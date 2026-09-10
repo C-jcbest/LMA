@@ -13,6 +13,7 @@ interface ChatWindowProps {
   streamingParts?: MessagePart[];
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
+  isNewSessionDraft?: boolean;
 }
 
 const MAX_LENGTH = 3000;
@@ -25,6 +26,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   streamingParts = [],
   isSidebarCollapsed,
   onToggleSidebar,
+  isNewSessionDraft = false,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showPromptsMenu, setShowPromptsMenu] = useState(false);
@@ -88,7 +90,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
 
       {/* 消息滚动区域 */}
       <div className="flex-1 overflow-y-auto px-6 py-2 space-y-6">
-        {messages.length === 0 && !streamingText && streamingParts.length === 0 && (
+        {(isNewSessionDraft ||
+          (messages.length === 0 && !streamingText && streamingParts.length === 0)) && (
           <div className="h-full flex flex-col items-center justify-center text-center p-8 text-neutral-400 select-none">
             <div className="w-12 h-12 rounded-2xl bg-neutral-100 flex items-center justify-center mb-3">
               <MessageCircle className="w-6 h-6 text-neutral-400" />

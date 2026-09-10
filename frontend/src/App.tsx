@@ -12,11 +12,13 @@ import {
   deleteSession,
   getSessionMessages,
   streamChatWithLangGraph,
+  generateSessionTitle,
 } from './services/api';
 
 export const App: React.FC = () => {
   const [sessions, setSessions] = useState<ThreadSession[]>([]);
   const [activeSession, setActiveSession] = useState<ThreadSession | null>(null);
+  const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState('');
@@ -63,23 +65,21 @@ export const App: React.FC = () => {
   };
 
   const handleSelectSession = (session: ThreadSession) => {
+    setIsNewSessionDraft(false);
     setActiveSession(session);
     setStreamingText('');
     setStreamingParts([]);
     loadMessages(session.thread_id);
   };
 
-  const handleCreateSession = async () => {
-    try {
-      const newSession = await createSession('新建监测会话');
-      setSessions((prev) => [newSession, ...prev]);
-      setActiveSession(newSession);
-      setMessages([]);
-      setStreamingText('');
-      setStreamingParts([]);
-    } catch (e) {
-      console.error('handleCreateSession failed:', e);
-    }
+  const handleCreateSession = () => {
+    abortControllerRef.current?.abort();
+    setIsNewSessionDraft(true);
+    setActiveSession(null);
+    setMessages([]);
+    setStreamingText('');
+    setStreamingParts([]);
+    setLoading(false);
   };
 
   const handleRenameSession = async (sessionId: string, newName: string) => {
@@ -98,11 +98,12 @@ export const App: React.FC = () => {
     setSessions(updated);
     if (activeSession?.thread_id === sessionId) {
       const next = updated[0] || null;
-      setActiveSession(next);
       if (next) {
+        setActiveSession(next);
+        setIsNewSessionDraft(false);
         loadMessages(next.thread_id);
       } else {
-        setMessages([]);
+        handleCreateSession();
       }
     }
   };
@@ -111,11 +112,52 @@ export const App: React.FC = () => {
     if (!userText.trim() || loading) return;
 
     let targetSession = activeSession;
-    if (!targetSession) {
-      targetSession = await createSession(userText.slice(0, 15));
-      setSessions((prev) => [targetSession!, ...prev]);
-      setActiveSession(targetSession);
+    const isDraft = isNewSessionDraft || !targetSession;
+
+    if (isDraft) {
+      try {
+        // 1. 正式创建会话，标记为正在生成标题，名称暂留空
+        const newSession = await createSession('');
+        newSession.isGeneratingTitle = true;
+        newSession.name = '';
+
+        targetSession = newSession;
+        setSessions((prev) => [newSession, ...prev]);
+        setActiveSession(newSession);
+        setIsNewSessionDraft(false);
+
+        // 2. 并行触发异步标题生成任务
+        (async () => {
+          let finalTitle = '新会话';
+          try {
+            const title = await generateSessionTitle(userText);
+            if (title && title.trim()) {
+              finalTitle = title.trim();
+            }
+          } catch (e) {
+            console.warn('generateSessionTitle error, fallback to default title:', e);
+          }
+          await renameSession(newSession.thread_id, finalTitle);
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.thread_id === newSession.thread_id
+                ? { ...s, name: finalTitle, isGeneratingTitle: false }
+                : s
+            )
+          );
+          setActiveSession((curr) =>
+            curr?.thread_id === newSession.thread_id
+              ? { ...curr, name: finalTitle, isGeneratingTitle: false }
+              : curr
+          );
+        })();
+      } catch (err) {
+        console.error('Failed to initialize session:', err);
+        return;
+      }
     }
+
+    if (!targetSession) return;
 
     const newUserMsg: Message = {
       id: `user-${Date.now()}`,
@@ -166,12 +208,6 @@ export const App: React.FC = () => {
       setMessages((prev) => [...prev, newAiMsg]);
       setStreamingText('');
       setStreamingParts([]);
-
-      // 自动更新会话标题（若为默认新建名称）
-      if (targetSession.name === '新建监测会话') {
-        const shortTitle = userText.length > 12 ? `${userText.slice(0, 12)}...` : userText;
-        handleRenameSession(targetSession.thread_id, shortTitle);
-      }
     } catch (err: any) {
       console.error('handleSendMessage failed:', err);
       const errMsg: Message = {
@@ -193,6 +229,7 @@ export const App: React.FC = () => {
         <Sidebar
           sessions={sessions}
           activeSessionId={activeSession?.thread_id || null}
+          isNewSessionDraft={isNewSessionDraft}
           onSelectSession={handleSelectSession}
           onCreateSession={handleCreateSession}
           onRenameSession={handleRenameSession}
@@ -212,6 +249,7 @@ export const App: React.FC = () => {
         streamingParts={streamingParts}
         isSidebarCollapsed={isSidebarCollapsed}
         onToggleSidebar={() => setIsSidebarCollapsed(false)}
+        isNewSessionDraft={isNewSessionDraft}
       />
 
       {/* 服务配置弹窗 */}

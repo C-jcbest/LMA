@@ -18,6 +18,7 @@ import { ThreadSession } from '../services/api';
 interface SidebarProps {
   sessions: ThreadSession[];
   activeSessionId: string | null;
+  isNewSessionDraft: boolean;
   onSelectSession: (session: ThreadSession) => void;
   onCreateSession: () => void;
   onRenameSession: (sessionId: string, newName: string) => void;
@@ -30,6 +31,7 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   sessions,
   activeSessionId,
+  isNewSessionDraft,
   onSelectSession,
   onCreateSession,
   onRenameSession,
@@ -116,9 +118,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 历史会话列表 */}
       <div className="flex-1 overflow-y-auto px-2 space-y-1">
-        {sessions.map((session) => {
-          const isActive = session.thread_id === activeSessionId;
-          const isEditing = editingId === session.thread_id;
+        {sessions.length === 0 && !isNewSessionDraft ? (
+          <div className="h-36 flex flex-col items-center justify-center text-neutral-400 text-xs px-4 text-center select-none">
+            <MessageSquare className="w-7 h-7 mb-2 opacity-30 text-neutral-500" />
+            暂无历史监测会话<br />点击上方新建开始监测
+          </div>
+        ) : (
+          sessions.map((session) => {
+            if (session.isGeneratingTitle) {
+              return (
+                <div
+                  key={session.thread_id}
+                  className="flex items-center gap-2.5 h-9 px-3 rounded-xl border border-neutral-200/90 bg-neutral-100 animate-pulse select-none"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                  <div className="h-2.5 bg-neutral-200 rounded w-20"></div>
+                </div>
+              );
+            }
+
+            const isActive = !isNewSessionDraft && session.thread_id === activeSessionId;
+            const isEditing = editingId === session.thread_id;
 
           return (
             <div
@@ -185,7 +205,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           );
-        })}
+        }))}
       </div>
 
       {/* 底部用户卡片 */}

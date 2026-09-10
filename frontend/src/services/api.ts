@@ -34,6 +34,7 @@ export interface ThreadSession {
   name: string;
   created_at: string;
   messages?: Message[];
+  isGeneratingTitle?: boolean;
 }
 
 const STORAGE_KEY_CONFIG = 'lma_langgraph_config';
@@ -116,7 +117,7 @@ export async function getSessions(): Promise<{ sessions: ThreadSession[]; isLive
  * 新建会话（Thread）
  */
 export async function createSession(name?: string): Promise<ThreadSession> {
-  const sessionName = name || '新建监测会话';
+  const sessionName = name !== undefined ? name : '新建监测会话';
   try {
     const client = createLangGraphClient();
     const thread = await client.threads.create({
@@ -144,6 +145,84 @@ export async function createSession(name?: string): Promise<ThreadSession> {
     return newSession;
   }
 }
+
+/**
+ * 根据用户首条消息生成会话标题
+ * 优先调用 LangGraph Server 的 session-title 无状态图（设置超时）。
+ * 若服务离线、调用异常或生成为空，优雅降级提取关键实体或截取首句，失败兜底为默认标题名。
+ */
+export async function generateSessionTitle(userMessage: string): Promise<string> {
+  const DEFAULT_TITLE = '新会话';
+  const cleanInput = userMessage?.trim();
+  if (!cleanInput) return DEFAULT_TITLE;
+
+  try {
+    const client = createLangGraphClient();
+    // 使用 Promise.race 设置 3.5 秒超时，避免阻塞用户感知
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Title generation timed out')), 3500)
+    );
+
+    const runPromise = (async () => {
+      const res = await client.runs.wait(null, 'session-title', {
+        input: { input_text: cleanInput },
+      });
+      if (res && typeof res === 'object') {
+        const title = (res as any).title;
+        if (typeof title === 'string' && title.trim()) {
+          return title.trim().replace(/^["'“”]+|["'“”]+$/g, '').slice(0, 16);
+        }
+      }
+      return null;
+    })();
+
+    const result = await Promise.race([runPromise, timeoutPromise]);
+    if (result) return result;
+  } catch (err) {
+    console.warn('LangGraph title generator unavailable or failed, falling back:', err);
+  }
+
+  // 降级规则：
+  // 1. 若包含站点名（如 ZJ-MS10, SX-01 等），结合意图词
+  const stationMatch = cleanInput.match(/[A-Z]{2}-[A-Z0-9]{2,6}/i);
+  const station = stationMatch ? stationMatch[0].toUpperCase() : '';
+
+  if (station) {
+    if (cleanInput.includes('稳定')) return `${station}稳定性分析`;
+    if (cleanInput.includes('天气') || cleanInput.includes('降雨') || cleanInput.includes('气象')) {
+      return `${station}气象与环境`;
+    }
+    if (cleanInput.includes('数据') || cleanInput.includes('GNSS')) {
+      return `${station}数据监测`;
+    }
+    return `${station}监测分析`;
+  }
+
+  if (cleanInput.includes('天气') || cleanInput.includes('降雨') || cleanInput.includes('气温')) {
+    const locMatch = cleanInput.match(/([\u4e00-\u9fa5]{2,6})(?:今日|近期|天气|降雨)/);
+    const loc = locMatch ? locMatch[1] : '';
+    return loc ? `${loc}天气查询` : '气象环境查询';
+  }
+
+  if (
+    cleanInput.includes('分组') ||
+    cleanInput.includes('测点') ||
+    cleanInput.includes('点位') ||
+    cleanInput.includes('站点数量')
+  ) {
+    return '监测点资源统计';
+  }
+
+  // 2. 普通文本截取前 12 字符
+  const textSample = cleanInput
+    .replace(/[#*`\n\r\t]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 12);
+
+  return textSample || DEFAULT_TITLE;
+}
+
 
 /**
  * 重命名会话

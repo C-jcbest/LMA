@@ -1,7 +1,8 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "lma-agent": "./app/agent/graph.py:graph"
+    "lma-agent": "./app/agent/graph.py:graph",
+    "session-title": "./app/agent/title.py:graph"
   },
   "env": ".env"
 }
