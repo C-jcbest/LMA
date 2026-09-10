@@ -24,6 +24,21 @@ _UUID_PATTERN = re.compile(
 
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
+# 北斗平台枚举值 → 中文可读描述；仅用于工具返回值转换，
+# 入参仍使用平台枚举码（由 LLM 按工具说明完成中文到枚举码的映射）
+_STATION_TYPE_TEXT = {
+    1: "基准站",
+    2: "移动站单点模式",
+    3: "移动站RTK模式",
+    4: "中继站",
+}
+_STATION_STATUS_TEXT = {
+    10: "正常",
+    20: "离线",
+    30: "告警",
+    40: "故障",
+}
+
 
 def _build_client() -> BeidouClient:
     settings = get_settings()
@@ -96,13 +111,17 @@ def _validate_time(value: str) -> str:
 
 
 def _station_to_dict(station: Station) -> dict:
-    """精简站点字段，避免工具输出过长。"""
+    """精简站点字段并把枚举值转为中文描述，避免工具输出过长且不可读。"""
     return {
         "station_uuid": station.station_uuid,
         "station_name": station.station_name,
         "group_name": station.group_name,
-        "station_type": station.station_type,
-        "station_status": station.station_status,
+        "station_type": _STATION_TYPE_TEXT.get(
+            station.station_type, f"未知类型({station.station_type})"
+        ),
+        "station_status": _STATION_STATUS_TEXT.get(
+            station.station_status, f"未知状态({station.station_status})"
+        ),
         "location": station.location,
         "description": station.description,
     }
@@ -168,7 +187,8 @@ async def list_stations(
         station_name: 监测点名称，支持模糊匹配，不传则返回全部。
         station_status: 监测点状态过滤：10=正常，20=离线，30=告警，40=故障。不传则不限状态。
 
-    返回站点名称、所属分组、类型、状态、位置等摘要信息。
+    返回站点名称、所属分组、类型、状态、位置等摘要信息；
+    类型与状态字段已转换为中文描述（如“基准站”“正常”），不返回数字代码。
     """
     async with _build_client() as client:
         group_uuid = None
