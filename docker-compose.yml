@@ -1,0 +1,63 @@
+# 会话历史持久化：PostgreSQL + LangGraph Server 生产部署
+#
+# 部署流程（项目根目录执行）：
+#   cd backend
+#   langgraph build -t lma-agent:latest     # 生成生产镜像（自动安装 requirements.txt）
+#   cd ..
+#   docker compose --env-file backend/.env up -d   # 指定 backend/.env 供变量插值，宿主机端口 2024
+#
+# 注意：${POSTGRES_PASSWORD} 变量插值需要 --env-file backend/.env（compose 默认只读根目录 .env）；
+# env_file 同样指向 backend/.env，保证容器内凭据与插值密码同源。
+#
+# 开发链路不受影响：backend/ 下 langgraph dev + frontend/ 下 npm run dev。
+#
+# 数据持久：Postgres 数据落在 named volume lma_pgdata，
+# docker compose down / restart / 机器重启后会话历史（threads、checkpoints）均保留；
+# 彻底清除数据需 docker compose down -v。
+#
+# 凭据安全：LLM/北斗/视觉等密钥通过 env_file: backend/.env 运行时注入，
+# 不会被烘焙进镜像；POSTGRES_PASSWORD 从同一 .env 读取。
+#
+# Redis 说明：langgraph-api 0.14.x（Go core server 架构）强制要求 REDIS_URI，
+# 即使单实例部署也需提供，用于流式事件 pub/sub 与后台任务队列；
+# 数据不落盘（仅消息队列，持久化全部在 Postgres），重启不丢会话。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: lma
+      POSTGRES_USER: lma
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 backend/.env 中设置 POSTGRES_PASSWORD}
+    volumes:
+      - lma_pgdata:/var/lib/postgresql/data # 数据落盘，容器重建不丢
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lma -d lma"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  lma-agent:
+    image: lma-agent:latest # 由 langgraph build 产出
+    env_file: backend/.env # 运行时注入 LLM/北斗/视觉凭据（不烘焙进镜像）
+    environment:
+      DATABASE_URI: postgresql://lma:${POSTGRES_PASSWORD}@postgres:5432/lma?sslmode=disable
+      REDIS_URI: redis://redis:6379
+    ports:
+      - "2024:8000" # 容器 8000 → 宿主机 2024，前端默认地址不变
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  lma_pgdata:

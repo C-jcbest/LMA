@@ -1,0 +1,225 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Sidebar } from './components/Sidebar';
+import { ChatWindow } from './components/ChatWindow';
+import { ConfigModal } from './components/ConfigModal';
+import {
+  ThreadSession,
+  Message,
+  MessagePart,
+  getSessions,
+  createSession,
+  renameSession,
+  deleteSession,
+  getSessionMessages,
+  streamChatWithLangGraph,
+} from './services/api';
+
+export const App: React.FC = () => {
+  const [sessions, setSessions] = useState<ThreadSession[]>([]);
+  const [activeSession, setActiveSession] = useState<ThreadSession | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+  const [streamingParts, setStreamingParts] = useState<MessagePart[]>([]);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [isLiveServer, setIsLiveServer] = useState(false);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // 初始化加载会话
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
+  const loadSessions = async () => {
+    try {
+      const res = await getSessions();
+      setIsLiveServer(res.isLive);
+      if (res.sessions && res.sessions.length > 0) {
+        setSessions(res.sessions);
+        if (!activeSession || !res.sessions.some((s) => s.thread_id === activeSession.thread_id)) {
+          const first = res.sessions[0];
+          setActiveSession(first);
+          loadMessages(first.thread_id);
+        }
+      } else {
+        setSessions([]);
+        setActiveSession(null);
+        setMessages([]);
+      }
+    } catch (e) {
+      console.warn('loadSessions err:', e);
+    }
+  };
+
+  const loadMessages = async (threadId: string) => {
+    try {
+      const msgs = await getSessionMessages(threadId);
+      setMessages(msgs);
+    } catch (e) {
+      console.warn('loadMessages err:', e);
+    }
+  };
+
+  const handleSelectSession = (session: ThreadSession) => {
+    setActiveSession(session);
+    setStreamingText('');
+    setStreamingParts([]);
+    loadMessages(session.thread_id);
+  };
+
+  const handleCreateSession = async () => {
+    try {
+      const newSession = await createSession('新建监测会话');
+      setSessions((prev) => [newSession, ...prev]);
+      setActiveSession(newSession);
+      setMessages([]);
+      setStreamingText('');
+      setStreamingParts([]);
+    } catch (e) {
+      console.error('handleCreateSession failed:', e);
+    }
+  };
+
+  const handleRenameSession = async (sessionId: string, newName: string) => {
+    await renameSession(sessionId, newName);
+    setSessions((prev) =>
+      prev.map((s) => (s.thread_id === sessionId ? { ...s, name: newName } : s))
+    );
+    if (activeSession?.thread_id === sessionId) {
+      setActiveSession((prev) => (prev ? { ...prev, name: newName } : null));
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    await deleteSession(sessionId);
+    const updated = sessions.filter((s) => s.thread_id !== sessionId);
+    setSessions(updated);
+    if (activeSession?.thread_id === sessionId) {
+      const next = updated[0] || null;
+      setActiveSession(next);
+      if (next) {
+        loadMessages(next.thread_id);
+      } else {
+        setMessages([]);
+      }
+    }
+  };
+
+  const handleSendMessage = async (userText: string) => {
+    if (!userText.trim() || loading) return;
+
+    let targetSession = activeSession;
+    if (!targetSession) {
+      targetSession = await createSession(userText.slice(0, 15));
+      setSessions((prev) => [targetSession!, ...prev]);
+      setActiveSession(targetSession);
+    }
+
+    const newUserMsg: Message = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: userText,
+    };
+
+    setMessages((prev) => [...prev, newUserMsg]);
+    setLoading(true);
+    setStreamingText('');
+    setStreamingParts([]);
+
+    abortControllerRef.current = new AbortController();
+
+    try {
+      let finalCapturedParts: MessagePart[] = [];
+
+      const finalReply = await streamChatWithLangGraph(
+        targetSession.thread_id,
+        userText,
+        {
+          onToken: (chunk) => {
+            setStreamingText((prev) => prev + chunk);
+          },
+          onPartsUpdate: (parts) => {
+            finalCapturedParts = parts;
+            setStreamingParts([...parts]);
+          },
+          onError: (err) => {
+            console.error('Stream chat error:', err);
+          },
+          onDone: (_, doneParts) => {
+            if (doneParts && doneParts.length > 0) {
+              finalCapturedParts = doneParts;
+            }
+          },
+        },
+        abortControllerRef.current.signal
+      );
+
+      const newAiMsg: Message = {
+        id: `ai-${Date.now()}`,
+        role: 'assistant',
+        content: finalReply || streamingText,
+        parts: finalCapturedParts.length > 0 ? [...finalCapturedParts] : undefined,
+      };
+
+      setMessages((prev) => [...prev, newAiMsg]);
+      setStreamingText('');
+      setStreamingParts([]);
+
+      // 自动更新会话标题（若为默认新建名称）
+      if (targetSession.name === '新建监测会话') {
+        const shortTitle = userText.length > 12 ? `${userText.slice(0, 12)}...` : userText;
+        handleRenameSession(targetSession.thread_id, shortTitle);
+      }
+    } catch (err: any) {
+      console.error('handleSendMessage failed:', err);
+      const errMsg: Message = {
+        id: `ai-err-${Date.now()}`,
+        role: 'assistant',
+        content: `⚠️ 会话请求失败：${err?.message || '连接后端 LangGraph 服务失败，请检查服务是否正常启动。'}`,
+      };
+      setMessages((prev) => [...prev, errMsg]);
+    } finally {
+      setLoading(false);
+      abortControllerRef.current = null;
+    }
+  };
+
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-white">
+      {/* 左侧边栏 */}
+      {!isSidebarCollapsed && (
+        <Sidebar
+          sessions={sessions}
+          activeSessionId={activeSession?.thread_id || null}
+          onSelectSession={handleSelectSession}
+          onCreateSession={handleCreateSession}
+          onRenameSession={handleRenameSession}
+          onDeleteSession={handleDeleteSession}
+          onToggleCollapse={() => setIsSidebarCollapsed(true)}
+          onOpenConfig={() => setIsConfigOpen(true)}
+          isLiveServer={isLiveServer}
+        />
+      )}
+
+      {/* 右侧主聊天区域 */}
+      <ChatWindow
+        messages={messages}
+        onSendMessage={handleSendMessage}
+        loading={loading}
+        streamingText={streamingText}
+        streamingParts={streamingParts}
+        isSidebarCollapsed={isSidebarCollapsed}
+        onToggleSidebar={() => setIsSidebarCollapsed(false)}
+      />
+
+      {/* 服务配置弹窗 */}
+      <ConfigModal
+        isOpen={isConfigOpen}
+        onClose={() => setIsConfigOpen(false)}
+        onSaved={() => loadSessions()}
+      />
+    </div>
+  );
+};

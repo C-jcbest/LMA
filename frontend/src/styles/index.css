@@ -1,0 +1,173 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --ring: 240 5% 64.9%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    background: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+}
+
+/* Custom scrollbars with high visibility */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.45);
+}
+
+/* Markdown styling matching prototype image */
+.message-markdown {
+  color: #1f2937; /* gray-800 */
+}
+.message-markdown > :first-child {
+  margin-top: 0;
+}
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+.message-markdown p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.65;
+}
+.message-markdown h1,
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4 {
+  color: #111827; /* gray-900 */
+  font-weight: 700;
+  line-height: 1.35;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+.message-markdown h1 {
+  font-size: 1.25rem;
+}
+.message-markdown h2 {
+  font-size: 1.125rem;
+}
+.message-markdown h3,
+.message-markdown h4 {
+  font-size: 1rem;
+}
+.message-markdown strong {
+  color: #111827; /* gray-900 */
+  font-weight: 700;
+}
+.message-markdown code {
+  background: #f3f4f6;
+  color: #1f2937;
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+.message-markdown pre {
+  background: #f9fafb;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  border: 1px solid #e5e7eb;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.message-markdown pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.875em;
+  color: #1f2937;
+}
+.message-markdown ul,
+.message-markdown ol {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding-left: 1.25rem;
+}
+.message-markdown ul {
+  list-style-type: disc;
+}
+.message-markdown ol {
+  list-style-type: decimal;
+}
+.message-markdown li {
+  margin-top: 0.2rem;
+  margin-bottom: 0.2rem;
+}
+.message-markdown blockquote {
+  border-left: 3px solid #cbd5e1;
+  margin: 0.75rem 0;
+  padding-left: 0.85rem;
+  color: #4b5563;
+}
+
+/* Data Table Container & Styling */
+.markdown-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  margin-top: 0.85rem;
+  margin-bottom: 0.85rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.65rem;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.02);
+}
+.message-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.message-markdown th,
+.message-markdown td {
+  border: 1px solid #e5e7eb;
+  padding: 0.65rem 0.85rem;
+  text-align: left;
+  vertical-align: middle;
+}
+.message-markdown th {
+  background: #f9fafb;
+  color: #111827;
+  font-weight: 600;
+}
+.message-markdown tr:nth-child(even) td {
+  background-color: #fafafa;
+}
