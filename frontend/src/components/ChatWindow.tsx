@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, PanelLeftOpen, Sparkles, MessageCircle, ChevronRight } from 'lucide-react';
+import { Send, Plus, PanelLeftOpen, Sparkles, MessageCircle, ChevronRight, Square, ArrowDown } from 'lucide-react';
 import { Message, MessagePart } from '../services/api';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { SummaryCard } from './SummaryCard';
+import { MessageActions } from './MessageActions';
 
 interface ChatWindowProps {
   messages: Message[];
@@ -17,9 +18,21 @@ interface ChatWindowProps {
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   isNewSessionDraft?: boolean;
+  onStopGeneration?: () => void;
 }
 
 const MAX_LENGTH = 3000;
+
+// 消息复制内容：有 parts 时只拼接文本片段（不含工具卡片），否则取正文
+const getMessageText = (msg: Message): string => {
+  if (msg.parts && msg.parts.length > 0) {
+    return msg.parts
+      .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+      .map((p) => p.content)
+      .join('\n\n');
+  }
+  return msg.content || '';
+};
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({
   messages,
@@ -32,18 +45,37 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   isSidebarCollapsed,
   onToggleSidebar,
   isNewSessionDraft = false,
+  onStopGeneration,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showPromptsMenu, setShowPromptsMenu] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isPinnedRef = useRef(true);
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const scrollToBottom = (smooth = true) => {
+    messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+  };
+
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    isPinnedRef.current = distance < 80;
+    setShowJumpToBottom(distance > 200);
+  };
+
+  const handleJumpToBottom = () => {
+    isPinnedRef.current = true;
+    setShowJumpToBottom(false);
+    scrollToBottom();
   };
 
   useEffect(() => {
-    scrollToBottom();
+    // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
+    if (isPinnedRef.current) scrollToBottom();
   }, [messages, streamingText, streamingParts, loading]);
 
   const handleSubmit = (e?: React.FormEvent) => {
@@ -76,6 +108,20 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     '平台当前有权访问的分组和监测点数量是多少？',
   ];
 
+  // 流式块中最后一个文本片段的索引（用于追加“正在生成”光标）
+  let lastStreamingTextIdx = -1;
+  for (let i = streamingParts.length - 1; i >= 0; i--) {
+    if (streamingParts[i].type === 'text') {
+      lastStreamingTextIdx = i;
+      break;
+    }
+  }
+  // 最后一个片段是已完成调用的工具卡片、其后尚无正文时，显示“整理回答”标志，
+  // 避免工具结束到正文 token 到达之间的界面看起来像卡死
+  const lastStreamingPart = streamingParts[streamingParts.length - 1];
+  const settlingAfterTool =
+    lastStreamingPart?.type === 'tool' && lastStreamingPart.toolCall.status === 'success';
+
   return (
     <div className="flex-1 h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden">
       {/* 顶部轻量栏（折叠侧边栏时展示展开按钮） */}
@@ -94,7 +140,11 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       </div>
 
       {/* 消息滚动区域 */}
-      <div className="flex-1 overflow-y-auto px-6 py-2 space-y-6">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-6 py-2 space-y-6"
+      >
         {(isNewSessionDraft ||
           (messages.length === 0 && !streamingText && streamingParts.length === 0)) && (
           <div className="h-full flex flex-col items-center justify-center text-center p-8 text-neutral-400 select-none">
@@ -114,7 +164,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         {messages.map((msg, index) => {
           const isUser = msg.role === 'user';
           return (
-            <div key={msg.id || index} className="max-w-4xl mx-auto w-full">
+            <div key={msg.id || index} className="group max-w-4xl mx-auto w-full">
               <div className={`flex items-start gap-3.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
                 {/* 头像 */}
                 {isUser ? (
@@ -157,6 +207,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                       <MarkdownMessage content={msg.content || ''} />
                     )}
                   </div>
+
+                  {/* 消息底部工具栏：悬浮显示，当前仅复制 */}
+                  <MessageActions
+                    align={isUser ? 'right' : 'left'}
+                    getText={() => getMessageText(msg)}
+                  />
                 </div>
               </div>
             </div>
@@ -189,17 +245,28 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             </div>
             <div className="flex-1 min-w-0 text-neutral-800 text-sm py-0.5 space-y-2">
               {streamingParts.length > 0 ? (
-                streamingParts.map((part, pIdx) => (
-                  <React.Fragment key={pIdx}>
-                    {part.type === 'tool' ? (
-                      <InlineToolCall toolCall={part.toolCall} />
-                    ) : (
-                      <MarkdownMessage content={part.content} />
-                    )}
-                  </React.Fragment>
-                ))
+                <>
+                  {streamingParts.map((part, pIdx) => (
+                    <React.Fragment key={pIdx}>
+                      {part.type === 'tool' ? (
+                        <InlineToolCall toolCall={part.toolCall} />
+                      ) : pIdx === lastStreamingTextIdx ? (
+                        <div className="streaming-cursor">
+                          <MarkdownMessage content={part.content} />
+                        </div>
+                      ) : (
+                        <MarkdownMessage content={part.content} />
+                      )}
+                    </React.Fragment>
+                  ))}
+                  {settlingAfterTool && (
+                    <ThinkingIndicator statusText="正在根据查询结果整理回答..." />
+                  )}
+                </>
               ) : streamingText ? (
-                <MarkdownMessage content={streamingText} />
+                <div className="streaming-cursor">
+                  <MarkdownMessage content={streamingText} />
+                </div>
               ) : (
                 <div className="py-1">
                   <ThinkingIndicator />
@@ -211,6 +278,18 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
 
         <div ref={messagesEndRef} />
       </div>
+
+      {/* 回到底部悬浮按钮（用户上翻后显示） */}
+      {showJumpToBottom && (
+        <button
+          type="button"
+          onClick={handleJumpToBottom}
+          title="回到底部"
+          className="absolute bottom-32 right-8 z-20 w-9 h-9 rounded-full bg-white border border-neutral-200 shadow-md flex items-center justify-center text-neutral-500 hover:text-neutral-800 transition-colors"
+        >
+          <ArrowDown className="w-4 h-4" />
+        </button>
+      )}
 
       {/* 底部悬浮卡片输入区 */}
       <div className="p-4 bg-white shrink-0 z-20">
@@ -270,15 +349,26 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               {inputText.length}/{MAX_LENGTH}
             </div>
 
-            {/* 发送按钮 */}
-            <button
-              type="submit"
-              disabled={!inputText.trim() || loading}
-              className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#8793ea] to-[#99a4f4] hover:brightness-105 active:scale-95 text-white flex items-center justify-center shrink-0 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm"
-              title="发送 (Enter)"
-            >
-              <Send className="w-3.5 h-3.5 fill-current" />
-            </button>
+            {/* 发送 / 停止按钮：生成中时变为停止按钮 */}
+            {loading ? (
+              <button
+                type="button"
+                onClick={onStopGeneration}
+                className="w-8 h-8 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-500 hover:text-neutral-800 flex items-center justify-center shrink-0 transition-all active:scale-95"
+                title="停止生成"
+              >
+                <Square className="w-3 h-3 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!inputText.trim()}
+                className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#8793ea] to-[#99a4f4] hover:brightness-105 active:scale-95 text-white flex items-center justify-center shrink-0 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm"
+                title="发送 (Enter)"
+              >
+                <Send className="w-3.5 h-3.5 fill-current" />
+              </button>
+            )}
           </form>
         </div>
       </div>

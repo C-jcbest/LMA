@@ -30,6 +30,26 @@ export const App: React.FC = () => {
   const [isLiveServer, setIsLiveServer] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  // 当前流式输出所属会话（thread_id）：用于切换会话时阻止跨会话的状态写入
+  const streamingOwnerRef = useRef<string | null>(null);
+
+  // 中断当前流式请求（用户点击停止按钮）：半截内容会按普通消息落地，
+  // 服务端 run 继续完成并写入 checkpoint，重新进入会话可见完整回答
+  const stopGeneration = () => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  };
+
+  // 切换/新建/删除会话时调用：中断流式输出并清理全部相关状态，
+  // 同时清空流式归属，阻止旧流的回调写入新会话的界面
+  const stopStreaming = () => {
+    stopGeneration();
+    streamingOwnerRef.current = null;
+    setLoading(false);
+    setStreamingText('');
+    setStreamingParts([]);
+    setRecommendations([]);
+  };
 
   // 初始化加载会话
   useEffect(() => {
@@ -69,23 +89,17 @@ export const App: React.FC = () => {
   };
 
   const handleSelectSession = (session: ThreadSession) => {
+    stopStreaming();
     setIsNewSessionDraft(false);
     setActiveSession(session);
-    setStreamingText('');
-    setStreamingParts([]);
-    setRecommendations([]);
     loadMessages(session.thread_id);
   };
 
   const handleCreateSession = () => {
-    abortControllerRef.current?.abort();
+    stopStreaming();
     setIsNewSessionDraft(true);
     setActiveSession(null);
     setMessages([]);
-    setStreamingText('');
-    setStreamingParts([]);
-    setRecommendations([]);
-    setLoading(false);
   };
 
   const handleRenameSession = async (sessionId: string, newName: string) => {
@@ -99,6 +113,10 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
+    // 删除的是正在流式输出的会话时，先中断避免回调写入已删除的会话
+    if (sessionId === streamingOwnerRef.current) {
+      stopStreaming();
+    }
     await deleteSession(sessionId);
     const updated = sessions.filter((s) => s.thread_id !== sessionId);
     setSessions(updated);
@@ -165,6 +183,10 @@ export const App: React.FC = () => {
 
     if (!targetSession) return;
 
+    const ownerThreadId = targetSession.thread_id;
+    // 本轮流式输出的会话归属检查：切换会话后旧流的所有回调不得再写入界面
+    const isOwner = () => streamingOwnerRef.current === ownerThreadId;
+
     const newUserMsg: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -178,6 +200,7 @@ export const App: React.FC = () => {
     setRecommendations([]);
 
     abortControllerRef.current = new AbortController();
+    streamingOwnerRef.current = ownerThreadId;
 
     try {
       let finalCapturedParts: MessagePart[] = [];
@@ -187,14 +210,15 @@ export const App: React.FC = () => {
         userText,
         {
           onToken: (chunk) => {
-            setStreamingText((prev) => prev + chunk);
+            if (isOwner()) setStreamingText((prev) => prev + chunk);
           },
           onPartsUpdate: (parts) => {
+            if (!isOwner()) return;
             finalCapturedParts = parts;
             setStreamingParts([...parts]);
           },
           onRecommendations: (list) => {
-            setRecommendations(list);
+            if (isOwner()) setRecommendations(list);
           },
           onError: (err) => {
             console.error('Stream chat error:', err);
@@ -208,26 +232,37 @@ export const App: React.FC = () => {
         abortControllerRef.current.signal
       );
 
-      const newAiMsg: Message = {
-        id: `ai-${Date.now()}`,
-        role: 'assistant',
-        content: finalReply || streamingText,
-        parts: finalCapturedParts.length > 0 ? [...finalCapturedParts] : undefined,
-      };
-
-      setMessages((prev) => [...prev, newAiMsg]);
-      setStreamingText('');
-      setStreamingParts([]);
+      // 只有仍停留在发起会话时才落地最终消息；
+      // 切换走的情况下服务端 run 已写入 checkpoint，重新进入会话会从历史加载
+      if (isOwner()) {
+        const newAiMsg: Message = {
+          id: `ai-${Date.now()}`,
+          role: 'assistant',
+          content: finalReply,
+          parts: finalCapturedParts.length > 0 ? [...finalCapturedParts] : undefined,
+        };
+        setMessages((prev) => [...prev, newAiMsg]);
+        setStreamingText('');
+        setStreamingParts([]);
+      }
     } catch (err: any) {
-      console.error('handleSendMessage failed:', err);
-      const errMsg: Message = {
-        id: `ai-err-${Date.now()}`,
-        role: 'assistant',
-        content: `⚠️ 会话请求失败：${err?.message || '连接后端 LangGraph 服务失败，请检查服务是否正常启动。'}`,
-      };
-      setMessages((prev) => [...prev, errMsg]);
+      // 用户主动停止不算错误，静默收尾（半截内容已由上方落地或随会话历史恢复）
+      const aborted =
+        err?.name === 'AbortError' || abortControllerRef.current?.signal?.aborted;
+      if (!aborted && isOwner()) {
+        console.error('handleSendMessage failed:', err);
+        const errMsg: Message = {
+          id: `ai-err-${Date.now()}`,
+          role: 'assistant',
+          content: `⚠️ 会话请求失败：${err?.message || '连接后端 LangGraph 服务失败，请检查服务是否正常启动。'}`,
+        };
+        setMessages((prev) => [...prev, errMsg]);
+      }
     } finally {
-      setLoading(false);
+      if (isOwner()) {
+        setLoading(false);
+        streamingOwnerRef.current = null;
+      }
       abortControllerRef.current = null;
     }
   };
@@ -262,6 +297,7 @@ export const App: React.FC = () => {
         isSidebarCollapsed={isSidebarCollapsed}
         onToggleSidebar={() => setIsSidebarCollapsed(false)}
         isNewSessionDraft={isNewSessionDraft}
+        onStopGeneration={stopGeneration}
       />
 
       {/* 服务配置弹窗 */}
