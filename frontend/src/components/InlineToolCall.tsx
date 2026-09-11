@@ -36,7 +36,14 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
     return res;
   };
 
-  const data = parseData(toolCall.detail);
+  const parsedDetail = parseData(toolCall.detail);
+  const data: any =
+    parsedDetail && typeof parsedDetail === 'object' ? { ...parsedDetail } : parsedDetail;
+  // chart_points 随 artifact 转发（全量数据，不进入 LLM 上下文）：
+  // detail 内容里没有时从 artifact 兑底，兼容旧会话中 content 内携带的序列
+  if (data && toolCall.chartPoints?.length && !data.chart_points) {
+    data.chart_points = toolCall.chartPoints;
+  }
 
   // 图标
   const renderIcon = () => {
@@ -108,7 +115,16 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
 
   // 渲染简约全量数据表格（带吸顶表头与独立顺畅滚动）
   const renderTableContent = () => {
-    // 0. 视觉复核卡片：优先展示后端渲染的 PNG 图表（artifact），无图时兑底 SVG
+    // 0a. 工具执行中：不展示任何结果形态，更不能显示“执行成功”
+    if (toolCall.status === 'loading') {
+      return (
+        <div className="flex items-center gap-2 p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
+          <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />
+          正在查询，请稍候…
+        </div>
+      );
+    }
+    // 0b. 视觉复核卡片：优先展示后端渲染的 PNG 图表（artifact），无图时兑底 SVG
     if (data?.chart_points && Array.isArray(data.chart_points)) {
       const obs = data.observations || {};
       const candidates: any[] = obs.candidates || [];
@@ -139,19 +155,22 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
           {/* 后端渲染的分析图 PNG（原始时序 / 累计位移 / 合成位移） */}
           {artifactImages.length > 0 && (
             <div className="space-y-1.5">
-              {artifactImages.map((img, i) => (
-                <figure key={img.name} className="border border-neutral-200/90 rounded-lg bg-white shadow-sm overflow-hidden max-w-3xl">
-                  <figcaption className="px-3 py-1.5 text-[11px] font-medium text-neutral-600 border-b border-neutral-100 bg-[#f9fafb]">
-                    图{i + 1} · {CHART_TITLES[img.name]}
-                  </figcaption>
-                  <img
-                    src={`data:image/png;base64,${img.png_base64}`}
-                    alt={CHART_TITLES[img.name]}
-                    className="w-full h-auto block"
-                    loading="lazy"
-                  />
-                </figure>
-              ))}
+              {artifactImages.map((img, i) => {
+                const title = img.title || CHART_TITLES[img.name] || img.name;
+                return (
+                  <figure key={img.name} className="border border-neutral-200/90 rounded-lg bg-white shadow-sm overflow-hidden max-w-3xl">
+                    <figcaption className="px-3 py-1.5 text-[11px] font-medium text-neutral-600 border-b border-neutral-100 bg-[#f9fafb]">
+                      图{i + 1} · {title}
+                    </figcaption>
+                    <img
+                      src={`data:image/png;base64,${img.png_base64}`}
+                      alt={title}
+                      className="w-full h-auto block"
+                      loading="lazy"
+                    />
+                  </figure>
+                );
+              })}
             </div>
           )}
 
@@ -545,9 +564,14 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
       }
     }
 
+    // 已完成但无可解析的数据内容：中性文案，不显示“执行成功”等状态词
     return (
-      <div className="p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-700 font-mono max-h-56 overflow-auto overscroll-contain">
-        {String(data || '执行成功')}
+      <div className="p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
+        {data ? (
+          <span className="font-mono text-neutral-700 break-all">{String(data)}</span>
+        ) : (
+          '该步骤已完成，无详细数据输出'
+        )}
       </div>
     );
   };

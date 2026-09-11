@@ -16,7 +16,7 @@ from app.beidou.schemas import Station
 from app.config import get_settings
 
 # 返回给 LLM 的 GNSS 数据点上限，超出时截断并注明
-_MAX_DATA_POINTS = 500
+_MAX_DATA_POINTS = 900
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"

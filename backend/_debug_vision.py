@@ -23,7 +23,7 @@ async def main():
         )
     render_points = _downsample(points, 720)
     charts = _render_all_charts(
-        render_points, "ZJ-MS10", "2025-10-15 00:00:00", "2025-10-31 00:00:00"
+        render_points, None, "ZJ-MS10", "2025-10-15 00:00:00", "2025-10-31 00:00:00"
     )
     content = [
         {

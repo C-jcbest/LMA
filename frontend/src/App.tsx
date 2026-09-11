@@ -20,6 +20,7 @@ export const App: React.FC = () => {
   const [activeSession, setActiveSession] = useState<ThreadSession | null>(null);
   const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [contextSummary, setContextSummary] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [streamingParts, setStreamingParts] = useState<MessagePart[]>([]);
@@ -57,8 +58,9 @@ export const App: React.FC = () => {
 
   const loadMessages = async (threadId: string) => {
     try {
-      const msgs = await getSessionMessages(threadId);
-      setMessages(msgs);
+      const res = await getSessionMessages(threadId);
+      setMessages(res.messages);
+      setContextSummary(res.contextSummary || '');
     } catch (e) {
       console.warn('loadMessages err:', e);
     }
@@ -243,6 +245,7 @@ export const App: React.FC = () => {
       {/* 右侧主聊天区域 */}
       <ChatWindow
         messages={messages}
+        contextSummary={contextSummary}
         onSendMessage={handleSendMessage}
         loading={loading}
         streamingText={streamingText}

@@ -78,7 +78,7 @@ export const ToolCallCard: React.FC<ToolCallCardProps> = ({ toolCall }) => {
     if (toolCall.preview) {
       return <span className="text-[11px] text-neutral-500 truncate max-w-[240px]">{toolCall.preview}</span>;
     }
-    return <span className="text-[11px] text-emerald-600 font-medium">执行完成</span>;
+    return <span className="text-[11px] text-neutral-500 font-medium">已完成</span>;
   };
 
   // 渲染分组定制内容

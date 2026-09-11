@@ -2,7 +2,17 @@ import { Client } from '@langchain/langgraph-sdk';
 
 export interface ToolCallImage {
   name: string;
+  // 后端下发的图表中文标题（含基线口径），缺省时前端按 name 映射兑底
+  title?: string;
   png_base64: string;
+}
+
+// 视觉复核随 artifact 转发的全量图表数据序列（后端 chart_points）
+export interface ChartPoint {
+  t: string;
+  n?: number | null;
+  e?: number | null;
+  u?: number | null;
 }
 
 export interface ToolCallInfo {
@@ -15,6 +25,7 @@ export interface ToolCallInfo {
   preview?: string;
   detail?: Record<string, unknown>;
   images?: ToolCallImage[];
+  chartPoints?: ChartPoint[];
 }
 
 export type MessagePart =
@@ -256,11 +267,14 @@ export async function deleteSession(threadId: string): Promise<void> {
 }
 
 /**
- * 获取单个会话的历史消息：把 LangGraph state 的原始消息序列
+ * 获取单个会话的历史消息与历史压缩摘要：把 LangGraph state 的原始消息序列
  * （human / ai+tool_calls / tool / ai 文本）重构为前端的 parts 结构，
  * 工具结果以 tool part 形式挂在最终回答前，避免工具 JSON 被当成 AI 正文。
+ * 若服务端已触发上下文压缩，contextSummary 携带持久化摘要供头部展示。
  */
-export async function getSessionMessages(threadId: string): Promise<Message[]> {
+export async function getSessionMessages(
+  threadId: string
+): Promise<{ messages: Message[]; contextSummary?: string }> {
   // 先检查是否是预置会话
   const cached = loadStoredSessions();
   const found = cached.find(s => s.thread_id === threadId);
@@ -314,6 +328,9 @@ export async function getSessionMessages(threadId: string): Promise<Message[]> {
                     (img: any) => img?.name && typeof img?.png_base64 === 'string'
                   )
                 : undefined,
+              chartPoints: Array.isArray((m as any)?.artifact?.chart_points)
+                ? ((m as any).artifact.chart_points as ChartPoint[])
+                : undefined,
             },
           });
         } else if (m.type === 'ai') {
@@ -329,13 +346,20 @@ export async function getSessionMessages(threadId: string): Promise<Message[]> {
       }
       flushAssistant('');
 
-      if (result.length > 0) return result;
+      if (result.length > 0) {
+        const contextSummary =
+          typeof (state.values as any).context_summary === 'string' &&
+          (state.values as any).context_summary.trim()
+            ? (state.values as any).context_summary
+            : undefined;
+        return { messages: result, contextSummary };
+      }
     }
   } catch (e) {
     console.warn('getSessionMessages fallback to cached:', e);
   }
 
-  return found?.messages || [];
+  return { messages: found?.messages || [] };
 }
 
 export interface StreamChatCallbacks {
@@ -369,7 +393,8 @@ export async function streamChatWithLangGraph(
     output?: any,
     isEnd: boolean = false,
     images?: ToolCallImage[],
-    callId?: string
+    callId?: string,
+    chartPoints?: ChartPoint[]
   ) => {
     // 以 tool_call_id 为主键去重：同一调用只保留一张卡，重复事件只更新
     let existingIndex = callId
@@ -388,6 +413,7 @@ export async function streamChatWithLangGraph(
         tc.status = 'success';
         if (output !== undefined) tc.detail = output;
         if (images) tc.images = images;
+        if (chartPoints) tc.chartPoints = chartPoints;
       }
     } else {
       currentParts.push({
@@ -400,6 +426,7 @@ export async function streamChatWithLangGraph(
           input,
           detail: output,
           images,
+          chartPoints,
         },
       });
     }
@@ -456,6 +483,11 @@ export async function streamChatWithLangGraph(
                 (img: any) => img?.name && typeof img?.png_base64 === 'string'
               )
             : undefined;
+          const artifactChartPoints: ChartPoint[] | undefined = Array.isArray(
+            (msg as any)?.artifact?.chart_points
+          )
+            ? (msg as any).artifact.chart_points
+            : undefined;
           // 同一 tool_call_id 已有卡片时用其工具名，避免 name 缺失时退化成 beidou_tool
           let toolName = msg?.name;
           if (!toolName && callId) {
@@ -471,7 +503,8 @@ export async function streamChatWithLangGraph(
             msg?.content,
             true,
             artifactImages,
-            callId
+            callId,
+            artifactChartPoints
           );
           continue;
         }

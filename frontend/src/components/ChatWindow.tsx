@@ -4,9 +4,11 @@ import { Message, MessagePart } from '../services/api';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
+import { SummaryCard } from './SummaryCard';
 
 interface ChatWindowProps {
   messages: Message[];
+  contextSummary?: string;
   onSendMessage: (text: string) => void;
   loading: boolean;
   streamingText: string;
@@ -20,6 +22,7 @@ const MAX_LENGTH = 3000;
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({
   messages,
+  contextSummary,
   onSendMessage,
   loading,
   streamingText,
@@ -102,6 +105,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             </p>
           </div>
         )}
+
+        {/* 历史压缩摘要卡（上下文压缩发生后展示） */}
+        {contextSummary && <SummaryCard summary={contextSummary} />}
 
         {messages.map((msg, index) => {
           const isUser = msg.role === 'user';

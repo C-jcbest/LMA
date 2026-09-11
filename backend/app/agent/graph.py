@@ -3,6 +3,9 @@
 图以模块级 `graph` 导出，由 LangGraph Server（langgraph dev / langgraph build）
 加载并提供 API；服务端自动注入持久化（checkpointer），
 多轮对话通过官方 SDK 的 thread_id 实现，无需自建 InMemorySaver。
+
+用户回合入口先经 manage_context：token 总量超触发线时，将最旧对话段
+（剔除工具明细）压缩为持久摘要（context_summary），避免长会话上下文溢出。
 """
 
 from functools import lru_cache
@@ -14,6 +17,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from app.agent.context import manage_context
 from app.agent.tools import get_daily_gnss_data, list_station_groups, list_stations
 from app.agent.vision import analyze_gnss_chart
 from app.agent.weather import query_weather
@@ -41,18 +45,35 @@ SYSTEM_PROMPT = """你是一个滑坡连续监测业务的辅助调查智能体�
   用户只给了地点名称时先向用户确认或索要大致位置，不要臆测经纬度。
 - 查询 GNSS 数据需要明确的监测点和时间范围；用户未说明时间时先向用户确认，不要自行假设关键参数。
 - 站点名称存在歧义（多个匹配）时，把候选列表展示给用户并请用户确认，不要自行选择。
-- get_daily_gnss_data 返回的 summary（各方向首末值/变化量/极值/缺失时段）和 downsampled 标记
-  是趋势分析的主要依据，请优先使用；不要因降采样而自行补查数据，时间范围已完整覆盖。
+- get_daily_gnss_data 返回的统计信息（各方向首末值/变化量/极值/缺失时段）和数据完整性标记
+  是趋势分析的主要依据，请优先使用；不要因数据被抽稀而自行补查数据，时间范围已完整覆盖。
 
 异常分析工作流（检测到异常信号时执行）：
-- 异常信号包括：台阶式跳变、持续单向漂移、缺测时段、幅度突变（参考 summary 的 change 与 gaps）。
+- 异常信号包括：台阶式跳变、持续单向漂移、缺测时段、幅度突变（参考统计信息中的变化量与缺测时段）。
 - 检测到异常信号时，进行双通道取证（可依次或并行调用）：
   1) query_weather：查异常时段前 3 天至异常时段的降雨（降雨是主要诱因，关注滞后关联），
      start_date/end_date 覆盖异常时段之前约 72 小时；
   2) analyze_gnss_chart：渲染图表由视觉模型复核形态异常，focus 参数带上初判的异常时段与方向。
+- analyze_gnss_chart 的图表用全量数据绘制（累计位移以监测点初始坐标为基准）；
+  其返回的每个视觉异常区间都附有数值核验结果——已按该区间（自动向两侧外扩少许）
+  回查原始 GNSS 数据得到的准确数值（区间点数、各方向首末值/变化量/极值及极值出现时刻）。
+  回答时必须结合数值核验判断异常区间成立性并区分三类，且一律用中文完整表述：
+  “数值证据支持”（数据异常得到数值证据支持）；“存在变化但证据不足”（存疑）；
+  “复核未获数值支持（视觉误判）”。不得把视觉发现的异常直接当作已确认异常。
 - 综合回答建议按“一、数据现象（数值证据）；二、气象关联（同期降雨/风况事实）；
-  三、视觉观察（图表形态描述）；四、数据质量（缺测/降采样说明）”组织。
-- analyze_gnss_chart 返回 ok=false 时如实告知视觉复核不可用及原因，其余分析照常进行。
+  三、视觉观察（图表形态描述）；四、数据质量（数据完整性与缺测说明）”组织。
+- 视觉复核不可用时如实告知原因，其余分析照常进行。
+
+对外表达规范（面向用户，必须遵守）：
+- 回答面向不了解本系统的监测业务人员，只使用业务语言。
+- 严禁出现：工具名（如 analyze_gnss_chart、get_daily_gnss_data、query_weather）、
+  参数名或 JSON 字段名（如 summary、gaps、downsampled、recheck、ok、candidates、
+  observations、focus）、内部判定码（confirmed、suspected、visual_false_positive），
+  以及“字段”“返回值”“标记”“工具调用”等实现性措辞。
+- 固定转述口径：数据完整性统计（不说统计摘要字段名）、缺测时段（不说缺失时段字段名）、
+  数据完整时表述为“该时段数据完整（小时级，未抽稀）”、数值核验（不提回查字段名）。
+  数值核验范围比视觉定位区间略宽时，说明为“核验时向区间两侧适当放宽了时间窗”。
+- 复核结论表格的判定列一律用中文表述，不得出现英文标签、字段名或代码值。
 
 回答边界（必须遵守）：
 - 只基于工具返回的真实数据回答，数值不得自行计算、估算或编造。
@@ -64,6 +85,7 @@ SYSTEM_PROMPT = """你是一个滑坡连续监测业务的辅助调查智能体�
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
+    context_summary: str  # 历史压缩摘要（空串表示无历史），随 checkpoint 持久化
 
 
 @lru_cache
@@ -80,17 +102,28 @@ def _get_llm_with_tools():
 
 async def agent_node(state: AgentState) -> dict:
     llm_with_tools = _get_llm_with_tools()
-    messages = [SystemMessage(content=SYSTEM_PROMPT)] + state["messages"]
+    messages = [SystemMessage(content=SYSTEM_PROMPT)]
+    summary = state.get("context_summary")
+    if summary:
+        messages.append(SystemMessage(content=f"【历史对话摘要】\n{summary}"))
+    messages += state["messages"]
     response: BaseMessage = await llm_with_tools.ainvoke(messages)
     return {"messages": [response]}
+
+
+async def manage_context_node(state: AgentState) -> dict:
+    """上下文管理：超触发线时淘汰最旧段并压缩为摘要；未超线零开销放行。"""
+    return await manage_context(state["messages"], state.get("context_summary") or "")
 
 
 tool_node = ToolNode(tools, handle_tool_errors=True)
 
 builder = StateGraph(AgentState)
+builder.add_node("manage_context", manage_context_node)
 builder.add_node("agent", agent_node)
 builder.add_node("tools", tool_node)
-builder.add_edge(START, "agent")
+builder.add_edge(START, "manage_context")
+builder.add_edge("manage_context", "agent")
 builder.add_conditional_edges("agent", tools_condition, ["tools", END])
 builder.add_edge("tools", "agent")
 

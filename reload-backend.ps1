@@ -12,6 +12,10 @@ $ProjectRoot = $PSScriptRoot
 $BackendDir = Join-Path $ProjectRoot 'backend'
 $ImageTag = 'lma-agent:latest'
 
+# Windows 中文控制台（GBK）下 langgraph CLI 输出 emoji/中文会 UnicodeEncodeError，
+# 强制 UTF-8 后再调用
+$env:PYTHONIOENCODING = 'utf-8'
+
 function Write-Step($msg) { Write-Host "[reload] $msg" -ForegroundColor Cyan }
 
 # 1. 重建镜像（依赖层缓存命中时仅需数秒）
