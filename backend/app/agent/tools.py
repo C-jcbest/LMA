@@ -15,8 +15,11 @@ from app.beidou.client import BeidouClient
 from app.beidou.schemas import Station
 from app.config import get_settings
 
-# 返回给 LLM 的 GNSS 数据点上限，超出时截断并注明
-_MAX_DATA_POINTS = 900
+# 返回给 LLM 的 GNSS 数据点上限：超出时优先在请求前调整采样间隔（或按天抽稀），
+# 仍超出再等间隔降采样，保证返回数据量不超过该值
+_MAX_DATA_POINTS = 1500
+# 固定每日取样时刻（sample_times）数量上限
+_MAX_SAMPLE_TIMES = 6
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -108,6 +111,69 @@ def _detect_gaps(points) -> list[dict]:
 def _validate_time(value: str) -> str:
     datetime.strptime(value, _TIME_FORMAT)
     return value
+
+
+def _parse_frequency_minutes(value: str) -> int | None:
+    """把采样频率解析为分钟数：支持 "1h"/"2h"、"every 6 hours"、整数分钟（"90" 或 "90m"）。"""
+    if not value:
+        return None
+    text = value.strip().lower()
+    match = re.match(r"^(?:every\s+)?(\d+(?:\.\d+)?)\s*h(?:our)?s?$", text)
+    if match:
+        return int(float(match.group(1)) * 60)
+    match = re.match(r"^(\d+)\s*(?:m(?:in(?:ute)?s?)?)?$", text)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _normalize_sample_times(values: list[str]) -> list[str] | str:
+    """校验并规范化固定每日取样时刻，返回按时刻排序的去重列表；非法时返回错误说明。
+
+    日监测数据源为小时级，非整点时刻匹配不到任何数据，必须校验为整点。
+    """
+    seen: set[str] = set()
+    for raw in values:
+        text = str(raw).strip()
+        if text.lower().startswith("daily "):
+            text = text[6:].strip()
+        parsed = None
+        for fmt in ("%H:%M:%S", "%H:%M"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        if parsed is None:
+            return f"固定取样时刻“{raw}”格式无效，应为 HH:mm 或 HH:mm:ss（如 15:00）"
+        if parsed.minute != 0 or parsed.second != 0:
+            return (
+                f"固定取样时刻“{text}”不是整点：日监测数据源为小时级，"
+                "非整点时刻匹配不到数据，请使用整点时刻（如 15:00）"
+            )
+        seen.add(parsed.strftime("%H:%M"))
+    if not seen:
+        return "sample_times 不能为空"
+    if len(seen) > _MAX_SAMPLE_TIMES:
+        return f"固定取样时刻最多 {_MAX_SAMPLE_TIMES} 个（当前 {len(seen)} 个），请减少后重试"
+    return sorted(seen)
+
+
+def _thin_days(points: list, stride: int) -> list:
+    """固定时刻模式的数据量控制：按天抽稀，保留天序号能整除 stride 的天（末天兜底保留）。
+
+    同一保留天内的全部固定时刻点都保留，跨天固定时刻对比关系不被破坏。
+    """
+    if stride <= 1 or not points:
+        return points
+    days: list[str] = []
+    for p in points:
+        day = p.data_time[:10]
+        if not days or days[-1] != day:
+            days.append(day)
+    keep = {day for i, day in enumerate(days) if i % stride == 0}
+    keep.add(days[-1])
+    return [p for p in points if p.data_time[:10] in keep]
 
 
 def _station_to_dict(station: Station) -> dict:
@@ -226,6 +292,7 @@ async def get_daily_gnss_data(
     begin_time: str,
     end_time: str,
     sampling_frequency: str | None = None,
+    sample_times: list[str] | None = None,
 ) -> str:
     """查询指定监测点在时间范围内的日监测 GNSS 数据（默认每小时一条）。
 
@@ -235,10 +302,16 @@ async def get_daily_gnss_data(
         end_time: 结束时间，格式必须为 "YYYY-MM-DD HH:mm:ss"，可跨天。
         sampling_frequency: 可选采样频率，如 "1h"/"2h"/"3h"/"6h" 或整数分钟，
             不传则返回默认每小时一条。
+        sample_times: 可选固定每日取样时刻，如 ["03:00", "15:00"]（必须为整点，HH:mm），
+            传入后优先于 sampling_frequency。分析长段时间趋势时推荐使用：每小时的数据
+            会表现出每日周期性变化，掩盖长周期的持续形变，而对比每日固定时刻的数据能
+            更清晰分辨；每日只取一个点时按业务惯例取 15 时数据，即 ["15:00"]。
+            需要观察日内波动或短时段细节时再改用 sampling_frequency。
 
     返回的数据点包含时间以及 N（北向坐标，m）、E（东向坐标，m）、U（垂直坐标，m）。
-    数据点超过上限时会等间隔降采样（时间范围仍完整覆盖），并附 summary 统计摘要
-    （各方向首末值/变化量/极值及缺失时段），趋势分析请优先使用 summary。
+    数据量自动控制：预计超过 1500 条时自动调整采样间隔（固定时刻模式按天抽稀），
+    仍超出时等间隔降采样（时间范围仍完整覆盖），调整方式记录在 sampling 字段；
+    并附 summary 统计摘要（各方向首末值/变化量/极值及缺失时段），趋势分析请优先使用 summary。
     """
     try:
         _validate_time(begin_time)
@@ -249,6 +322,47 @@ async def get_daily_gnss_data(
             f"{_TIME_FORMAT} 格式，例如 2026-08-01 00:00:00"
         )
 
+    # sample_times 校验与规范化（非法时返回错误说明，促使调用方修正参数）
+    normalized_sample_times: list[str] | None = None
+    if sample_times:
+        normalized = _normalize_sample_times(sample_times)
+        if isinstance(normalized, str):
+            return normalized
+        normalized_sample_times = normalized
+
+    # 请求前规划数据量：估算点数超上限时先调整采样间隔，避免拉回超量数据
+    time_start = datetime.strptime(begin_time, _TIME_FORMAT)
+    time_end = datetime.strptime(end_time, _TIME_FORMAT)
+    total_minutes = (time_end - time_start).total_seconds() / 60
+    notes: list[str] = []
+    day_stride = 0
+    effective_frequency = sampling_frequency
+    if normalized_sample_times:
+        if sampling_frequency:
+            notes.append("已按固定每日时刻取样，sampling_frequency 被忽略（固定时刻优先）")
+        days = max(1, math.ceil(total_minutes / 1440))
+        expected = days * len(normalized_sample_times)
+        if expected > _MAX_DATA_POINTS:
+            day_stride = math.ceil(expected / _MAX_DATA_POINTS)
+            notes.append(
+                f"固定时刻模式预计约 {expected} 条数据（{days} 天 × {len(normalized_sample_times)} 个时刻），"
+                f"超过 {_MAX_DATA_POINTS} 条上限，返回时按每 {day_stride} 天取一天抽稀（保留全部指定时刻）"
+            )
+    else:
+        freq_minutes = _parse_frequency_minutes(sampling_frequency) if sampling_frequency else None
+        if sampling_frequency and not freq_minutes:
+            notes.append(f"采样频率“{sampling_frequency}”无法识别，按默认每小时处理")
+        base_minutes = freq_minutes or 60
+        expected = math.ceil(total_minutes / base_minutes)
+        if expected > _MAX_DATA_POINTS:
+            hour_step = math.ceil(total_minutes / _MAX_DATA_POINTS / 60)
+            effective_frequency = f"{hour_step}h" if hour_step <= 6 else str(hour_step * 60)
+            notes.append(
+                f"按 {sampling_frequency or '默认每小时'} 采样预计约 {expected} 条数据，"
+                f"超过 {_MAX_DATA_POINTS} 条上限，已自动调整为每 {effective_frequency} 一条"
+                "（数据源为小时级，不影响可用信息）"
+            )
+
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
         if isinstance(station, str):
@@ -258,10 +372,17 @@ async def get_daily_gnss_data(
             station_uuid=station.station_uuid,
             begin_time=begin_time,
             end_time=end_time,
-            sampling_frequency=sampling_frequency,
+            sampling_frequency=None if normalized_sample_times else effective_frequency,
+            sample_times=normalized_sample_times,
         )
 
-    # 超过上限时等间隔降采样（保留首末点，时间范围完整覆盖），不再硬截断
+    total_points = len(points)
+
+    # 固定时刻模式：按天抽稀（保留全部指定时刻，仅减少参与对比的天数）
+    if normalized_sample_times and day_stride > 1:
+        points = _thin_days(points, day_stride)
+
+    # 兜底：平台实际返回量仍超上限时等间隔降采样（保留首末点，时间范围完整覆盖）
     downsampled = len(points) > _MAX_DATA_POINTS
     if downsampled:
         step = math.ceil(len(points) / _MAX_DATA_POINTS)
@@ -272,14 +393,28 @@ async def get_daily_gnss_data(
     else:
         points_to_return = points
 
+    mode = (
+        "sample_times"
+        if normalized_sample_times
+        else ("frequency" if effective_frequency else "hourly")
+    )
     return _dumps(
         {
             "station_name": station.station_name,
             "begin_time": begin_time,
             "end_time": end_time,
-            "total_points": len(points),
+            "total_points": total_points,
             "returned_points": len(points_to_return),
-            "downsampled": downsampled,
+            "downsampled": downsampled or day_stride > 1,
+            "sampling": {
+                "mode": mode,
+                "sample_times": normalized_sample_times,
+                "frequency_effective": None if normalized_sample_times else effective_frequency,
+                "frequency_requested": sampling_frequency,
+                "day_stride": day_stride or None,
+                "points_limit": _MAX_DATA_POINTS,
+                "note": "；".join(notes) if notes else None,
+            },
             "summary": {
                 "n": _axis_summary([p.n for p in points]),
                 "e": _axis_summary([p.e for p in points]),
