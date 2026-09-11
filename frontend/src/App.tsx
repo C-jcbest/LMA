@@ -21,6 +21,7 @@ export const App: React.FC = () => {
   const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [contextSummary, setContextSummary] = useState<string>('');
+  const [recommendations, setRecommendations] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [streamingParts, setStreamingParts] = useState<MessagePart[]>([]);
@@ -61,6 +62,7 @@ export const App: React.FC = () => {
       const res = await getSessionMessages(threadId);
       setMessages(res.messages);
       setContextSummary(res.contextSummary || '');
+      setRecommendations(res.recommendations || []);
     } catch (e) {
       console.warn('loadMessages err:', e);
     }
@@ -71,6 +73,7 @@ export const App: React.FC = () => {
     setActiveSession(session);
     setStreamingText('');
     setStreamingParts([]);
+    setRecommendations([]);
     loadMessages(session.thread_id);
   };
 
@@ -81,6 +84,7 @@ export const App: React.FC = () => {
     setMessages([]);
     setStreamingText('');
     setStreamingParts([]);
+    setRecommendations([]);
     setLoading(false);
   };
 
@@ -171,6 +175,7 @@ export const App: React.FC = () => {
     setLoading(true);
     setStreamingText('');
     setStreamingParts([]);
+    setRecommendations([]);
 
     abortControllerRef.current = new AbortController();
 
@@ -187,6 +192,9 @@ export const App: React.FC = () => {
           onPartsUpdate: (parts) => {
             finalCapturedParts = parts;
             setStreamingParts([...parts]);
+          },
+          onRecommendations: (list) => {
+            setRecommendations(list);
           },
           onError: (err) => {
             console.error('Stream chat error:', err);
@@ -250,6 +258,7 @@ export const App: React.FC = () => {
         loading={loading}
         streamingText={streamingText}
         streamingParts={streamingParts}
+        recommendations={recommendations}
         isSidebarCollapsed={isSidebarCollapsed}
         onToggleSidebar={() => setIsSidebarCollapsed(false)}
         isNewSessionDraft={isNewSessionDraft}

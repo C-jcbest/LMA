@@ -274,7 +274,7 @@ export async function deleteSession(threadId: string): Promise<void> {
  */
 export async function getSessionMessages(
   threadId: string
-): Promise<{ messages: Message[]; contextSummary?: string }> {
+): Promise<{ messages: Message[]; contextSummary?: string; recommendations: string[] }> {
   // 先检查是否是预置会话
   const cached = loadStoredSessions();
   const found = cached.find(s => s.thread_id === threadId);
@@ -352,14 +352,21 @@ export async function getSessionMessages(
           (state.values as any).context_summary.trim()
             ? (state.values as any).context_summary
             : undefined;
-        return { messages: result, contextSummary };
+        // 下一步推荐动作随线程状态持久化，切换会话回来仍可恢复显示
+        const recsRaw = (state.values as any).recommendations;
+        const recommendations = Array.isArray(recsRaw)
+          ? (recsRaw as any[])
+              .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+              .slice(0, 3)
+          : [];
+        return { messages: result, contextSummary, recommendations };
       }
     }
   } catch (e) {
     console.warn('getSessionMessages fallback to cached:', e);
   }
 
-  return { messages: found?.messages || [] };
+  return { messages: found?.messages || [], recommendations: [] };
 }
 
 export interface StreamChatCallbacks {
@@ -367,6 +374,7 @@ export interface StreamChatCallbacks {
   onToolStart?: (toolName: string, input?: any) => void;
   onToolEnd?: (toolName: string, output?: any) => void;
   onPartsUpdate?: (parts: MessagePart[]) => void;
+  onRecommendations?: (list: string[]) => void;
   onError?: (err: any) => void;
   onDone?: (fullText: string, finalParts?: MessagePart[]) => void;
 }
@@ -529,8 +537,23 @@ export async function streamChatWithLangGraph(
           appendTextToken(msg.content);
         }
       }
-      // updates 事件不再渲染工具卡片：messages-tuple 已携带完整 ToolMessage 结果，
-      // 在此重复渲染会导致同一工具的原始数据展示第二遍
+      // updates 事件：只读取 recommend 节点产出的“下一步推荐动作”；
+      // 其余节点的 updates 不渲染（messages-tuple 已携带完整工具结果，
+      // 重复渲染会导致同一工具的原始数据展示第二遍）
+      if (chunk.event === 'updates') {
+        const payload = chunk.data as Record<string, any> | undefined;
+        const recs = payload?.recommend?.recommendations;
+        if (Array.isArray(recs)) {
+          const cleaned = (recs as any[])
+            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+            .map((x) => x.trim().slice(0, 60))
+            .slice(0, 3);
+          if (cleaned.length > 0) {
+            callbacks.onRecommendations?.(cleaned);
+          }
+        }
+        continue;
+      }
     }
 
     if (hasReceivedTokens || accumulated.trim().length > 0 || currentParts.length > 0) {
