@@ -12,6 +12,7 @@ import {
   Settings,
   Server,
   RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { ThreadSession } from '../services/api';
 
@@ -19,6 +20,8 @@ interface SidebarProps {
   sessions: ThreadSession[];
   activeSessionId: string | null;
   isNewSessionDraft: boolean;
+  /** 正在生成回复的会话 thread_id 列表 */
+  generatingThreadIds: string[];
   onSelectSession: (session: ThreadSession) => void;
   onCreateSession: () => void;
   onRenameSession: (sessionId: string, newName: string) => void;
@@ -32,6 +35,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   sessions,
   activeSessionId,
   isNewSessionDraft,
+  generatingThreadIds,
   onSelectSession,
   onCreateSession,
   onRenameSession,
@@ -139,6 +143,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
             const isActive = !isNewSessionDraft && session.thread_id === activeSessionId;
             const isEditing = editingId === session.thread_id;
+            const isGenerating = generatingThreadIds.includes(session.thread_id);
 
           return (
             <div
@@ -151,11 +156,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
-                <MessageSquare
-                  className={`w-3.5 h-3.5 shrink-0 ${
-                    isActive ? 'text-neutral-800' : 'text-neutral-400 group-hover:text-neutral-600'
-                  }`}
-                />
+                {isGenerating ? (
+                  <span title="正在生成回复" className="shrink-0 flex">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                  </span>
+                ) : (
+                  <MessageSquare
+                    className={`w-3.5 h-3.5 shrink-0 ${
+                      isActive ? 'text-neutral-800' : 'text-neutral-400 group-hover:text-neutral-600'
+                    }`}
+                  />
+                )}
                 {isEditing ? (
                   <input
                     type="text"
@@ -170,7 +181,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 )}
               </div>
 
-              {/* 悬停操作按钮 */}
+              {/* 悬停操作按钮：生成中时替换为 loading 图标，不可重命名/删除 */}
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 {isEditing ? (
                   <>
@@ -184,6 +195,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <X className="w-3 h-3" />
                     </button>
                   </>
+                ) : isGenerating ? (
+                  <span title="生成中，暂不可重命名或删除" className="p-1 flex">
+                    <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+                  </span>
                 ) : (
                   <>
                     <button

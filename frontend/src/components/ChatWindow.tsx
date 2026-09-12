@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Plus, PanelLeftOpen, Sparkles, MessageCircle, ChevronRight, Square, ArrowDown } from 'lucide-react';
-import { Message, MessagePart } from '../services/api';
+import { Message, MessagePart, ThreadStreamState } from '../services/api';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
@@ -11,9 +11,10 @@ interface ChatWindowProps {
   messages: Message[];
   contextSummary?: string;
   onSendMessage: (text: string) => void;
-  loading: boolean;
-  streamingText: string;
-  streamingParts?: MessagePart[];
+  /** 当前查看会话是否正在生成回复 */
+  isGenerating: boolean;
+  /** 当前查看会话进行中的流式缓冲（切换会话后切回可恢复显示） */
+  streamState?: ThreadStreamState;
   recommendations?: string[];
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -38,9 +39,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   messages,
   contextSummary,
   onSendMessage,
-  loading,
-  streamingText,
-  streamingParts = [],
+  isGenerating,
+  streamState,
   recommendations = [],
   isSidebarCollapsed,
   onToggleSidebar,
@@ -54,6 +54,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
+
+  const streamingParts = streamState?.parts ?? [];
+  const streamingText = streamState?.text ?? '';
 
   const scrollToBottom = (smooth = true) => {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
@@ -76,11 +79,11 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
     if (isPinnedRef.current) scrollToBottom();
-  }, [messages, streamingText, streamingParts, loading]);
+  }, [messages, streamingText, streamingParts, isGenerating]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim() || loading) return;
+    if (!inputText.trim() || isGenerating) return;
     onSendMessage(inputText.trim());
     setInputText('');
     if (textareaRef.current) {
@@ -220,7 +223,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         })}
 
         {/* 下一步推荐动作：点击后自动发送 */}
-        {!loading && recommendations.length > 0 && (
+        {!isGenerating && recommendations.length > 0 && (
           <div className="max-w-4xl mx-auto w-full flex flex-wrap items-center gap-2 pl-11">
             <span className="text-[11px] text-neutral-400 select-none shrink-0">下一步</span>
             {recommendations.map((rec, i) => (
@@ -238,7 +241,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         )}
 
         {/* 正在生成中的统一 AI 消息单元 (内容按流式顺序实时嵌入渲染) */}
-        {loading && (
+        {isGenerating && (
           <div className="max-w-4xl mx-auto w-full flex items-start gap-3.5">
             <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center shrink-0 text-xs font-bold text-white select-none shadow-sm">
               AI
@@ -339,7 +342,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
               maxLength={MAX_LENGTH}
-              disabled={loading}
+              disabled={isGenerating}
               placeholder="询问滑坡监测数据、气象降雨风险或计算判定方案..."
               className="flex-1 bg-transparent text-neutral-800 placeholder:text-neutral-400 text-sm outline-none resize-none leading-relaxed px-1 py-1 max-h-28"
             />
@@ -350,7 +353,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             </div>
 
             {/* 发送 / 停止按钮：生成中时变为停止按钮 */}
-            {loading ? (
+            {isGenerating ? (
               <button
                 type="button"
                 onClick={onStopGeneration}

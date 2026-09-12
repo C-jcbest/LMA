@@ -32,6 +32,13 @@ export type MessagePart =
   | { type: 'text'; content: string }
   | { type: 'tool'; toolCall: ToolCallInfo };
 
+// 单个会话进行中的流式内容缓冲：按 thread_id 隔离，
+// 切换会话不中断生成，切回时据此恢复流式显示
+export interface ThreadStreamState {
+  parts: MessagePart[];
+  text: string;
+}
+
 export interface Message {
   id?: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
