@@ -31,9 +31,6 @@ class Settings(BaseSettings):
     # 视觉定位异常区间的数值核验外扩小时数：视觉估读时间存在误差，
     # 向两侧外扩可避免边界关键数据被截掉；0 表示不外扩
     vision_recheck_pad_hours: int = 2
-    # 子窗口放大复核的窗口数上限（focus/放大请求/异常候选中选取，重叠合并）：
-    # 控制视觉调用次数，0 表示关闭二次放大复核
-    vision_zoom_max_windows: int = 2
 
     # 上下文管理（token 驱动，无轮数窗口）
     # 触发线 = min(token_threshold, model_context * compress_ratio)，超线才压缩
