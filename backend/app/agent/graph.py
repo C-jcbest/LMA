@@ -69,9 +69,9 @@ SYSTEM_PROMPT = """你是一个滑坡连续监测业务的辅助调查智能体�
   1) query_weather：查异常时段前 3 天至异常时段的降雨（降雨是主要诱因，关注滞后关联），
      start_date/end_date 覆盖异常时段之前约 72 小时；
   2) analyze_gnss_chart：渲染图表由视觉模型做全窗口形态观察与形态学推断
-     （单一工具单一提示词），focus 参数可带上初判的异常时段或方向（仅供参考）。
+     （单一工具单一提示词）。
 - analyze_gnss_chart 支持重复调用以精确子窗口：首次对整个关注范围调用做全局观察；
-  发现可疑子窗口（视觉候选区间、focus 指向区域、数值特征指向的区段）后，以更窄的
+  发现可疑子窗口（视觉候选区间、数值特征指向的区段）后，以更窄的
   begin_time/end_time 再次调用做精确判读——窗口越窄图表横向分辨率越高；累计位移
   基线为站点初始坐标（未登记时回退首点），跨时间范围连续可比，子窗口图与全范围图
   可直接对照，子窗口调用的 global_features 即该子窗口的数值特征。一般 1~3 次为宜，
@@ -92,7 +92,7 @@ SYSTEM_PROMPT = """你是一个滑坡连续监测业务的辅助调查智能体�
 - 回答面向不了解本系统的监测业务人员，只使用业务语言。
 - 严禁出现：工具名（如 analyze_gnss_chart、get_daily_gnss_data、query_weather）、
   参数名或 JSON 字段名（如 summary、gaps、downsampled、sampling、recheck、features、
-  global_features、interpretation、ok、candidates、observations、focus）、
+  global_features、interpretation、ok、candidates、observations）、
   内部判定码（confirmed、suspected、visual_false_positive）、
   以及“字段”“返回值”“标记”“工具调用”等实现性措辞。
 - 固定转述口径：数据完整性统计（不说统计摘要字段名）、缺测时段（不说缺失时段字段名）、

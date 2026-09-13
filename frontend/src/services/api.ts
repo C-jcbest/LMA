@@ -382,8 +382,23 @@ export interface StreamChatCallbacks {
   onToolEnd?: (toolName: string, output?: any) => void;
   onPartsUpdate?: (parts: MessagePart[]) => void;
   onRecommendations?: (list: string[]) => void;
+  /** run 启动后上报 run_id，用于停止生成时取消服务端 run */
+  onRunStarted?: (runId: string) => void;
   onError?: (err: any) => void;
   onDone?: (fullText: string, finalParts?: MessagePart[]) => void;
+}
+
+/**
+ * 取消服务端正在执行的 run（interrupt：中止后续步骤，已完成的步骤保留在会话历史）。
+ * 失败仅告警不抛出：本地流已中断，取消失败时服务端 run 会自行完成写入 checkpoint。
+ */
+export async function cancelRun(threadId: string, runId: string): Promise<void> {
+  try {
+    const client = createLangGraphClient();
+    await client.runs.cancel(threadId, runId, false, 'interrupt');
+  } catch (e) {
+    console.warn('cancelRun failed:', e);
+  }
 }
 
 /**
@@ -471,6 +486,11 @@ export async function streamChatWithLangGraph(
           messages: [{ role: 'user', content: userMessage }],
         },
         streamMode: ['messages-tuple', 'updates'],
+        // run 创建即从响应中拿到 run_id：停止生成时据此调用服务端
+        // cancel API 真正终止 run（仅中断本地流时服务端会继续跑完）
+        onRunCreated: (run) => {
+          if (run.run_id) callbacks.onRunStarted?.(run.run_id);
+        },
         signal,
       }
     );

@@ -13,6 +13,7 @@ import {
   deleteSession,
   getSessionMessages,
   streamChatWithLangGraph,
+  cancelRun,
   generateSessionTitle,
 } from './services/api';
 
@@ -31,6 +32,8 @@ export const App: React.FC = () => {
 
   // 每个会话独立的 AbortController；删除会话/点击停止时按 thread 中断
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  // 每个会话进行中 run 的 run_id（run 创建时从响应回调获得），停止生成时取消服务端 run
+  const runIdsRef = useRef<Map<string, string>>(new Map());
   // 非激活会话生成失败时暂存错误信息，切回该会话时展示
   const pendingErrorsRef = useRef<Record<string, string>>({});
 
@@ -38,6 +41,9 @@ export const App: React.FC = () => {
   // 激活会话镜像 ref：流式回调与落地判断在异步闭包中进行，state 会过期
   const activeThreadIdRef = useRef<string | null>(null);
   activeThreadIdRef.current = activeThreadId;
+  // 流式状态镜像 ref：loadMessages 等异步流程中判断生成是否仍在进行
+  const streamStatesRef = useRef(streamStates);
+  streamStatesRef.current = streamStates;
 
   const activeStream = activeThreadId ? streamStates[activeThreadId] : undefined;
   const isGeneratingActive = !!activeStream;
@@ -62,13 +68,19 @@ export const App: React.FC = () => {
     });
   };
 
-  // 用户点击停止按钮：只中断当前查看会话的生成，
-  // 半截内容照旧落地；服务端 run 继续完成并写入 checkpoint
+  // 用户点击停止按钮：只中断当前查看会话的生成。
+  // 本地中断流消费并把半截内容落地；同时调用服务端 cancel API 真正终止 run，
+  // 服务端不再继续生成（已完成的步骤保留在会话历史，半截正文不写入 checkpoint）
   const stopGeneration = () => {
     const threadId = activeThreadIdRef.current;
     if (!threadId) return;
     abortControllersRef.current.get(threadId)?.abort();
     abortControllersRef.current.delete(threadId);
+    const runId = runIdsRef.current.get(threadId);
+    if (runId) {
+      runIdsRef.current.delete(threadId);
+      void cancelRun(threadId, runId);
+    }
   };
 
   // 初始化加载会话
@@ -97,12 +109,40 @@ export const App: React.FC = () => {
     }
   };
 
-  const loadMessages = async (threadId: string) => {
+  // 截掉最后一条用户消息之后的全部内容：生成中的回复其已完成部分
+  // （工具调用轮等）可能已写入服务端 checkpoint，与前端流式缓冲重叠，
+  // 这部分交给流式缓冲统一渲染，避免切回会话时同一回复重复显示
+  const truncateAfterLastUser = (msgs: Message[]): Message[] => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') return msgs.slice(0, i + 1);
+    }
+    return msgs;
+  };
+
+  // 最后一条用户消息之后是否已有带正文的助手回答
+  const hasReplyAfterLastUser = (msgs: Message[]): boolean => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') return false;
+      if (msgs[i].role === 'assistant' && (msgs[i].content || '').trim()) return true;
+    }
+    return false;
+  };
+
+  const loadMessages = async (threadId: string, allowRefetch = true) => {
     try {
       const res = await getSessionMessages(threadId);
       // 加载期间用户已切走则不覆盖当前会话的消息
       if (activeThreadIdRef.current !== threadId) return;
-      setMessages(res.messages);
+      const streaming = threadId in streamStatesRef.current;
+      let msgs = res.messages;
+      if (streaming) {
+        msgs = truncateAfterLastUser(msgs);
+      } else if (allowRefetch && msgs.length > 0 && !hasReplyAfterLastUser(msgs)) {
+        // 流刚结束但拿到的是未含最终回答的中间 checkpoint（加载与落地竞态），
+        // 重拉一次取完整历史；仅重试一次，服务端确无回答时如实展示
+        return loadMessages(threadId, false);
+      }
+      setMessages(msgs);
       setContextSummary(res.contextSummary || '');
       setRecommendations(res.recommendations || []);
       // 切回时展示该会话在离线期间的失败信息（如有）
@@ -147,9 +187,14 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    // 删除生成中的会话：先中断其流并清缓冲，避免孤儿回调写入已删除的会话
+    // 删除生成中的会话：先中断本地流并清缓冲、取消服务端 run，避免孤儿回调写入已删除的会话
     abortControllersRef.current.get(sessionId)?.abort();
     abortControllersRef.current.delete(sessionId);
+    const runId = runIdsRef.current.get(sessionId);
+    if (runId) {
+      runIdsRef.current.delete(sessionId);
+      void cancelRun(sessionId, runId);
+    }
     clearStreamState(sessionId);
     await deleteSession(sessionId);
     const updated = sessions.filter((s) => s.thread_id !== sessionId);
@@ -253,6 +298,9 @@ export const App: React.FC = () => {
             streamRecs = list;
             if (activeThreadIdRef.current === threadId) setRecommendations(list);
           },
+          onRunStarted: (runId) => {
+            runIdsRef.current.set(threadId, runId);
+          },
           onError: (err) => {
             console.error('Stream chat error:', err);
           },
@@ -303,6 +351,7 @@ export const App: React.FC = () => {
       }
     } finally {
       abortControllersRef.current.delete(threadId);
+      runIdsRef.current.delete(threadId);
     }
   };
 
