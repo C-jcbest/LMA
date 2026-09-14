@@ -5,11 +5,16 @@ import {
   Layers,
   MapPin,
   CloudRain,
+  Compass,
   Eye,
   ChevronRight,
   Loader2,
 } from 'lucide-react';
 import { ToolCallInfo } from '../services/api';
+
+const SiteEnvironmentCard = React.lazy(() =>
+  import('./SiteEnvironmentCard').then((module) => ({ default: module.SiteEnvironmentCard }))
+);
 
 interface InlineToolCallProps {
   toolCall: ToolCallInfo;
@@ -53,6 +58,9 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
     if (toolCall.name?.includes('group')) {
       return <Layers className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
     }
+    if (toolCall.name?.includes('site_environment')) {
+      return <Compass className="w-3.5 h-3.5 text-amber-600 shrink-0" />;
+    }
     if (toolCall.name?.includes('station') && !toolCall.name?.includes('group')) {
       return <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
     }
@@ -84,6 +92,9 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
     }
     if (toolCall.name === 'analyze_gnss_chart') {
       return '进行了视觉复核';
+    }
+    if (toolCall.name === 'inspect_site_environment') {
+      return '调查了站点地形与地质环境';
     }
     return toolCall.display_name || `调用了工具 ${toolCall.name}`;
   };
@@ -606,8 +617,20 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
       {/* 展开后的全量数据表格区域：外层统一限高兜底（任何工具结果都不会撑破界面），
           内部各表格自带 max-h 滚动与吸顶表头 */}
       {expanded && (
-        <div className="mt-1.5 max-w-3xl max-h-[28rem] overflow-y-auto overscroll-contain animate-in fade-in duration-150">
-          {renderTableContent()}
+        <div
+          className={`mt-1.5 max-w-3xl animate-in fade-in duration-150 ${
+            toolCall.siteEnvironment ? '' : 'max-h-[28rem] overflow-y-auto overscroll-contain'
+          }`}
+        >
+          {toolCall.siteEnvironment ? (
+            <React.Suspense
+              fallback={<div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-500">正在加载地图组件…</div>}
+            >
+              <SiteEnvironmentCard environment={toolCall.siteEnvironment} />
+            </React.Suspense>
+          ) : (
+            renderTableContent()
+          )}
         </div>
       )}
     </div>

@@ -12,17 +12,22 @@
 """
 
 import json
+import logging
 from functools import lru_cache
 from typing import Annotated, TypedDict
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
+from langgraph.errors import NodeError
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
+from langgraph.types import RetryPolicy
 
 from app.agent.context import manage_context
 from app.agent.prompting import build_system_prompt, build_time_context
+from app.agent.retry import is_transient_error
+from app.agent.site import inspect_site_environment
 from app.business_time import business_now
 from app.agent.tools import get_daily_gnss_data, list_station_groups, list_stations
 from app.agent.vision import analyze_gnss_chart
@@ -35,7 +40,10 @@ tools = [
     get_daily_gnss_data,
     query_weather,
     analyze_gnss_chart,
+    inspect_site_environment,
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class AgentState(TypedDict):
@@ -71,7 +79,12 @@ async def agent_node(state: AgentState) -> dict:
 async def manage_context_node(state: AgentState) -> dict:
     """上下文管理：超触发线时淘汰最旧段并压缩为摘要；未超线零开销放行。"""
     current_time = business_now().isoformat(timespec="seconds")
-    updates = await manage_context(state["messages"], state.get("context_summary") or "")
+    updates = await manage_context(
+        state["messages"],
+        state.get("context_summary") or "",
+        system_prompt=build_system_prompt(current_time),
+        bound_tools=tools,
+    )
     return {**updates, "business_time": current_time}
 
 
@@ -155,12 +168,59 @@ def route_after_agent(state: AgentState) -> str:
     return "tools" if getattr(last, "tool_calls", None) else "recommend"
 
 
-tool_node = ToolNode(tools, handle_tool_errors=True)
+def _handle_tool_error(exc: Exception) -> str:
+    """业务错误交还模型；瞬时错误上抛给 LangGraph RetryPolicy。"""
+    if is_transient_error(exc):
+        raise exc
+    logger.warning(
+        "tool execution failed without retry: %s",
+        type(exc).__name__,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    message = str(exc).strip()
+    return f"工具执行失败：{message[:300] if message else type(exc).__name__}"
+
+
+def _tool_retry_exhausted(state: AgentState, error: NodeError) -> dict:
+    """重试耗尽后补齐 ToolMessage，让智能体说明降级而不是中断整轮。"""
+    last = state["messages"][-1]
+    calls = getattr(last, "tool_calls", None) or []
+    error_type = type(error.error).__name__
+    logger.warning(
+        "tool retries exhausted: %s",
+        error_type,
+        exc_info=(type(error.error), error.error, error.error.__traceback__),
+    )
+    return {
+        "messages": [
+            ToolMessage(
+                content=f"外部数据服务连续重试后仍不可用（{error_type}），请基于已有证据回答并说明限制。",
+                tool_call_id=call["id"],
+                name=call.get("name"),
+            )
+            for call in calls
+        ]
+    }
+
+
+tool_node = ToolNode(tools, handle_tool_errors=_handle_tool_error)
+tool_retry_policy = RetryPolicy(
+    max_attempts=3,
+    initial_interval=0.5,
+    backoff_factor=2.0,
+    jitter=True,
+    retry_on=is_transient_error,
+)
 
 builder = StateGraph(AgentState)
 builder.add_node("manage_context", manage_context_node)
 builder.add_node("agent", agent_node)
-builder.add_node("tools", tool_node)
+builder.add_node(
+    "tools",
+    tool_node,
+    retry_policy=tool_retry_policy,
+    error_handler=_tool_retry_exhausted,
+)
 builder.add_node("recommend", recommend_node)
 builder.add_edge(START, "manage_context")
 builder.add_edge("manage_context", "agent")

@@ -23,8 +23,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 先于导入 context 覆盖默认阈值，避免读到 .env 的真实配置干扰逻辑测试
 os.environ["CONTEXT_TOKEN_THRESHOLD"] = "5000"
 os.environ["CONTEXT_MODEL_CONTEXT"] = "0"
+os.environ["CONTEXT_OUTPUT_RESERVE_TOKENS"] = "0"
+os.environ["CONTEXT_SAFETY_MARGIN_TOKENS"] = "0"
+os.environ["CONTEXT_TOKEN_ESTIMATE_FACTOR"] = "1"
 
 from app.agent.context import (  # noqa: E402
+    _estimated_tokens,
     _evictable_text,
     count_message_tokens,
     get_trigger_threshold,
@@ -138,7 +142,7 @@ def test_compress_eviction(r: TestResult):
 
     # 剩余消息 token 应低于目标水位 2500（含摘要）
     remaining = [m for m in msgs if m.id not in remove_ids]
-    total = sum(count_message_tokens(m) for m in remaining) + count_message_tokens(update["context_summary"])
+    total = sum(count_message_tokens(m) for m in remaining) + _estimated_tokens(update["context_summary"])
     r.check(f"压缩后总量 {total} ≤ 目标水位 2500", total <= 2500)
 
 

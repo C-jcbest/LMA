@@ -9,9 +9,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@langchain/langgraph-sdk": "^1.10.2",
+    "@langchain/core": "^1.2.10",
+    "@langchain/langgraph-sdk": "^1.11.0",
+    "@langchain/react": "^1.1.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.395.0",
+    "maplibre-gl": "^6.9.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.1",

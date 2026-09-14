@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     context_target_ratio: float = 0.5  # 压缩后目标水位（触发线的比例）
     context_min_turns: int = 2  # 最少保留对话段数（兜底）
     context_summary_max_tokens: int = 2000  # 摘要长度上限
+    context_output_reserve_tokens: int = 8192  # 为本轮模型输出预留
+    context_safety_margin_tokens: int = 2048  # tokenizer 误差与协议开销余量
+    context_token_estimate_factor: float = 1.1  # OpenAI 兼容模型的保守估算系数
 
     # 压缩模型（OpenAI 兼容，不配置则复用主 LLM）
     compress_base_url: str = ""

@@ -191,6 +191,10 @@ def _station_to_dict(station: Station) -> dict:
         ),
         "location": station.location,
         "description": station.description,
+        "latitude": _to_float(station.latitude),
+        "longitude": _to_float(station.longitude),
+        "altitude": _to_float(station.altitude),
+        "coordinate_system": "WGS84",
     }
 
 
@@ -254,7 +258,7 @@ async def list_stations(
         station_name: 监测点名称，支持模糊匹配，不传则返回全部。
         station_status: 监测点状态过滤：10=正常，20=离线，30=告警，40=故障。不传则不限状态。
 
-    返回站点名称、所属分组、类型、状态、位置等摘要信息；
+    返回站点名称、所属分组、类型、状态、位置、WGS84 经纬度和海拔等摘要信息；
     类型与状态字段已转换为中文描述（如“基准站”“正常”），不返回数字代码。
     """
     async with _build_client() as client:

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Plus, PanelLeftOpen, Sparkles, MessageCircle, ChevronRight, Square, ArrowDown } from 'lucide-react';
-import { Message, MessagePart, ThreadStreamState } from '../services/api';
+import { Message, MessagePart } from '../services/api';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
@@ -13,8 +13,6 @@ interface ChatWindowProps {
   onSendMessage: (text: string) => void;
   /** 当前查看会话是否正在生成回复 */
   isGenerating: boolean;
-  /** 当前查看会话进行中的流式缓冲（切换会话后切回可恢复显示） */
-  streamState?: ThreadStreamState;
   recommendations?: string[];
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -40,7 +38,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   contextSummary,
   onSendMessage,
   isGenerating,
-  streamState,
   recommendations = [],
   isSidebarCollapsed,
   onToggleSidebar,
@@ -54,9 +51,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isPinnedRef = useRef(true);
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
-
-  const streamingParts = streamState?.parts ?? [];
-  const streamingText = streamState?.text ?? '';
 
   const scrollToBottom = (smooth = true) => {
     messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
@@ -79,7 +73,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
     if (isPinnedRef.current) scrollToBottom();
-  }, [messages, streamingText, streamingParts, isGenerating]);
+  }, [messages, isGenerating]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -111,19 +105,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     '平台当前有权访问的分组和监测点数量是多少？',
   ];
 
-  // 流式块中最后一个文本片段的索引（用于追加“正在生成”光标）
-  let lastStreamingTextIdx = -1;
-  for (let i = streamingParts.length - 1; i >= 0; i--) {
-    if (streamingParts[i].type === 'text') {
-      lastStreamingTextIdx = i;
-      break;
-    }
-  }
-  // 最后一个片段是已完成调用的工具卡片、其后尚无正文时，显示“整理回答”标志，
-  // 避免工具结束到正文 token 到达之间的界面看起来像卡死
-  const lastStreamingPart = streamingParts[streamingParts.length - 1];
-  const settlingAfterTool =
-    lastStreamingPart?.type === 'tool' && lastStreamingPart.toolCall.status === 'success';
+  const lastMessage = messages[messages.length - 1];
+  const waitingForAssistant = isGenerating && (!lastMessage || lastMessage.role === 'user');
 
   return (
     <div className="flex-1 h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden">
@@ -148,8 +131,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-6 py-2 space-y-6"
       >
-        {(isNewSessionDraft ||
-          (messages.length === 0 && !streamingText && streamingParts.length === 0)) && (
+        {(isNewSessionDraft || messages.length === 0) && (
           <div className="h-full flex flex-col items-center justify-center text-center p-8 text-neutral-400 select-none">
             <div className="w-12 h-12 rounded-2xl bg-neutral-100 flex items-center justify-center mb-3">
               <MessageCircle className="w-6 h-6 text-neutral-400" />
@@ -166,6 +148,22 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
 
         {messages.map((msg, index) => {
           const isUser = msg.role === 'user';
+          const isStreamingAssistant =
+            isGenerating && index === messages.length - 1 && msg.role === 'assistant';
+          let lastTextPartIndex = -1;
+          if (isStreamingAssistant && msg.parts) {
+            for (let i = msg.parts.length - 1; i >= 0; i--) {
+              if (msg.parts[i].type === 'text') {
+                lastTextPartIndex = i;
+                break;
+              }
+            }
+          }
+          const lastPart = msg.parts?.[msg.parts.length - 1];
+          const settlingAfterTool =
+            isStreamingAssistant &&
+            lastPart?.type === 'tool' &&
+            lastPart.toolCall.status === 'success';
           return (
             <div key={msg.id || index} className="group max-w-4xl mx-auto w-full">
               <div className={`flex items-start gap-3.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -201,13 +199,22 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                         <React.Fragment key={pIdx}>
                           {part.type === 'tool' ? (
                             <InlineToolCall toolCall={part.toolCall} />
+                          ) : pIdx === lastTextPartIndex ? (
+                            <div className="streaming-cursor">
+                              <MarkdownMessage content={part.content} />
+                            </div>
                           ) : (
                             <MarkdownMessage content={part.content} />
                           )}
                         </React.Fragment>
                       ))
                     ) : (
-                      <MarkdownMessage content={msg.content || ''} />
+                      <div className={isStreamingAssistant ? 'streaming-cursor' : undefined}>
+                        <MarkdownMessage content={msg.content || ''} />
+                      </div>
+                    )}
+                    {settlingAfterTool && (
+                      <ThinkingIndicator statusText="正在根据查询结果整理回答..." />
                     )}
                   </div>
 
@@ -240,41 +247,16 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
-        {/* 正在生成中的统一 AI 消息单元 (内容按流式顺序实时嵌入渲染) */}
-        {isGenerating && (
+        {/* 尚未收到第一段权威消息时显示思考状态；消息到达后直接由 messages 渲染。 */}
+        {waitingForAssistant && (
           <div className="max-w-4xl mx-auto w-full flex items-start gap-3.5">
             <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center shrink-0 text-xs font-bold text-white select-none shadow-sm">
               AI
             </div>
             <div className="flex-1 min-w-0 text-neutral-800 text-sm py-0.5 space-y-2">
-              {streamingParts.length > 0 ? (
-                <>
-                  {streamingParts.map((part, pIdx) => (
-                    <React.Fragment key={pIdx}>
-                      {part.type === 'tool' ? (
-                        <InlineToolCall toolCall={part.toolCall} />
-                      ) : pIdx === lastStreamingTextIdx ? (
-                        <div className="streaming-cursor">
-                          <MarkdownMessage content={part.content} />
-                        </div>
-                      ) : (
-                        <MarkdownMessage content={part.content} />
-                      )}
-                    </React.Fragment>
-                  ))}
-                  {settlingAfterTool && (
-                    <ThinkingIndicator statusText="正在根据查询结果整理回答..." />
-                  )}
-                </>
-              ) : streamingText ? (
-                <div className="streaming-cursor">
-                  <MarkdownMessage content={streamingText} />
-                </div>
-              ) : (
-                <div className="py-1">
-                  <ThinkingIndicator />
-                </div>
-              )}
+              <div className="py-1">
+                <ThinkingIndicator />
+              </div>
             </div>
           </div>
         )}

@@ -12,7 +12,10 @@
 
 import json
 import logging
+import math
+from dataclasses import dataclass
 from functools import lru_cache
+from typing import Iterable
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, RemoveMessage, ToolMessage
 from langchain_openai import ChatOpenAI
@@ -24,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 # 近似计数：非 content 字段（role、id 等）的固定开销
 _PER_MSG_OVERHEAD = 8
+
+
+@lru_cache(maxsize=1)
+def _warn_context_config_once() -> None:
+    settings = get_settings()
+    if settings.context_model_context <= 0:
+        logger.warning(
+            "CONTEXT_MODEL_CONTEXT is not configured; context budgeting uses the absolute "
+            "threshold and conservative tokenizer estimate"
+        )
 
 
 @lru_cache
@@ -38,18 +51,85 @@ def _count_tokens(text: str) -> int:
     return len(_get_encoder().encode(text))
 
 
+def _estimated_tokens(text: str) -> int:
+    """使用保守系数修正兼容模型与 cl100k_base 的 tokenizer 偏差。"""
+    factor = max(1.0, get_settings().context_token_estimate_factor)
+    return math.ceil(_count_tokens(text) * factor)
+
+
 def count_message_tokens(msg: BaseMessage) -> int:
     """单条消息近似 token 数：content + tool_calls JSON + 固定开销。"""
     total = _PER_MSG_OVERHEAD
     content = getattr(msg, "content", None)
     if isinstance(content, str):
-        total += _count_tokens(content)
+        total += _estimated_tokens(content)
     elif content:
-        total += _count_tokens(json.dumps(content, ensure_ascii=False))
+        total += _estimated_tokens(json.dumps(content, ensure_ascii=False))
     tool_calls = getattr(msg, "tool_calls", None)
     if tool_calls:
-        total += _count_tokens(json.dumps(tool_calls, ensure_ascii=False, default=str))
+        total += _estimated_tokens(json.dumps(tool_calls, ensure_ascii=False, default=str))
     return total
+
+
+def count_tool_schema_tokens(bound_tools: Iterable) -> int:
+    """统计发送给模型的工具名称、说明和参数 schema。"""
+    schemas = []
+    for item in bound_tools:
+        args_schema = getattr(item, "args_schema", None)
+        schema = args_schema.model_json_schema() if args_schema is not None else {}
+        schemas.append(
+            {
+                "name": getattr(item, "name", type(item).__name__),
+                "description": getattr(item, "description", ""),
+                "parameters": schema,
+            }
+        )
+    return _estimated_tokens(json.dumps(schemas, ensure_ascii=False, default=str)) if schemas else 0
+
+
+@dataclass(frozen=True)
+class ContextBudget:
+    trigger_tokens: int
+    fixed_input_tokens: int
+    history_tokens: int
+    available_history_tokens: int
+    target_history_tokens: int
+    output_reserve_tokens: int
+    safety_margin_tokens: int
+
+    @property
+    def total_reserved_tokens(self) -> int:
+        return self.fixed_input_tokens + self.history_tokens + self.output_reserve_tokens + self.safety_margin_tokens
+
+    @property
+    def needs_compression(self) -> bool:
+        return self.history_tokens > self.available_history_tokens
+
+
+def build_context_budget(
+    messages: list[BaseMessage],
+    context_summary: str,
+    system_prompt: str = "",
+    bound_tools: Iterable = (),
+) -> ContextBudget:
+    """计算完整模型输入预算，而非只计算持久消息。"""
+    settings = get_settings()
+    _warn_context_config_once()
+    trigger = get_trigger_threshold()
+    fixed = _estimated_tokens(system_prompt) + count_tool_schema_tokens(bound_tools)
+    output_reserve = max(0, settings.context_output_reserve_tokens)
+    safety_margin = max(0, settings.context_safety_margin_tokens)
+    history = _estimated_tokens(context_summary) + sum(count_message_tokens(message) for message in messages)
+    available = max(0, trigger - fixed - output_reserve - safety_margin)
+    return ContextBudget(
+        trigger_tokens=trigger,
+        fixed_input_tokens=fixed,
+        history_tokens=history,
+        available_history_tokens=available,
+        target_history_tokens=max(0, int(available * settings.context_target_ratio)),
+        output_reserve_tokens=output_reserve,
+        safety_margin_tokens=safety_margin,
+    )
 
 
 def get_trigger_threshold() -> int:
@@ -151,7 +231,12 @@ async def compress_history(evicted_texts: list[str], prev_summary: str) -> str:
     return text.strip()
 
 
-async def manage_context(messages: list[BaseMessage], context_summary: str) -> dict:
+async def manage_context(
+    messages: list[BaseMessage],
+    context_summary: str,
+    system_prompt: str = "",
+    bound_tools: Iterable = (),
+) -> dict:
     """上下文管理入口：返回 {"messages": [...], "context_summary": str} 形式的状态更新。
 
     - 未超触发线：返回空 dict（零修改）；
@@ -163,13 +248,12 @@ async def manage_context(messages: list[BaseMessage], context_summary: str) -> d
     if trigger <= 0:
         return {}
 
-    total = _count_tokens(context_summary)
-    for m in messages:
-        total += count_message_tokens(m)
-    if total <= trigger:
+    budget = build_context_budget(messages, context_summary, system_prompt, bound_tools)
+    if not budget.needs_compression:
         return {}
 
-    target = int(trigger * s.context_target_ratio)
+    total = budget.history_tokens
+    target = budget.target_history_tokens
     turns = split_turns(messages)
     if len(turns) <= 1:
         # 只有当前进行中的段，无可淘汰
@@ -214,7 +298,7 @@ async def manage_context(messages: list[BaseMessage], context_summary: str) -> d
         "context compressed: evicted %d msgs, total %d -> %d tokens, trigger=%d",
         len(evicted),
         total,
-        _count_tokens(new_summary),
+        _estimated_tokens(new_summary),
         trigger,
     )
     return {

@@ -17,6 +17,7 @@ import httpx
 from langchain_core.tools import tool
 
 from app.agent.tools import _build_client, _resolve_station
+from app.agent.retry import is_transient_error
 from app.business_time import BUSINESS_TIMEZONE, BUSINESS_TZ, business_now
 
 FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
@@ -266,10 +267,12 @@ async def query_weather(
             _fetch_json(FORECAST_ENDPOINT, forecast_params),
             _fetch_json(ARCHIVE_ENDPOINT, history_params),
         )
-    except httpx.HTTPStatusError:
+    except httpx.HTTPStatusError as exc:
+        if is_transient_error(exc):
+            raise
         return _error("Open-Meteo 拒绝了本次天气查询，请检查参数后重试")
     except (httpx.TimeoutException, httpx.RequestError):
-        return _error("Open-Meteo 请求超时或暂时不可用，请稍后重试")
+        raise
 
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")

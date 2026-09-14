@@ -5,9 +5,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from langchain_core.messages import AIMessage, HumanMessage
+import httpx
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.errors import NodeError
 
-from app.agent import context, graph, tools, vision, weather
+from app.agent import context, graph, retry, site, title, tools, vision, weather
 from app.agent.prompting import SYSTEM_PROMPT_TEMPLATE, VISION_PROMPT, build_system_prompt
 from app.business_time import BUSINESS_TZ, business_now
 
@@ -52,8 +54,129 @@ class PromptTimeTests(unittest.TestCase):
         self.assertEqual(result["available_hours"], 23)
         self.assertIsNone(weather._recent_precipitation({}, now)["precipitation"])
 
+    def test_station_spatial_fields_and_title_are_not_truncated(self):
+        station = SimpleNamespace(
+            station_uuid="station-1",
+            station_name="ZJ-MS10-LONG-NAME",
+            group_name="示范组",
+            station_type=3,
+            station_status=10,
+            location="贵州",
+            description="",
+            latitude="27.1234",
+            longitude="106.5678",
+            altitude="982.5",
+        )
+        data = tools._station_to_dict(station)
+        self.assertEqual(data["coordinate_system"], "WGS84")
+        self.assertEqual(data["latitude"], 27.1234)
+        self.assertEqual(data["altitude"], 982.5)
+        generated = "ZJ-MS10-LONG-NAME 近期形变调查"
+        self.assertEqual(title.clean_generated_title(generated), generated)
+        self.assertEqual(title.clean_generated_title("x" * 81), "")
+
+        station.latitude = ""
+        station.longitude = "not-a-number"
+        station.altitude = None
+        invalid = tools._station_to_dict(station)
+        self.assertIsNone(invalid["latitude"])
+        self.assertIsNone(invalid["longitude"])
+        self.assertIsNone(invalid["altitude"])
+
+    def test_retry_classifier_only_accepts_transient_failures(self):
+        request = httpx.Request("GET", "https://example.invalid")
+        too_many = httpx.Response(429, request=request)
+        bad_request = httpx.Response(400, request=request)
+        server_error = httpx.Response(503, request=request)
+        self.assertTrue(retry.is_transient_error(TimeoutError()))
+        self.assertTrue(retry.is_transient_error(httpx.HTTPStatusError("429", request=request, response=too_many)))
+        self.assertTrue(retry.is_transient_error(httpx.HTTPStatusError("503", request=request, response=server_error)))
+        self.assertFalse(retry.is_transient_error(httpx.HTTPStatusError("400", request=request, response=bad_request)))
+        self.assertFalse(retry.is_transient_error(ValueError("业务参数错误")))
+
+    def test_retry_exhaustion_returns_explainable_tool_message(self):
+        state = {
+            "messages": [
+                AIMessage(content="", tool_calls=[{"id": "call-1", "name": "query_weather", "args": {}}])
+            ]
+        }
+        update = graph._tool_retry_exhausted(state, NodeError("tools", TimeoutError("timeout")))
+        self.assertEqual(len(update["messages"]), 1)
+        self.assertIsInstance(update["messages"][0], ToolMessage)
+        self.assertEqual(update["messages"][0].tool_call_id, "call-1")
+        self.assertIn("重试", update["messages"][0].content)
+
+    def test_context_budget_counts_fixed_prompt_tools_and_output_reserve(self):
+        settings = SimpleNamespace(
+            context_token_threshold=10_000,
+            context_model_context=0,
+            context_compress_ratio=0.8,
+            context_target_ratio=0.5,
+            context_output_reserve_tokens=1000,
+            context_safety_margin_tokens=200,
+            context_token_estimate_factor=1.0,
+        )
+        with patch.object(context, "get_settings", return_value=settings):
+            budget = context.build_context_budget(
+                [HumanMessage(content="查询监测点")],
+                "历史摘要",
+                system_prompt="系统规则" * 100,
+                bound_tools=[tools.list_stations],
+            )
+        self.assertGreater(budget.fixed_input_tokens, 0)
+        self.assertEqual(budget.output_reserve_tokens, 1000)
+        self.assertEqual(
+            budget.available_history_tokens,
+            budget.trigger_tokens - budget.fixed_input_tokens - 1200,
+        )
+
+    def test_terrain_metrics_are_derived_from_dem_samples(self):
+        elevations = [100 + i for i in range(25)] + [100, 118, 104, 122]
+        metrics = site._terrain_metrics(
+            elevations,
+            {"west": 25, "east": 26, "south": 27, "north": 28},
+        )
+        self.assertIsNotNone(metrics)
+        self.assertEqual(metrics["dem_elevation_m"], 112.0)
+        self.assertGreater(metrics["slope_degrees"], 0)
+        self.assertEqual(metrics["relief_500m_m"], 24.0)
+
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_site_environment_returns_versioned_artifact(self):
+        station = SimpleNamespace(
+            station_uuid="station-1",
+            station_name="ZJ-MS10",
+            group_uuid="group-1",
+            group_name="示范组",
+            station_type=3,
+            station_status=10,
+            location="贵州",
+            description="",
+            latitude=27.1,
+            longitude=106.5,
+            altitude=980,
+        )
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.get_stations.return_value = [station]
+        terrain = {"dem_elevation_m": 981.0, "slope_degrees": 12.5}
+        geology = {"name": "测试地层", "lithology": "砂岩"}
+        with (
+            patch.object(site, "_build_client", return_value=client),
+            patch.object(site, "_resolve_station", AsyncMock(return_value=station)),
+            patch.object(site, "_fetch_terrain", AsyncMock(return_value=(terrain, None))),
+            patch.object(site, "_fetch_geology", AsyncMock(return_value=(geology, None))),
+        ):
+            content, artifact = await site.inspect_site_environment.coroutine("ZJ-MS10")
+        self.assertTrue(json.loads(content)["ok"])
+        environment = artifact["site_environment"]
+        self.assertEqual(environment["version"], 1)
+        self.assertEqual(environment["coordinate_system"], "WGS84")
+        self.assertEqual(environment["center_station"]["station_name"], "ZJ-MS10")
+        self.assertEqual(environment["terrain"], terrain)
+        self.assertEqual(environment["geology"], geology)
+
     async def test_compression_separates_historical_data_from_instructions(self):
         llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="摘要")))
         with patch.object(context, "_get_compress_llm", return_value=llm):

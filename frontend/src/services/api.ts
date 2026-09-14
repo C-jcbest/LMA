@@ -15,6 +15,51 @@ export interface ChartPoint {
   u?: number | null;
 }
 
+export interface SiteStation {
+  station_uuid: string;
+  station_name: string;
+  group_name?: string;
+  station_type?: string;
+  station_status?: string;
+  location?: string;
+  latitude: number | null;
+  longitude: number | null;
+  altitude: number | null;
+  coordinate_system: 'WGS84';
+}
+
+export interface SiteEnvironmentArtifact {
+  version: number;
+  observed_at?: string;
+  coordinate_system: 'WGS84';
+  center_station: SiteStation;
+  group_stations: SiteStation[];
+  terrain?: {
+    dem_elevation_m?: number;
+    slope_degrees?: number;
+    aspect_degrees?: number;
+    aspect?: string;
+    relief_500m_m?: number;
+    resolution_m?: number;
+  } | null;
+  geology?: {
+    name?: string;
+    lithology?: string;
+    age?: string;
+    description?: string;
+    color?: string;
+    source_reference?: string;
+  } | null;
+  faults?: { available?: boolean; distance_km?: number | null; note?: string };
+  layer_sources?: {
+    geology_tiles?: string;
+    geology_source_layer?: string;
+    fault_source_layer?: string;
+  };
+  sources?: Array<{ name: string; role?: string; url?: string; license?: string }>;
+  limitations?: string[];
+}
+
 export interface ToolCallInfo {
   id: string;
   name: string;
@@ -26,18 +71,12 @@ export interface ToolCallInfo {
   detail?: Record<string, unknown>;
   images?: ToolCallImage[];
   chartPoints?: ChartPoint[];
+  siteEnvironment?: SiteEnvironmentArtifact;
 }
 
 export type MessagePart =
   | { type: 'text'; content: string }
   | { type: 'tool'; toolCall: ToolCallInfo };
-
-// 单个会话进行中的流式内容缓冲：按 thread_id 隔离，
-// 切换会话不中断生成，切回时据此恢复流式显示
-export interface ThreadStreamState {
-  parts: MessagePart[];
-  text: string;
-}
 
 export interface Message {
   id?: string;
@@ -53,6 +92,7 @@ export interface ThreadSession {
   created_at: string;
   messages?: Message[];
   isGeneratingTitle?: boolean;
+  status?: string;
 }
 
 const STORAGE_KEY_CONFIG = 'lma_langgraph_config';
@@ -118,6 +158,7 @@ export async function getSessions(): Promise<{ sessions: ThreadSession[]; isLive
         thread_id: t.thread_id,
         name: (t.metadata?.name as string) || `监测会话-${t.thread_id.slice(0, 6)}`,
         created_at: t.created_at || new Date().toISOString(),
+        status: (t as any).status,
       }));
       // 若服务端暂无 threads，合并预置的原型数据展示
       if (serverSessions.length === 0) {
@@ -188,7 +229,13 @@ export async function generateSessionTitle(userMessage: string): Promise<string>
       if (res && typeof res === 'object') {
         const title = (res as any).title;
         if (typeof title === 'string' && title.trim()) {
-          return title.trim().replace(/^["'“”]+|["'“”]+$/g, '').slice(0, 16);
+          const cleanTitle = title
+            .replace(/[\u0000-\u001f\u007f]/g, ' ')
+            .split(/\r?\n/, 1)[0]
+            .trim()
+            .replace(/^["'“”]+|["'“”]+$/g, '')
+            .trim();
+          if (cleanTitle && cleanTitle.length <= 80) return cleanTitle;
         }
       }
       return null;
@@ -200,45 +247,33 @@ export async function generateSessionTitle(userMessage: string): Promise<string>
     console.warn('LangGraph title generator unavailable or failed, falling back:', err);
   }
 
-  // 降级规则：
-  // 1. 若包含站点名（如 ZJ-MS10, SX-01 等），结合意图词
-  const stationMatch = cleanInput.match(/[A-Z]{2}-[A-Z0-9]{2,6}/i);
-  const station = stationMatch ? stationMatch[0].toUpperCase() : '';
-
-  if (station) {
-    if (cleanInput.includes('稳定')) return `${station}稳定性分析`;
-    if (cleanInput.includes('天气') || cleanInput.includes('降雨') || cleanInput.includes('气象')) {
-      return `${station}气象与环境`;
-    }
-    if (cleanInput.includes('数据') || cleanInput.includes('GNSS')) {
-      return `${station}数据监测`;
-    }
-    return `${station}监测分析`;
-  }
-
-  if (cleanInput.includes('天气') || cleanInput.includes('降雨') || cleanInput.includes('气温')) {
-    const locMatch = cleanInput.match(/([\u4e00-\u9fa5]{2,6})(?:今日|近期|天气|降雨)/);
-    const loc = locMatch ? locMatch[1] : '';
-    return loc ? `${loc}天气查询` : '气象环境查询';
-  }
-
-  if (
-    cleanInput.includes('分组') ||
-    cleanInput.includes('测点') ||
-    cleanInput.includes('点位') ||
-    cleanInput.includes('站点数量')
-  ) {
-    return '监测点资源统计';
-  }
-
-  // 2. 普通文本截取前 12 字符
-  const textSample = cleanInput
+  // 离线降级仅提取用户原句，不用“实体 + 固定动作”模板猜测意图。
+  const normalized = cleanInput
     .replace(/[#*`\n\r\t]/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 12);
-
-  return textSample || DEFAULT_TITLE;
+    .trim();
+  const firstClause = normalized.split(/[。！？!?；;]/, 1)[0].trim();
+  if (!firstClause) return DEFAULT_TITLE;
+  if (firstClause.length <= 48) return firstClause;
+  const stationMatch = firstClause.match(/[A-Z]{2,8}-[A-Z0-9-]{2,32}/i)?.[0] || '';
+  const IntlWithSegmenter = Intl as typeof Intl & {
+    Segmenter?: new (locale: string, options: { granularity: 'word' }) => {
+      segment: (text: string) => Iterable<{ segment: string }>;
+    };
+  };
+  const segments = IntlWithSegmenter.Segmenter
+    ? Array.from(new IntlWithSegmenter.Segmenter('zh-CN', { granularity: 'word' }).segment(firstClause), (part) => part.segment)
+    : firstClause.split(/(?<=[，,、：:\s])/);
+  let shortened = '';
+  for (const segment of segments) {
+    if ((shortened + segment).length > 48) break;
+    shortened += segment;
+  }
+  shortened = shortened.trim().replace(/[，,、：:]$/, '');
+  if (stationMatch && !shortened.toLowerCase().includes(stationMatch.toLowerCase())) {
+    return stationMatch.length <= 48 ? stationMatch : DEFAULT_TITLE;
+  }
+  return shortened || DEFAULT_TITLE;
 }
 
 
@@ -273,6 +308,117 @@ export async function deleteSession(threadId: string): Promise<void> {
   saveStoredSessions(cached.filter(s => s.thread_id !== threadId));
 }
 
+const messageText = (message: any): string => {
+  if (typeof message?.content === 'string') return message.content;
+  if (!Array.isArray(message?.content)) return '';
+  return message.content
+    .filter((block: any) => block?.type === 'text' && typeof block?.text === 'string')
+    .map((block: any) => block.text)
+    .join('');
+};
+
+const parseToolDetail = (content: unknown): Record<string, unknown> | undefined => {
+  if (typeof content !== 'string') return undefined;
+  try {
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === 'object' ? parsed : undefined;
+  } catch {
+    return { raw: content };
+  }
+};
+
+/**
+ * 将 useStream 的服务端权威消息投影为现有聊天 UI 结构。
+ * 该函数无缓存和副作用；每次都从 Thread 消息重新派生，避免维护第二份历史。
+ */
+export function projectLangGraphMessages(rawMsgs: any[]): Message[] {
+  const result: Message[] = [];
+  let pendingParts: MessagePart[] = [];
+
+  const flushAssistant = (text: string, id?: string) => {
+    if (pendingParts.length > 0) {
+      const parts = [...pendingParts];
+      if (text.trim()) parts.push({ type: 'text', content: text });
+      result.push({ id, role: 'assistant', content: text, parts });
+    } else if (text.trim()) {
+      result.push({ id, role: 'assistant', content: text });
+    }
+    pendingParts = [];
+  };
+
+  for (const message of rawMsgs || []) {
+    const type = message?.type || message?.getType?.() || message?._getType?.() || message?.role;
+    const text = messageText(message);
+
+    if (type === 'human' || type === 'user') {
+      flushAssistant('');
+      result.push({ id: message.id, role: 'user', content: text });
+      continue;
+    }
+
+    if (type === 'tool') {
+      const callId = message.tool_call_id || message.toolCallId || message.id;
+      const index = pendingParts.findIndex(
+        (part) => part.type === 'tool' && part.toolCall.id === callId
+      );
+      const existingTool =
+        index >= 0 && pendingParts[index].type === 'tool'
+          ? pendingParts[index].toolCall
+          : undefined;
+      const artifact = message.artifact || message.additional_kwargs?.artifact;
+      const toolPart: MessagePart = {
+        type: 'tool',
+        toolCall: {
+          id: callId || `tc-${result.length}-${pendingParts.length}`,
+          name: message.name || existingTool?.name || 'beidou_tool',
+          display_name: message.name || existingTool?.display_name || 'beidou_tool',
+          status: message.status === 'error' ? 'error' : 'success',
+          detail: parseToolDetail(text),
+          images: Array.isArray(artifact?.images)
+            ? artifact.images.filter((image: any) => image?.name && typeof image?.png_base64 === 'string')
+            : undefined,
+          chartPoints: Array.isArray(artifact?.chart_points) ? artifact.chart_points : undefined,
+          siteEnvironment:
+            artifact?.site_environment && typeof artifact.site_environment === 'object'
+              ? artifact.site_environment
+              : undefined,
+        },
+      };
+      if (index >= 0) pendingParts[index] = toolPart;
+      else pendingParts.push(toolPart);
+      continue;
+    }
+
+    if (type === 'ai' || type === 'assistant') {
+      const toolCalls = Array.isArray(message.tool_calls)
+        ? message.tool_calls
+        : Array.isArray(message.toolCalls)
+          ? message.toolCalls
+          : [];
+      if (toolCalls.length > 0) {
+        if (text.trim()) pendingParts.push({ type: 'text', content: text });
+        for (const call of toolCalls) {
+          if (!call?.id || pendingParts.some((part) => part.type === 'tool' && part.toolCall.id === call.id)) continue;
+          pendingParts.push({
+            type: 'tool',
+            toolCall: {
+              id: call.id,
+              name: call.name || 'beidou_tool',
+              display_name: call.name || 'beidou_tool',
+              status: 'loading',
+              input: call.args,
+            },
+          });
+        }
+      } else if (text.trim()) {
+        flushAssistant(text, message.id);
+      }
+    }
+  }
+  flushAssistant('');
+  return result;
+}
+
 /**
  * 获取单个会话的历史消息与历史压缩摘要：把 LangGraph state 的原始消息序列
  * （human / ai+tool_calls / tool / ai 文本）重构为前端的 parts 结构，
@@ -291,67 +437,7 @@ export async function getSessionMessages(
     const state = await client.threads.getState(threadId);
     if (state && state.values && Array.isArray((state.values as any).messages)) {
       const rawMsgs = (state.values as any).messages;
-      const result: Message[] = [];
-      let pendingParts: MessagePart[] = [];
-
-      const parseDetail = (content: any): Record<string, unknown> | undefined => {
-        if (typeof content !== 'string') return undefined;
-        try {
-          return JSON.parse(content);
-        } catch {
-          return undefined;
-        }
-      };
-
-      const flushAssistant = (text: string) => {
-        if (pendingParts.length > 0) {
-          const parts: MessagePart[] = [...pendingParts];
-          if (text.trim()) parts.push({ type: 'text', content: text });
-          result.push({ role: 'assistant', content: text, parts });
-        } else if (text.trim()) {
-          result.push({ role: 'assistant', content: text });
-        }
-        pendingParts = [];
-      };
-
-      for (const m of rawMsgs) {
-        const text = typeof m.content === 'string' ? m.content : '';
-
-        if (m.type === 'human') {
-          flushAssistant('');
-          result.push({ id: m.id, role: 'user', content: text });
-        } else if (m.type === 'tool') {
-          // 工具结果：折叠为 tool part，等最终回答时一并展示
-          pendingParts.push({
-            type: 'tool',
-            toolCall: {
-              id: m.tool_call_id || m.id || `tc-${result.length}-${pendingParts.length}`,
-              name: m.name || 'beidou_tool',
-              display_name: m.name || 'beidou_tool',
-              status: 'success',
-              detail: parseDetail(m.content),
-              images: Array.isArray((m as any)?.artifact?.images)
-                ? (m as any).artifact.images.filter(
-                    (img: any) => img?.name && typeof img?.png_base64 === 'string'
-                  )
-                : undefined,
-              chartPoints: Array.isArray((m as any)?.artifact?.chart_points)
-                ? ((m as any).artifact.chart_points as ChartPoint[])
-                : undefined,
-            },
-          });
-        } else if (m.type === 'ai') {
-          const hasToolCalls = Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
-          if (hasToolCalls) {
-            // 发起工具调用的中间轮：正文通常为空，若带文本则作为片段保留
-            if (text.trim()) pendingParts.push({ type: 'text', content: text });
-          } else if (text.trim()) {
-            // 最终回答：与前置工具卡片合并为一条带 parts 的消息
-            flushAssistant(text);
-          }
-        }
-      }
-      flushAssistant('');
+      const result = projectLangGraphMessages(rawMsgs);
 
       if (result.length > 0) {
         const contextSummary =
@@ -374,232 +460,4 @@ export async function getSessionMessages(
   }
 
   return { messages: found?.messages || [], recommendations: [] };
-}
-
-export interface StreamChatCallbacks {
-  onToken: (token: string) => void;
-  onToolStart?: (toolName: string, input?: any) => void;
-  onToolEnd?: (toolName: string, output?: any) => void;
-  onPartsUpdate?: (parts: MessagePart[]) => void;
-  onRecommendations?: (list: string[]) => void;
-  /** run 启动后上报 run_id，用于停止生成时取消服务端 run */
-  onRunStarted?: (runId: string) => void;
-  onError?: (err: any) => void;
-  onDone?: (fullText: string, finalParts?: MessagePart[]) => void;
-}
-
-/**
- * 取消服务端正在执行的 run（interrupt：中止后续步骤，已完成的步骤保留在会话历史）。
- * 失败仅告警不抛出：本地流已中断，取消失败时服务端 run 会自行完成写入 checkpoint。
- */
-export async function cancelRun(threadId: string, runId: string): Promise<void> {
-  try {
-    const client = createLangGraphClient();
-    await client.runs.cancel(threadId, runId, false, 'interrupt');
-  } catch (e) {
-    console.warn('cancelRun failed:', e);
-  }
-}
-
-/**
- * 向 LangGraph Server 发起 Runs Stream 流式对话
- */
-export async function streamChatWithLangGraph(
-  threadId: string,
-  userMessage: string,
-  callbacks: StreamChatCallbacks,
-  signal?: AbortSignal
-): Promise<string> {
-  const client = createLangGraphClient();
-  const assistantId = 'lma-agent';
-
-  let accumulated = '';
-  let hasReceivedTokens = false;
-  const currentParts: MessagePart[] = [];
-
-  const addOrUpdateTool = (
-    toolName: string,
-    input?: any,
-    output?: any,
-    isEnd: boolean = false,
-    images?: ToolCallImage[],
-    callId?: string,
-    chartPoints?: ChartPoint[]
-  ) => {
-    // 以 tool_call_id 为主键去重：同一调用只保留一张卡，重复事件只更新
-    let existingIndex = callId
-      ? currentParts.findIndex(
-          (p) => p.type === 'tool' && p.toolCall.id === callId
-        )
-      : -1;
-    if (existingIndex < 0) {
-      existingIndex = currentParts.findIndex(
-        (p) => p.type === 'tool' && p.toolCall.name === toolName && p.toolCall.status === 'loading'
-      );
-    }
-    if (existingIndex >= 0 && currentParts[existingIndex].type === 'tool') {
-      const tc = (currentParts[existingIndex] as { type: 'tool'; toolCall: ToolCallInfo }).toolCall;
-      if (isEnd) {
-        tc.status = 'success';
-        if (output !== undefined) tc.detail = output;
-        if (images) tc.images = images;
-        if (chartPoints) tc.chartPoints = chartPoints;
-      }
-    } else {
-      currentParts.push({
-        type: 'tool',
-        toolCall: {
-          id: callId || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          name: toolName,
-          display_name: toolName,
-          status: isEnd ? 'success' : 'loading',
-          input,
-          detail: output,
-          images,
-          chartPoints,
-        },
-      });
-    }
-    callbacks.onPartsUpdate?.([...currentParts]);
-  };
-
-  const appendTextToken = (token: string) => {
-    if (!token) return;
-    hasReceivedTokens = true;
-    accumulated += token;
-    const last = currentParts[currentParts.length - 1];
-    if (last && last.type === 'text') {
-      last.content += token;
-    } else {
-      currentParts.push({ type: 'text', content: token });
-    }
-    callbacks.onPartsUpdate?.([...currentParts]);
-    callbacks.onToken(token);
-  };
-
-  try {
-    const stream = client.runs.stream(
-      threadId,
-      assistantId,
-      {
-        input: {
-          messages: [{ role: 'user', content: userMessage }],
-        },
-        streamMode: ['messages-tuple', 'updates'],
-        // run 创建即从响应中拿到 run_id：停止生成时据此调用服务端
-        // cancel API 真正终止 run（仅中断本地流时服务端会继续跑完）
-        onRunCreated: (run) => {
-          if (run.run_id) callbacks.onRunStarted?.(run.run_id);
-        },
-        signal,
-      }
-    );
-
-    for await (const chunk of stream) {
-      if (signal?.aborted) break;
-
-      // 按照官方规范解析 messages-tuple 流模式
-      if (chunk.event === 'messages') {
-        const [msg, meta] = chunk.data as [any, any];
-
-        // 1. 工具节点输出（ToolMessage）：工具调用结果，嵌入当前流式消息块中；
-        //    artifact（如视觉复核渲染的图表 PNG）随 ToolMessage 转发，不进入 LLM 上下文。
-        //    注意：不能仅凭 meta.langgraph_node === 'tools' 判断——工具内部调用
-        //    的 LLM（如视觉模型）token 流同样来自 tools 节点，会被误判成工具结果
-        //    导致重复建卡刷屏；必须确认消息本体就是 ToolMessage
-        const isToolResult =
-          msg?.type === 'tool' || msg?.type === 'ToolMessage' || msg?.role === 'tool';
-        if (isToolResult) {
-          const callId: string | undefined = msg?.tool_call_id || msg?.id;
-          const artifactImages: ToolCallImage[] | undefined = Array.isArray(
-            (msg as any)?.artifact?.images
-          )
-            ? (msg as any).artifact.images.filter(
-                (img: any) => img?.name && typeof img?.png_base64 === 'string'
-              )
-            : undefined;
-          const artifactChartPoints: ChartPoint[] | undefined = Array.isArray(
-            (msg as any)?.artifact?.chart_points
-          )
-            ? (msg as any).artifact.chart_points
-            : undefined;
-          // 同一 tool_call_id 已有卡片时用其工具名，避免 name 缺失时退化成 beidou_tool
-          let toolName = msg?.name;
-          if (!toolName && callId) {
-            const existing = currentParts.find(
-              (p) => p.type === 'tool' && p.toolCall.id === callId
-            );
-            toolName = existing?.type === 'tool' ? existing.toolCall.name : undefined;
-          }
-          callbacks.onToolEnd?.(toolName || 'beidou_tool', msg?.content);
-          addOrUpdateTool(
-            toolName || 'beidou_tool',
-            undefined,
-            msg?.content,
-            true,
-            artifactImages,
-            callId,
-            artifactChartPoints
-          );
-          continue;
-        }
-
-        // 工具内部 LLM 调用（如视觉模型）的 token 也走 messages 事件，
-        // 只处理 agent 节点产生的 AI 消息，其余一律忽略
-        const node = meta?.langgraph_node;
-        if (node && node !== 'agent') continue;
-
-        // 2. 检查智能体是否在发起工具调用（tool_call_chunks）
-        if (msg?.tool_call_chunks && Array.isArray(msg.tool_call_chunks) && msg.tool_call_chunks.length > 0) {
-          for (const tc of msg.tool_call_chunks) {
-            if (tc?.name) {
-              callbacks.onToolStart?.(tc.name, tc.args);
-              addOrUpdateTool(tc.name, tc.args, undefined, false, undefined, tc.id);
-            }
-          }
-        }
-
-        // 3. AI 智能体生成的正文文本 Token（AIMessageChunk）
-        if (typeof msg?.content === 'string' && msg.content.length > 0) {
-          appendTextToken(msg.content);
-        }
-      }
-      // updates 事件：只读取 recommend 节点产出的“下一步推荐动作”；
-      // 其余节点的 updates 不渲染（messages-tuple 已携带完整工具结果，
-      // 重复渲染会导致同一工具的原始数据展示第二遍）
-      if (chunk.event === 'updates') {
-        const payload = chunk.data as Record<string, any> | undefined;
-        const recs = payload?.recommend?.recommendations;
-        if (Array.isArray(recs)) {
-          const cleaned = (recs as any[])
-            .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
-            .map((x) => x.trim().slice(0, 60))
-            .slice(0, 3);
-          if (cleaned.length > 0) {
-            callbacks.onRecommendations?.(cleaned);
-          }
-        }
-        continue;
-      }
-    }
-
-    if (hasReceivedTokens || accumulated.trim().length > 0 || currentParts.length > 0) {
-      callbacks.onDone?.(accumulated, currentParts);
-      return accumulated;
-    }
-  } catch (err: any) {
-    if (signal?.aborted) return accumulated;
-    console.warn('streamChatWithLangGraph server stream failed:', err);
-    callbacks.onError?.(err);
-    throw err;
-  }
-
-  if (!hasReceivedTokens && accumulated.trim().length === 0 && currentParts.length === 0) {
-    const noReplyErr = new Error('智能体未返回任何有效内容，请检查后端服务日志并重试');
-    callbacks.onError?.(noReplyErr);
-    throw noReplyErr;
-  }
-
-  callbacks.onDone?.(accumulated, currentParts);
-  return accumulated;
 }

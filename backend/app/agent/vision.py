@@ -34,6 +34,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.prompting import VISION_PROMPT
+from app.agent.retry import is_transient_error
 from app.business_time import BUSINESS_TIMEZONE
 from app.agent.tools import (
     _TIME_FORMAT,
@@ -561,6 +562,8 @@ async def _recheck_candidate_window(
             end_time=query_end.strftime(_TIME_FORMAT),
         )
     except Exception as e:
+        if is_transient_error(e):
+            raise
         return {"ok": False, "error": f"回查失败：{type(e).__name__}"}
     return {
         "ok": True,
@@ -795,6 +798,8 @@ async def analyze_gnss_chart(
                     config={"callbacks": []},
                 )
             except Exception as e:
+                if is_transient_error(e):
+                    raise
                 return (
                     _error(f"视觉模型调用失败：{type(e).__name__}，请检查 VISION_* 配置后重试"),
                     artifact,

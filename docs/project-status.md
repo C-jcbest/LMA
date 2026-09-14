@@ -1,5 +1,14 @@
 # 项目状态与决策记录
 
+### 2026-09-14 - TODO 8–13 实施完成
+
+- 类型：完成 / 前后端能力升级
+- 范围：LangGraph 流式会话、工具重试、上下文预算、站点空间字段、标题、内联地图
+- 记录：前端已由 `@langchain/react useStream` 直接投影 Thread 权威消息，移除手工流缓冲与 Run 引用；工具节点只重试超时、连接、HTTP 429/5xx，并在耗尽后向智能体返回可解释的 ToolMessage；上下文预算已纳入动态系统提示、工具 schema、输出预留与安全余量；站点输出补齐 WGS84 经纬度和海拔；标题不再使用固定意图模板或破坏性截断；新增版本化 `site_environment` 工具结果与惰性 MapLibre 地图卡片。
+- 证据边界：地图使用代码内固定的受信瓦片源；Open-Meteo/Copernicus DEM 与 Macrostrat 图层均显示来源。Macrostrat 公开能力不足以可靠计算最近断层距离，因此仅展示构造线并明确缺失，不做模型补写。
+- 验证：后端 15 项单元测试通过；上下文脚本 18 项自测通过；前端 TypeScript 与 Vite 生产构建通过；`git diff --check` 通过。
+- 关联：`docs/TODO.md`、`backend/app/agent/graph.py`、`backend/app/agent/site.py`、`frontend/src/App.tsx`、`frontend/src/components/SiteEnvironmentCard.tsx`
+
 ### 2026-09-14 - 保持智能体灵活性
 
 - 类型：纠正 / 约束 / 文档同步
@@ -16,4 +25,3 @@
 - 记录：第 8–13 项均已补充依赖关系、增量方案和验收标准，但尚未标记为完成。
 - 预防：只能在实现、回归测试和文档同步全部完成后，将对应事项改为“已完成”。
 - 关联：`docs/TODO.md`
-
