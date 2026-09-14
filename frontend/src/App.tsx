@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { ChatWindow } from './components/ChatWindow';
 import { ConfigModal } from './components/ConfigModal';
 import { ContextUsage } from './components/ContextUsageIndicator';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   ThreadSession,
   Message,
@@ -285,20 +286,22 @@ export const App: React.FC = () => {
         />
       )}
 
-      <ChatWindow
-        messages={messages}
-        contextSummary={contextSummary}
-        contextUsage={stream.values?.context_usage}
-        onSendMessage={handleSendMessage}
-        isGenerating={stream.isLoading || stream.isThreadLoading || isStopping || isStartingRun}
-        recommendations={recommendations}
-        recommendationError={recommendationError}
-        errorMessage={submissionError}
-        isSidebarCollapsed={isSidebarCollapsed}
-        onToggleSidebar={() => setIsSidebarCollapsed(false)}
-        isNewSessionDraft={isNewSessionDraft}
-        onStopGeneration={() => void handleStopGeneration()}
-      />
+      <ErrorBoundary fallbackTitle="会话窗口渲染异常">
+        <ChatWindow
+          messages={messages}
+          contextSummary={contextSummary}
+          contextUsage={stream.values?.context_usage}
+          onSendMessage={handleSendMessage}
+          isGenerating={stream.isLoading || stream.isThreadLoading || isStopping || isStartingRun}
+          recommendations={recommendations}
+          recommendationError={recommendationError}
+          errorMessage={submissionError}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onToggleSidebar={() => setIsSidebarCollapsed(false)}
+          isNewSessionDraft={isNewSessionDraft}
+          onStopGeneration={() => void handleStopGeneration()}
+        />
+      </ErrorBoundary>
 
       <ConfigModal
         isOpen={isConfigOpen}

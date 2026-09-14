@@ -4,11 +4,14 @@
 此图独立于主智能体图，支持无状态（threadless）单次运行，不污染主对话的检查点与历史消息。
 """
 
+from functools import lru_cache
 from typing import TypedDict
+
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
+from app.agent.reasoning import thinking_options
 from app.config import get_settings
 
 SYSTEM_PROMPT = """Create a concise conversation title from the first user message.
@@ -50,19 +53,26 @@ class TitleState(TypedDict):
     title: str
 
 
-async def generate_title_node(state: TitleState) -> dict:
-    input_text = state.get("input_text", "")
-    if not input_text or not input_text.strip():
-        raise ValueError("会话标题缺少首条消息")
-
+@lru_cache
+def _get_title_llm():
+    """标题模型独立控制思考，避免继承主 Agent 的高成本配置。"""
     settings = get_settings()
-    llm = ChatOpenAI(
+    return ChatOpenAI(
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.3,
         max_tokens=48,
+        **thinking_options(settings.title_thinking),
     )
+
+
+async def generate_title_node(state: TitleState) -> dict:
+    input_text = state.get("input_text", "")
+    if not input_text or not input_text.strip():
+        raise ValueError("会话标题缺少首条消息")
+
+    llm = _get_title_llm()
     response = await llm.ainvoke(
         [
             SystemMessage(content=SYSTEM_PROMPT),

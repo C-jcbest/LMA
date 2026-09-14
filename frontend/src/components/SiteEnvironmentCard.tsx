@@ -39,6 +39,8 @@ const BASE_STYLE: StyleSpecification = {
     geology: {
       type: 'vector',
       tiles: [GEOLOGY_TILES],
+      minzoom: 0,
+      maxzoom: 5,
       attribution: 'Geology © Macrostrat (CC BY 4.0)',
     },
   },
@@ -51,9 +53,9 @@ const BASE_STYLE: StyleSpecification = {
       source: 'geology',
       'source-layer': 'units',
       paint: {
-        'fill-color': ['coalesce', ['get', 'color'], '#b7a273'],
-        'fill-opacity': 0.28,
-        'fill-outline-color': 'rgba(58, 48, 32, 0.35)',
+        'fill-color': ['coalesce', ['get', 'color'], '#d4b483'],
+        'fill-opacity': 0.35,
+        'fill-outline-color': 'rgba(40, 30, 20, 0.45)',
       },
     },
     {
@@ -61,7 +63,11 @@ const BASE_STYLE: StyleSpecification = {
       type: 'line',
       source: 'geology',
       'source-layer': 'lines',
-      paint: { 'line-color': '#d43f2f', 'line-width': 1.6, 'line-opacity': 0.85 },
+      paint: {
+        'line-color': '#e11d48',
+        'line-width': 2.8,
+        'line-opacity': 0.95,
+      },
     },
   ],
 };
@@ -138,21 +144,28 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
       // Marker 是独立 DOM，地理点在边缘时标签会跨过地图边框。根据实际标签尺寸
       // 在每次平移/缩放后做可视区裁决，边缘点直接隐藏而不覆盖外框。
       const updateMarkerVisibility = () => {
-        const container = map.getContainer();
-        const width = container.clientWidth;
-        const height = container.clientHeight;
-        for (const marker of markersRef.current) {
-          const point = map.project(marker.getLngLat());
-          const element = marker.getElement();
-          const rect = element.getBoundingClientRect();
-          const halfWidth = Math.max(10, rect.width / 2);
-          const markerHeight = Math.max(18, rect.height);
-          const inside =
-            point.x - halfWidth >= 4 &&
-            point.x + halfWidth <= width - 4 &&
-            point.y - markerHeight >= 4 &&
-            point.y <= height - 4;
-          element.style.visibility = inside ? 'visible' : 'hidden';
+        try {
+          if (!map || !mapRef.current) return;
+          const container = map.getContainer();
+          if (!container) return;
+          const width = container.clientWidth;
+          const height = container.clientHeight;
+          if (width === 0 || height === 0) return;
+          for (const marker of markersRef.current) {
+            const point = map.project(marker.getLngLat());
+            const element = marker.getElement();
+            const rect = element.getBoundingClientRect();
+            const halfWidth = Math.max(10, rect.width / 2);
+            const markerHeight = Math.max(18, rect.height);
+            const inside =
+              point.x - halfWidth >= 4 &&
+              point.x + halfWidth <= width - 4 &&
+              point.y - markerHeight >= 4 &&
+              point.y <= height - 4;
+            element.style.visibility = inside ? 'visible' : 'hidden';
+          }
+        } catch (err) {
+          console.warn('updateMarkerVisibility error:', err);
         }
       };
       map.on('move', updateMarkerVisibility);
@@ -168,6 +181,8 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
       }
       window.requestAnimationFrame(updateMarkerVisibility);
     }
+    map.on('load', () => applyLayerVisibilities(map));
+
     map.on('error', (event: { error?: unknown }) => {
       console.warn('site map resource error:', event.error);
       setMapError('部分地图图层暂时不可用，站点与已获取的环境数据仍可查看。');
@@ -181,22 +196,58 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
     };
   }, [environment.center_station.station_uuid]);
 
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
-    map.setLayoutProperty('satellite-base', 'visibility', baseLayer === 'satellite' ? 'visible' : 'none');
-    map.setLayoutProperty('terrain-base', 'visibility', baseLayer === 'terrain' ? 'visible' : 'none');
-  }, [baseLayer]);
+  // 保持对最新图层配置的引用
+  const layerConfigRef = useRef({ baseLayer, geologyVisible, faultsVisible });
+  layerConfigRef.current = { baseLayer, geologyVisible, faultsVisible };
+
+  const applyLayerVisibilities = (mapInstance?: MapLibreMap | null) => {
+    const map = mapInstance || mapRef.current;
+    if (!map) return;
+    const { baseLayer: currentBase, geologyVisible: currentGeology, faultsVisible: currentFaults } = layerConfigRef.current;
+
+    const setVisibilityIfChanged = (layerId: string, targetVisibility: 'visible' | 'none') => {
+      try {
+        if (map.getLayer(layerId)) {
+          const current = map.getLayoutProperty(layerId, 'visibility') || 'visible';
+          if (current !== targetVisibility) {
+            map.setLayoutProperty(layerId, 'visibility', targetVisibility);
+          }
+        }
+      } catch (err) {
+        console.warn(`Failed to update visibility for layer ${layerId}:`, err);
+      }
+    };
+
+    setVisibilityIfChanged('satellite-base', currentBase === 'satellite' ? 'visible' : 'none');
+    setVisibilityIfChanged('terrain-base', currentBase === 'terrain' ? 'visible' : 'none');
+    setVisibilityIfChanged('geology-units', currentGeology ? 'visible' : 'none');
+    setVisibilityIfChanged('fault-lines', currentFaults ? 'visible' : 'none');
+  };
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map?.isStyleLoaded()) return;
-    map.setLayoutProperty('geology-units', 'visibility', geologyVisible ? 'visible' : 'none');
-    map.setLayoutProperty('fault-lines', 'visibility', faultsVisible ? 'visible' : 'none');
-  }, [geologyVisible, faultsVisible]);
+    applyLayerVisibilities();
+  }, [baseLayer, geologyVisible, faultsVisible]);
+
+  const handleToggleBaseLayer = (layer: BaseLayer) => {
+    setBaseLayer(layer);
+  };
+
+  const handleToggleGeology = () => {
+    setGeologyVisible((prev) => !prev);
+  };
+
+  const handleToggleFaults = () => {
+    setFaultsVisible((prev) => !prev);
+  };
 
   useEffect(() => {
-    const timer = window.setTimeout(() => mapRef.current?.resize(), 180);
+    const timer = window.setTimeout(() => {
+      try {
+        mapRef.current?.resize();
+      } catch (err) {
+        console.warn('Map resize error:', err);
+      }
+    }, 180);
     return () => window.clearTimeout(timer);
   }, [expanded]);
 
@@ -227,8 +278,24 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
 
   return (
     <>
-    {expanded && <button type="button" className="fixed inset-0 z-[70] bg-black/45 backdrop-blur-[2px]" onClick={() => setExpanded(false)} aria-label="关闭展开地图" />}
-    <section className={`overflow-hidden rounded-xl border border-stone-300 bg-[#f4f1e8] shadow-sm ${expanded ? 'fixed inset-4 z-[80] flex flex-col shadow-2xl sm:inset-8' : ''}`}>
+      {expanded && (
+        <button
+          key="map-backdrop"
+          type="button"
+          className="fixed inset-0 z-[70] bg-black/45 backdrop-blur-[2px]"
+          onClick={() => setExpanded(false)}
+          aria-label="关闭展开地图"
+        />
+      )}
+      {expanded && (
+        <div key="map-placeholder" className="h-80 rounded-xl border border-transparent" aria-hidden="true" />
+      )}
+      <section
+        key="map-section"
+        className={`overflow-hidden rounded-xl border border-stone-300 bg-[#f4f1e8] shadow-sm ${
+          expanded ? 'fixed inset-4 z-[80] flex flex-col shadow-2xl sm:inset-8' : ''
+        }`}
+      >
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-300 bg-[#252a24] px-4 py-3 text-stone-100">
         <div>
           <div className="flex items-center gap-2 text-sm font-semibold tracking-wide">
@@ -244,7 +311,7 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
             <button
               key={layer}
               type="button"
-              onClick={() => setBaseLayer(layer)}
+              onClick={() => handleToggleBaseLayer(layer)}
               className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
                 baseLayer === layer ? 'bg-amber-400 text-stone-950' : 'text-stone-300 hover:bg-white/10'
               }`}
@@ -254,7 +321,7 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
           ))}
           <button
             type="button"
-            onClick={() => setGeologyVisible((value) => !value)}
+            onClick={handleToggleGeology}
             className={`rounded-md px-2 py-1 text-[11px] ${
               geologyVisible ? 'bg-stone-100/20 text-white' : 'text-stone-400'
             }`}
@@ -264,7 +331,7 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
           </button>
           <button
             type="button"
-            onClick={() => setFaultsVisible((value) => !value)}
+            onClick={handleToggleFaults}
             className={`rounded-md px-2 py-1 text-[11px] ${
               faultsVisible ? 'bg-red-500/25 text-red-100' : 'text-stone-400'
             }`}

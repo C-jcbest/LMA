@@ -6,15 +6,112 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.errors import NodeError
 
-from app.agent import context, graph, retry, site, title, tools, vision, weather
+from app.agent import context, graph, reasoning, retry, site, title, tools, vision, weather
 from app.agent.prompting import SYSTEM_PROMPT_TEMPLATE, VISION_PROMPT, build_system_prompt
 from app.business_time import BUSINESS_TZ, business_now
+from app.config import Settings
 
 
 class PromptTimeTests(unittest.TestCase):
+    def test_auxiliary_thinking_defaults_are_disabled(self):
+        for field in (
+            "title_thinking",
+            "recommend_thinking",
+            "compress_thinking",
+            "vision_thinking",
+        ):
+            self.assertIs(Settings.model_fields[field].default, False)
+
+    def test_recommendations_are_enabled_by_default(self):
+        self.assertIs(Settings.model_fields["recommend_enabled"].default, True)
+
+    def test_thinking_options_only_emits_extension_when_enabled(self):
+        self.assertEqual(reasoning.thinking_options(False), {})
+        self.assertEqual(
+            reasoning.thinking_options(True),
+            {"extra_body": {"enable_thinking": True}},
+        )
+
+    def test_auxiliary_models_do_not_inherit_main_thinking(self):
+        settings = SimpleNamespace(
+            llm_model="test-model",
+            llm_api_key="test-key",
+            llm_base_url="https://example.invalid/v1",
+            llm_thinking=True,
+            title_thinking=False,
+            recommend_enabled=True,
+            recommend_thinking=False,
+            compress_model="",
+            compress_api_key="",
+            compress_base_url="",
+            compress_thinking=False,
+            vision_model="vision-model",
+            vision_api_key="test-key",
+            vision_base_url="https://example.invalid/v1",
+            vision_thinking=False,
+        )
+        factories = (
+            (title, title._get_title_llm),
+            (graph, graph._get_recommend_llm),
+            (context, context._get_compress_llm),
+            (vision, vision._get_vision_llm),
+        )
+        try:
+            for module, factory in factories:
+                factory.cache_clear()
+                with patch.object(module, "get_settings", return_value=settings):
+                    llm = factory()
+                self.assertIsNone(llm.extra_body)
+        finally:
+            for _, factory in factories:
+                factory.cache_clear()
+
+    def test_reasoning_chat_model_preserves_complete_and_streamed_reasoning(self):
+        llm = reasoning.ReasoningChatOpenAI(
+            model="test-model",
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+        )
+        complete = llm._create_chat_result(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "结论",
+                            "reasoning_content": "先核对数据。",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(
+            complete.generations[0].message.additional_kwargs["reasoning_content"],
+            "先核对数据。",
+        )
+
+        streamed = llm._convert_chunk_to_generation_chunk(
+            {
+                "choices": [
+                    {
+                        "delta": {"role": "assistant", "reasoning_content": "检查趋势"},
+                        "finish_reason": None,
+                    }
+                ]
+            },
+            AIMessageChunk,
+            None,
+        )
+        self.assertIsNotNone(streamed)
+        self.assertEqual(
+            streamed.message.additional_kwargs["reasoning_content"],
+            "检查趋势",
+        )
+
     def test_templates_match_business_source(self):
         source = (Path(__file__).resolve().parents[2] / "prompt.md").read_text(encoding="utf-8-sig")
         system, visual = source.split("# VISION_PROMPT", 1)
@@ -166,6 +263,20 @@ class PromptTimeTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_disabled_recommendations_skip_model_call(self):
+        state = {
+            "messages": [HumanMessage(content="查询站点"), AIMessage(content="查询完成")],
+            "business_time": "2026-09-14T10:00:00+08:00",
+        }
+        settings = SimpleNamespace(recommend_enabled=False)
+        with patch.object(graph, "get_settings", return_value=settings), patch.object(
+            graph, "_get_recommend_llm"
+        ) as get_llm:
+            update = await graph.recommend_node(state)
+        self.assertEqual(update["recommendations"], [])
+        self.assertEqual(update["recommendations_error"], "")
+        get_llm.assert_not_called()
+
     async def test_site_environment_returns_versioned_artifact(self):
         station = SimpleNamespace(
             station_uuid="station-1",
@@ -283,6 +394,30 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(graph, "_get_llm_with_tools", return_value=llm):
             update = await graph.agent_node(state)
         self.assertNotIn("context_usage", update)
+
+    async def test_agent_records_model_call_duration_for_reasoning(self):
+        llm = SimpleNamespace(
+            ainvoke=AsyncMock(
+                return_value=AIMessage(
+                    content="完成",
+                    additional_kwargs={"reasoning_content": "核对证据"},
+                )
+            )
+        )
+        state = {
+            "messages": [HumanMessage(content="查询监测点")],
+            "business_time": "2026-09-14T10:00:00+08:00",
+            "context_summary": "",
+            "context_usage": {},
+        }
+        with patch.object(graph, "_get_llm_with_tools", return_value=llm), patch.object(
+            graph, "perf_counter", side_effect=[10.0, 11.25]
+        ):
+            update = await graph.agent_node(state)
+        self.assertEqual(
+            update["messages"][0].additional_kwargs["lma_thinking_duration_ms"],
+            1250,
+        )
 
     async def test_invalid_title_is_reported_instead_of_fabricated(self):
         with self.assertRaises(ValueError):

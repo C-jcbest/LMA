@@ -40,6 +40,53 @@ describe('会话关键路径集成回归', () => {
     expect(projected[0].parts?.[1]).toMatchObject({ type: 'text', content: '查询完成。' });
   });
 
+  it('模型思考按调用顺序投影，并可折叠展示思考用时与差异化正文', async () => {
+    const raw = [
+      {
+        type: 'ai',
+        id: 'a1',
+        content: '',
+        additional_kwargs: {
+          reasoning_content: '先确认目标站点，再查询监测数据。',
+          lma_thinking_duration_ms: 1250,
+        },
+        tool_calls: [{ id: 'call-1', name: 'list_stations', args: {} }],
+      },
+      { type: 'tool', tool_call_id: 'call-1', name: 'list_stations', content: '{"ok":true}' },
+      {
+        type: 'ai',
+        id: 'a2',
+        content: '查询完成。',
+        additional_kwargs: {
+          reasoning_content: '根据返回结果组织结论。',
+          lma_thinking_duration_ms: 2100,
+        },
+      },
+    ];
+
+    const projected = projectLangGraphMessages(raw, { isRunActive: false });
+    expect(projected[0].parts?.map((part) => part.type)).toEqual([
+      'thinking',
+      'tool',
+      'thinking',
+      'text',
+    ]);
+
+    render(
+      <ChatWindow
+        messages={projected}
+        onSendMessage={() => undefined}
+        isGenerating={false}
+        isSidebarCollapsed={false}
+        onToggleSidebar={() => undefined}
+      />
+    );
+    expect(screen.getByText('1.3 秒')).toBeInTheDocument();
+    expect(screen.queryByText('先确认目标站点，再查询监测数据。')).not.toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole('button', { name: /已思考/ })[0]);
+    expect(screen.getByText('先确认目标站点，再查询监测数据。')).toBeInTheDocument();
+  });
+
   it('推荐动作可直接发送，回到底部按钮仅在上翻后显示在输入区附近', async () => {
     const onSend = vi.fn();
     render(
@@ -149,5 +196,57 @@ describe('会话关键路径集成回归', () => {
     ])).toEqual([
       { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', name: '站点分析', status: undefined },
     ]);
+  });
+
+  it('流式输出中支持从 content 块和 think 标签提取思考内容，并默认展开实时查看', () => {
+    // 场景 1：LangGraph protocol v2 content 块流
+    const rawBlocks = [
+      {
+        type: 'ai',
+        id: 'a1',
+        content: [
+          { type: 'reasoning', reasoning: '正在实时分析斜坡变形特征…' },
+          { type: 'text', text: '结论如下：' },
+        ],
+      },
+    ];
+    const projected1 = projectLangGraphMessages(rawBlocks, { isRunActive: true });
+    expect(projected1[0].parts?.[0]).toMatchObject({
+      type: 'thinking',
+      thinking: { content: '正在实时分析斜坡变形特征…' },
+    });
+    expect(projected1[0].parts?.[1]).toMatchObject({
+      type: 'text',
+      content: '结论如下：',
+    });
+
+    // 场景 2：流式输出中未闭合的 <think> 标签（正在流式思考中）
+    const rawStreamingThink = [
+      {
+        type: 'ai',
+        id: 'a2',
+        content: '<think>正在对比历史雨量与位移数据',
+      },
+    ];
+    const projected2 = projectLangGraphMessages(rawStreamingThink, { isRunActive: true });
+    expect(projected2[0].parts?.[0]).toMatchObject({
+      type: 'thinking',
+      thinking: { content: '正在对比历史雨量与位移数据' },
+    });
+    // 思考尚未结束时，正文为空
+    expect(projected2[0].content).toBe('');
+
+    // 场景 3：正在思考状态下（isActive=true）思考过程默认展开可直接查看
+    render(
+      <ChatWindow
+        messages={projected2}
+        onSendMessage={() => undefined}
+        isGenerating={true}
+        isSidebarCollapsed={false}
+        onToggleSidebar={() => undefined}
+      />
+    );
+    expect(screen.getByText('正在思考')).toBeInTheDocument();
+    expect(screen.getByText('正在对比历史雨量与位移数据')).toBeInTheDocument();
   });
 });

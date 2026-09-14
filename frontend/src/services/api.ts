@@ -74,14 +74,21 @@ export interface ToolCallInfo {
   siteEnvironment?: SiteEnvironmentArtifact;
 }
 
+export interface ThinkingInfo {
+  content: string;
+  duration_ms?: number;
+}
+
 export type MessagePart =
   | { type: 'text'; content: string }
+  | { type: 'thinking'; thinking: ThinkingInfo }
   | { type: 'tool'; toolCall: ToolCallInfo };
 
 export interface Message {
   id?: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content?: string;
+  created_at?: string;
   parts?: MessagePart[];
   tool_calls?: ToolCallInfo[];
 }
@@ -213,12 +220,102 @@ export async function deleteSession(threadId: string): Promise<void> {
 }
 
 const messageText = (message: any): string => {
-  if (typeof message?.content === 'string') return message.content;
-  if (!Array.isArray(message?.content)) return '';
-  return message.content
-    .filter((block: any) => block?.type === 'text' && typeof block?.text === 'string')
-    .map((block: any) => block.text)
-    .join('');
+  let raw = '';
+  if (typeof message?.content === 'string') {
+    raw = message.content;
+  } else if (Array.isArray(message?.content)) {
+    raw = message.content
+      .filter((block: any) => block?.type === 'text' && typeof block?.text === 'string')
+      .map((block: any) => block.text)
+      .join('');
+  }
+  if (!raw) return '';
+
+  // 如果字符串内容中包含 <think> 标签，将思考部分剔除，仅保留真实回复正文
+  if (raw.includes('<think>')) {
+    const endThinkIdx = raw.indexOf('</think>');
+    if (endThinkIdx !== -1) {
+      return raw.slice(endThinkIdx + 8).trimStart();
+    }
+    // 仍在思考流输出阶段（未闭合），正文尚未开始
+    return '';
+  }
+
+  return raw;
+};
+
+const messageThinking = (message: any): ThinkingInfo | undefined => {
+  let content = '';
+
+  // 1. 优先读取 additional_kwargs (支持 reasoning_content / reasoning / thinking)
+  const addKwargs = message?.additional_kwargs;
+  if (typeof addKwargs?.reasoning_content === 'string' && addKwargs.reasoning_content.trim()) {
+    content = addKwargs.reasoning_content;
+  } else if (typeof addKwargs?.reasoning === 'string' && addKwargs.reasoning.trim()) {
+    content = addKwargs.reasoning;
+  } else if (typeof addKwargs?.thinking === 'string' && addKwargs.thinking.trim()) {
+    content = addKwargs.thinking;
+  }
+
+  // 2. 检查 response_metadata
+  if (!content) {
+    const respMeta = message?.response_metadata;
+    if (typeof respMeta?.reasoning_content === 'string' && respMeta.reasoning_content.trim()) {
+      content = respMeta.reasoning_content;
+    } else if (typeof respMeta?.reasoning === 'string' && respMeta.reasoning.trim()) {
+      content = respMeta.reasoning;
+    }
+  }
+
+  // 3. 检查直接挂在 message 根属性上的 reasoning_content / reasoning
+  if (!content) {
+    if (typeof message?.reasoning_content === 'string' && message.reasoning_content.trim()) {
+      content = message.reasoning_content;
+    } else if (typeof message?.reasoning === 'string' && message.reasoning.trim()) {
+      content = message.reasoning;
+    }
+  }
+
+  // 4. 检查 content 为数组时的 reasoning / thinking content blocks (LangGraph SDK v2 / protocol 块流)
+  if (!content && Array.isArray(message?.content)) {
+    const parts: string[] = [];
+    for (const block of message.content) {
+      if (!block || typeof block !== 'object') continue;
+      if (block.type === 'reasoning' || block.type === 'thinking' || block.type === 'thought') {
+        const t = block.reasoning || block.thinking || block.thought || block.text;
+        if (typeof t === 'string' && t) parts.push(t);
+      }
+    }
+    if (parts.length > 0) {
+      content = parts.join('');
+    }
+  }
+
+  // 5. 检查 content 为字符串时夹带的 <think>...</think> 或流式输出中未闭合的 <think>
+  if (!content && typeof message?.content === 'string' && message.content.includes('<think>')) {
+    const startIdx = message.content.indexOf('<think>') + 7;
+    const endIdx = message.content.indexOf('</think>');
+    if (endIdx !== -1) {
+      content = message.content.slice(startIdx, endIdx);
+    } else {
+      // 正在流式输出思考内容，尚未输出 </think>
+      content = message.content.slice(startIdx);
+    }
+  }
+
+  if (!content || !content.trim()) return undefined;
+
+  const rawDuration =
+    message?.additional_kwargs?.lma_thinking_duration_ms ??
+    message?.response_metadata?.lma_thinking_duration_ms;
+
+  return {
+    content,
+    duration_ms:
+      typeof rawDuration === 'number' && Number.isFinite(rawDuration) && rawDuration >= 0
+        ? rawDuration
+        : undefined,
+  };
 };
 
 const parseToolDetail = (content: unknown): Record<string, unknown> | undefined => {
@@ -242,13 +339,13 @@ export function projectLangGraphMessages(
   const result: Message[] = [];
   let pendingParts: MessagePart[] = [];
 
-  const flushAssistant = (text: string, id?: string) => {
+  const flushAssistant = (text: string, id?: string, createdAt?: string) => {
     if (pendingParts.length > 0) {
       const parts = [...pendingParts];
       if (text.trim()) parts.push({ type: 'text', content: text });
-      result.push({ id, role: 'assistant', content: text, parts });
+      result.push({ id, role: 'assistant', content: text, created_at: createdAt, parts });
     } else if (text.trim()) {
-      result.push({ id, role: 'assistant', content: text });
+      result.push({ id, role: 'assistant', content: text, created_at: createdAt });
     }
     pendingParts = [];
   };
@@ -256,10 +353,15 @@ export function projectLangGraphMessages(
   for (const message of rawMsgs || []) {
     const type = message?.type || message?.getType?.() || message?._getType?.() || message?.role;
     const text = messageText(message);
+    const thinking = messageThinking(message);
+    const msgCreatedAt =
+      message?.additional_kwargs?.created_at ||
+      message?.response_metadata?.created_at ||
+      message?.created_at;
 
     if (type === 'human' || type === 'user') {
       flushAssistant('');
-      result.push({ id: message.id, role: 'user', content: text });
+      result.push({ id: message.id, role: 'user', content: text, created_at: msgCreatedAt });
       continue;
     }
 
@@ -313,6 +415,7 @@ export function projectLangGraphMessages(
           ? message.toolCalls
           : [];
       if (toolCalls.length > 0) {
+        if (thinking) pendingParts.push({ type: 'thinking', thinking });
         if (text.trim()) pendingParts.push({ type: 'text', content: text });
         for (const call of toolCalls) {
           if (!call?.id || !call?.name || pendingParts.some((part) => part.type === 'tool' && part.toolCall.id === call.id)) continue;
@@ -327,8 +430,9 @@ export function projectLangGraphMessages(
             },
           });
         }
-      } else if (text.trim()) {
-        flushAssistant(text, message.id);
+      } else if (text.trim() || thinking) {
+        if (thinking) pendingParts.push({ type: 'thinking', thinking });
+        flushAssistant(text, message.id, msgCreatedAt);
       }
     }
   }

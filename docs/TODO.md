@@ -124,6 +124,15 @@
    - `context_usage` 随 LangGraph Thread checkpoint 持久化。前端仅在拿到完整的真实 usage 和有效窗口配置后展示 LMA 山形环状进度，点击查看实际输入/输出、剩余预算、估算分项与压缩触发线；旧 checkpoint 或缺失 usage 时保持不显示。
    - `CONTEXT_MODEL_CONTEXT` 使用当前 DeepSeek V4 Flash 官方窗口 `1048576`，且必须为正整数；缺失或非法时服务配置直接报错，不渲染“未配置”占位或伪造百分比。
 
+19. [已完成] 增加主模型思考功能，并在前端折叠展示思考过程与用时
+
+   - 主模型通过 `LLM_THINKING` 控制兼容接口的 `enable_thinking` 参数；关闭时不发送该供应商扩展字段，不支持时由接口明确报错。
+   - 后端保留完整响应和流式分片中的 `reasoning_content`，按模型调用记录用时，并随 AIMessage checkpoint 持久化；不从提示词、工具结果或 LangGraph 内部状态拼造思考内容。
+   - 前端将思考作为独立消息片段，保持“思考—工具—思考—正文”的实际顺序；默认折叠，标题显示思考状态与用时，展开后使用区别于最终正文的批注式排版。
+   - 回归覆盖思考字段透传、流式分片、耗时记录、消息投影顺序、折叠交互与生产构建。
+   - 主 Agent、标题、下一步建议、历史压缩和视觉复核使用互相独立的思考开关；四类辅助任务默认关闭，关闭时不发送供应商扩展参数。
+   - 增加 `RECOMMEND_ENABLED` 总开关（默认开启）；关闭后清空当前建议且不调用建议模型。开启时仅在主回答最终完成后生成，不依据流式正文前段提前生成。
+
 ## 参考
 
 - LangChain 官方 Join & rejoin streams：<https://docs.langchain.com/oss/python/langchain/frontend/join-rejoin>

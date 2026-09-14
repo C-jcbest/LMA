@@ -19,6 +19,8 @@ from typing import Iterable
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, RemoveMessage, ToolMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_openai import ChatOpenAI
+
+from app.agent.reasoning import thinking_options
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -85,7 +87,7 @@ class ContextBudget:
         return self.fixed_input_tokens + self.history_tokens
 
     def usage_snapshot(self, usage_metadata: dict) -> dict:
-        """将供应商返回的实际 usage 与请求前分项估算组成自洽快照。"""
+        """将供应商返回的实际 usage 与配置的模型上下文窗口组成自洽快照。"""
         limit = self.context_limit_tokens
         if limit <= 0:
             raise ValueError("CONTEXT_MODEL_CONTEXT must be greater than 0")
@@ -123,7 +125,7 @@ def build_context_budget(
     system_prompt: str = "",
     bound_tools: Iterable = (),
 ) -> ContextBudget:
-    """计算完整模型输入预算，而非只计算持久消息。"""
+    """发送前进行估算：计算完整模型输入预算，判断是否到达触发线或可能超限。"""
     settings = get_settings()
     trigger = get_trigger_threshold()
     fixed_messages = [SystemMessage(content=system_prompt)] if system_prompt else []
@@ -225,6 +227,7 @@ def _get_compress_llm() -> ChatOpenAI | None:
         api_key=s.compress_api_key or s.llm_api_key,
         base_url=s.compress_base_url or s.llm_base_url,
         temperature=0,
+        **thinking_options(s.compress_thinking),
     )
 
 

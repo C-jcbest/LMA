@@ -1,5 +1,42 @@
 # 项目状态与决策记录
 
+### 2026-09-14 - 撤回下一步建议流式预取
+
+- 类型：纠正 / 行为回退
+- 范围：主 Agent 流式输出、下一步建议、部署配置
+- 记录：保留 `RECOMMEND_ENABLED` 总开关及 `RECOMMEND_THINKING` 独立思考配置；撤回“正文流达到 120 字后并行预取建议”，下一步建议恢复为主回答最终完成后生成。
+- 边界：开启建议时只依据完整最终回答生成；关闭时继续清空建议并跳过建议模型调用。主回答流式回调不再创建后台建议任务。
+- 预防：除非产品再次明确要求，不得依据未完成的回答前段提前生成建议，也不得恢复固定字数触发阈值。
+- 关联：`prd.md`、`docs/TODO.md`、`backend/app/agent/graph.py`、`backend/app/config.py`
+
+### 2026-09-14 - 下一步建议并行预取与总开关
+
+- 类型：决策 / 性能优化 / 配置
+- 状态：已被“撤回下一步建议流式预取”取代，仅保留为历史记录。
+- 范围：主 Agent 流式输出、下一步建议、部署配置、成本控制
+- 记录：新增 `RECOMMEND_ENABLED`（默认开启）。关闭时清空建议并跳过模型调用；开启时在主回答正文流达到可用长度后启动建议预取，与剩余正文生成并行，降低正文结束后的等待。
+- 边界：预取只使用用户问题和已输出的回答前段；主模型若返回工具调用，必须取消或丢弃预取结果。短回答未达到预取长度时仍在回答结束后生成，以避免仅凭过短片段降低建议质量。
+- 预防：不得为了即时展示而使用固定模板或伪造建议；并行任务必须跟随主模型取消，辅助 token 不得混入主消息流。
+- 关联：`prd.md`、`backend/app/agent/graph.py`、`backend/app/config.py`、`backend/.env.example`
+
+### 2026-09-14 - 辅助模型思考配置与主模型隔离
+
+- 类型：纠正 / 配置边界 / 成本控制
+- 范围：主 Agent、会话标题、下一步建议、历史压缩、视觉复核、部署配置
+- 记录：`LLM_THINKING` 只控制主 Agent。标题、下一步建议、历史压缩和视觉复核分别由 `TITLE_THINKING`、`RECOMMEND_THINKING`、`COMPRESS_THINKING`、`VISION_THINKING` 控制，四项默认均为关闭。
+- 行为：任何思考开关为关闭时都不发送 `enable_thinking`，不能继承或复用主模型开关；只有对应开关明确开启时才发送该供应商扩展参数。
+- 预防：新增辅助 LLM 场景时必须声明独立的思考配置和默认值，不得直接读取 `LLM_THINKING`，以避免非必要延迟和 reasoning token 消耗。
+- 关联：`prd.md`、`backend/app/config.py`、`backend/app/agent/reasoning.py`、`backend/.env.example`
+
+### 2026-09-14 - 主模型思考过程可视化
+
+- 类型：决策 / 产品行为变更 / 文档同步
+- 范围：主模型配置、LangGraph 消息协议、前端会话、测试、安全
+- 记录：主模型默认开启兼容接口的 `enable_thinking`；仅透传模型接口显式返回的 `reasoning_content`，按每次模型调用与工具步骤的原始顺序折叠展示，并记录该次调用墙钟耗时。展开态采用区别于最终回答的弱化排版。
+- 边界：不得从系统提示词、LangGraph 状态或工具原始结果拼造思考过程；模型内容继续按不可信文本处理，不直接作为 HTML 或副作用输入。接口不支持思考参数时明确报错，不静默伪装为已启用。
+- 预防：后续更换模型或供应商时，必须验证 `enable_thinking`、`reasoning_content`、流式合并与 checkpoint 恢复四项契约。
+- 关联：`prd.md`、`backend/app/agent/reasoning.py`、`backend/app/agent/graph.py`、`frontend/src/services/api.ts`、`frontend/src/components/ThinkingBlock.tsx`
+
 ### 2026-09-14 - 兼容分支与兜底策略必须先告知
 
 - 类型：纠正 / 长期实现约束

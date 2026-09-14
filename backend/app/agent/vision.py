@@ -45,6 +45,7 @@ from app.agent.tools import (
 )
 from app.beidou.client import BeidouClient
 from app.config import get_settings
+from app.agent.reasoning import thinking_options
 
 # 渲染使用全量数据，不做降采样（降采样会漏掉采样点之间的异常形态）
 _MIN_POINTS = 5  # 少于该点数不值得绘图识别
@@ -94,14 +95,13 @@ class VisionObservations(BaseModel):
 @lru_cache
 def _get_vision_llm():
     settings = get_settings()
-    # 思考开关：Qwen3 系列等 OpenAI 兼容 API 通过 extra_body.enable_thinking 控制
-    # 推理模式的开关；关闭后不产生 reasoning token，可降低延迟与 token 消耗
+    # 独立思考开关：仅开启时发送 enable_thinking；默认关闭以控制延迟和 token。
     return ChatOpenAI(
         model=settings.vision_model,
         api_key=settings.vision_api_key,
         base_url=settings.vision_base_url,
         temperature=0,
-        extra_body={"enable_thinking": settings.vision_thinking},
+        **thinking_options(settings.vision_thinking),
         # 预算必须宽裕：思考开启时视觉模型每次输出中约 2000 token 是
         # 内部思考（reasoning），正文 JSON 另需 ~1000+；预算不足时正文被
         # 截断导致 JSON 解析间歇性失败

@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.deepseek.com"
     llm_api_key: str = ""
     llm_model: str = "deepseek-flash"
+    # 主模型思考开关：适用于通过 reasoning_content 返回思考过程的
+    # OpenAI 兼容接口。平台不支持该参数时由接口明确报错，不静默降级。
+    llm_thinking: bool = True
+
+    # 辅助模型调用分别控制思考，均默认关闭，不能继承主模型开关。
+    title_thinking: bool = False
+    recommend_enabled: bool = True
+    recommend_thinking: bool = False
 
     # 北斗监测平台（当前为测试账号，后续迭代改为用户绑定凭据）
     beidou_api_base_url: str = ""
@@ -25,9 +33,8 @@ class Settings(BaseSettings):
     vision_base_url: str = ""
     vision_api_key: str = ""
     vision_model: str = ""
-    # 视觉模型思考开关：以 extra_body {"enable_thinking": ...} 下发，
-    # 适配 Qwen3 系列等支持该参数的 OpenAI 兼容 API；关闭可降低延迟与
-    # reasoning token 消耗，其他平台不识别该参数时通常忽略
+    # 视觉模型独立思考开关：仅开启时通过 extra_body 下发 enable_thinking，
+    # 适配支持该参数的 OpenAI 兼容 API；关闭时不发送扩展字段。
     vision_thinking: bool = False
     # 视觉定位异常区间的数值核验外扩小时数：视觉估读时间存在误差，
     # 向两侧外扩可避免边界关键数据被截掉；0 表示不外扩
@@ -52,6 +59,7 @@ class Settings(BaseSettings):
     compress_base_url: str = ""
     compress_api_key: str = ""
     compress_model: str = ""
+    compress_thinking: bool = False
 
 
 @lru_cache

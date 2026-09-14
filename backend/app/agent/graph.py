@@ -7,13 +7,14 @@
 
 用户回合入口先经 manage_context：token 总量超触发线时，将最旧对话段
 （剔除工具明细）压缩为持久摘要（context_summary），避免长会话上下文溢出。
-回答结束后 recommend 节点用轻量 LLM 生成 2~3 条后续问题建议
-（recommendations），随状态持久化，前端经 updates 流读取后展示为可点击直接发送的建议。
+最终回答完成后，由 recommend 节点生成 2~3 条后续问题建议。建议随状态持久化，
+前端经 updates 流读取后展示。
 """
 
 import json
 import logging
 from functools import lru_cache
+from time import perf_counter
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -27,6 +28,7 @@ from langgraph.types import RetryPolicy
 from app.agent.context import SUMMARY_CONTEXT_PREFIX, build_context_budget, manage_context
 from app.agent.prompting import build_system_prompt, build_time_context
 from app.agent.retry import is_transient_error
+from app.agent.reasoning import ReasoningChatOpenAI, thinking_options
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
 from app.agent.tools import get_daily_gnss_data, list_station_groups, list_stations
@@ -58,11 +60,12 @@ class AgentState(TypedDict):
 @lru_cache
 def _get_llm_with_tools():
     settings = get_settings()
-    llm = ChatOpenAI(
+    llm = ReasoningChatOpenAI(
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0,
+        **thinking_options(settings.llm_thinking),
     )
     return llm.bind_tools(tools)
 
@@ -81,13 +84,34 @@ async def agent_node(state: AgentState) -> dict:
         system_prompt=system_prompt,
         bound_tools=tools,
     )
+    started_at = perf_counter()
     response: BaseMessage = await llm_with_tools.ainvoke(messages)
+    elapsed_ms = max(0, round((perf_counter() - started_at) * 1000))
+    reasoning_content = (
+        response.additional_kwargs.get("reasoning_content")
+        or response.additional_kwargs.get("reasoning")
+        or response.additional_kwargs.get("thinking")
+        or response.response_metadata.get("reasoning_content")
+    )
+    if isinstance(reasoning_content, str) and reasoning_content.strip():
+        response = response.model_copy(
+            update={
+                "additional_kwargs": {
+                    **response.additional_kwargs,
+                    "reasoning_content": reasoning_content,
+                    "lma_thinking_duration_ms": elapsed_ms,
+                }
+            }
+        )
     usage = getattr(response, "usage_metadata", None) or {}
     input_tokens = usage.get("input_tokens")
+    updates: dict = {"messages": [response]}
     if isinstance(input_tokens, int) and input_tokens >= 0:
-        return {"messages": [response], "context_usage": budget.usage_snapshot(usage)}
-    logger.warning("model response did not include input token usage; preserve previous context_usage")
-    return {"messages": [response]}
+        updates["context_usage"] = budget.usage_snapshot(usage)
+    else:
+        logger.warning("model response did not include input token usage; preserve previous context_usage")
+
+    return updates
 
 
 async def manage_context_node(state: AgentState) -> dict:
@@ -130,6 +154,7 @@ def _get_recommend_llm():
         base_url=settings.llm_base_url,
         temperature=0.3,
         max_tokens=200,
+        **thinking_options(settings.recommend_thinking),
     )
 
 
@@ -162,8 +187,47 @@ def _message_text(message: BaseMessage) -> str:
     return "".join(parts)
 
 
+async def _generate_recommendations(
+    user_text: str,
+    answer_text: str,
+    business_time: str | None,
+) -> dict:
+    """根据完整的最终回答生成下一步建议。"""
+    if not answer_text.strip():
+        return {
+            "recommendations": [],
+            "recommendations_error": "未找到可用的助手回答，无法生成下一步建议。",
+        }
+    try:
+        response = await _get_recommend_llm().ainvoke(
+            [
+                SystemMessage(
+                    content=RECOMMEND_PROMPT + "\n\n" + build_time_context(business_time)
+                ),
+                HumanMessage(
+                    content=(
+                        f"用户问题：{user_text[:800]}\n\n"
+                        f"助手回答：{answer_text[:1500]}"
+                    )
+                ),
+            ],
+            # 阻断辅助调用 token 被主消息流捕获，避免混入最终回答。
+            config={"callbacks": []},
+        )
+        recommendations = _parse_recommendations(_message_text(response))
+        return {"recommendations": recommendations, "recommendations_error": ""}
+    except Exception:
+        logger.warning("recommendation generation or validation failed", exc_info=True)
+        return {"recommendations": [], "recommendations_error": "下一步建议生成失败。"}
+
+
 async def recommend_node(state: AgentState) -> dict:
-    """回答结束后由模型判断是否生成下一步建议，错误显式写入状态。"""
+    """最终回答完成后按开关生成下一步建议。"""
+    if not get_settings().recommend_enabled:
+        return {
+            "recommendations": [],
+            "recommendations_error": "",
+        }
     user_text = ""
     answer_text = ""
     for msg in reversed(state["messages"]):
@@ -176,28 +240,13 @@ async def recommend_node(state: AgentState) -> dict:
             user_text = text
         if user_text and answer_text:
             break
-    if not answer_text.strip():
-        return {"recommendations": [], "recommendations_error": "未找到可用的助手回答，无法生成下一步建议。"}
-    try:
-        response = await _get_recommend_llm().ainvoke(
-            [
-                SystemMessage(content=RECOMMEND_PROMPT + "\n\n" + build_time_context(state.get("business_time"))),
-                HumanMessage(
-                    content=f"用户问题：{user_text[:800]}\n\n助手回答：{answer_text[:1500]}"
-                ),
-            ],
-            # 传空 callbacks：阻断本调用的 token 流被 langgraph messages 流捕获上报
-            config={"callbacks": []},
-        )
-        recommendations = _parse_recommendations(_message_text(response))
-        return {"recommendations": recommendations, "recommendations_error": ""}
-    except Exception:
-        logger.warning("recommendation generation or validation failed", exc_info=True)
-        return {"recommendations": [], "recommendations_error": "下一步建议生成失败。"}
+    return await _generate_recommendations(
+        user_text, answer_text, state.get("business_time")
+    )
 
 
 def route_after_agent(state: AgentState) -> str:
-    """agent 输出含工具调用则进工具节点，否则进入推荐动作节点后结束。"""
+    """agent 输出含工具调用则继续调查，否则生成建议后结束。"""
     last = state["messages"][-1]
     return "tools" if getattr(last, "tool_calls", None) else "recommend"
 

@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, PanelLeftOpen, Sparkles, MessageCircle, ChevronRight, Square, ArrowDown } from 'lucide-react';
+import { Send, Plus, PanelLeftOpen, Sparkles, MessageCircle, ChevronRight, Square, ArrowDown, Archive } from 'lucide-react';
 import { Message, MessagePart } from '../services/api';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
+import { ThinkingBlock } from './ThinkingBlock';
 import { SummaryCard } from './SummaryCard';
 import { MessageActions } from './MessageActions';
 import { ContextUsage, ContextUsageIndicator } from './ContextUsageIndicator';
@@ -151,22 +152,26 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
-        {/* 历史压缩摘要卡（上下文压缩发生后展示） */}
-        {contextSummary && <SummaryCard summary={contextSummary} />}
+        {/* 历史压缩摘要与分割线（到达阈值或超限触发压缩后展示） */}
+        {contextSummary && (
+          <div className="max-w-4xl mx-auto w-full py-1">
+            <div className="relative flex items-center justify-center my-3">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-dashed border-amber-300" />
+              </div>
+              <div className="relative flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-0.5 text-[11px] font-medium text-amber-800 shadow-xs">
+                <Archive className="h-3 w-3 text-amber-600 shrink-0" />
+                <span>历史对话已压缩至摘要 · 分割线之上为长期背景</span>
+              </div>
+            </div>
+            <SummaryCard summary={contextSummary} />
+          </div>
+        )}
 
         {messages.map((msg, index) => {
           const isUser = msg.role === 'user';
           const isStreamingAssistant =
             isGenerating && index === messages.length - 1 && msg.role === 'assistant';
-          let lastTextPartIndex = -1;
-          if (isStreamingAssistant && msg.parts) {
-            for (let i = msg.parts.length - 1; i >= 0; i--) {
-              if (msg.parts[i].type === 'text') {
-                lastTextPartIndex = i;
-                break;
-              }
-            }
-          }
           const lastPart = msg.parts?.[msg.parts.length - 1];
           const settlingAfterTool =
             isStreamingAssistant &&
@@ -207,19 +212,22 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                         <React.Fragment key={pIdx}>
                           {part.type === 'tool' ? (
                             <InlineToolCall toolCall={part.toolCall} />
-                          ) : pIdx === lastTextPartIndex ? (
-                            <div className="streaming-cursor">
-                              <MarkdownMessage content={part.content} />
-                            </div>
+                          ) : part.type === 'thinking' ? (
+                            <ThinkingBlock
+                              thinking={part.thinking}
+                              isActive={
+                                isStreamingAssistant &&
+                                part.thinking.duration_ms === undefined &&
+                                pIdx === msg.parts!.length - 1
+                              }
+                            />
                           ) : (
                             <MarkdownMessage content={part.content} />
                           )}
                         </React.Fragment>
                       ))
                     ) : (
-                      <div className={isStreamingAssistant ? 'streaming-cursor' : undefined}>
-                        <MarkdownMessage content={msg.content || ''} />
-                      </div>
+                      <MarkdownMessage content={msg.content || ''} />
                     )}
                     {settlingAfterTool && (
                       <ThinkingIndicator statusText="正在根据查询结果整理回答..." />
@@ -230,6 +238,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                   <MessageActions
                     align={isUser ? 'right' : 'left'}
                     getText={() => getMessageText(msg)}
+                    timestamp={msg.created_at}
                   />
                 </div>
               </div>
@@ -269,7 +278,13 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             </div>
             <div className="flex-1 min-w-0 text-neutral-800 text-sm py-0.5 space-y-2">
               <div className="py-1">
-                <ThinkingIndicator />
+                <ThinkingIndicator
+                  statusText={
+                    contextUsage?.usage_ratio && contextUsage.usage_ratio >= 0.8
+                      ? '上下文接近触发线，正在执行历史压缩以释放窗口预算...'
+                      : undefined
+                  }
+                />
               </div>
             </div>
           </div>
