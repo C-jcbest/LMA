@@ -12,32 +12,19 @@ interface MessageActionsProps {
  */
 export const MessageActions: React.FC<MessageActionsProps> = ({ getText, align = 'left' }) => {
   const [copied, setCopied] = useState(false);
-
-  const copyText = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      // 非安全上下文（http）下 clipboard API 不可用，降级为 execCommand
-      const textarea = document.createElement('textarea');
-      textarea.value = text;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      try {
-        document.execCommand('copy');
-      } finally {
-        document.body.removeChild(textarea);
-      }
-    }
-  };
+  const [copyError, setCopyError] = useState(false);
 
   const handleCopy = async () => {
     const text = getText();
     if (!text.trim()) return;
-    await copyText(text);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    setCopyError(false);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopyError(true);
+    }
   };
 
   return (
@@ -49,7 +36,8 @@ export const MessageActions: React.FC<MessageActionsProps> = ({ getText, align =
       <button
         type="button"
         onClick={handleCopy}
-        title="复制"
+        title={copyError ? '复制失败：浏览器未开放剪贴板权限' : '复制'}
+        aria-label={copyError ? '复制失败：浏览器未开放剪贴板权限' : '复制'}
         className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
       >
         {copied ? (
@@ -59,6 +47,7 @@ export const MessageActions: React.FC<MessageActionsProps> = ({ getText, align =
         )}
       </button>
       {copied && <span className="text-[11px] text-neutral-400 select-none">已复制</span>}
+      {copyError && <span className="text-[11px] text-red-500 select-none">复制失败</span>}
     </div>
   );
 };

@@ -7,9 +7,9 @@
 覆盖场景：
   1. 未超触发线：零修改放行
   2. 超线：从最旧段淘汰至目标水位，AI tool_calls 与 ToolMessage 成对淘汰
-  3. 最少保留段数兜底：只剩 min_turns 段时停止淘汰
+  3. 数据保全边界：只剩 min_turns 段时停止淘汰
   4. 触发线计算：模型上下文百分比 vs 绝对阈值取小
-  5. 压缩失败降级：LLM 异常时消息不被淘汰
+  5. 压缩失败数据保全：LLM 异常时消息不被淘汰
 """
 
 import asyncio
@@ -22,7 +22,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 先于导入 context 覆盖默认阈值，避免读到 .env 的真实配置干扰逻辑测试
 os.environ["CONTEXT_TOKEN_THRESHOLD"] = "5000"
-os.environ["CONTEXT_MODEL_CONTEXT"] = "0"
+os.environ["CONTEXT_MODEL_CONTEXT"] = "10000"
 os.environ["CONTEXT_OUTPUT_RESERVE_TOKENS"] = "0"
 os.environ["CONTEXT_SAFETY_MARGIN_TOKENS"] = "0"
 os.environ["CONTEXT_TOKEN_ESTIMATE_FACTOR"] = "1"
@@ -80,8 +80,8 @@ class TestResult:
 
 def test_trigger_threshold(r: TestResult):
     print("[1] 触发线计算（取小逻辑）")
-    # 环境变量已设 threshold=5000, model_context=0
-    r.check("仅阈值时 trigger=5000", get_trigger_threshold() == 5000)
+    # 环境变量已设 threshold=5000, model_context=10000
+    r.check("绝对阈值更小时 trigger=5000", get_trigger_threshold() == 5000)
 
     os.environ["CONTEXT_MODEL_CONTEXT"] = "8000"  # 8000*0.8=6400 > 5000
     get_settings.cache_clear()
@@ -91,7 +91,7 @@ def test_trigger_threshold(r: TestResult):
     get_settings.cache_clear()
     r.check("model_context 百分比更小时取 3200", get_trigger_threshold() == 3200)
 
-    os.environ["CONTEXT_MODEL_CONTEXT"] = "0"
+    os.environ["CONTEXT_MODEL_CONTEXT"] = "10000"
     get_settings.cache_clear()
 
 
@@ -108,9 +108,9 @@ def test_no_compress_below_threshold(r: TestResult):
 
 def test_compress_eviction(r: TestResult):
     print("[3] 超线淘汰：成对淘汰 + 目标水位")
-    # 阈值 5000、目标水位 2500。构造中等 payload（单段约 600 token）：
-    # 8 段约 5.2k 超线，淘汰至 ≤2500 应剩约 4 段
-    mid = '{"points": [' + ",".join('{"n":1.0,"e":2.0,"u":3.0,"t":"2026-09-01 00:00:00"}' for _ in range(16)) + "]}"
+    # 阈值 5000、目标水位 2500。按 LangChain 官方字符近似计数构造足量 payload，
+    # 确保 8 段明显超线并需要淘汰至目标水位。
+    mid = '{"points": [' + ",".join('{"n":1.0,"e":2.0,"u":3.0,"t":"2026-09-01 00:00:00"}' for _ in range(60)) + "]}"
     msgs = []
     for i in range(1, 9):
         msgs.extend(build_turn(i, mid))
@@ -140,14 +140,15 @@ def test_compress_eviction(r: TestResult):
     tool_msg = msgs[2]
     r.check("tool_calls 与 ToolMessage 成对淘汰", ai_call.id in remove_ids and tool_msg.id in remove_ids)
 
-    # 剩余消息 token 应低于目标水位 2500（含摘要）
+    # 目标水位与最少保留段数冲突时，以不删除最近两段为数据保全边界；
+    # 不伪称已经降到目标水位。
     remaining = [m for m in msgs if m.id not in remove_ids]
     total = sum(count_message_tokens(m) for m in remaining) + _estimated_tokens(update["context_summary"])
-    r.check(f"压缩后总量 {total} ≤ 目标水位 2500", total <= 2500)
+    r.check(f"压缩后保留最近 2 段（当前估算 {total} token）", len(split_turns(remaining)) == 2)
 
 
 def test_min_turns_guard(r: TestResult):
-    print("[4] 最少保留段数兜底")
+    print("[4] 最少保留段数数据保全边界")
     # 阈值 5000，2 段但总量超线：min_turns=2 时不再淘汰
     big = '{"points": [' + ",".join('{"n":1.0,"e":2.0,"u":3.0,"t":"2026-09-01 00:00:00"}' for _ in range(300)) + "]}"
     msgs = build_turn(1, big) + build_turn(2, big)
@@ -156,7 +157,7 @@ def test_min_turns_guard(r: TestResult):
 
 
 def test_degrade_on_llm_failure(r: TestResult):
-    print("[5] 压缩失败降级")
+    print("[5] 压缩失败时保留原消息")
     big = '{"points": [' + ",".join('{"n":1.0}' for _ in range(300)) + "]}"
     msgs = build_turn(1, big) + build_turn(2, big) + build_turn(3, big)
 

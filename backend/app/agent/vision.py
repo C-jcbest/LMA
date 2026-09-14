@@ -821,7 +821,7 @@ async def analyze_gnss_chart(
             # 数值证据（纯数据接口回查，无额外视觉调用）：
             # 全部异常候选经网络回查（首次全量拉取可能被降采样，回查保证窗口内
             # 小时级全分辨率）计算五类数值特征；global_features 为整个调用范围的
-            # 同一套特征，兜底捕捉视觉漏报的持续形变
+            # 同一套数值特征独立覆盖整个调用范围，用于与视觉候选交叉核验
             pad_hours = settings.vision_recheck_pad_hours
             rechecks = await _recheck_candidates(
                 client, station.station_uuid, validated.candidates,

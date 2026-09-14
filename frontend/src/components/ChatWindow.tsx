@@ -6,14 +6,18 @@ import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { SummaryCard } from './SummaryCard';
 import { MessageActions } from './MessageActions';
+import { ContextUsage, ContextUsageIndicator } from './ContextUsageIndicator';
 
 interface ChatWindowProps {
   messages: Message[];
   contextSummary?: string;
+  contextUsage?: ContextUsage;
   onSendMessage: (text: string) => void;
   /** 当前查看会话是否正在生成回复 */
   isGenerating: boolean;
   recommendations?: string[];
+  recommendationError?: string;
+  errorMessage?: string;
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   isNewSessionDraft?: boolean;
@@ -36,9 +40,12 @@ const getMessageText = (msg: Message): string => {
 export const ChatWindow: React.FC<ChatWindowProps> = ({
   messages,
   contextSummary,
+  contextUsage,
   onSendMessage,
   isGenerating,
   recommendations = [],
+  recommendationError = '',
+  errorMessage = '',
   isSidebarCollapsed,
   onToggleSidebar,
   isNewSessionDraft = false,
@@ -73,7 +80,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
     if (isPinnedRef.current) scrollToBottom();
-  }, [messages, isGenerating]);
+  }, [messages, isGenerating, recommendations]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -129,6 +136,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
+        aria-label="对话消息"
         className="flex-1 overflow-y-auto px-6 py-2 space-y-6"
       >
         {(isNewSessionDraft || messages.length === 0) && (
@@ -247,6 +255,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
+        {!isGenerating && recommendationError && (
+          <div className="mx-auto w-full max-w-4xl pl-11 text-xs text-amber-700" role="status">
+            {recommendationError}
+          </div>
+        )}
+
         {/* 尚未收到第一段权威消息时显示思考状态；消息到达后直接由 messages 渲染。 */}
         {waitingForAssistant && (
           <div className="max-w-4xl mx-auto w-full flex items-start gap-3.5">
@@ -264,21 +278,26 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 回到底部悬浮按钮（用户上翻后显示） */}
-      {showJumpToBottom && (
-        <button
-          type="button"
-          onClick={handleJumpToBottom}
-          title="回到底部"
-          className="absolute bottom-32 right-8 z-20 w-9 h-9 rounded-full bg-white border border-neutral-200 shadow-md flex items-center justify-center text-neutral-500 hover:text-neutral-800 transition-colors"
-        >
-          <ArrowDown className="w-4 h-4" />
-        </button>
-      )}
-
       {/* 底部悬浮卡片输入区 */}
       <div className="p-4 bg-white shrink-0 z-20">
         <div className="max-w-4xl mx-auto relative">
+          {errorMessage && (
+            <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
+              {errorMessage}
+            </div>
+          )}
+          {/* 位于输入框正上方，只有离开底部时出现。 */}
+          {showJumpToBottom && (
+            <button
+              type="button"
+              onClick={handleJumpToBottom}
+              title="回到底部"
+              aria-label="回到底部"
+              className="absolute bottom-full left-1/2 mb-3 -translate-x-1/2 w-9 h-9 rounded-full bg-white border border-neutral-200 shadow-md flex items-center justify-center text-neutral-500 hover:text-neutral-800 hover:border-neutral-300 transition-colors"
+            >
+              <ArrowDown className="w-4 h-4" />
+            </button>
+          )}
           {/* 快捷提问推荐浮层 */}
           {showPromptsMenu && (
             <div className="absolute bottom-full mb-2 left-0 w-80 bg-white border border-neutral-200 rounded-2xl shadow-xl p-2 z-30 space-y-1">
@@ -333,6 +352,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             <div className="text-[11px] text-neutral-400 select-none shrink-0 px-1">
               {inputText.length}/{MAX_LENGTH}
             </div>
+
+            {/* 上下文窗口用量：点击环形项目标识查看明细 */}
+            <ContextUsageIndicator usage={contextUsage} />
 
             {/* 发送 / 停止按钮：生成中时变为停止按钮 */}
             {isGenerating ? (

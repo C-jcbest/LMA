@@ -192,3 +192,47 @@
   color: #9ca3af;
   animation: caret-blink 1s step-end infinite;
 }
+
+/* 地图测点使用 DOM Marker，不依赖远程矢量图层的加载结果。 */
+.site-map-marker {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 45%));
+}
+
+.site-map-marker__dot {
+  width: 13px;
+  height: 13px;
+  border: 2px solid #252a24;
+  border-radius: 999px;
+  background: #faf8f1;
+}
+
+.site-map-marker--center .site-map-marker__dot {
+  width: 18px;
+  height: 18px;
+  border-width: 3px;
+  background: #f2ad3a;
+}
+
+.site-map-marker__label {
+  margin-top: 3px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: #fffdf7;
+  background: rgb(37 42 36 / 88%);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.site-map-marker:focus-visible .site-map-marker__label {
+  outline: 2px solid #f2ad3a;
+  outline-offset: 2px;
+}

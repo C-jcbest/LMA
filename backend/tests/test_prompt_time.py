@@ -109,12 +109,14 @@ class PromptTimeTests(unittest.TestCase):
     def test_context_budget_counts_fixed_prompt_tools_and_output_reserve(self):
         settings = SimpleNamespace(
             context_token_threshold=10_000,
-            context_model_context=0,
+            context_model_context=100_000,
             context_compress_ratio=0.8,
             context_target_ratio=0.5,
             context_output_reserve_tokens=1000,
             context_safety_margin_tokens=200,
             context_token_estimate_factor=1.0,
+            context_chars_per_token=1.6667,
+            llm_model="deepseek-flash",
         )
         with patch.object(context, "get_settings", return_value=settings):
             budget = context.build_context_budget(
@@ -129,6 +131,27 @@ class PromptTimeTests(unittest.TestCase):
             budget.available_history_tokens,
             budget.trigger_tokens - budget.fixed_input_tokens - 1200,
         )
+        snapshot = budget.usage_snapshot(
+            {"input_tokens": 321, "output_tokens": 20, "total_tokens": 341}
+        )
+        self.assertEqual(snapshot["counter"], "provider_reported")
+        self.assertEqual(snapshot["input_tokens"], 321)
+        self.assertEqual(snapshot["remaining_tokens"], 100_000 - 321 - 1200)
+        self.assertEqual(
+            snapshot["estimated_fixed_input_tokens"]
+            + snapshot["estimated_history_tokens"]
+            + snapshot["accounting_difference_tokens"],
+            snapshot["input_tokens"],
+        )
+
+    def test_recommendations_require_strict_json_and_allow_model_to_decline(self):
+        self.assertEqual(
+            graph._parse_recommendations('["查看近期趋势", "对比同组测点"]'),
+            ["查看近期趋势", "对比同组测点"],
+        )
+        self.assertEqual(graph._parse_recommendations("[]"), [])
+        with self.assertRaises((json.JSONDecodeError, ValueError)):
+            graph._parse_recommendations("1. 查看近期趋势\n2. 对比同组测点")
 
     def test_terrain_metrics_are_derived_from_dem_samples(self):
         elevations = [100 + i for i in range(25)] + [100, 118, 104, 122]
@@ -202,11 +225,68 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(calls[0].args[0][1].type, "human")
             self.assertEqual(len(state["messages"]), 1)
             state["messages"].append(AIMessage(content="需要继续复核"))
-            with patch.object(graph, "_get_recommend_llm", return_value=llm):
+            recommend_llm = SimpleNamespace(
+                ainvoke=AsyncMock(return_value=AIMessage(content='["查看近期趋势", "对比同组测点"]'))
+            )
+            with patch.object(graph, "_get_recommend_llm", return_value=recommend_llm):
                 await graph.recommend_node(state)
-            self.assertIn("2026-09-13 23:59:00", llm.ainvoke.call_args.args[0][0].content)
+            self.assertIn("2026-09-13 23:59:00", recommend_llm.ainvoke.call_args.args[0][0].content)
             state.update(await graph.manage_context_node(state))
             self.assertEqual(state["business_time"], second.isoformat(timespec="seconds"))
+
+    async def test_agent_prefers_provider_reported_usage_metadata(self):
+        response = AIMessage(
+            content="完成",
+            usage_metadata={"input_tokens": 321, "output_tokens": 20, "total_tokens": 341},
+        )
+        llm = SimpleNamespace(ainvoke=AsyncMock(return_value=response))
+        state = {
+            "messages": [HumanMessage(content="查询监测点")],
+            "business_time": "2026-09-14T10:00:00+08:00",
+            "context_summary": "",
+            "context_usage": {"context_limit_tokens": 1000, "is_estimate": True},
+        }
+        settings = SimpleNamespace(
+            context_token_threshold=800,
+            context_model_context=1000,
+            context_compress_ratio=0.8,
+            context_target_ratio=0.5,
+            context_output_reserve_tokens=100,
+            context_safety_margin_tokens=20,
+            context_token_estimate_factor=1.0,
+            context_chars_per_token=1.6667,
+            llm_model="deepseek-flash",
+        )
+        with patch.object(graph, "_get_llm_with_tools", return_value=llm), patch.object(
+            context, "get_settings", return_value=settings
+        ):
+            update = await graph.agent_node(state)
+        self.assertEqual(update["context_usage"]["input_tokens"], 321)
+        self.assertEqual(update["context_usage"]["remaining_tokens"], 559)
+        self.assertEqual(update["context_usage"]["counter"], "provider_reported")
+        self.assertEqual(
+            update["context_usage"]["estimated_fixed_input_tokens"]
+            + update["context_usage"]["estimated_history_tokens"]
+            + update["context_usage"]["accounting_difference_tokens"],
+            321,
+        )
+
+    async def test_agent_preserves_last_usage_when_provider_omits_usage(self):
+        previous = {"counter": "provider_reported", "input_tokens": 123}
+        llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="完成")))
+        state = {
+            "messages": [HumanMessage(content="查询监测点")],
+            "business_time": "2026-09-14T10:00:00+08:00",
+            "context_summary": "",
+            "context_usage": previous,
+        }
+        with patch.object(graph, "_get_llm_with_tools", return_value=llm):
+            update = await graph.agent_node(state)
+        self.assertNotIn("context_usage", update)
+
+    async def test_invalid_title_is_reported_instead_of_fabricated(self):
+        with self.assertRaises(ValueError):
+            await title.generate_title_node({"input_text": "   ", "title": ""})
 
     async def test_weather_default_window_uses_business_day(self):
         now = datetime(2026, 9, 14, 0, 5, tzinfo=BUSINESS_TZ)
@@ -226,6 +306,19 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 result = await tool.ainvoke({"station_name_or_uuid": "基准站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-14 00:00:00"})
             self.assertIn("基准站", result)
             client.get_daily_data.assert_not_called()
+
+    async def test_invalid_sampling_frequency_is_not_silently_replaced(self):
+        with patch.object(tools, "_build_client") as build_client:
+            result = await tools.get_daily_gnss_data.ainvoke(
+                {
+                    "station_name_or_uuid": "测试站",
+                    "begin_time": "2026-09-01 00:00:00",
+                    "end_time": "2026-09-02 00:00:00",
+                    "sampling_frequency": "sometimes",
+                }
+            )
+        self.assertIn("无法识别", result)
+        build_client.assert_not_called()
 
 
 if __name__ == "__main__":

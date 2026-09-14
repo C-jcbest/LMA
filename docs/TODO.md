@@ -94,8 +94,40 @@
 
    验收：地图只在有效 artifact 出现；坐标位置正确、图层可独立开关、来源可追溯；外部图层失败不影响正文和其他工具卡；无 XSS/任意 URL 加载风险。
 
+14. [已完成] 建立端到端测试集验证各种情况下回复是否正常，是否对用户友好
+
+   - 新增前端会话关键路径集成回归，覆盖完整工具结果、取消中的未闭合工具调用、推荐动作点击、回到底部按钮和取消态文案；与后端 15 项单元测试、前端生产构建共同作为离线回归基线。
+   - 真实模型措辞、上游数据质量和外部瓦片可用性仍属于部署环境验收，不以模拟数据冒充通过。
+
+15. [已完成] 当前下一步建议消失了，检查问题；将回到底部放在消息输入框上方中间展示，已经在底部时隐藏；标题生成时会短暂出现监测点-01a93e类似标识而后展示总结的标题，定位问题并修复，正常效果是占位闪烁并展示生成的标题，失败则展示默认新会话标题名称；取消回复后工具调用一直显示正在进行标志，并且再次请求后显示⚠️ 会话请求失败：An internal error occurred，修复；生成消息时标题不需要前后都展示loading，仅保留后面的；
+
+   - 推荐动作到达后触发底部跟随；回到底部按钮移至输入框上方居中，并按实际滚动距离显隐。
+   - 标题生成期间轮询保留本地占位态，不再回退显示 thread id 派生名称；失败统一落为“新会话”。侧栏运行态只保留标题右侧 loading。
+   - Stop 后为未完成 tool_call 补齐结构化取消 ToolMessage，取消态不再旋转，并在 checkpoint 清理完成前锁住输入，保证下一轮消息协议合法。
+
+16. [已完成] 地图交互有问题，比如放大、缩小等会出现无法关闭的情况，而且出现的位置有问题，只有关闭工具折叠栏才能正常关闭；没有出现marker，请在地图上展示一些方便监测人员查看的信息，并适当调整地图初始放大倍率，当前地图查看过小；不需要在回复中标注地理信息来源，仅需要将一些需要注意的信息标注；
+
+   - 测点改为不依赖外部图层 load 事件的 DOM Marker；当前站点使用金色，同组站点使用浅色，并显示名称、设备状态和可点击详情。
+   - 单站默认缩放提高至 15，多站自适应范围最大缩放提高至 16；展开态改为独立全屏浮层，可由右上角按钮、遮罩或 Esc 关闭，不受工具折叠容器影响。
+   - 地图内突出当前关注站点、有效同组测点数和设备状态；详情区仅保留资料限制，地图供应方 attribution 仍按许可要求由底图库展示。
+
+17. [已完成] 地图放大后再缩小会导致marker标记能够位于边框上方；还是没有看见下一步的可点击项；在会话第一次消息发送时仍然出现临时会话，类似监测点-01a93e，且这次观察到出现了两个检查并修复；取消回复后的工具处理是否符合官方规范？会不会有其他问题？
+
+   - Marker 在每次缩放、平移和容器尺寸变化后按投影点与实际 DOM 尺寸做边缘裁决，边缘标记隐藏，地图容器同时隔离裁切。
+   - 下一步建议由模型结合本轮问题与回答判断是否适用，仅接受约定的 JSON 数组；格式异常或独立调用失败时显示错误，不通过正则或固定模板猜测业务建议；新回合开始清除旧项。
+   - 首次发送在任何异步操作前上锁，客户端预生成 thread id 并先登记标题骨架态；会话列表只投影带明确名称的业务 Thread，过滤 `session-title` 无状态运行产生的无名称临时 Thread。
+   - 取消使用官方 interrupt 语义，并以 `cancel(wait=true, action="interrupt")` 等待服务端收敛后，才对 checkpoint 中确实未闭合的 tool_call 补入取消 ToolMessage，避免与迟到工具结果竞态。
+
+18. [已完成] 上下文计算是否合理，langgragh中应当能够方便的计算token消耗，首先查阅官方文档，然后进行优化改进，尽可能规范功能靠拢官方实现。并且前端进行上下文窗口token的展示，在消息框发送按钮左侧展示logo进度条，点击后能查看更详细的内容
+
+   - 每次主模型请求完成后使用供应商返回的 `usage_metadata` 记录实际输入、输出和总 token；系统提示、工具 schema、历史消息与摘要采用 LangChain `count_tokens_approximately` 和当前模型字符/token 规则估算分项，并单独展示估算与实际输入的核算差值。
+   - `context_usage` 随 LangGraph Thread checkpoint 持久化。前端仅在拿到完整的真实 usage 和有效窗口配置后展示 LMA 山形环状进度，点击查看实际输入/输出、剩余预算、估算分项与压缩触发线；旧 checkpoint 或缺失 usage 时保持不显示。
+   - `CONTEXT_MODEL_CONTEXT` 使用当前 DeepSeek V4 Flash 官方窗口 `1048576`，且必须为正整数；缺失或非法时服务配置直接报错，不渲染“未配置”占位或伪造百分比。
+
 ## 参考
 
 - LangChain 官方 Join & rejoin streams：<https://docs.langchain.com/oss/python/langchain/frontend/join-rejoin>
 - LangGraph 官方 Fault tolerance / RetryPolicy：<https://docs.langchain.com/oss/python/langgraph/fault-tolerance>
+- LangSmith 官方 Cancel runs：<https://docs.langchain.com/langsmith/cancel-run>
+- LangGraph 官方 Manage short-term memory / token counting：<https://docs.langchain.com/oss/python/langgraph/add-memory>
 - 北斗平台站点字段与 WGS84 约定：`docs/reference/beidou-platform-api.md`

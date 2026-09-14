@@ -161,7 +161,7 @@ def _normalize_sample_times(values: list[str]) -> list[str] | str:
 
 
 def _thin_days(points: list, stride: int) -> list:
-    """固定时刻模式的数据量控制：按天抽稀，保留天序号能整除 stride 的天（末天兜底保留）。
+    """固定时刻模式的数据量控制：按天抽稀，并保留时间范围末端。
 
     同一保留天内的全部固定时刻点都保留，跨天固定时刻对比关系不被破坏。
     """
@@ -358,7 +358,10 @@ async def get_daily_gnss_data(
     else:
         freq_minutes = _parse_frequency_minutes(sampling_frequency) if sampling_frequency else None
         if sampling_frequency and not freq_minutes:
-            notes.append(f"采样频率“{sampling_frequency}”无法识别，按默认每小时处理")
+            return (
+                f"采样频率“{sampling_frequency}”无法识别；"
+                "请使用 1h/2h/3h/6h、every 6 hours 或整数分钟（如 90m）"
+            )
         base_minutes = freq_minutes or 60
         expected = math.ceil(total_minutes / base_minutes)
         if expected > _MAX_DATA_POINTS:
@@ -367,7 +370,7 @@ async def get_daily_gnss_data(
             notes.append(
                 f"按 {sampling_frequency or '默认每小时'} 采样预计约 {expected} 条数据，"
                 f"超过 {_MAX_DATA_POINTS} 条上限，已自动调整为每 {effective_frequency} 一条"
-                "（数据源为小时级，不影响可用信息）"
+                "；查询时间范围仍完整覆盖，但短时波动细节可能因抽稀而缺失"
             )
 
     async with _build_client() as client:
@@ -392,7 +395,7 @@ async def get_daily_gnss_data(
     if normalized_sample_times and day_stride > 1:
         points = _thin_days(points, day_stride)
 
-    # 兜底：平台实际返回量仍超上限时等间隔降采样（保留首末点，时间范围完整覆盖）
+    # 数据量硬上限：平台实际返回量仍超限时等间隔降采样，并在结果元数据中明确披露
     downsampled = len(points) > _MAX_DATA_POINTS
     if downsampled:
         step = math.ceil(len(points) / _MAX_DATA_POINTS)

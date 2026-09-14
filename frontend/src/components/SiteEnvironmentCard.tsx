@@ -1,7 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LngLatBounds, Map as MapLibreMap, NavigationControl, StyleSpecification } from 'maplibre-gl';
+import {
+  LngLatBounds,
+  Map as MapLibreMap,
+  Marker,
+  NavigationControl,
+  Popup,
+  StyleSpecification,
+} from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Compass, Expand, Layers3, MapPin, Mountain, Shrink } from 'lucide-react';
+import { Compass, Expand, Layers3, MapPin, Mountain, X } from 'lucide-react';
 import { SiteEnvironmentArtifact, SiteStation } from '../services/api';
 
 interface SiteEnvironmentCardProps {
@@ -74,6 +81,7 @@ const validStations = (environment: SiteEnvironmentArtifact): SiteStation[] => {
 export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ environment }) => {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
+  const markersRef = useRef<Marker[]>([]);
   const [baseLayer, setBaseLayer] = useState<BaseLayer>('satellite');
   const [geologyVisible, setGeologyVisible] = useState(true);
   const [faultsVisible, setFaultsVisible] = useState(true);
@@ -89,68 +97,85 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
       container: mapNodeRef.current,
       style: BASE_STYLE,
       center: [center.longitude as number, center.latitude as number],
-      zoom: 13,
+      zoom: 15,
       attributionControl: { compact: true },
     });
     mapRef.current = map;
     map.addControl(new NavigationControl({ showCompass: true }), 'bottom-right');
 
-    map.on('load', () => {
-      const features = stations.map((station) => ({
-        type: 'Feature' as const,
-        geometry: {
-          type: 'Point' as const,
-          coordinates: [station.longitude as number, station.latitude as number],
-        },
-        properties: {
-          name: station.station_name,
-          group: station.group_name || '',
-          isCenter: station.station_uuid === environment.center_station.station_uuid,
-        },
-      }));
-      map.addSource('stations', {
-        type: 'geojson',
-        data: { type: 'FeatureCollection', features },
+    // DOM Marker 不依赖底图/地质瓦片加载完成；辅助图层失败时测点仍应立即可见。
+    {
+      markersRef.current = stations.map((station) => {
+        const isCenter = station.station_uuid === environment.center_station.station_uuid;
+        const markerNode = document.createElement('button');
+        markerNode.type = 'button';
+        markerNode.className = `site-map-marker ${isCenter ? 'site-map-marker--center' : ''}`;
+        markerNode.setAttribute('aria-label', `${isCenter ? '当前调查站点' : '同组站点'} ${station.station_name}`);
+        markerNode.innerHTML = `<span class="site-map-marker__dot"></span><span class="site-map-marker__label"></span>`;
+        const label = markerNode.querySelector('.site-map-marker__label');
+        if (label) label.textContent = station.station_name;
+        const popupNode = document.createElement('div');
+        const popupTitle = document.createElement('strong');
+        popupTitle.textContent = station.station_name;
+        popupNode.append(popupTitle);
+        for (const text of [
+          isCenter ? '当前调查站点' : '同组监测点',
+          station.station_status ? `状态：${station.station_status}` : '',
+          station.location || '',
+        ]) {
+          if (!text) continue;
+          const line = document.createElement('div');
+          line.textContent = text;
+          popupNode.append(line);
+        }
+        const popup = new Popup({ offset: 18, closeButton: true }).setDOMContent(popupNode);
+        return new Marker({ element: markerNode, anchor: 'bottom' })
+          .setLngLat([station.longitude as number, station.latitude as number])
+          .setPopup(popup)
+          .addTo(map);
       });
-      map.addLayer({
-        id: 'group-stations',
-        type: 'circle',
-        source: 'stations',
-        filter: ['!=', ['get', 'isCenter'], true],
-        paint: {
-          'circle-radius': 5,
-          'circle-color': '#f7f3e8',
-          'circle-stroke-color': '#252a24',
-          'circle-stroke-width': 1.5,
-        },
-      });
-      map.addLayer({
-        id: 'center-station',
-        type: 'circle',
-        source: 'stations',
-        filter: ['==', ['get', 'isCenter'], true],
-        paint: {
-          'circle-radius': 8,
-          'circle-color': '#f2ad3a',
-          'circle-stroke-color': '#171a17',
-          'circle-stroke-width': 2.5,
-        },
-      });
+
+      // Marker 是独立 DOM，地理点在边缘时标签会跨过地图边框。根据实际标签尺寸
+      // 在每次平移/缩放后做可视区裁决，边缘点直接隐藏而不覆盖外框。
+      const updateMarkerVisibility = () => {
+        const container = map.getContainer();
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        for (const marker of markersRef.current) {
+          const point = map.project(marker.getLngLat());
+          const element = marker.getElement();
+          const rect = element.getBoundingClientRect();
+          const halfWidth = Math.max(10, rect.width / 2);
+          const markerHeight = Math.max(18, rect.height);
+          const inside =
+            point.x - halfWidth >= 4 &&
+            point.x + halfWidth <= width - 4 &&
+            point.y - markerHeight >= 4 &&
+            point.y <= height - 4;
+          element.style.visibility = inside ? 'visible' : 'hidden';
+        }
+      };
+      map.on('move', updateMarkerVisibility);
+      map.on('resize', updateMarkerVisibility);
+      map.once('idle', updateMarkerVisibility);
 
       if (stations.length > 1) {
         const bounds = new LngLatBounds();
         stations.forEach((station) =>
           bounds.extend([station.longitude as number, station.latitude as number])
         );
-        map.fitBounds(bounds, { padding: 55, maxZoom: 15, duration: 0 });
+        map.fitBounds(bounds, { padding: 75, maxZoom: 16, duration: 0 });
       }
-    });
+      window.requestAnimationFrame(updateMarkerVisibility);
+    }
     map.on('error', (event: { error?: unknown }) => {
       console.warn('site map resource error:', event.error);
       setMapError('部分地图图层暂时不可用，站点与已获取的环境数据仍可查看。');
     });
 
     return () => {
+      markersRef.current.forEach((marker) => marker.remove());
+      markersRef.current = [];
       map.remove();
       mapRef.current = null;
     };
@@ -175,6 +200,20 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
     return () => window.clearTimeout(timer);
   }, [expanded]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [expanded]);
+
   if (!center) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
@@ -187,7 +226,9 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
   const geology = environment.geology;
 
   return (
-    <section className="overflow-hidden rounded-xl border border-stone-300 bg-[#f4f1e8] shadow-sm">
+    <>
+    {expanded && <button type="button" className="fixed inset-0 z-[70] bg-black/45 backdrop-blur-[2px]" onClick={() => setExpanded(false)} aria-label="关闭展开地图" />}
+    <section className={`overflow-hidden rounded-xl border border-stone-300 bg-[#f4f1e8] shadow-sm ${expanded ? 'fixed inset-4 z-[80] flex flex-col shadow-2xl sm:inset-8' : ''}`}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-300 bg-[#252a24] px-4 py-3 text-stone-100">
         <div>
           <div className="flex items-center gap-2 text-sm font-semibold tracking-wide">
@@ -238,12 +279,19 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
             aria-label={expanded ? '收起地图' : '展开地图'}
             title={expanded ? '收起地图' : '展开地图'}
           >
-            {expanded ? <Shrink className="h-3.5 w-3.5" /> : <Expand className="h-3.5 w-3.5" />}
+            {expanded ? <X className="h-4 w-4" /> : <Expand className="h-3.5 w-3.5" />}
           </button>
         </div>
       </header>
 
-      <div ref={mapNodeRef} className={`w-full transition-[height] duration-200 ${expanded ? 'h-[34rem]' : 'h-72'}`} />
+      <div className={`relative isolate overflow-hidden ${expanded ? 'min-h-0 flex-1' : ''}`}>
+        <div ref={mapNodeRef} className={`w-full ${expanded ? 'h-full' : 'h-80'}`} />
+        <div className="pointer-events-none absolute left-3 top-3 max-w-[15rem] rounded-lg border border-white/40 bg-stone-950/80 px-3 py-2 text-[10px] text-stone-100 shadow-lg backdrop-blur-sm">
+          <div className="font-semibold text-amber-300">当前关注：{center.station_name}</div>
+          <div className="mt-1 text-stone-200">{stations.length > 1 ? `同组另有 ${stations.length - 1} 个有效测点，可点击标记查看` : '当前仅有该站点具备有效坐标'}</div>
+          {center.station_status && <div className="mt-1 text-stone-300">设备状态：{center.station_status}</div>}
+        </div>
+      </div>
       {mapError && <div className="border-t border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-800">{mapError}</div>}
 
       <div className="grid gap-px border-t border-stone-300 bg-stone-300 sm:grid-cols-3">
@@ -270,19 +318,19 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
             <Compass className="h-3.5 w-3.5" />图层与测点
           </div>
           <div className="mt-1.5 text-xs text-stone-800">同组 {stations.length} 个有效坐标测点</div>
-          <div className="mt-1 text-[10px] text-stone-500">地层半透明叠加 · 红线为公开构造线</div>
+          <div className="mt-1 text-[10px] text-stone-500">金色为当前站点 · 浅色为同组站点</div>
         </div>
       </div>
 
       {(environment.limitations || []).length > 0 && (
         <details className="border-t border-stone-300 bg-[#ece8dc] px-3 py-2 text-[10px] text-stone-600">
-          <summary className="cursor-pointer font-medium text-stone-700">数据来源与限制</summary>
+          <summary className="cursor-pointer font-medium text-stone-700">资料限制</summary>
           <ul className="mt-2 list-disc space-y-1 pl-4">
             {environment.limitations?.map((item, index) => <li key={index}>{item}</li>)}
           </ul>
-          <div className="mt-2">高程：Open-Meteo / Copernicus DEM GLO-90；地质：Macrostrat CC BY 4.0。</div>
         </details>
       )}
     </section>
+    </>
   );
 };

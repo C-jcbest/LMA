@@ -9,6 +9,7 @@ import {
   Eye,
   ChevronRight,
   Loader2,
+  CircleSlash2,
 } from 'lucide-react';
 import { ToolCallInfo } from '../services/api';
 
@@ -44,8 +45,8 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
   const parsedDetail = parseData(toolCall.detail);
   const data: any =
     parsedDetail && typeof parsedDetail === 'object' ? { ...parsedDetail } : parsedDetail;
-  // chart_points 随 artifact 转发（全量数据，不进入 LLM 上下文）：
-  // detail 内容里没有时从 artifact 兑底，兼容旧会话中 content 内携带的序列
+  // chart_points 随当前工具 artifact 转发（全量数据，不进入 LLM 上下文），
+  // 合并到展示数据中供图表组件使用。
   if (data && toolCall.chartPoints?.length && !data.chart_points) {
     data.chart_points = toolCall.chartPoints;
   }
@@ -54,6 +55,9 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
   const renderIcon = () => {
     if (toolCall.status === 'loading') {
       return <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />;
+    }
+    if (toolCall.status === 'cancelled') {
+      return <CircleSlash2 className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
     }
     if (toolCall.name?.includes('group')) {
       return <Layers className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
@@ -78,25 +82,26 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
 
   // 生成简约的中文动作文案（类似“运行了命令”）
   const getActionText = () => {
+    const suffix = toolCall.status === 'cancelled' ? '（已停止）' : '';
     if (toolCall.name === 'list_station_groups') {
-      return '查询了监测点分组';
+      return `查询监测点分组${suffix}`;
     }
     if (toolCall.name === 'list_stations') {
-      return '查询了监测点列表';
+      return `查询监测点列表${suffix}`;
     }
     if (toolCall.name === 'get_daily_gnss_data') {
-      return '获取了北斗GNSS日监测数据';
+      return `获取北斗GNSS日监测数据${suffix}`;
     }
     if (toolCall.name === 'query_weather') {
-      return '查询了天气数据';
+      return `查询天气数据${suffix}`;
     }
     if (toolCall.name === 'analyze_gnss_chart') {
-      return '进行了视觉复核';
+      return `视觉复核${suffix}`;
     }
     if (toolCall.name === 'inspect_site_environment') {
-      return '调查了站点地形与地质环境';
+      return `调查站点地形与地质环境${suffix}`;
     }
-    return toolCall.display_name || `调用了工具 ${toolCall.name}`;
+    return `${toolCall.display_name || `调用工具 ${toolCall.name}`}${suffix}`;
   };
 
   // 由 chart_points 生成单方向迷你 SVG 折线（归一化到 0~100 视口）
@@ -614,7 +619,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
         />
       </div>
 
-      {/* 展开后的全量数据表格区域：外层统一限高兜底（任何工具结果都不会撑破界面），
+      {/* 展开后的全量数据表格区域：外层统一限制高度（任何工具结果都不会撑破界面），
           内部各表格自带 max-h 滚动与吸顶表头 */}
       {expanded && (
         <div

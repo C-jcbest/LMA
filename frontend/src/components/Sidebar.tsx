@@ -156,17 +156,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
-                {isGenerating ? (
-                  <span title="正在生成回复" className="shrink-0 flex">
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
-                  </span>
-                ) : (
-                  <MessageSquare
-                    className={`w-3.5 h-3.5 shrink-0 ${
-                      isActive ? 'text-neutral-800' : 'text-neutral-400 group-hover:text-neutral-600'
-                    }`}
-                  />
-                )}
+                <MessageSquare
+                  className={`w-3.5 h-3.5 shrink-0 ${
+                    isActive ? 'text-neutral-800' : 'text-neutral-400 group-hover:text-neutral-600'
+                  }`}
+                />
                 {isEditing ? (
                   <input
                     type="text"
@@ -182,7 +176,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               {/* 悬停操作按钮：生成中时替换为 loading 图标，不可重命名/删除 */}
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className={`flex items-center gap-1 transition-opacity ${isGenerating ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 {isEditing ? (
                   <>
                     <button
@@ -197,7 +191,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </>
                 ) : isGenerating ? (
                   <span title="生成中，暂不可重命名或删除" className="p-1 flex">
-                    <Loader2 className="w-3 h-3 animate-spin text-neutral-400" />
+                    <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
                   </span>
                 ) : (
                   <>

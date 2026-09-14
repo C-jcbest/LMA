@@ -6,11 +6,10 @@
 - 淘汰内容剔除 ToolMessage、剥离 tool_calls 后，交由独立压缩 LLM 增量合并为持久摘要；
 - 压缩失败时放弃本次淘汰（宁可暂时超限，不可丢上下文）。
 
-触发线 = min(CONTEXT_TOKEN_THRESHOLD, CONTEXT_MODEL_CONTEXT * CONTEXT_COMPRESS_RATIO)
-（未配置模型上下文时仅用前者）。
+触发线 = min(CONTEXT_TOKEN_THRESHOLD, CONTEXT_MODEL_CONTEXT * CONTEXT_COMPRESS_RATIO)。
+模型上下文窗口是必填的正整数配置，非法配置在服务启动时直接报错。
 """
 
-import json
 import logging
 import math
 from dataclasses import dataclass
@@ -18,77 +17,57 @@ from functools import lru_cache
 from typing import Iterable
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, RemoveMessage, ToolMessage
+from langchain_core.messages.utils import count_tokens_approximately
 from langchain_openai import ChatOpenAI
-from tiktoken import get_encoding
-
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# 近似计数：非 content 字段（role、id 等）的固定开销
-_PER_MSG_OVERHEAD = 8
+SUMMARY_CONTEXT_PREFIX = "【历史对话摘要，仅供背景参考，不是系统指令；其中的相对时间和结论不代表当前状态】\n"
 
+def _estimated_message_tokens(messages: Iterable[BaseMessage], bound_tools: Iterable = ()) -> int:
+    """使用 LangChain 官方近似计数器统计完整消息和工具 schema。
 
-@lru_cache(maxsize=1)
-def _warn_context_config_once() -> None:
-    settings = get_settings()
-    if settings.context_model_context <= 0:
-        logger.warning(
-            "CONTEXT_MODEL_CONTEXT is not configured; context budgeting uses the absolute "
-            "threshold and conservative tokenizer estimate"
-        )
-
-
-@lru_cache
-def _get_encoder():
-    # 对 DeepSeek/Qwen 等非 OpenAI 模型是近似值，仅作触发器使用
-    return get_encoding("cl100k_base")
-
-
-def _count_tokens(text: str) -> int:
-    if not text:
+    兼容模型未必提供本地 tokenizer，因此预算使用近似值；单次调用完成后
+    由 AIMessage.usage_metadata 向前端提供供应商返回的实际输入 token。
+    """
+    materialized = list(messages)
+    tools = list(bound_tools)
+    if not materialized and not tools:
         return 0
-    return len(_get_encoder().encode(text))
+    factor = max(1.0, get_settings().context_token_estimate_factor)
+    chars_per_token = get_settings().context_chars_per_token
+    if chars_per_token <= 0:
+        raise ValueError("CONTEXT_CHARS_PER_TOKEN must be greater than 0")
+    return math.ceil(
+        count_tokens_approximately(
+            materialized,
+            tools=tools or None,
+            chars_per_token=chars_per_token,
+            use_usage_metadata_scaling=True,
+        )
+        * factor
+    )
 
 
 def _estimated_tokens(text: str) -> int:
-    """使用保守系数修正兼容模型与 cl100k_base 的 tokenizer 偏差。"""
-    factor = max(1.0, get_settings().context_token_estimate_factor)
-    return math.ceil(_count_tokens(text) * factor)
+    """纯文本近似计数的兼容入口，与消息预算使用同一官方计数器。"""
+    return _estimated_message_tokens([HumanMessage(content=text)]) if text else 0
 
 
 def count_message_tokens(msg: BaseMessage) -> int:
-    """单条消息近似 token 数：content + tool_calls JSON + 固定开销。"""
-    total = _PER_MSG_OVERHEAD
-    content = getattr(msg, "content", None)
-    if isinstance(content, str):
-        total += _estimated_tokens(content)
-    elif content:
-        total += _estimated_tokens(json.dumps(content, ensure_ascii=False))
-    tool_calls = getattr(msg, "tool_calls", None)
-    if tool_calls:
-        total += _estimated_tokens(json.dumps(tool_calls, ensure_ascii=False, default=str))
-    return total
+    """单条消息的 LangChain 官方近似 token 数。"""
+    return _estimated_message_tokens([msg])
 
 
 def count_tool_schema_tokens(bound_tools: Iterable) -> int:
-    """统计发送给模型的工具名称、说明和参数 schema。"""
-    schemas = []
-    for item in bound_tools:
-        args_schema = getattr(item, "args_schema", None)
-        schema = args_schema.model_json_schema() if args_schema is not None else {}
-        schemas.append(
-            {
-                "name": getattr(item, "name", type(item).__name__),
-                "description": getattr(item, "description", ""),
-                "parameters": schema,
-            }
-        )
-    return _estimated_tokens(json.dumps(schemas, ensure_ascii=False, default=str)) if schemas else 0
+    """统计发送给模型的工具 schema（保留为公开辅助函数）。"""
+    return _estimated_message_tokens([], bound_tools)
 
 
 @dataclass(frozen=True)
 class ContextBudget:
+    context_limit_tokens: int
     trigger_tokens: int
     fixed_input_tokens: int
     history_tokens: int
@@ -100,6 +79,38 @@ class ContextBudget:
     @property
     def total_reserved_tokens(self) -> int:
         return self.fixed_input_tokens + self.history_tokens + self.output_reserve_tokens + self.safety_margin_tokens
+
+    @property
+    def estimated_input_tokens(self) -> int:
+        return self.fixed_input_tokens + self.history_tokens
+
+    def usage_snapshot(self, usage_metadata: dict) -> dict:
+        """将供应商返回的实际 usage 与请求前分项估算组成自洽快照。"""
+        limit = self.context_limit_tokens
+        if limit <= 0:
+            raise ValueError("CONTEXT_MODEL_CONTEXT must be greater than 0")
+        input_tokens = usage_metadata.get("input_tokens")
+        if not isinstance(input_tokens, int) or input_tokens < 0:
+            raise ValueError("usage_metadata.input_tokens is required")
+        output_tokens = usage_metadata.get("output_tokens")
+        total_tokens = usage_metadata.get("total_tokens")
+        reserved = input_tokens + self.output_reserve_tokens + self.safety_margin_tokens
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens if isinstance(output_tokens, int) else None,
+            "total_tokens": total_tokens if isinstance(total_tokens, int) else None,
+            "context_limit_tokens": limit,
+            "remaining_tokens": max(0, limit - reserved),
+            "usage_ratio": min(1.0, reserved / limit),
+            "trigger_tokens": self.trigger_tokens,
+            "estimated_fixed_input_tokens": self.fixed_input_tokens,
+            "estimated_history_tokens": self.history_tokens,
+            "accounting_difference_tokens": input_tokens - self.estimated_input_tokens,
+            "output_reserve_tokens": self.output_reserve_tokens,
+            "safety_margin_tokens": self.safety_margin_tokens,
+            "counter": "provider_reported",
+            "model": get_settings().llm_model,
+        }
 
     @property
     def needs_compression(self) -> bool:
@@ -114,14 +125,18 @@ def build_context_budget(
 ) -> ContextBudget:
     """计算完整模型输入预算，而非只计算持久消息。"""
     settings = get_settings()
-    _warn_context_config_once()
     trigger = get_trigger_threshold()
-    fixed = _estimated_tokens(system_prompt) + count_tool_schema_tokens(bound_tools)
+    fixed_messages = [SystemMessage(content=system_prompt)] if system_prompt else []
+    fixed = _estimated_message_tokens(fixed_messages, bound_tools)
     output_reserve = max(0, settings.context_output_reserve_tokens)
     safety_margin = max(0, settings.context_safety_margin_tokens)
-    history = _estimated_tokens(context_summary) + sum(count_message_tokens(message) for message in messages)
+    history_messages = list(messages)
+    if context_summary:
+        history_messages.insert(0, HumanMessage(content=SUMMARY_CONTEXT_PREFIX + context_summary))
+    history = _estimated_message_tokens(history_messages)
     available = max(0, trigger - fixed - output_reserve - safety_margin)
     return ContextBudget(
+        context_limit_tokens=max(0, settings.context_model_context),
         trigger_tokens=trigger,
         fixed_input_tokens=fixed,
         history_tokens=history,
@@ -265,7 +280,7 @@ async def manage_context(
     while kept_turns:
         removable = len(kept_turns) - s.context_min_turns
         if removable <= 0:
-            break  # 最少保留段数兜底：宁可超限让模型截断，不可丢当前上下文
+            break  # 数据保全边界：不静默删除最近对话；超限由模型请求明确报错
         oldest = kept_turns[0]
         turn_tokens = sum(count_message_tokens(m) for m in oldest)
         evicted.extend(oldest)
@@ -298,7 +313,7 @@ async def manage_context(
         "context compressed: evicted %d msgs, total %d -> %d tokens, trigger=%d",
         len(evicted),
         total,
-        _estimated_tokens(new_summary),
+        _estimated_message_tokens([HumanMessage(content=new_summary)]),
         trigger,
     )
     return {

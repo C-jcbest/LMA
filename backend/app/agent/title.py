@@ -53,30 +53,26 @@ class TitleState(TypedDict):
 async def generate_title_node(state: TitleState) -> dict:
     input_text = state.get("input_text", "")
     if not input_text or not input_text.strip():
-        return {"title": "新会话"}
+        raise ValueError("会话标题缺少首条消息")
 
-    try:
-        settings = get_settings()
-        llm = ChatOpenAI(
-            model=settings.llm_model,
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-            temperature=0.3,
-            max_tokens=48,
-        )
-        response = await llm.ainvoke(
-            [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=input_text[:500]),
-            ]
-        )
-        clean_title = clean_generated_title(response.content)
-        if not clean_title:
-            clean_title = "新会话"
-        return {"title": clean_title}
-    except Exception:
-        # 异常兜底，返回空以指示调用失败，由上层采用默认标题
-        return {"title": ""}
+    settings = get_settings()
+    llm = ChatOpenAI(
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        temperature=0.3,
+        max_tokens=48,
+    )
+    response = await llm.ainvoke(
+        [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=input_text),
+        ]
+    )
+    clean_title = clean_generated_title(response.content)
+    if not clean_title:
+        raise ValueError("模型未返回有效会话标题")
+    return {"title": clean_title}
 
 
 builder = StateGraph(TitleState)

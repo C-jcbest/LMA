@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,14 +36,17 @@ class Settings(BaseSettings):
     # 上下文管理（token 驱动，无轮数窗口）
     # 触发线 = min(token_threshold, model_context * compress_ratio)，超线才压缩
     context_token_threshold: int = 800_000  # 绝对触发线，适配百万级上下文模型
-    context_model_context: int = 0  # 主 LLM 上下文窗口 token 数，>0 时按百分比触发
+    context_model_context: int = Field(
+        gt=0
+    )  # 必须按当前模型配置；DeepSeek V4 Flash 官方窗口为 1_048_576
     context_compress_ratio: float = 0.8  # 模型上下文的触发百分比
     context_target_ratio: float = 0.5  # 压缩后目标水位（触发线的比例）
-    context_min_turns: int = 2  # 最少保留对话段数（兜底）
+    context_min_turns: int = 2  # 数据保全边界：绝不静默删除的最近对话段数
     context_summary_max_tokens: int = 2000  # 摘要长度上限
     context_output_reserve_tokens: int = 8192  # 为本轮模型输出预留
     context_safety_margin_tokens: int = 2048  # tokenizer 误差与协议开销余量
     context_token_estimate_factor: float = 1.1  # OpenAI 兼容模型的保守估算系数
+    context_chars_per_token: float = 1.6667  # DeepSeek 官方参考：1 中文字符约 0.6 token
 
     # 压缩模型（OpenAI 兼容，不配置则复用主 LLM）
     compress_base_url: str = ""

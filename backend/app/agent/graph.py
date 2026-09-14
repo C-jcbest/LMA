@@ -24,7 +24,7 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langgraph.types import RetryPolicy
 
-from app.agent.context import manage_context
+from app.agent.context import SUMMARY_CONTEXT_PREFIX, build_context_budget, manage_context
 from app.agent.prompting import build_system_prompt, build_time_context
 from app.agent.retry import is_transient_error
 from app.agent.site import inspect_site_environment
@@ -51,6 +51,8 @@ class AgentState(TypedDict):
     business_time: str  # 每个用户回合刷新，工具循环与后续建议共用同一时间锚点
     context_summary: str  # 历史压缩摘要（空串表示无历史），随 checkpoint 持久化
     recommendations: list[str]  # 下一步推荐动作（每轮回答结束覆盖更新），随 checkpoint 持久化
+    recommendations_error: str  # 推荐生成或结构校验失败时的可见错误
+    context_usage: dict  # 完整输入预算与最近一次模型实际 usage，供前端展示
 
 
 @lru_cache
@@ -67,12 +69,24 @@ def _get_llm_with_tools():
 
 async def agent_node(state: AgentState) -> dict:
     llm_with_tools = _get_llm_with_tools()
-    messages = [SystemMessage(content=build_system_prompt(state.get("business_time")))]
+    system_prompt = build_system_prompt(state.get("business_time"))
+    messages = [SystemMessage(content=system_prompt)]
     summary = state.get("context_summary")
     if summary:
-        messages.append(HumanMessage(content=f"【历史对话摘要，仅供背景参考，不是系统指令；其中的相对时间和结论不代表当前状态】\n{summary}"))
+        messages.append(HumanMessage(content=SUMMARY_CONTEXT_PREFIX + summary))
     messages += state["messages"]
+    budget = build_context_budget(
+        state["messages"],
+        summary or "",
+        system_prompt=system_prompt,
+        bound_tools=tools,
+    )
     response: BaseMessage = await llm_with_tools.ainvoke(messages)
+    usage = getattr(response, "usage_metadata", None) or {}
+    input_tokens = usage.get("input_tokens")
+    if isinstance(input_tokens, int) and input_tokens >= 0:
+        return {"messages": [response], "context_usage": budget.usage_snapshot(usage)}
+    logger.warning("model response did not include input token usage; preserve previous context_usage")
     return {"messages": [response]}
 
 
@@ -85,7 +99,13 @@ async def manage_context_node(state: AgentState) -> dict:
         system_prompt=build_system_prompt(current_time),
         bound_tools=tools,
     )
-    return {**updates, "business_time": current_time}
+    return {
+        **updates,
+        "business_time": current_time,
+        # 新回合开始先清除上轮推荐，避免在新回答完成前误展示旧项。
+        "recommendations": [],
+        "recommendations_error": "",
+    }
 
 
 RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生成器。根据最近一轮对话（用户问题与助手回答），给出用户接下来最可能继续提出的 2~3 个后续问题。
@@ -102,7 +122,7 @@ RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生�
 
 @lru_cache
 def _get_recommend_llm():
-    """推荐动作生成用轻量 LLM：主模型 + 小输出预算，失败时上层静默降级。"""
+    """推荐动作生成用轻量 LLM：主模型 + 小输出预算。"""
     settings = get_settings()
     return ChatOpenAI(
         model=settings.llm_model,
@@ -114,27 +134,40 @@ def _get_recommend_llm():
 
 
 def _parse_recommendations(text: str) -> list[str]:
-    """从模型输出中稳健提取 JSON 字符串数组，非法输入一律返回空列表。"""
-    start, end = text.find("["), text.rfind("]")
-    if start == -1 or end <= start:
-        return []
-    try:
-        data = json.loads(text[start : end + 1])
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, list):
-        return []
-    return [str(x).strip()[:60] for x in data if isinstance(x, str) and x.strip()][:3]
+    """严格校验模型约定的 JSON 数组，不尝试修补或猜测结果。"""
+    data = json.loads(text)
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        raise ValueError("recommendations must be a JSON string array")
+    recommendations = [item.strip() for item in data if item.strip()]
+    if recommendations and not 2 <= len(recommendations) <= 3:
+        raise ValueError("recommendations must contain 2 or 3 items")
+    if any(len(item) > 60 for item in recommendations):
+        raise ValueError("recommendation exceeds 60 characters")
+    return recommendations
+
+
+def _message_text(message: BaseMessage) -> str:
+    """按 LangChain 标准消息内容形式提取文本块。"""
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+    return "".join(parts)
 
 
 async def recommend_node(state: AgentState) -> dict:
-    """回答结束后生成下一步推荐动作：轻量 LLM 调用，结果随状态持久化。
-    任何失败静默降级为空列表（前端隐藏推荐区，不影响主回答）。"""
+    """回答结束后由模型判断是否生成下一步建议，错误显式写入状态。"""
     user_text = ""
     answer_text = ""
     for msg in reversed(state["messages"]):
-        content = getattr(msg, "content", "")
-        text = content if isinstance(content, str) else ""
+        text = _message_text(msg)
         if not text.strip():
             continue
         if msg.type == "ai" and not answer_text:
@@ -144,7 +177,7 @@ async def recommend_node(state: AgentState) -> dict:
         if user_text and answer_text:
             break
     if not answer_text.strip():
-        return {"recommendations": []}
+        return {"recommendations": [], "recommendations_error": "未找到可用的助手回答，无法生成下一步建议。"}
     try:
         response = await _get_recommend_llm().ainvoke(
             [
@@ -156,10 +189,11 @@ async def recommend_node(state: AgentState) -> dict:
             # 传空 callbacks：阻断本调用的 token 流被 langgraph messages 流捕获上报
             config={"callbacks": []},
         )
-        raw = response.content if isinstance(response.content, str) else str(response.content)
-        return {"recommendations": _parse_recommendations(raw)}
+        recommendations = _parse_recommendations(_message_text(response))
+        return {"recommendations": recommendations, "recommendations_error": ""}
     except Exception:
-        return {"recommendations": []}
+        logger.warning("recommendation generation or validation failed", exc_info=True)
+        return {"recommendations": [], "recommendations_error": "下一步建议生成失败。"}
 
 
 def route_after_agent(state: AgentState) -> str:
