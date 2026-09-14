@@ -5,11 +5,11 @@ import json
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.tools import _build_client, _resolve_station
+from app.agent.prompting import VISION_PROMPT
 from app.agent.vision import (
-    _downsample,
     _get_vision_llm,
     _render_all_charts,
-    _VISION_PROMPT,
+    _resolve_baseline,
 )
 
 
@@ -21,9 +21,8 @@ async def main():
             begin_time="2025-10-15 00:00:00",
             end_time="2025-10-31 00:00:00",
         )
-    render_points = _downsample(points, 720)
     charts = _render_all_charts(
-        render_points, None, "ZJ-MS10", "2025-10-15 00:00:00", "2025-10-31 00:00:00"
+        points, _resolve_baseline(station), "ZJ-MS10", "2025-10-15 00:00:00", "2025-10-31 00:00:00"
     )
     content = [
         {
@@ -39,7 +38,7 @@ async def main():
             }
         )
     resp = await _get_vision_llm().ainvoke(
-        [SystemMessage(content=_VISION_PROMPT), HumanMessage(content=content)]
+        [SystemMessage(content=VISION_PROMPT), HumanMessage(content=content)]
     )
     raw = resp.content if isinstance(resp.content, str) else str(resp.content)
     print("len:", len(raw))
@@ -54,4 +53,5 @@ async def main():
         print("invalid:", e)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

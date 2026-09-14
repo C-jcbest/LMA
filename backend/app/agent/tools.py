@@ -14,6 +14,7 @@ from langchain_core.tools import tool
 from app.beidou.client import BeidouClient
 from app.beidou.schemas import Station
 from app.config import get_settings
+from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT
 
 # 返回给 LLM 的 GNSS 数据点上限：超出时优先在请求前调整采样间隔（或按天抽稀），
 # 仍超出再等间隔降采样，保证返回数据量不超过该值
@@ -25,7 +26,7 @@ _UUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
-_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+_TIME_FORMAT = TIME_FORMAT
 
 # 北斗平台枚举值 → 中文可读描述；仅用于工具返回值转换，
 # 入参仍使用平台枚举码（由 LLM 按工具说明完成中文到枚举码的映射）
@@ -298,11 +299,11 @@ async def get_daily_gnss_data(
 
     Args:
         station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID。
-        begin_time: 开始时间，格式必须为 "YYYY-MM-DD HH:mm:ss"。
+        begin_time: 开始时间，业务时区 Asia/Shanghai，格式必须为 "YYYY-MM-DD HH:mm:ss"。
         end_time: 结束时间，格式必须为 "YYYY-MM-DD HH:mm:ss"，可跨天。
         sampling_frequency: 可选采样频率，如 "1h"/"2h"/"3h"/"6h" 或整数分钟，
             不传则返回默认每小时一条。
-        sample_times: 可选固定每日取样时刻，如 ["03:00", "15:00"]（必须为整点，HH:mm），
+        sample_times: 可选固定每日取样时刻（Asia/Shanghai），如 ["03:00", "15:00"]（必须为整点，HH:mm），
             传入后优先于 sampling_frequency。分析长段时间趋势时推荐使用：每小时的数据
             会表现出每日周期性变化，掩盖长周期的持续形变，而对比每日固定时刻的数据能
             更清晰分辨；每日只取一个点时按业务惯例取 15 时数据，即 ["15:00"]。
@@ -370,6 +371,9 @@ async def get_daily_gnss_data(
         if isinstance(station, str):
             return station
 
+        if station.station_type == 1:
+            return "该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。"
+
         points = await client.get_daily_data(
             station_uuid=station.station_uuid,
             begin_time=begin_time,
@@ -405,6 +409,7 @@ async def get_daily_gnss_data(
             "station_name": station.station_name,
             "begin_time": begin_time,
             "end_time": end_time,
+            "timezone": BUSINESS_TIMEZONE,
             "total_points": total_points,
             "returned_points": len(points_to_return),
             "downsampled": downsampled or day_stride > 1,

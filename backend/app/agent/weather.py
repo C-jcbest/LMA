@@ -10,12 +10,14 @@
 
 import asyncio
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+import math
 
 import httpx
 from langchain_core.tools import tool
 
 from app.agent.tools import _build_client, _resolve_station
+from app.business_time import BUSINESS_TIMEZONE, BUSINESS_TZ, business_now
 
 FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_ENDPOINT = "https://archive-api.open-meteo.com/v1/archive"
@@ -146,6 +148,31 @@ def _select_daily(payload: dict, fields: tuple[str, ...]) -> dict:
     return selected
 
 
+def _recent_precipitation(payload: dict, now: datetime) -> dict:
+    """按小时结束时间取最近 24 个完整小时；缺测不能作为零降雨。"""
+    end = now.astimezone(BUSINESS_TZ).replace(minute=0, second=0, microsecond=0)
+    start = end - timedelta(hours=24)
+    expected = {start + timedelta(hours=i) for i in range(1, 25)}
+    samples = {}
+    for stamp, value in zip(_series(payload, "hourly", "time"), _series(payload, "hourly", "precipitation")):
+        try:
+            dt = datetime.fromisoformat(stamp)
+            dt = dt.replace(tzinfo=BUSINESS_TZ) if dt.tzinfo is None else dt.astimezone(BUSINESS_TZ)
+        except (TypeError, ValueError):
+            continue
+        if dt in expected and isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            samples[dt] = value
+    return {
+        "start_time": start.isoformat(),
+        "end_time": end.isoformat(),
+        "available_hours": len(samples),
+        "expected_hours": 24,
+        "complete": len(samples) == 24,
+        "precipitation": round(sum(samples.values()), 3) if len(samples) == 24 else None,
+        "note": "来自天气服务小时数据；缺测时不输出完整24小时总量，不等同于现场雨量计实测。",
+    }
+
+
 @tool
 async def query_weather(
     station_name_or_uuid: str | None = None,
@@ -163,7 +190,7 @@ async def query_weather(
             提供后自动使用该监测点的经纬度查询其所在位置天气。
         latitude: 纬度（-90 到 90）。与 station_name_or_uuid 二选一。
         longitude: 经度（-180 到 180）。与 latitude 同时提供。
-        start_date: 历史天气开始日期，格式 YYYY-MM-DD，与 end_date 同时提供或同时不传
+        start_date: 历史天气开始日期，业务时区 Asia/Shanghai，格式 YYYY-MM-DD，与 end_date 同时提供或同时不传
             （不传默认查最近 7 天，最多到昨天）。
         end_date: 历史天气结束日期，格式 YYYY-MM-DD，最多到昨天。
         forecast_days: 预报天数，1 到 16，默认 7。
@@ -187,7 +214,8 @@ async def query_weather(
     lat, lon, station_name = resolved
 
     # 历史窗口：默认最近 7 天（截止昨天）
-    today = date.today()
+    now = business_now()
+    today = now.date()
     yesterday = today - timedelta(days=1)
     if start_date is None and end_date is None:
         history_end = yesterday
@@ -211,7 +239,7 @@ async def query_weather(
     forecast_params = {
         "latitude": lat,
         "longitude": lon,
-        "timezone": "auto",
+        "timezone": BUSINESS_TIMEZONE,
         "forecast_days": forecast_days,
         "past_days": 1,
         "temperature_unit": "celsius",
@@ -226,7 +254,7 @@ async def query_weather(
         "longitude": lon,
         "start_date": history_start.isoformat(),
         "end_date": history_end.isoformat(),
-        "timezone": "auto",
+        "timezone": BUSINESS_TIMEZONE,
         "temperature_unit": "celsius",
         "wind_speed_unit": "kmh",
         "precipitation_unit": "mm",
@@ -245,7 +273,7 @@ async def query_weather(
 
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
-    recent_24h = _sum(_series(forecast, "hourly", "precipitation")[-24:])
+    recent_24h = _recent_precipitation(forecast, now)
 
     return _dumps(
         {
@@ -257,6 +285,7 @@ async def query_weather(
                 "timezone": forecast.get("timezone"),
             },
             "query": {
+                "timezone": BUSINESS_TIMEZONE,
                 "history_start_date": history_start.isoformat(),
                 "history_end_date": history_end.isoformat(),
                 "forecast_days": forecast_days,
@@ -273,7 +302,8 @@ async def query_weather(
                 "wind_gusts_10m": current.get("wind_gusts_10m"),
             },
             "rain_summary": {
-                "recent_24h_precipitation": recent_24h,
+                "recent_24h_precipitation": recent_24h["precipitation"],
+                "recent_24h_window": recent_24h,
                 "history_total_precipitation": _sum(
                     _series(history, "daily", "precipitation_sum")
                 ),
