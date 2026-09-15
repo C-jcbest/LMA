@@ -4,12 +4,13 @@
 后续迭代改为用户绑定凭据时只需替换 _build_client。
 """
 
-import json
 import math
 import re
 from datetime import datetime
 
 from langchain_core.tools import tool
+from app.agent.tool_protocol import ToolFailure, tool_result
+from app.agent.tool_inputs import StationListInput, GnssInput, _parse_frequency_minutes
 
 from app.beidou.client import BeidouClient
 from app.beidou.schemas import Station
@@ -19,8 +20,6 @@ from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT
 # 返回给 LLM 的 GNSS 数据点上限：超出时优先在请求前调整采样间隔（或按天抽稀），
 # 仍超出再等间隔降采样，保证返回数据量不超过该值
 _MAX_DATA_POINTS = 1500
-# 固定每日取样时刻（sample_times）数量上限
-_MAX_SAMPLE_TIMES = 6
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -51,10 +50,6 @@ def _build_client() -> BeidouClient:
         username=settings.beidou_username,
         password=settings.beidou_password,
     )
-
-
-def _dumps(obj) -> str:
-    return json.dumps(obj, ensure_ascii=False)
 
 
 def _to_float(value: str | float | int | None) -> float | None:
@@ -109,56 +104,6 @@ def _detect_gaps(points) -> list[dict]:
     return gaps[:20]
 
 
-def _validate_time(value: str) -> str:
-    datetime.strptime(value, _TIME_FORMAT)
-    return value
-
-
-def _parse_frequency_minutes(value: str) -> int | None:
-    """把采样频率解析为分钟数：支持 "1h"/"2h"、"every 6 hours"、整数分钟（"90" 或 "90m"）。"""
-    if not value:
-        return None
-    text = value.strip().lower()
-    match = re.match(r"^(?:every\s+)?(\d+(?:\.\d+)?)\s*h(?:our)?s?$", text)
-    if match:
-        return int(float(match.group(1)) * 60)
-    match = re.match(r"^(\d+)\s*(?:m(?:in(?:ute)?s?)?)?$", text)
-    if match:
-        return int(match.group(1))
-    return None
-
-
-def _normalize_sample_times(values: list[str]) -> list[str] | str:
-    """校验并规范化固定每日取样时刻，返回按时刻排序的去重列表；非法时返回错误说明。
-
-    日监测数据源为小时级，非整点时刻匹配不到任何数据，必须校验为整点。
-    """
-    seen: set[str] = set()
-    for raw in values:
-        text = str(raw).strip()
-        if text.lower().startswith("daily "):
-            text = text[6:].strip()
-        parsed = None
-        for fmt in ("%H:%M:%S", "%H:%M"):
-            try:
-                parsed = datetime.strptime(text, fmt)
-                break
-            except ValueError:
-                continue
-        if parsed is None:
-            return f"固定取样时刻“{raw}”格式无效，应为 HH:mm 或 HH:mm:ss（如 15:00）"
-        if parsed.minute != 0 or parsed.second != 0:
-            return (
-                f"固定取样时刻“{text}”不是整点：日监测数据源为小时级，"
-                "非整点时刻匹配不到数据，请使用整点时刻（如 15:00）"
-            )
-        seen.add(parsed.strftime("%H:%M"))
-    if not seen:
-        return "sample_times 不能为空"
-    if len(seen) > _MAX_SAMPLE_TIMES:
-        return f"固定取样时刻最多 {_MAX_SAMPLE_TIMES} 个（当前 {len(seen)} 个），请减少后重试"
-    return sorted(seen)
-
 
 def _thin_days(points: list, stride: int) -> list:
     """固定时刻模式的数据量控制：按天抽稀，并保留时间范围末端。
@@ -200,36 +145,35 @@ def _station_to_dict(station: Station) -> dict:
 
 async def _resolve_station(
     client: BeidouClient, station_name_or_uuid: str
-) -> Station | str:
-    """把站名或 UUID 解析为唯一站点；无法唯一确定时返回提示字符串。"""
+) -> Station:
+    """把站名或 UUID 解析为唯一站点；无法唯一确定时抛出受控业务异常。"""
     if _UUID_PATTERN.match(station_name_or_uuid):
         stations = await client.get_stations()
         for station in stations:
             if station.station_uuid == station_name_or_uuid:
                 return station
-        return f"未找到 UUID 为 {station_name_or_uuid} 的监测点"
+        raise ToolFailure("未找到指定 UUID 对应的监测点，请确认站点。")
 
     stations = await client.get_stations(station_name=station_name_or_uuid)
     if not stations:
-        return f"未找到名称包含“{station_name_or_uuid}”的监测点"
+        raise ToolFailure(f"未找到名称包含“{station_name_or_uuid}”的监测点")
     if len(stations) > 1:
-        return (
-            f"名称包含“{station_name_or_uuid}”的监测点有 {len(stations)} 个，"
-            "请让用户确认具体站点："
-            + _dumps([_station_to_dict(s) for s in stations[:20]])
-        )
+        names = [item.station_name for item in stations[:20]]
+        raise ToolFailure(f"匹配到 {len(stations)} 个监测点，请确认具体站点：" + "、".join(names))
     return stations[0]
 
 
-@tool
-async def list_station_groups() -> str:
+@tool(response_format="content_and_artifact")
+async def list_station_groups() -> tuple[str, dict]:
     """查询北斗监测平台上当前用户有权访问的全部监测点分组。
 
     返回分组列表，包含分组名称、分组内监测点数量和分组描述。
     """
     async with _build_client() as client:
         groups = await client.get_station_groups()
-    return _dumps(
+    if not groups:
+        raise ToolFailure("当前账号没有可访问的监测点分组。")
+    return tool_result(
         {
             "total": len(groups),
             "groups": [
@@ -244,12 +188,12 @@ async def list_station_groups() -> str:
     )
 
 
-@tool
+@tool(response_format="content_and_artifact", args_schema=StationListInput)
 async def list_stations(
     group_name: str | None = None,
     station_name: str | None = None,
     station_status: int | None = None,
-) -> str:
+) -> tuple[str, dict]:
     """按条件查询监测点列表。
 
     Args:
@@ -266,15 +210,9 @@ async def list_stations(
             groups = await client.get_station_groups()
             matched = [g for g in groups if group_name in g.group_name]
             if not matched:
-                return f"未找到名称包含“{group_name}”的监测点分组"
+                raise ToolFailure(f"未找到名称包含“{group_name}”的监测点分组")
             if len(matched) > 1:
-                return (
-                    f"名称包含“{group_name}”的分组有 {len(matched)} 个，"
-                    "请让用户确认具体分组："
-                    + _dumps(
-                        [{"group_name": g.group_name} for g in matched[:20]]
-                    )
-                )
+                raise ToolFailure(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(g.group_name for g in matched[:20]))
             group_uuid = matched[0].group_uuid
 
         stations = await client.get_stations(
@@ -282,7 +220,9 @@ async def list_stations(
             station_name=station_name,
             station_status=station_status,
         )
-    return _dumps(
+    if not stations:
+        raise ToolFailure("未找到符合筛选条件的监测点。")
+    return tool_result(
         {
             "total": len(stations),
             "stations": [_station_to_dict(s) for s in stations],
@@ -290,14 +230,14 @@ async def list_stations(
     )
 
 
-@tool
+@tool(response_format="content_and_artifact", args_schema=GnssInput)
 async def get_daily_gnss_data(
     station_name_or_uuid: str,
     begin_time: str,
     end_time: str,
     sampling_frequency: str | None = None,
     sample_times: list[str] | None = None,
-) -> str:
+) -> tuple[str, dict]:
     """查询指定监测点在时间范围内的日监测 GNSS 数据（默认每小时一条）。
 
     Args:
@@ -314,22 +254,7 @@ async def get_daily_gnss_data(
     仍超出时等间隔降采样（时间范围仍完整覆盖），调整方式记录在 sampling 字段；
     并附 summary 统计摘要（各方向首末值/变化量/极值及缺失时段）。
     """
-    try:
-        _validate_time(begin_time)
-        _validate_time(end_time)
-    except ValueError:
-        return (
-            f"时间格式错误：begin_time/end_time 必须为 "
-            f"{_TIME_FORMAT} 格式，例如 2026-08-01 00:00:00"
-        )
-
-    # sample_times 校验与规范化（非法时返回错误说明，促使调用方修正参数）
-    normalized_sample_times: list[str] | None = None
-    if sample_times:
-        normalized = _normalize_sample_times(sample_times)
-        if isinstance(normalized, str):
-            return normalized
-        normalized_sample_times = normalized
+    normalized_sample_times = sample_times
 
     # 请求前规划数据量：估算点数超上限时先调整采样间隔，避免拉回超量数据
     time_start = datetime.strptime(begin_time, _TIME_FORMAT)
@@ -351,11 +276,6 @@ async def get_daily_gnss_data(
             )
     else:
         freq_minutes = _parse_frequency_minutes(sampling_frequency) if sampling_frequency else None
-        if sampling_frequency and not freq_minutes:
-            return (
-                f"采样频率“{sampling_frequency}”无法识别；"
-                "请使用 1h/2h/3h/6h、every 6 hours 或整数分钟（如 90m）"
-            )
         base_minutes = freq_minutes or 60
         expected = math.ceil(total_minutes / base_minutes)
         if expected > _MAX_DATA_POINTS:
@@ -369,11 +289,8 @@ async def get_daily_gnss_data(
 
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
-        if isinstance(station, str):
-            return station
-
         if station.station_type == 1:
-            return "该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。"
+            raise ToolFailure("该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。")
 
         points = await client.get_daily_data(
             station_uuid=station.station_uuid,
@@ -383,6 +300,8 @@ async def get_daily_gnss_data(
             sample_times=normalized_sample_times,
         )
 
+    if not points:
+        raise ToolFailure("查询时间范围内没有 GNSS 数据，不能据此判断形变。")
     total_points = len(points)
 
     # 固定时刻模式：按天抽稀（保留全部指定时刻，仅减少参与对比的天数）
@@ -405,7 +324,7 @@ async def get_daily_gnss_data(
         if normalized_sample_times
         else ("frequency" if effective_frequency else "hourly")
     )
-    return _dumps(
+    return tool_result(
         {
             "station_name": station.station_name,
             "begin_time": begin_time,

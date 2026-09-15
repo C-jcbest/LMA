@@ -40,7 +40,6 @@ class ContextBudget:
     trigger_tokens: int
     fixed_input_tokens: int
     history_tokens: int
-    available_history_tokens: int
     output_reserve_tokens: int
     safety_margin_tokens: int
 
@@ -76,33 +75,26 @@ class ContextBudget:
             "model": get_settings().llm_model,
         }
 
+
 def build_context_budget(
     messages: list[BaseMessage],
     system_prompt: str = "",
     bound_tools: Iterable = (),
 ) -> ContextBudget:
-    """发送前进行估算：计算完整模型输入预算，判断是否到达触发线或可能超限。"""
+    """估算模型输入分项供用量展示，不参与官方摘要的触发或保留决策。"""
     settings = get_settings()
-    trigger = get_trigger_threshold()
+    trigger = settings.context_token_threshold
     fixed_messages = [SystemMessage(content=system_prompt)] if system_prompt else []
     fixed = _estimated_message_tokens(fixed_messages, bound_tools)
     output_reserve = max(0, settings.context_output_reserve_tokens)
     safety_margin = max(0, settings.context_safety_margin_tokens)
     history_messages = list(messages)
     history = _estimated_message_tokens(history_messages)
-    available = max(0, trigger - fixed - output_reserve - safety_margin)
     return ContextBudget(
         context_limit_tokens=max(0, settings.context_model_context),
         trigger_tokens=trigger,
         fixed_input_tokens=fixed,
         history_tokens=history,
-        available_history_tokens=available,
         output_reserve_tokens=output_reserve,
         safety_margin_tokens=safety_margin,
     )
-
-
-def get_trigger_threshold() -> int:
-    """触发线：配置了模型上下文则按其百分比，同时配置时取较小值。"""
-    s = get_settings()
-    return min(s.context_token_threshold, int(s.context_model_context * s.context_compress_ratio))

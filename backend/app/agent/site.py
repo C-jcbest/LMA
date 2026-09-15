@@ -5,12 +5,14 @@
 """
 
 import asyncio
-import json
 import math
+import logging
 from typing import Any
 
 import httpx
 from langchain_core.tools import tool
+from app.agent.tool_inputs import StationInput
+from app.agent.tool_protocol import ToolFailure, tool_result
 
 from app.agent.retry import is_transient_error
 from app.agent.tools import _build_client, _resolve_station, _station_to_dict
@@ -94,9 +96,10 @@ async def _fetch_terrain(latitude: float, longitude: float) -> tuple[dict[str, A
         metrics = _terrain_metrics(payload.get("elevation", []), index)
         return metrics, None if metrics else "地形服务返回的数据不完整"
     except (httpx.HTTPError, ValueError, TypeError) as exc:
+        logging.getLogger(__name__).warning("site evidence request failed", exc_info=True)
         if is_transient_error(exc):
             raise
-        return None, f"地形服务暂不可用（{type(exc).__name__}）"
+        return None, "地形服务暂不可用，缺少地形证据"
 
 
 async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, Any] | None, str | None]:
@@ -119,12 +122,13 @@ async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, A
             "source_reference": refs.get(source_id),
         }, None
     except (httpx.HTTPError, ValueError, TypeError) as exc:
+        logging.getLogger(__name__).warning("site evidence request failed", exc_info=True)
         if is_transient_error(exc):
             raise
-        return None, f"地质服务暂不可用（{type(exc).__name__}）"
+        return None, "地质服务暂不可用，缺少地质证据"
 
 
-@tool(response_format="content_and_artifact")
+@tool(response_format="content_and_artifact", args_schema=StationInput)
 async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict[str, Any]]:
     """调查一个监测点的空间环境，并生成可交互地图所需的结构化数据。
 
@@ -136,14 +140,12 @@ async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict
     """
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
-        if isinstance(station, str):
-            return json.dumps({"ok": False, "message": station}, ensure_ascii=False), {"site_environment": None}
         center = _station_to_dict(station)
         latitude = center.get("latitude")
         longitude = center.get("longitude")
         if latitude is None or longitude is None:
             message = "该监测点未登记有效的 WGS84 经纬度，无法生成场地环境地图"
-            return json.dumps({"ok": False, "message": message, "station": center}, ensure_ascii=False), {"site_environment": None}
+            raise ToolFailure(message)
         group_stations = await client.get_stations(group_uuid=station.group_uuid)
 
     terrain_task = _fetch_terrain(latitude, longitude)
@@ -203,4 +205,7 @@ async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict
         "limitations": artifact["site_environment"]["limitations"],
         "sources": sources,
     }
-    return json.dumps(content, ensure_ascii=False), artifact
+    if content["limitations"]:
+        raise ToolFailure("场地环境资料不完整：" + "；".join(content["limitations"]),
+            facts=content, artifact={**artifact, "data": content})
+    return tool_result(content, artifact=artifact)

@@ -18,6 +18,8 @@ from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.errors import GraphBubbleUp
 
+from app.beidou.client import BeidouApiError
+from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
 from app.agent.context import build_context_budget
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import build_system_prompt, build_time_context
@@ -110,13 +112,28 @@ class LmaMiddleware(AgentMiddleware):
 
     async def awrap_tool_call(self, request, handler):
         try:
-            return await handler(request)
+            result = await handler(request)
+            if isinstance(result, ToolMessage) and result.status == "error" and not result.artifact:
+                # 官方 schema 错误不含展示 artifact；只投影受控提示，不传输入或堆栈。
+                message = VALIDATION_MESSAGE if result.content == VALIDATION_MESSAGE else "工具调用未完成，未取得可用数据。"
+                return result.model_copy(update={"content": message, "artifact": {"data": {"message": message}, "error": {"category": "parameter" if result.content == VALIDATION_MESSAGE else "internal"}}})
+            return result
+        except ToolFailure as exc:
+            return ToolMessage(content=exc.content, artifact=exc.artifact,
+                tool_call_id=request.tool_call["id"], name=request.tool_call["name"], status="error")
         except GraphBubbleUp:
             raise
-        except Exception:
+        except BeidouApiError:
+            logger.warning("monitoring platform rejected tool request", exc_info=True)
+            message = "监测平台拒绝本次查询，未取得可用数据，请检查账号访问权限或查询条件。"
+            return ToolMessage(content=message, artifact={"data": {"message": message}, "error": {"category": "business"}},
+                tool_call_id=request.tool_call["id"], name=request.tool_call["name"], status="error")
+        except Exception as exc:
             logger.warning("tool execution failed without retry", exc_info=True)
+            message = ("数据服务暂不可用，本次查询未取得可用数据，请稍后重试。"
+                       if is_transient_error(exc) else "工具执行失败，未取得可用数据，请说明这一限制。")
             return ToolMessage(
-                content="工具执行失败，未取得可用数据，请说明这一限制。",
+                content=message, artifact={"data": {"message": message}, "error": {"category": "infrastructure" if is_transient_error(exc) else "internal"}},
                 tool_call_id=request.tool_call["id"], name=request.tool_call["name"], status="error",
             )
 
@@ -235,27 +252,23 @@ async def generate_recommendations(state: AgentState) -> dict:
     )
 
 
-def _tool_failure_message(exc: Exception) -> str:
-    """官方工具重试耗尽后的受控内容，不暴露异常、URL 或内部字段。"""
-    logger.warning("tool retries exhausted", exc_info=(type(exc), exc, exc.__traceback__))
-    return "外部数据服务连续重试后仍不可用，请基于已有证据回答并说明限制。"
-
-
 def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=0.5, summary_model=None):
     """生产与回归测试共用同一个官方 Agent 工厂。"""
     bound_tools = tools if agent_tools is None else agent_tools
+    for agent_tool in bound_tools:
+        agent_tool.handle_validation_error = VALIDATION_MESSAGE
     return create_agent(
         model, tools=bound_tools,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
             LmaMiddleware(bound_tools),
             create_summarization_middleware(
-                _get_summary_model() if summary_model is None else summary_model, bound_tools,
+                _get_summary_model() if summary_model is None else summary_model,
             ),
             ModelRetryMiddleware(max_retries=2, retry_on=is_transient_error,
                                  on_failure="error", initial_delay=retry_delay),
             ToolRetryMiddleware(max_retries=2, retry_on=is_transient_error,
-                                on_failure=_tool_failure_message, initial_delay=retry_delay),
+                                on_failure="error", initial_delay=retry_delay),
         ],
     )
 

@@ -41,14 +41,12 @@ class Settings(BaseSettings):
     vision_recheck_pad_hours: int = 2
 
     # 上下文管理（token 驱动，无轮数窗口）
-    # 触发线 = min(token_threshold, model_context * compress_ratio)，超线才压缩
+    # 官方 middleware 按消息 token 阈值触发，按 token budget 保留近期上下文
     context_token_threshold: int = Field(default=800_000, gt=0)  # 绝对触发线，适配百万级上下文模型
     context_model_context: int = Field(
         gt=0
     )  # 必须按当前模型配置；DeepSeek V4 Flash 官方窗口为 1_048_576
-    context_compress_ratio: float = Field(default=0.8, gt=0, lt=1)  # 模型上下文的触发百分比
-    context_keep_messages: int = Field(default=20, gt=0)  # 官方消息保留起点
-    context_min_turns: int = Field(default=2, gt=0)  # 数据保全边界：绝不静默删除的最近对话段数
+    context_keep_tokens: int = Field(default=400_000, gt=0)  # 官方近期消息 token budget
     context_summary_max_tokens: int = Field(default=2000, gt=0)  # 摘要长度上限
     context_output_reserve_tokens: int = 8192  # 为本轮模型输出预留
     context_safety_margin_tokens: int = 2048  # tokenizer 误差与协议开销余量

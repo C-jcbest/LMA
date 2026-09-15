@@ -43,6 +43,8 @@ class StubHandler(BaseHTTPRequestHandler):
             return self.send_json({"ResponseCode": "200", "StationGroupList": [{
                 "StationGroupUUID": "INVALID_GROUP", "StationGroupName": "测试监测组", "StationCount": 2,
             }]})
+        if self.path.endswith("getStationListInfo.php"):
+            return self.send_json({"ResponseCode": "200", "StationList": []})
         if self.path != "/v1/chat/completions":
             return self.send_json({"error": "unknown endpoint"}, 404)
         self.server.model_calls += 1
@@ -60,11 +62,14 @@ class StubHandler(BaseHTTPRequestHandler):
                     "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 1000, "completion_tokens": 20, "total_tokens": 1020}})
         last_user = max(i for i, m in enumerate(messages) if m["role"] == "user")
-        needs_tool = ("分组" in messages[last_user]["content"]
+        missing_station = "不存在的监测点" in messages[last_user]["content"]
+        needs_tool = (("分组" in messages[last_user]["content"] or missing_station)
                       and not any(m["role"] == "tool" for m in messages[last_user + 1:]))
         deltas = ([{"role": "assistant", "content": "", "tool_calls": [{
             "index": 0, "id": "test-call", "type": "function",
-            "function": {"name": "list_station_groups", "arguments": "{}"},
+            "function": {"name": "get_daily_gnss_data" if missing_station else "list_station_groups",
+                         "arguments": json.dumps({"station_name_or_uuid": "不存在的监测点",
+                            "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"}) if missing_station else "{}"},
         }]}] if needs_tool else [
             {"role": "assistant", "reasoning_content": "检查工具证据"},
             {"content": "测试监测组包含2个监测点。"},
@@ -124,7 +129,7 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "LLM_BASE_URL": stub_url + "/v1", "LLM_API_KEY": "INVALID_TEST_KEY",
             "LLM_MODEL": "lma-test-model", "LLM_THINKING": "true",
             "RECOMMEND_ENABLED": "false", "CONTEXT_MODEL_CONTEXT": "1048576",
-            "CONTEXT_TOKEN_THRESHOLD": "50000", "CONTEXT_KEEP_MESSAGES": "4",
+            "CONTEXT_TOKEN_THRESHOLD": "50000", "CONTEXT_KEEP_TOKENS": "1000",
             "BEIDOU_API_BASE_URL": stub_url, "BEIDOU_USERNAME": "INVALID_TEST_USER",
             "BEIDOU_PASSWORD": "INVALID_TEST_PASSWORD", "LANGSMITH_TRACING": "false",
         }}
@@ -201,7 +206,7 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
         history = []
         for index in range(3):
             history.extend([{"role": "user", "content": f"历史查询{index} 2026-09-15"},
-                            {"role": "assistant", "content": "已查询测试监测组；" + "x" * 60000}])
+                            {"role": "assistant", "content": "已查询测试监测组；" + "x" * 100000}])
         history.append({"role": "user", "content": "继续核实"})
         compressed_events = [event async for event in client.runs.stream(thread_id, "lma-agent",
             input={"messages": history}, stream_mode=["messages", "values"])]
@@ -221,4 +226,11 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     if isinstance(message, dict) and message.get("type") == "ai":
                         self.assertNotIn("内部摘要", message.get("content", ""))
         self.assertEqual(compressed["context_usage"]["input_tokens"], 100)
+        rejected = await client.runs.wait(thread_id, "lma-agent", input={
+            "messages": [{"role": "user", "content": "查询不存在的监测点"}]})
+        failed_tool = next(m for m in reversed(rejected["messages"]) if m["type"] == "tool")
+        self.assertEqual(failed_tool["status"], "error")
+        self.assertIn("未找到", failed_tool["artifact"]["data"]["message"])
+        self.assertEqual(failed_tool["artifact"]["error"]["category"], "business")
+        self.assertNotIn("INVALID_TEST_SESSION", str(failed_tool))
         await client.threads.delete(thread_id)

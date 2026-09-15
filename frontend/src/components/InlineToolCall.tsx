@@ -38,27 +38,8 @@ export const formatGnssValue = (value: unknown): string => {
 export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
   const [expanded, setExpanded] = useState(false);
 
-  // 稳健解析工具详情数据
-  const parseData = (val: any): any => {
-    if (!val) return null;
-    let res = val;
-    if (typeof val === 'string') {
-      try {
-        res = JSON.parse(val);
-      } catch {
-        return { raw: val };
-      }
-    }
-    if (res && typeof res === 'object') {
-      if (res.detail) return parseData(res.detail);
-      if (res.result && typeof res.result === 'object') return res.result;
-    }
-    return res;
-  };
-
-  const parsedDetail = parseData(toolCall.detail);
-  const data: any =
-    parsedDetail && typeof parsedDetail === 'object' ? { ...parsedDetail } : parsedDetail;
+  // 仅消费服务端明确用于展示的 artifact.data，不解析模型 content 或历史包装。
+  const data: any = toolCall.data ? { ...toolCall.data } : null;
   // chart_points 随当前工具 artifact 转发（全量数据，不进入 LLM 上下文），
   // 合并到展示数据中供图表组件使用。
   if (data && toolCall.chartPoints?.length && !data.chart_points) {
@@ -96,7 +77,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
 
   // 生成简约的中文动作文案（类似“运行了命令”）
   const getActionText = () => {
-    const suffix = toolCall.status === 'cancelled' ? '（已停止）' : '';
+    const suffix = toolCall.status === 'cancelled' ? '（已停止）' : toolCall.status === 'error' ? '（未完成）' : '';
     if (toolCall.name === 'list_station_groups') {
       return `查询监测点分组${suffix}`;
     }
@@ -115,7 +96,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
     if (toolCall.name === 'inspect_site_environment') {
       return `调查站点地形与地质环境${suffix}`;
     }
-    return `${toolCall.display_name || '执行技术步骤'}${suffix}`;
+    return `执行工具查询${suffix}`;
   };
 
   // 由 chart_points 生成单方向迷你 SVG 折线（归一化到 0~100 视口）
@@ -162,6 +143,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
         </div>
       );
     }
+    if (toolCall.status === 'error' && !data?.chart_points) return null;
     // 0b. 视觉复核卡片：优先展示后端渲染的 PNG 图表（artifact），无图时兑底 SVG
     if (data?.chart_points && Array.isArray(data.chart_points)) {
       const obs = data.observations || {};
@@ -183,12 +165,6 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
                 : ` 展示 ${data.chart_points.length} 点`}
             </span>
           </div>
-
-          {!data.ok && (
-            <div className="px-2.5 py-1.5 bg-amber-50 border border-amber-200/70 rounded-md text-[11px] text-amber-700">
-              {data.message || '视觉模型不可用，仅展示图表数据'}
-            </div>
-          )}
 
           {/* 后端渲染的分析图 PNG（原始时序 / 累计位移 / 合成位移） */}
           {artifactImages.length > 0 && (
@@ -598,33 +574,10 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
       );
     }
 
-    // 4. 未知结果只作为二次折叠的技术详情，不进入默认业务展示。
-    if (data && typeof data === 'object') {
-      if (Object.keys(data).length > 0) {
-        return (
-          <details className="rounded-lg border border-neutral-200/90 bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
-            <summary className="cursor-pointer select-none font-medium">技术详情</summary>
-            <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-neutral-700">
-              {JSON.stringify(data, null, 2)}
-            </pre>
-          </details>
-        );
-      }
-    }
-
-    // 已完成但无可解析的数据内容：中性文案，不显示“执行成功”等状态词
-    return (
-      <div className="p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
-        {data ? (
-          <details>
-            <summary className="cursor-pointer select-none font-medium">技术详情</summary>
-            <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] text-neutral-700">{String(data)}</pre>
-          </details>
-        ) : (
-          '该步骤已完成，无详细数据输出'
-        )}
-      </div>
-    );
+    // 未定义业务呈现的工具，不提供原始 JSON 或内部字段查看入口。
+    return <div className="rounded-lg border border-neutral-200/80 bg-neutral-50 p-3 text-xs text-neutral-500">
+      该步骤没有可展示的业务数据
+    </div>;
   };
 
   return (
@@ -642,6 +595,12 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
           }`}
         />
       </div>
+
+      {toolCall.status === 'error' && (
+        <div role="alert" className="mt-1 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          {typeof data?.message === 'string' ? data.message : '本次工具调用未完成，未取得可展示的数据。'}
+        </div>
+      )}
 
       {/* 展开后的全量数据表格区域：外层统一限制高度（任何工具结果都不会撑破界面），
           内部各表格自带 max-h 滚动与吸顶表头 */}

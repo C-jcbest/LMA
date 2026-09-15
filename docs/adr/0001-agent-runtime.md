@@ -15,27 +15,34 @@
 | 模型重试 | ModelRetryMiddleware；主模型底层 max_retries=0，避免重复计数 |
 | 工具重试 | ToolRetryMiddleware；仅重试失败调用，删除节点级批量 retry / exhausted 补齐 |
 | 瞬时异常分类 | 已有 httpx 分类及 OpenAI APIConnectionError / APIStatusError；参数、权限失败不重试 |
-| 受控失败内容 | 官方工具 retry on_failure + LMA wrap_tool_call；ToolMessage status=error，原始异常仅记录日志，GraphBubbleUp 不吞掉 |
+| 受控失败内容 | 官方工具 retry on_failure=error + LMA wrap_tool_call；ToolMessage status=error，原始异常仅记录日志，GraphBubbleUp 不吞掉 |
 | 回合时间、清空旧推荐 | LMA before_agent，一次 Run 共享服务端时间锚点 |
 | 动态 Prompt、消息时间与思考耗时 | LMA wrap_model_call，复用唯一正式 Prompt，保留标准 blocks 和 usage_metadata |
 | 实际 context_usage | LMA after_model，供应商未返回 usage 时保留上一已确认值 |
 | 完整最终回答后的推荐 | LMA after_agent；独立思考配置与失败字段保留，辅助 token 不混入主消息流 |
 | Thread/Checkpoint | Agent Server 注入，未新增数据库、迁移兜底或第二套历史 |
 
-TODO 5 已采用官方 SummarizationMiddleware，删除旧算法和 context_summary。LMA 子类仅向前限制官方安全切点，保留近期完整用户回合；不实现摘要/淘汰/替换状态机。必要 summary prompt 在 prompts/summary.md 中维护证据边界，前端按官方 lc_source 标记过滤摘要气泡并投影摘要卡。内部调用使用官方 nostream 标记、非流式 ChatOpenAI 和官方 with_retry，重试仅接受明确瞬时异常；空摘要抛错，不删除历史。
+TODO 5 直接实例化官方 SummarizationMiddleware，无自定义子类或私有方法覆写。trigger=(tokens, CONTEXT_TOKEN_THRESHOLD)、keep=(tokens, CONTEXT_KEEP_TOKENS)，分别默认800000和400000。token计数、触发、安全切点、工具配对、摘要重试及消息替换全部采用锁定版本官方逻辑。
 
-CONTEXT_KEEP_MESSAGES 替代旧 CONTEXT_TARGET_RATIO；删除 COMPRESS_MODEL / COMPRESS_BASE_URL / COMPRESS_API_KEY 的可选复用分支，摘要直接使用当前模型配置并保留独立 COMPRESS_THINKING。输出上限通过模型参数控制，官方摘要输入不再采用4000token裁剪，防止遗漏被压缩的监测事实。Factory 根据当前 Prompt、工具 schema、输出/安全预留计算历史触发预算。
+删除旧完整回合/消息数保留、压缩比例、自定义空摘要检查与内部重试替换。LMA预算分项只用于context_usage展示，不参与压缩决策。保留官方暴露的summary_prompt及完整摘要输入配置、输出上限、独立COMPRESS_THINKING和官方nostream标签；不保留旧字段或checkpoint兼容代码。
 
 推荐退出主 Run 仍属 TODO 23，当前 after_agent 保留功能；调用预算由 TODO 21 单独确定。
 
+## 工具协议与展示边界
+
+TODO 6 使用官方 Pydantic args_schema、content_and_artifact 和 ToolMessage.status。工具抛出 ToolException 的受控业务子类，外层 wrap_tool_call 保留安全的失败原因和部分证据；参数、业务、瞬时基础设施和内部程序错误分别处理，原始异常只记录日志。官方工具 retry 只重试瞬时异常，耗尽后抛给外层安全边界。
+
+前端只消费 artifact.data 及明确的图表/地图字段，不再解析 content 或 detail/raw/result 历史包装，不提供通用技术详情。错误原因常驻，已获得的图表/地图仍可查看。artifact 只是与模型上下文分离，会随 Thread 发送客户端，不能承载秘密或原始诊断。公开证据来源链接不属于内部请求 URL。
+
 ## 验证证据
 
+- `test_tool_protocol.py`：生产参数校验、业务错误、瞬时重试耗尽、原始异常隔离、部分场地证据及视觉未配置时图表保留。
 - `test_agent_runtime.py`：生产工厂的模型/工具循环、并行工具部分失败、单工具重试耗尽、非瞬时错误、interrupt 传播、多轮持久化、时间、usage/思考耗时与推荐开关。
 - `test_agent_server_runtime.py`：真正启动隔离 langgraph dev，使用生产 graph 工厂与 HTTP OpenAI-compatible / 北斗 Stub；SDK stream 取得模型消息和工具 updates，模型和工具 503 重试通过，新客户端恢复 Thread 并完成第二轮。测试在临时目录运行，不读取项目 .env 或改写已有服务。
 - 显式执行：PowerShell 在 backend 下设置 `$env:LMA_RUN_SERVER_E2E='1'`，运行 `.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_agent_server_runtime.py -v`。默认常规测试不启动服务。
-- 当前后端35项常规测试、1项隔离Server E2E、前端16项会话测试及生产构建通过。浏览器全面 E2E、真实模型和线上北斗服务不是本轮完成证据。
+- 当前后端43项常规测试、1项隔离Server E2E、前端19项会话测试及生产构建通过。浏览器全面 E2E、真实模型和线上北斗服务不是本轮完成证据。
 
-旧候选 factory 与旧压缩测试已删除。生产回归统一使用 create_lma_agent。test_context_management.py 验证官方摘要和 LMA 保留边界；Server E2E 还实际触发摘要与摘要503重试，确认内部 token 不混入主消息流，压缩后的 Thread 与主模型 usage 正常恢复。
+旧候选 factory 与旧压缩测试已删除。生产回归统一使用 create_lma_agent。test_context_management.py 验证官方token触发和保留；Server E2E 还实际触发摘要与摘要503重试，确认内部 token 不混入主消息流，压缩后的 Thread 与主模型 usage 正常恢复。
 
 ## 部署与历史边界（2026-09-15 更新）
 
@@ -43,6 +50,7 @@ CONTEXT_KEEP_MESSAGES 替代旧 CONTEXT_TARGET_RATIO；删除 COMPRESS_MODEL / C
 
 ## 官方参考
 
+- [Tools](https://docs.langchain.com/oss/python/langchain/tools)
 - [Agents](https://docs.langchain.com/oss/python/langchain/agents)
 - [Custom middleware 与 hook 顺序](https://docs.langchain.com/oss/python/langchain/middleware/custom)
 - [Prebuilt middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in)

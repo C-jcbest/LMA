@@ -22,6 +22,7 @@ import asyncio
 import base64
 import json
 import math
+import logging
 import re
 import statistics
 from datetime import datetime, timedelta
@@ -30,6 +31,8 @@ from io import BytesIO
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
+from app.agent.tool_inputs import TimeWindowInput
+from app.agent.tool_protocol import ToolFailure, tool_result
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, ValidationError
 
@@ -41,7 +44,6 @@ from app.agent.tools import (
     _build_client,
     _resolve_station,
     _to_float,
-    _validate_time,
 )
 from app.beidou.client import BeidouClient
 from app.config import get_settings
@@ -108,14 +110,6 @@ def _get_vision_llm():
         max_completion_tokens=8000,
         timeout=120,
     )
-
-
-def _dumps(obj) -> str:
-    return json.dumps(obj, ensure_ascii=False)
-
-
-def _error(message: str) -> str:
-    return _dumps({"ok": False, "message": message})
 
 
 def _downsample(points: list, limit: int) -> list:
@@ -326,6 +320,7 @@ def _render_all_charts(
                 {"name": name, "title": titles[name], "png_base64": base64.b64encode(png).decode("ascii")}
             )
         except Exception:
+            logging.getLogger(__name__).warning("chart rendering failed", exc_info=True)
             # 单张渲染失败不影响其他图
             continue
     return charts
@@ -562,9 +557,10 @@ async def _recheck_candidate_window(
             end_time=query_end.strftime(_TIME_FORMAT),
         )
     except Exception as e:
+        logging.getLogger(__name__).warning("numerical recheck failed", exc_info=True)
         if is_transient_error(e):
             raise
-        return {"ok": False, "error": f"回查失败：{type(e).__name__}"}
+        return {"ok": False, "error": "数值回查失败，候选尚未获得数值复核支持"}
     return {
         "ok": True,
         "begin_time": query_start.strftime(_TIME_FORMAT),
@@ -639,7 +635,7 @@ def _build_retry_content(
     ]
 
 
-@tool(response_format="content_and_artifact")
+@tool(response_format="content_and_artifact", args_schema=TimeWindowInput)
 async def analyze_gnss_chart(
     station_name_or_uuid: str,
     begin_time: str,
@@ -658,26 +654,13 @@ async def analyze_gnss_chart(
     渲染好的图表 PNG（images，全量数据绘制）与全量 chart_points 数据序列
     通过 artifact 随流转发给前端展示，不进入模型上下文。
     """
-    try:
-        _validate_time(begin_time)
-        _validate_time(end_time)
-    except ValueError:
-        return _error(f"时间格式错误：begin_time/end_time 必须为 {_TIME_FORMAT} 格式"), {"images": []}
-
-    try:
-        time_start = datetime.strptime(begin_time, _TIME_FORMAT)
-        time_end = datetime.strptime(end_time, _TIME_FORMAT)
-    except ValueError:
-        return _error("时间解析失败"), {"images": []}
-    if time_start >= time_end:
-        return _error("begin_time 必须早于 end_time"), {"images": []}
+    time_start = datetime.strptime(begin_time, _TIME_FORMAT)
+    time_end = datetime.strptime(end_time, _TIME_FORMAT)
 
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
-        if isinstance(station, str):
-            return _error(station), {"images": []}
         if station.station_type == 1:
-            return _error("该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。"), {"images": []}
+            raise ToolFailure("该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。", artifact={"images": []})
 
         points = await client.get_daily_data(
             station_uuid=station.station_uuid,
@@ -686,7 +669,7 @@ async def analyze_gnss_chart(
         )
 
         if len(points) < _MIN_POINTS:
-            return _error(f"该时段数据点过少（{len(points)} 条），不足以绘图复核"), {"images": []}
+            raise ToolFailure(f"该时段数据点过少（{len(points)} 条），不足以绘图复核", artifact={"images": []})
 
         # 前端展示用全量数据序列：放在 artifact 中随流转发给前端（不进入
         # LLM 上下文，避免全量数据挤占上下文；数值证据由 recheck 按区间精查提供）
@@ -723,22 +706,12 @@ async def analyze_gnss_chart(
             _render_all_charts, points, baseline, station.station_name, begin_time, end_time
         )
         # chart_points 始终随 artifact 返回：渲染失败时前端仍可用全量序列兑底绘制
-        artifact = {"images": charts, "chart_points": chart_points}
+        artifact = {"images": charts, "chart_points": chart_points, "data": base_result}
         if not charts:
-            return _error("图表渲染失败（matplotlib 在当前环境不可用），无法进行视觉复核"), artifact
+            raise ToolFailure("图表渲染失败，无法进行视觉复核", artifact=artifact)
 
         if not (settings.vision_base_url and settings.vision_api_key and settings.vision_model):
-            return (
-                _dumps(
-                    {
-                        "ok": False,
-                        "message": "视觉模型未配置（.env 中 VISION_BASE_URL/VISION_API_KEY/VISION_MODEL），"
-                        "无法进行图表形态复核；已返回图表供前端展示。",
-                        **base_result,
-                    }
-                ),
-                artifact,
-            )
+            raise ToolFailure("视觉模型未配置，无法进行图表形态复核；已返回图表供人工查看。", category="configuration", artifact={**artifact, "data": base_result})
 
         # 单次视觉调用（单一提示词）：送累计位移与合成位移两张图做全窗口观察。
         # 需要精确判读某子窗口时，由主智能体以更窄时间范围重复调用本工具实现"放大"。
@@ -788,12 +761,10 @@ async def analyze_gnss_chart(
                     config={"callbacks": []},
                 )
             except Exception as e:
+                logging.getLogger(__name__).warning("vision model request failed", exc_info=True)
                 if is_transient_error(e):
                     raise
-                return (
-                    _error(f"视觉模型调用失败：{type(e).__name__}，请检查 VISION_* 配置后重试"),
-                    artifact,
-                )
+                raise ToolFailure("视觉模型调用失败，未获得形态复核结果；图表可供人工查看。", artifact=artifact)
 
             validated = _validate_observations(
                 response.content if isinstance(response.content, str) else str(response.content),
@@ -840,21 +811,15 @@ async def analyze_gnss_chart(
                 "核验范围比视觉定位区间略宽时，说明为“核验时向区间两侧适当放宽了时间窗”；"
                 "极值出现时刻与候选区间不一致时，应指出实际偏离发生的时间。"
             )
-            return (
-                _dumps(
-                    {
+            if any(not item.get("ok") for item in rechecks):
+                raise ToolFailure("部分视觉候选未能完成数值复核，不能将这些候选认定为已确认变化。",
+                    facts={"ok": False, **base_result, "observations": observations_out},
+                    artifact={**artifact, "data": {**base_result, "observations": validated.model_dump()}})
+            return tool_result({
                         "ok": True,
                         **base_result,
                         "observations": observations_out,
-                    }
-                ),
-                artifact,
-            )
+                    }, artifact=artifact, display={"ok": True, **base_result, "observations": validated.model_dump()})
 
-        return (
-            _error(
-                f"视觉复核失败：{last_error or '视觉模型未能从图表中提取有效观察'}，"
-                "图表已随结果返回供人工查看。"
-            ),
-            artifact,
-        )
+        raise ToolFailure(f"视觉复核失败：{last_error or '视觉模型未能从图表中提取有效观察'}，"
+                "图表已随结果返回供人工查看。", artifact=artifact)

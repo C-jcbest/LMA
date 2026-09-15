@@ -17,10 +17,10 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.settings = SimpleNamespace(
             recommend_enabled=False, context_token_threshold=800_000,
-            context_model_context=1_048_576, context_compress_ratio=0.8,
-            context_keep_messages=20, context_output_reserve_tokens=100,
+            context_model_context=1_048_576,
+            context_keep_tokens=400000, context_output_reserve_tokens=100,
             context_safety_margin_tokens=20, context_token_estimate_factor=1.0,
-            context_chars_per_token=1.6667, context_min_turns=2, context_summary_max_tokens=2000, llm_model="test",
+            context_chars_per_token=1.6667,  context_summary_max_tokens=2000, llm_model="test",
         )
         for module in (graph, context, summarization):
             patcher = patch.object(module, "get_settings", return_value=self.settings)

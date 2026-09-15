@@ -9,6 +9,9 @@ import httpx
 from openai import APIConnectionError, APIStatusError
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
+from app.agent.tool_protocol import ToolFailure
+from app.agent.tool_inputs import GnssInput
+from pydantic import ValidationError
 from app.agent import context, graph, reasoning, retry, site, summarization, title, tools, vision, weather
 from app.agent.prompting import SYSTEM_PROMPT_TEMPLATE, VISION_PROMPT, build_system_prompt, build_time_context
 from app.business_time import BUSINESS_TZ, business_now
@@ -199,8 +202,8 @@ class PromptTimeTests(unittest.TestCase):
         settings = SimpleNamespace(
             context_token_threshold=10_000,
             context_model_context=100_000,
-            context_compress_ratio=0.8,
-            context_keep_messages=20,
+
+            context_keep_tokens=400000,
             context_output_reserve_tokens=1000,
             context_safety_margin_tokens=200,
             context_token_estimate_factor=1.0,
@@ -215,10 +218,6 @@ class PromptTimeTests(unittest.TestCase):
             )
         self.assertGreater(budget.fixed_input_tokens, 0)
         self.assertEqual(budget.output_reserve_tokens, 1000)
-        self.assertEqual(
-            budget.available_history_tokens,
-            budget.trigger_tokens - budget.fixed_input_tokens - 1200,
-        )
         snapshot = budget.usage_snapshot(
             {"input_tokens": 321, "output_tokens": 20, "total_tokens": 341}
         )
@@ -308,7 +307,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_weather_default_window_uses_business_day(self):
         now = datetime(2026, 9, 14, 0, 5, tzinfo=BUSINESS_TZ)
-        fetch = AsyncMock(return_value={})
+        fetch = AsyncMock(return_value={"current": {"temperature_2m": 20}})
         with patch.object(weather, "business_now", return_value=now), patch.object(weather, "_fetch_json", fetch):
             result = json.loads(await weather.query_weather.ainvoke({"latitude": 30, "longitude": 120}))
         self.assertEqual(result["query"]["history_end_date"], "2026-09-13")
@@ -316,27 +315,28 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(c.args[1]["timezone"] == "Asia/Shanghai" for c in fetch.call_args_list))
         self.assertIsNone(result["rain_summary"]["recent_24h_precipitation"])
 
+    async def test_weather_day_limits(self):
+        now = datetime(2026, 9, 15, 12, 0, tzinfo=BUSINESS_TZ)
+        with patch.object(weather, "business_now", return_value=now):
+            with self.assertRaisesRegex(ToolFailure, "历史天气最多只能查询到昨天"):
+                await weather.query_weather.ainvoke({
+                    "latitude": 30, "longitude": 120,
+                    "start_date": "2026-09-10", "end_date": "2026-09-15"
+                })
+
     async def test_base_station_does_not_query_deformation(self):
         for module, tool in ((tools, tools.get_daily_gnss_data), (vision, vision.analyze_gnss_chart)):
             client = AsyncMock()
             client.__aenter__.return_value = client
             with patch.object(module, "_build_client", return_value=client), patch.object(module, "_resolve_station", AsyncMock(return_value=SimpleNamespace(station_type=1))):
-                result = await tool.ainvoke({"station_name_or_uuid": "基准站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-14 00:00:00"})
-            self.assertIn("基准站", result)
+                with self.assertRaisesRegex(ToolFailure, "基准站"):
+                    await tool.ainvoke({"station_name_or_uuid": "基准站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-14 00:00:00"})
             client.get_daily_data.assert_not_called()
 
     async def test_invalid_sampling_frequency_is_not_silently_replaced(self):
-        with patch.object(tools, "_build_client") as build_client:
-            result = await tools.get_daily_gnss_data.ainvoke(
-                {
-                    "station_name_or_uuid": "测试站",
-                    "begin_time": "2026-09-01 00:00:00",
-                    "end_time": "2026-09-02 00:00:00",
-                    "sampling_frequency": "sometimes",
-                }
-            )
-        self.assertIn("无法识别", result)
-        build_client.assert_not_called()
+        with self.assertRaises(ValidationError):
+            GnssInput.model_validate({"station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00",
+                "end_time": "2026-09-02 00:00:00", "sampling_frequency": "sometimes"})
 
 
 if __name__ == "__main__":

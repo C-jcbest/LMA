@@ -66,9 +66,7 @@ export interface ToolCallInfo {
   display_name: string;
   icon?: string;
   status: 'loading' | 'success' | 'error' | 'cancelled';
-  input?: Record<string, unknown>;
-  preview?: string;
-  detail?: Record<string, unknown>;
+  data?: Record<string, unknown>;
   images?: ToolCallImage[];
   chartPoints?: ChartPoint[];
   siteEnvironment?: SiteEnvironmentArtifact;
@@ -318,16 +316,6 @@ const messageThinking = (message: any): ThinkingInfo | undefined => {
   };
 };
 
-const parseToolDetail = (content: unknown): Record<string, unknown> | undefined => {
-  if (typeof content !== 'string') return undefined;
-  try {
-    const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' ? parsed : undefined;
-  } catch {
-    return { raw: content };
-  }
-};
-
 /**
  * 将 useStream 的服务端权威消息投影为现有聊天 UI 结构。
  * 该函数无缓存和副作用；每次都从 Thread 消息重新派生，避免维护第二份历史。
@@ -379,7 +367,7 @@ export function projectLangGraphMessages(
         console.error('忽略缺少 tool_call_id 或 name 的非法 ToolMessage', message);
         continue;
       }
-      const artifact = message.artifact || message.additional_kwargs?.artifact;
+      const artifact = message.artifact;
       const toolPart: MessagePart = {
         type: 'tool',
         toolCall: {
@@ -392,7 +380,9 @@ export function projectLangGraphMessages(
               : message.status === 'error'
                 ? 'error'
                 : 'success',
-          detail: parseToolDetail(text),
+          data: artifact?.data && typeof artifact.data === 'object' && !Array.isArray(artifact.data)
+            ? artifact.data
+            : undefined,
           images: Array.isArray(artifact?.images)
             ? artifact.images.filter((image: any) => image?.name && typeof image?.png_base64 === 'string')
             : undefined,
@@ -426,7 +416,6 @@ export function projectLangGraphMessages(
               name: call.name,
               display_name: call.name,
               status: 'loading',
-              input: call.args,
             },
           });
         }

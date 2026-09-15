@@ -46,6 +46,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState<ThreadSession | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,6 +58,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    if (!sessionToDelete) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setSessionToDelete(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [sessionToDelete]);
 
   const handleStartRename = (e: React.MouseEvent, session: ThreadSession) => {
     e.stopPropagation();
@@ -77,9 +89,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setEditingId(null);
   };
 
-  const handleDelete = (e: React.MouseEvent, sessionId: string) => {
+  const handleDeleteClick = (e: React.MouseEvent, session: ThreadSession) => {
     e.stopPropagation();
-    onDeleteSession(sessionId);
+    setSessionToDelete(session);
+  };
+
+  const handleConfirmDelete = () => {
+    if (sessionToDelete) {
+      onDeleteSession(sessionToDelete.thread_id);
+      setSessionToDelete(null);
+    }
+  };
+
+  const handleCancelDelete = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSessionToDelete(null);
   };
 
   return (
@@ -202,7 +226,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <Edit2 className="w-3 h-3" />
                     </button>
                     <button
-                      onClick={(e) => handleDelete(e, session.thread_id)}
+                      onClick={(e) => handleDeleteClick(e, session)}
                       className="p-1 text-neutral-400 hover:text-red-600"
                       title="删除"
                     >
@@ -250,6 +274,57 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 删除会话确认弹窗 */}
+      {sessionToDelete && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => handleCancelDelete()}
+        >
+          <div
+            className="bg-white border border-neutral-200 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden p-5 text-neutral-800 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-session-title"
+          >
+            <div className="flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-red-600 shrink-0">
+                <Trash2 className="w-4 h-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 id="delete-session-title" className="text-sm font-semibold text-neutral-900">
+                  删除会话
+                </h3>
+                <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
+                  确定要删除会话
+                  <span className="font-medium text-neutral-800 mx-1 break-all">
+                    “{sessionToDelete.name || '新监测调查'}”
+                  </span>
+                  吗？删除后该会话的全部监测分析历史将无法恢复。
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => handleCancelDelete()}
+                className="px-3.5 py-1.5 rounded-lg border border-neutral-200 text-xs font-medium text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-colors"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-xs font-medium text-white shadow-sm transition-colors"
+              >
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

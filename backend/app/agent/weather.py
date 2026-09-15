@@ -6,15 +6,30 @@
 
 字段选择聚焦降雨与风况（滑坡监测关心的气象因子），历史数据走 Archive API，
 预报走 Forecast API，两者并行请求。
+
+天气接口平台限制说明（Open-Meteo）：
+1. 访问频次与调用配额限制（免费层/非商用）：
+   - 每日调用上限：10,000 次/天
+   - 每小时调用上限：5,000 次/小时
+   - 每分钟调用上限：600 次/分钟
+   - 超额将触发 HTTP 429 Too Many Requests 拒绝访问。
+2. 预报天数限制（Forecast API）：
+   - forecast_days 取值范围为 1 到 16 天（受气象预报模型最大有效天数限制，超出将被平台拦截），默认 7 天。
+3. 历史天数与时间跨度限制（Archive API）：
+   - 起始日期（start_date）：受再分析资料覆盖范围限制，最早支持 1940-01-01。
+   - 结束日期（end_date）：受历史归档库及业务定义限制，最多只能查询到昨天（当天尚未结束且未归档，不归入历史实测统计）。
+   - 单次查询跨度：受平台推荐粒度与系统吞吐设计约束，单次历史天气查询跨度不能超过 31 天（MAX_HISTORY_DAYS = 31）。如需更长时间背景，需分段或按关键时段查询。
 """
 
 import asyncio
-import json
+import logging
 from datetime import date, datetime, timedelta
 import math
 
 import httpx
 from langchain_core.tools import tool
+from app.agent.tool_inputs import WeatherInput
+from app.agent.tool_protocol import ToolFailure, tool_result
 
 from app.agent.tools import _build_client, _resolve_station
 from app.agent.retry import is_transient_error
@@ -24,6 +39,7 @@ FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_ENDPOINT = "https://archive-api.open-meteo.com/v1/archive"
 
 HTTP_TIMEOUT_SECONDS = 10
+MIN_HISTORY_DATE = date(1940, 1, 1)
 MAX_FORECAST_DAYS = 16
 MAX_HISTORY_DAYS = 31
 
@@ -65,14 +81,6 @@ _WMO_CODES = {
 }
 
 
-def _dumps(obj) -> str:
-    return json.dumps(obj, ensure_ascii=False)
-
-
-def _error(message: str) -> str:
-    return _dumps({"ok": False, "message": message})
-
-
 async def _fetch_json(endpoint: str, params: dict) -> dict:
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
         response = await client.get(endpoint, params=params)
@@ -82,35 +90,28 @@ async def _fetch_json(endpoint: str, params: dict) -> dict:
 
 async def _resolve_coordinates(
     station_name_or_uuid: str | None, latitude: float | None, longitude: float | None
-) -> tuple[float, float, str | None] | str:
-    """把“站点名/UUID”或经纬度解析为坐标，失败时返回提示字符串。"""
+) -> tuple[float, float, str | None]:
+    """把“站点名/UUID”或经纬度解析为坐标，失败时抛出受控业务异常。"""
     if station_name_or_uuid:
         async with _build_client() as client:
             station = await _resolve_station(client, station_name_or_uuid)
-        if isinstance(station, str):
-            return station
         try:
             lat = float(station.latitude)
             lon = float(station.longitude)
         except (TypeError, ValueError):
-            return f"监测点 {station.station_name} 未登记经纬度，无法查询天气"
+            raise ToolFailure(f"监测点 {station.station_name} 未登记经纬度，无法查询天气")
         # 北斗平台的 Latitude/Longitude 字段存在系统性颠倒（纬度字段存的是经度），
         # 纬度必在 -90~90：若纬度超范围而经度在范围内，则交接后再使用
         if abs(lat) > 90 and abs(lon) <= 90:
             lat, lon = lon, lat
+        if not -90 <= lat <= 90 or not -180 <= lon <= 180:
+            raise ToolFailure("监测点未登记有效经纬度，无法查询天气。")
         return lat, lon, station.station_name
 
     if latitude is not None and longitude is not None:
         return float(latitude), float(longitude), None
 
-    return "请提供 station_name_or_uuid（监测点名称或 UUID），或同时提供 latitude 和 longitude"
-
-
-def _parse_date(value: str, field: str) -> date | str:
-    try:
-        return date.fromisoformat(value)
-    except ValueError:
-        return f"{field} 格式错误，必须为 YYYY-MM-DD，例如 2026-09-01"
+    raise ValueError("weather coordinates not supplied after schema validation")
 
 
 def _series(payload: dict, group: str, field: str) -> list:
@@ -174,7 +175,7 @@ def _recent_precipitation(payload: dict, now: datetime) -> dict:
     }
 
 
-@tool
+@tool(response_format="content_and_artifact", args_schema=WeatherInput)
 async def query_weather(
     station_name_or_uuid: str | None = None,
     latitude: float | None = None,
@@ -182,35 +183,30 @@ async def query_weather(
     start_date: str | None = None,
     end_date: str | None = None,
     forecast_days: int = 7,
-) -> str:
+) -> tuple[str, dict]:
     """查询 Open-Meteo 当前天气、历史降雨/风况和未来预报。
+
+    天气接口平台限制：
+    - 数据源：Open-Meteo 气象服务（Forecast API 与 Archive API）。
+    - 频次限制（免费层）：每日调用上限 10,000 次、每小时 5,000 次、每分钟 600 次；超限将触发 429。
+    - 预报天数限制：forecast_days 允许范围为 1 到 16 天（受数值预报模型有效天数限制），默认 7 天。
+    - 历史天数限制：start_date 最早可查至 1940-01-01；end_date 最多只能查询到昨天（当天未结束且未归档，不能冒充历史实测，请参考当前/预报数据）；单次历史查询跨度不能超过 31 天。
 
     Args:
         station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID，
-            提供后自动使用该监测点的经纬度查询其所在位置天气。
-        latitude: 纬度（-90 到 90）。与 station_name_or_uuid 二选一。
-        longitude: 经度（-180 到 180）。与 latitude 同时提供。
-        start_date: 历史天气开始日期，业务时区 Asia/Shanghai，格式 YYYY-MM-DD，与 end_date 同时提供或同时不传
-            （不传默认查最近 7 天，最多到昨天）。
-        end_date: 历史天气结束日期，格式 YYYY-MM-DD，最多到昨天。
-        forecast_days: 预报天数，1 到 16，默认 7。
+            提供后自动使用该监测点的经纬度查询其所在位置天气。与经纬度二选一。
+        latitude: 纬度（-90 到 90）。与 longitude 同时提供，与 station_name_or_uuid 二选一。
+        longitude: 经度（-180 到 180）。与 latitude 同时提供，与 station_name_or_uuid 二选一。
+        start_date: 历史天气开始日期，业务时区 Asia/Shanghai，格式 YYYY-MM-DD。
+            最早支持 1940-01-01。与 end_date 同时提供或同时不传（不传默认查最近 7 天，最多到昨天）。
+            单次历史查询跨度不能超过 31 天。
+        end_date: 历史天气结束日期，格式 YYYY-MM-DD，最多只能查询到昨天。与 start_date 跨度不超过 31 天。
+        forecast_days: 预报天数，受 Open-Meteo 平台限制范围为 1 到 16，默认 7。
 
     返回内容包含：当前天气（气温、天气现象、风）、降雨汇总（近 24 小时、历史合计、
     预报合计及最大日降雨）、风况汇总、按日的历史与预报明细。
     """
-    if not 1 <= forecast_days <= MAX_FORECAST_DAYS:
-        return _error(f"forecast_days 必须在 1 到 {MAX_FORECAST_DAYS} 之间")
-    if latitude is not None or longitude is not None:
-        if latitude is None or longitude is None:
-            return _error("latitude 和 longitude 必须同时提供")
-        if not -90 <= latitude <= 90:
-            return _error("latitude 必须在 -90 到 90 之间")
-        if not -180 <= longitude <= 180:
-            return _error("longitude 必须在 -180 到 180 之间")
-
     resolved = await _resolve_coordinates(station_name_or_uuid, latitude, longitude)
-    if isinstance(resolved, str):
-        return _error(resolved)
     lat, lon, station_name = resolved
 
     # 历史窗口：默认最近 7 天（截止昨天）
@@ -221,20 +217,14 @@ async def query_weather(
         history_end = yesterday
         history_start = history_end - timedelta(days=6)
     else:
-        if start_date is None or end_date is None:
-            return _error("start_date 和 end_date 必须同时提供")
-        history_start = _parse_date(start_date, "start_date")
-        if isinstance(history_start, str):
-            return _error(history_start)
-        history_end = _parse_date(end_date, "end_date")
-        if isinstance(history_end, str):
-            return _error(history_end)
-        if history_start > history_end:
-            return _error("start_date 不能晚于 end_date")
+        history_start = date.fromisoformat(start_date)
+        history_end = date.fromisoformat(end_date)
+        if history_start < MIN_HISTORY_DATE:
+            raise ToolFailure("历史天气最早支持查询至 1940-01-01")
         if history_end >= today:
-            return _error("历史天气最多只能查询到昨天")
+            raise ToolFailure("历史天气最多只能查询到昨天")
         if (history_end - history_start).days + 1 > MAX_HISTORY_DAYS:
-            return _error(f"历史天气查询跨度不能超过 {MAX_HISTORY_DAYS} 天")
+            raise ToolFailure(f"历史天气查询跨度不能超过 {MAX_HISTORY_DAYS} 天")
 
     forecast_params = {
         "latitude": lat,
@@ -267,17 +257,20 @@ async def query_weather(
             _fetch_json(ARCHIVE_ENDPOINT, history_params),
         )
     except httpx.HTTPStatusError as exc:
+        logging.getLogger(__name__).warning("weather service rejected request", exc_info=True)
         if is_transient_error(exc):
             raise
-        return _error("Open-Meteo 拒绝了本次天气查询，请检查参数后重试")
+        raise ToolFailure("Open-Meteo 拒绝了本次天气查询，请检查参数后重试")
     except (httpx.TimeoutException, httpx.RequestError):
         raise
 
+    if not forecast.get("current") and not _series(forecast, "daily", "time") and not _series(history, "daily", "time"):
+        raise ToolFailure("天气数据源未返回该位置和时间范围的可用数据。")
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
     recent_24h = _recent_precipitation(forecast, now)
 
-    return _dumps(
+    return tool_result(
         {
             "ok": True,
             "location": {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChatWindow } from '../src/components/ChatWindow';
 import { InlineToolCall } from '../src/components/InlineToolCall';
 import { MessageActions } from '../src/components/MessageActions';
+import { Sidebar } from '../src/components/Sidebar';
 import { getUnansweredToolCalls, projectLangGraphMessages, projectThreadSessions } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
@@ -149,7 +150,7 @@ describe('会话关键路径集成回归', () => {
           name: 'get_daily_gnss_data',
           display_name: 'GNSS 数据',
           status: 'success',
-          detail: {
+          data: {
             station_name: '测试站',
             points: [
               { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
@@ -174,7 +175,7 @@ describe('会话关键路径集成回归', () => {
           name: 'analyze_gnss_chart',
           display_name: '视觉复核',
           status: 'success',
-          detail: { station_name: '测试站', observations: {}, total_points: 5 },
+          data: { station_name: '测试站', observations: {}, total_points: 5 },
           chartPoints: [
             { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
             { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
@@ -199,7 +200,7 @@ describe('会话关键路径集成回归', () => {
           name: 'list_stations',
           display_name: '监测点列表',
           status: 'success',
-          detail: {
+          data: {
             stations: [
               { station_name: 'A', station_status: '正常', station_type: '基准站' },
               { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
@@ -219,7 +220,7 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByText('正常 (10)')).not.toBeInTheDocument();
   });
 
-  it('未知工具结果只在折叠的技术详情中展示', async () => {
+  it('未知工具结果不提供原始字段查看入口', async () => {
     const { container } = render(
       <InlineToolCall
         toolCall={{
@@ -227,14 +228,55 @@ describe('会话关键路径集成回归', () => {
           name: 'internal_step',
           display_name: '',
           status: 'success',
-          detail: { internal_field: 'value' },
+          data: { internal_field: 'value' },
         }}
       />
     );
     expect(screen.queryByText('internal_step')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByText('执行技术步骤'));
-    expect(screen.getByText('技术详情')).toBeInTheDocument();
-    expect(container.querySelector('details')).not.toHaveAttribute('open');
+    await userEvent.click(screen.getByText('执行工具查询'));
+    expect(screen.queryByText('技术详情')).not.toBeInTheDocument();
+    expect(container.textContent).not.toContain('internal_field');
+    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
+  });
+
+  it('业务失败按官方 status 展示，原因无需展开，模型文本和内部字段不可见', async () => {
+    const projected = projectLangGraphMessages([
+      { type: 'ai', tool_calls: [{ id: 'c1', name: 'get_daily_gnss_data', args: {} }] },
+      { type: 'tool', name: 'get_daily_gnss_data', tool_call_id: 'c1', status: 'error',
+        content: 'MODEL_ONLY net_change_mm secret://internal',
+        artifact: { data: { message: '未找到指定监测点，请确认站点。' }, error: { category: 'business' }, internal: 'PRIVATE' } },
+      { type: 'ai', content: '请确认监测点名称。' },
+    ]);
+    const part = projected[0].parts?.[0];
+    expect(part).toMatchObject({ type: 'tool', toolCall: { status: 'error' } });
+    if (part?.type !== 'tool') throw new Error('缺少工具结果');
+    const { container } = render(<InlineToolCall toolCall={part.toolCall} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('未找到指定监测点');
+    await userEvent.click(screen.getByText(/获取北斗GNSS日监测数据/));
+    expect(container.textContent).not.toMatch(/MODEL_ONLY|net_change_mm|secret:|PRIVATE|business/);
+  });
+
+  it('成功工具仅从 artifact.data 取业务展示，content 不作为界面数据源', () => {
+    const projected = projectLangGraphMessages([
+      { type: 'ai', tool_calls: [{ id: 'c1', name: 'list_stations', args: {} }] },
+      { type: 'tool', name: 'list_stations', tool_call_id: 'c1', status: 'success',
+        content: '{"internal_field":"MODEL_ONLY"}', artifact: { data: { total: 0, stations: [] } } },
+      { type: 'ai', content: '已查询。' },
+    ]);
+    expect(projected[0].parts?.[0]).toMatchObject({ type: 'tool', toolCall: { data: { total: 0, stations: [] } } });
+    expect(JSON.stringify(projected)).not.toContain('MODEL_ONLY');
+  });
+
+  it('视觉复核失败的原因可见，已获得的图表仍可展开查看', async () => {
+    render(<InlineToolCall toolCall={{ id: 'c1', name: 'analyze_gnss_chart', display_name: '', status: 'error',
+      data: { station_name: '测试站', message: '视觉模型未配置，图表可供人工查看。' },
+      chartPoints: [{ t: '08:00', n: 1, e: 2, u: 3 }, { t: '09:00', n: 2, e: 3, u: 4 }],
+      images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+    }} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('视觉模型未配置');
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('视觉复核（未完成）'));
+    expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
   });
 
   it('消息时间只显示服务端时间并按 Asia/Shanghai 格式化', () => {
@@ -364,5 +406,56 @@ describe('会话关键路径集成回归', () => {
     );
     expect(screen.getByText('正在思考')).toBeInTheDocument();
     expect(screen.getByText('正在对比历史雨量与位移数据')).toBeInTheDocument();
+  });
+
+  it('删除会话时具备确认步骤：点击删除弹出确认弹窗，取消不删除，确认后才调用删除', async () => {
+    const user = userEvent.setup();
+    const handleDeleteSession = vi.fn();
+    const sessions = [
+      { thread_id: 'thread-1', name: '监测点A形变分析', created_at: '2026-09-15T12:00:00Z' },
+      { thread_id: 'thread-2', name: '监测点B滑坡调查', created_at: '2026-09-15T13:00:00Z' },
+    ];
+
+    render(
+      <Sidebar
+        sessions={sessions}
+        activeSessionId="thread-1"
+        isNewSessionDraft={false}
+        generatingThreadIds={[]}
+        onSelectSession={() => undefined}
+        onCreateSession={() => undefined}
+        onRenameSession={() => undefined}
+        onDeleteSession={handleDeleteSession}
+        onToggleCollapse={() => undefined}
+        onOpenConfig={() => undefined}
+        isLiveServer={true}
+      />
+    );
+
+    const deleteButtons = screen.getAllByTitle('删除');
+    expect(deleteButtons.length).toBe(2);
+
+    // 1. 点击删除按钮，不应立刻触发删除，而应弹出确认弹窗
+    await user.click(deleteButtons[0]);
+    expect(handleDeleteSession).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText('删除会话')).toBeInTheDocument();
+    expect(screen.getByText(/确定要删除会话/)).toBeInTheDocument();
+    expect(screen.getByText(/“监测点A形变分析”/)).toBeInTheDocument();
+
+    // 2. 点击取消，弹窗关闭，未触发删除
+    const cancelButton = screen.getByRole('button', { name: '取消' });
+    await user.click(cancelButton);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(handleDeleteSession).not.toHaveBeenCalled();
+
+    // 3. 再次点击删除，并在弹窗中点击“确认删除”
+    await user.click(deleteButtons[0]);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    const confirmButton = screen.getByRole('button', { name: '确认删除' });
+    await user.click(confirmButton);
+    expect(handleDeleteSession).toHaveBeenCalledTimes(1);
+    expect(handleDeleteSession).toHaveBeenCalledWith('thread-1');
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
