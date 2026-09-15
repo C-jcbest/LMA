@@ -5,7 +5,7 @@
 ## 当前实现
 
 - 后端生产入口 `backend/app/agent/graph.py:graph` 为官方图工厂：create_agent 负责 ReAct 与工具并行执行，官方 middleware 负责模型/工具重试；LMA middleware 保留时间、Prompt、用量/思考耗时及推荐契约；历史由官方 SummarizationMiddleware 管理。持久化仍由 Agent Server Thread/Checkpoint 提供。
-- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建、标题占位与重复草稿状态已删除；Client 统一、URL 完整生命周期与停止协议仍待 TODO 9–13。
+- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建与重复草稿状态已删除，标题 skeleton 仅作为展示态；Client 已统一，URL 完整生命周期与停止协议仍待 TODO 10–13。
 - 第一阶段 TODO 1–3 已完成：遗留界面与无引用组件清理；敏感示例替换；GNSS 缺测不转成 0；消息只显示服务端时间且按 Asia/Shanghai 展示；站点未知状态不猜测；配置检查精确验证 lma-agent；内部字段默认折叠；正式 Prompt 单一来源。
 - 2026-09-15 TODO 4 已完成生产代码入口迁移，langchain==1.3.18 已纳入运行依赖，删除手写路由、循环边、ToolNode 装配及节点级批量 retry/exhausted。旧候选 factory 与候选测试已在 TODO 5 清除；架构和部署要求见 [ADR 0001](adr/0001-agent-runtime.md)。本轮未对现有服务执行部署。
 
@@ -17,15 +17,21 @@
 - TODO 5 已替换旧压缩算法：官方摘要消息为 checkpoint 中唯一摘要来源；按官方token阈值触发和token budget保留，按lc_source标记投影。摘要使用当前 LLM 配置与独立思考开关，失败显式终止本次请求，历史不被删除。
 - TODO 6 已统一六个工具的官方 content/artifact/status 协议和请求前 Pydantic 校验。参数、业务、基础设施及内部错误区分；失败原因常驻，部分证据可查看。模型只读事实，前端只消费展示 artifact，不解析 content、不暴露通用 JSON；原始诊断只写后端日志，artifact 不能放秘密。
 - TODO 7 已统一官方调用级重试与Run级模型/工具限额：默认重试2次、模型20次、工具40次、视觉有效候选12个；只有瞬时异常可重试，混合失败组不盲重试。全部底层SDK关闭重试，删除视觉格式/空结果与降载重试；超额明确报错并保留已有证据。摘要仍沿用官方独立逻辑；调用限额不是全HTTP或耗时配额。
-- TODO 8 的 onThreadId 通知先于服务端确认；仅对有 Run/checkpoint 的首个会话登记默认名，标题在首个 Run 结束后异步生成，失败不污染聊天错误。无名称 Thread 不进入业务列表；结果不确定时不自动删除。标题不覆盖已确认的手动命名。
+- TODO 8：onThreadId 写 URL 并立即显示 skeleton，用户输入使用 SDK optimistic messages；onCreated(runId) 异步启动标题，不等待 Agent。标题成功/失败保存 metadata 后原位显示标题/“新会话”，不影响聊天；metadata 保存失败明确显示未保存。Run 结束只取消运行 loading，轮询不吞骨架、不改选择态。
 - 地图弹窗通过 textContent 构造，瓦片源为受信代码配置；外部数据保留来源与坐标信息。Macrostrat 不能可靠提供最近断层距离，应明确缺失。
 - 当前不建设内部用户管理；部署认证、访问控制与生产 Server 暴露边界仍待 TODO 25。镜像构建通过 .dockerignore 排除环境文件和本地开发内容。
 
 ## 未完成与验证边界
 
 - TODO 5 的生产测试覆盖长会话摘要、近期token budget保留、重复压缩、停止后工具配对、摘要失败保全和内部模型流隔离。Server E2E 使用真实生产工厂与 HTTP Stub 验证官方摘要、瞬时重试、Thread 恢复及主 usage 保留。
-- 本轮后端49项常规测试、2项隔离Server E2E、前端27项测试和生产构建通过（常规发现51项，服务E2E默认跳过并另行执行）。真实官方 React SDK 测试覆盖首次 run.start 拒绝，隔离服务覆盖新版协议首次创建与 checkpoint；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
-- 下一项为 TODO 9 唯一 Client / Transport 配置源；推荐退出主 Run 属于 TODO 23。
+- 本轮后端49项常规测试、2项隔离Server E2E、前端39项测试和生产构建通过（常规发现51项，服务E2E默认跳过并另行执行）。真实官方 React SDK 测试覆盖首次 run.start 拒绝，隔离服务覆盖新版协议首次创建与 checkpoint；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
+- TODO 9 已完成唯一 Client / Transport 配置源；下一项为 TODO 10 URL 完整生命周期验收；推荐退出主 Run 属于 TODO 23。
+
+## 2026-09-15 TODO 9：统一 Client 与连接切换边界
+
+- App 通过官方 client 注入共用稳定 SDK 实例；Thread CRUD、标题及现有停止辅助请求不再独立创建连接或隐式读取 localStorage。主 Assistant identity 与 HTTP 策略集中定义，认证 header 统一由工厂注入；未新增认证 UI/存储。
+- 未保存地址的连通性测试只访问 Assistant；保存新服务地址会清空旧服务选择和展示态、作废旧请求回写，不迁移/删除历史。标题输出校验、纯文本展示与 SDK HTTP 零重试保留。
+- 本轮前端41项测试和生产构建通过；后端常规发现51项，49项通过、2项隔离Server E2E按默认条件跳过。本项未改后端、未部署、未操作真实会话。下一项 TODO 10；停止协议留给 TODO 12。
 
 ## 2026-09-15 用户纠正：直接替换，不保留兼容代码
 
@@ -36,3 +42,13 @@
 ## 2026-09-15 用户纠正：摘要触发与保留全部走官方 token 逻辑
 
 压缩按 token 阈值触发，近期上下文按 token budget 保留。已删除 LmaSummarizationMiddleware、完整回合下限、消息数保留、切点覆写和私有摘要重试/空值检查，直接使用官方 trigger/keep 和默认 token 计数器。CONTEXT_KEEP_TOKENS 替代消息数/回合配置，CONTEXT_COMPRESS_RATIO 已移除。不要再次添加固定回合或自定义压缩决策。
+
+## 2026-09-15 用户纠正：标题从 onCreated 启动，与主 Run 独立
+
+上一实现把标题推迟到首个 Run 结束，并移除了骨架，不符合交互意图。新建中央空白且不预建 Thread；onThreadId 后立即插入骨架并由 SDK 乐观显示输入；onCreated 后异步启动标题。主 Run 结束仅取消 sidebar 运行 loading，不收尾标题。该时序已同步 AGENTS.md、PRD 和 TODO，并用两种完成顺序及迟到回调测试约束。
+
+## 2026-09-15 删除会话失败排查
+
+容器日志显示同一 Thread 先 DELETE 204、约两秒后再次 DELETE 404。已复现旧轮询可恢复已删除条目，但不能仅凭重复 Thread ID 将本次问题归因为用户重复点击。用户确认连续删除的是不同会话；浏览器控制台证实报错位于 SDK HTTP DELETE 404。SDK 网络自动重试是另一个重复请求路径，最初重发原因尚无完整网络证据。现使用 useStream.client 的官方 threads.delete：删除前断开当前订阅；请求期间暂停轮询写回并禁止重复操作；成功后使旧请求失效、按最新状态移除条目，并取消对应标题展示任务。404 明确提示会话已不存在并重新同步列表，409 提示停止运行后删除；其他失败保留已确认状态，内部诊断只写控制台。回归覆盖旧轮询、重复点击、204、404、409；不把 404 转成删除成功，不删除用户历史作排查测试。
+
+用户纠正后补充：SDK HTTP maxRetries 固定为0，复用稳定配置对象，防止一次有副作用请求因网络错误自动重发；不影响后端官方模型/工具重试。删除控制台记录目标Thread ID、确认结果和失败阶段；不将请求日志中的重复ID解释为用户重复点击。连续删除不同Thread与网络异常不重发由回归约束，未删除用户真实会话来复现。

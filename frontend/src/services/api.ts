@@ -101,6 +101,13 @@ export interface ThreadSession {
 const STORAGE_KEY_CONFIG = 'lma_langgraph_config';
 const DEFAULT_API_URL = 'http://127.0.0.1:2024';
 
+// SDK HTTP 自动重试固定关闭（默认值/允许值均为 0，单位为重试次数）。
+// 作用于 Thread CRUD、Run 提交与标题 HTTP 请求，避免网络结果不确定时重发有副作用请求。
+// 主 Agent 模型/工具的瞬时重试仍由后端官方 middleware 管理，不受此策略影响。
+export const LANGGRAPH_CALLER_OPTIONS = Object.freeze({ maxRetries: 0 });
+export const LMA_ASSISTANT_ID = 'lma-agent';
+const TITLE_ASSISTANT_ID = 'session-title';
+
 export const getStoredApiUrl = (): string => {
   return localStorage.getItem(STORAGE_KEY_CONFIG) || DEFAULT_API_URL;
 };
@@ -109,10 +116,11 @@ export const setStoredApiUrl = (url: string) => {
   localStorage.setItem(STORAGE_KEY_CONFIG, url);
 };
 
-export const createLangGraphClient = (apiUrl?: string) => {
-  const url = apiUrl || getStoredApiUrl();
+export const createLangGraphClient = (apiUrl: string, defaultHeaders?: Record<string, string>) => {
   return new Client({
-    apiUrl: url,
+    apiUrl,
+    defaultHeaders,
+    callerOptions: LANGGRAPH_CALLER_OPTIONS,
   });
 };
 
@@ -134,8 +142,7 @@ export function projectThreadSessions(threads: any[]): ThreadSession[] {
  * 获取会话列表。只展示具有明确会话名称的业务 Thread；
  * session-title 无状态运行产生的临时 Thread 没有该元数据，不进入会话列表。
  */
-export async function getSessions(): Promise<{ sessions: ThreadSession[]; isLive: boolean }> {
-  const client = createLangGraphClient();
+export async function getSessions(client: Client): Promise<{ sessions: ThreadSession[]; isLive: boolean }> {
   const threads = await client.threads.search({ limit: 20 });
   const sessions = projectThreadSessions(threads);
   return { sessions, isLive: true };
@@ -146,17 +153,16 @@ export async function getSessions(): Promise<{ sessions: ThreadSession[]; isLive
  * 优先调用 LangGraph Server 的 session-title 无状态图（设置超时）。
  * 生成失败时抛出错误；调用方保留服务端已确认的“新会话”，不污染聊天错误。
  */
-export async function generateSessionTitle(userMessage: string): Promise<string> {
+export async function generateSessionTitle(client: Client, userMessage: string): Promise<string> {
   const cleanInput = userMessage?.trim();
   if (!cleanInput) throw new Error('会话标题缺少首条消息');
 
-  const client = createLangGraphClient();
   // 官方 SDK 接收 AbortSignal；超时取消请求，完成后清除计时器。
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3500);
 
   const runPromise = (async () => {
-    const res = await client.runs.wait(null, 'session-title', {
+    const res = await client.runs.wait(null, TITLE_ASSISTANT_ID, {
       input: { input_text: cleanInput },
       signal: controller.signal,
     });
@@ -186,19 +192,10 @@ export async function generateSessionTitle(userMessage: string): Promise<string>
 /**
  * 重命名会话
  */
-export async function renameSession(threadId: string, newName: string): Promise<void> {
-  const client = createLangGraphClient();
+export async function renameSession(client: Client, threadId: string, newName: string): Promise<void> {
   await client.threads.update(threadId, {
     metadata: { name: newName },
   });
-}
-
-/**
- * 删除会话
- */
-export async function deleteSession(threadId: string): Promise<void> {
-  const client = createLangGraphClient();
-  await client.threads.delete(threadId);
 }
 
 const messageText = (message: any): string => {
@@ -458,10 +455,10 @@ export function getUnansweredToolCalls(
 }
 
 export async function closeInterruptedToolCalls(
+  client: Client,
   threadId: string,
   rawMessages: unknown[] = []
 ): Promise<void> {
-  const client = createLangGraphClient();
   // useStream.stop() 会发出服务端 interrupt 取消，但默认不等待服务端完全停止。
   // 按官方 cancel(wait=true, action='interrupt') 收敛仍在运行/排队的 run，
   // 再更新 checkpoint，避免工具结果与手工补齐发生竞态。

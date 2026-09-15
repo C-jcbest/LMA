@@ -15,13 +15,18 @@ import {
 } from 'lucide-react';
 import { ThreadSession } from '../services/api';
 
+// SDK 已分配 ID 的骨架只含展示字段，不伪造服务端 created_at。
+export type SidebarSession = Omit<ThreadSession, 'created_at'> & { created_at?: string; titlePending?: boolean };
+
 interface SidebarProps {
-  sessions: ThreadSession[];
+  sessions: SidebarSession[];
   activeSessionId: string | null;
   isNewSessionDraft: boolean;
   /** 正在生成回复的会话 thread_id 列表 */
   generatingThreadIds: string[];
-  onSelectSession: (session: ThreadSession) => void;
+  /** 实际 DELETE 请求尚未完成的会话，禁止重复操作。 */
+  deletingThreadIds?: string[];
+  onSelectSession: (session: Pick<ThreadSession, 'thread_id'>) => void;
   onCreateSession: () => void;
   onRenameSession: (sessionId: string, newName: string) => void;
   onDeleteSession: (sessionId: string) => void;
@@ -35,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeSessionId,
   isNewSessionDraft,
   generatingThreadIds,
+  deletingThreadIds = [],
   onSelectSession,
   onCreateSession,
   onRenameSession,
@@ -46,7 +52,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const [sessionToDelete, setSessionToDelete] = useState<ThreadSession | null>(null);
+  const [sessionToDelete, setSessionToDelete] = useState<SidebarSession | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,7 +76,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [sessionToDelete]);
 
-  const handleStartRename = (e: React.MouseEvent, session: ThreadSession) => {
+  const handleStartRename = (e: React.MouseEvent, session: SidebarSession) => {
     e.stopPropagation();
     setEditingId(session.thread_id);
     setEditValue(session.name);
@@ -89,7 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setEditingId(null);
   };
 
-  const handleDeleteClick = (e: React.MouseEvent, session: ThreadSession) => {
+  const handleDeleteClick = (e: React.MouseEvent, session: SidebarSession) => {
     e.stopPropagation();
     setSessionToDelete(session);
   };
@@ -155,10 +161,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const isActive = !isNewSessionDraft && session.thread_id === activeSessionId;
             const isEditing = editingId === session.thread_id;
             const isGenerating = generatingThreadIds.includes(session.thread_id);
+            const isDeleting = deletingThreadIds.includes(session.thread_id);
 
           return (
             <div
               key={session.thread_id}
+              data-thread-id={session.thread_id}
               onClick={() => !isEditing && onSelectSession(session)}
               className={`group relative flex items-center justify-between h-9 px-3 rounded-xl text-xs cursor-pointer transition-colors ${
                 isActive
@@ -172,7 +180,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     isActive ? 'text-neutral-800' : 'text-neutral-400 group-hover:text-neutral-600'
                   }`}
                 />
-                {isEditing ? (
+                {session.titlePending ? (
+                  <span role="status" aria-label="会话标题生成中" className="h-2.5 bg-neutral-200 rounded w-20 animate-pulse" />
+                ) : isEditing ? (
                   <input
                     type="text"
                     value={editValue}
@@ -187,7 +197,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               {/* 悬停操作按钮：生成中时替换为 loading 图标，不可重命名/删除 */}
-              <div className={`flex items-center gap-1 transition-opacity ${isGenerating ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+              <div className={`flex items-center gap-1 transition-opacity ${isGenerating || isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 {isEditing ? (
                   <>
                     <button
@@ -200,11 +210,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <X className="w-3 h-3" />
                     </button>
                   </>
-                ) : isGenerating ? (
-                  <span title="生成中，暂不可重命名或删除" className="p-1 flex">
+                ) : isGenerating || isDeleting ? (
+                  <span title={isDeleting ? "删除中，暂不可重复操作" : "生成中，暂不可重命名或删除"} className="p-1 flex">
                     <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
                   </span>
-                ) : (
+                ) : session.titlePending ? null : (
                   <>
                     <button
                       onClick={(e) => handleStartRename(e, session)}

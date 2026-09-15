@@ -475,3 +475,11 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });
+
+it('新建会话的中央消息区域为空白，保留输入入口', () => {
+  render(<ChatWindow messages={[]} onSendMessage={vi.fn()} isGenerating={false}
+    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} isNewSessionDraft />);
+  expect(screen.getByLabelText('对话消息').textContent).toBe('');
+  expect(screen.getByLabelText('对话消息').querySelectorAll('p,h3,svg')).toHaveLength(0);
+  expect(screen.queryByText('开启滑坡连续监测业务调查')).not.toBeInTheDocument();
+});

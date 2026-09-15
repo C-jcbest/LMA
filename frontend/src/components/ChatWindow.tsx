@@ -140,18 +140,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         aria-label="对话消息"
         className="flex-1 overflow-y-auto px-6 py-2 space-y-6"
       >
-        {(isNewSessionDraft || messages.length === 0) && (
-          <div className="h-full flex flex-col items-center justify-center text-center p-8 text-neutral-400 select-none">
-            <div className="w-12 h-12 rounded-2xl bg-neutral-100 flex items-center justify-center mb-3">
-              <MessageCircle className="w-6 h-6 text-neutral-400" />
-            </div>
-            <h3 className="text-sm font-semibold text-neutral-700">开启滑坡连续监测业务调查</h3>
-            <p className="text-xs text-neutral-400 mt-1 max-w-sm">
-              在下方输入问题，或点击左下角加号选择预置指令，智能体将连接北斗平台与监测算法进行专业分析。
-            </p>
-          </div>
-        )}
-
         {/* 历史压缩摘要与分割线（到达阈值或超限触发压缩后展示） */}
         {contextSummary && (
           <div className="max-w-4xl mx-auto w-full py-1">

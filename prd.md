@@ -645,9 +645,9 @@ Agent 应优先使用高可靠数据解释低可靠数据，而不能反过来�
 
 生成完成后恢复正常操作。
 
-新会话默认名称来自服务端已确认的“新会话”，不得由 thread id 拼接技术名称或展示伪造标题进度；无名称 Thread 不得进入业务会话列表。首个 Run 结束后独立异步生成标题，失败保留已确认的默认名称，不写聊天错误；标题更新不得覆盖用户已确认的手动重命名。用户停止生成后，任何已发出但未返回结果的工具调用必须记录为“已停止”并闭合消息协议，确保同一 Thread 可以继续提问。用户上翻消息时，“回到底部”按钮显示在输入框上方居中，回到底部后隐藏。
+点击新建后中央消息区域空白，sidebar 不提前创建空 Thread。首条输入通过官方 useStream submit；onThreadId 写入 URL 并立即插入 skeleton，SDK optimistic messages 显示用户输入。onCreated(runId) 后异步启动独立标题生成，不等待主 Agent。标题成功保存 metadata.name 后原位替换骨架，生成失败保存“新会话”后原位替换，不影响聊天；metadata 保存失败明确显示未保存，不伪造成功。主 Run 结束只取消 sidebar 运行中 loading，标题 pending/成功/失败独立处理；轮询不得吞掉骨架或改变行顺序。用户停止生成后，任何已发出但未返回结果的工具调用必须记录为“已停止”并闭合消息协议，确保同一 Thread 可以继续提问。用户上翻消息时，“回到底部”按钮显示在输入框上方居中，回到底部后隐藏。
 
-首次发送必须同步防重；新会话 threadId=null，由官方 useStream submit 与 Agent Server run.start 完成 ID 分配及 Thread/Run 创建。onThreadId 只通知 SDK 分配的 ID，服务端确认存在 Run/checkpoint 后才登记业务会话默认名称。URL 仅记录 Thread 选择态，轮询不得把草稿切回历史会话。停止生成采用 LangGraph interrupt 取消语义；只有在服务端确认 run 停止后，才能修复确实未闭合的工具消息，不得与迟到结果并发写入。
+首次发送必须同步防重；新会话 threadId=null，由官方 useStream submit 与 Agent Server run.start 完成 ID 分配及 Thread/Run 创建。onThreadId 只通知 SDK 分配的 ID，onThreadId 后仅插入展示 skeleton，onCreated 后启动标题；服务端保存标题 metadata 后才展示已确认的会话名称。URL 仅记录 Thread 选择态，轮询不得把草稿切回历史会话。停止生成采用 LangGraph interrupt 取消语义；只有在服务端确认 run 停止后，才能修复确实未闭合的工具消息，不得与迟到结果并发写入。
 
 ## 17.2.1 官方历史摘要（2026-09-15 更新）
 

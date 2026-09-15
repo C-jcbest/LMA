@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Server, CheckCircle2, AlertTriangle, RefreshCw } from 'lucide-react';
-import { getStoredApiUrl, setStoredApiUrl, createLangGraphClient } from '../services/api';
+import { getStoredApiUrl, setStoredApiUrl, createLangGraphClient, LMA_ASSISTANT_ID } from '../services/api';
 
 interface ConfigModalProps {
   isOpen: boolean;
@@ -20,8 +20,8 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ isOpen, onClose, onSav
     setTestMsg('正在连接 LangGraph 服务...');
     try {
       const client = createLangGraphClient(apiUrl.trim());
-      const assistant = await client.assistants.get('lma-agent');
-      if (assistant.assistant_id !== 'lma-agent' && assistant.graph_id !== 'lma-agent') {
+      const assistant = await client.assistants.get(LMA_ASSISTANT_ID);
+      if (assistant.assistant_id !== LMA_ASSISTANT_ID && assistant.graph_id !== LMA_ASSISTANT_ID) {
         throw new Error('目标 Assistant 标识不匹配');
       }
       setTestStatus('success');
