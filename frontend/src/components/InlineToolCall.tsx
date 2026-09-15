@@ -22,6 +22,19 @@ interface InlineToolCallProps {
   toolCall: ToolCallInfo;
 }
 
+export const toFiniteGnssNumber = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export const formatGnssValue = (value: unknown): string => {
+  const parsed = toFiniteGnssNumber(value);
+  return parsed === null ? '—' : parsed.toFixed(3);
+};
+
 export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
   const [expanded, setExpanded] = useState(false);
 
@@ -102,25 +115,33 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
     if (toolCall.name === 'inspect_site_environment') {
       return `调查站点地形与地质环境${suffix}`;
     }
-    return `${toolCall.display_name || `调用工具 ${toolCall.name}`}${suffix}`;
+    return `${toolCall.display_name || '执行技术步骤'}${suffix}`;
   };
 
   // 由 chart_points 生成单方向迷你 SVG 折线（归一化到 0~100 视口）
-  const buildPolyline = (points: any[], key: string): { line: string; min: number; max: number } | null => {
-    const values = points.map((p) => Number(p[key])).filter((v) => Number.isFinite(v));
+  const buildPolyline = (points: any[], key: string): { lines: string[]; min: number; max: number } | null => {
+    const values = points
+      .map((p) => toFiniteGnssNumber(p[key]))
+      .filter((value): value is number => value !== null);
     if (values.length < 2) return null;
     const min = Math.min(...values);
     const max = Math.max(...values);
     const span = max - min || 1;
-    const line = points
-      .map((p, i) => {
+    const lines: string[] = [];
+    let segment: string[] = [];
+    points.forEach((p, i) => {
         const x = (i / (points.length - 1)) * 100;
-        const v = Number(p[key]);
-        const y = Number.isFinite(v) ? 100 - ((v - min) / span) * 100 : 50;
-        return `${x.toFixed(2)},${Math.max(2, Math.min(98, y)).toFixed(2)}`;
-      })
-      .join(' ');
-    return { line, min, max };
+        const v = toFiniteGnssNumber(p[key]);
+        if (v === null) {
+          if (segment.length >= 2) lines.push(segment.join(' '));
+          segment = [];
+          return;
+        }
+        const y = 100 - ((v - min) / span) * 100;
+        segment.push(`${x.toFixed(2)},${Math.max(2, Math.min(98, y)).toFixed(2)}`);
+      });
+    if (segment.length >= 2) lines.push(segment.join(' '));
+    return lines.length > 0 ? { lines, min, max } : null;
   };
 
   // 视觉复核图表的中文标题映射
@@ -214,13 +235,16 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
                         preserveAspectRatio="none"
                         className="w-full h-14 bg-neutral-50/80 border border-neutral-100 rounded"
                       >
-                        <polyline
-                          points={chart.line}
-                          fill="none"
-                          stroke="#2563eb"
-                          strokeWidth="1.2"
-                          vectorEffect="non-scaling-stroke"
-                        />
+                        {chart.lines.map((line, index) => (
+                          <polyline
+                            key={index}
+                            points={line}
+                            fill="none"
+                            stroke="#2563eb"
+                            strokeWidth="1.2"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        ))}
                       </svg>
                     ) : (
                       <div className="h-14 flex items-center justify-center text-[10px] text-neutral-300 bg-neutral-50/80 border border-neutral-100 rounded">
@@ -487,7 +511,16 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
               </thead>
               <tbody className="divide-y divide-neutral-100 text-neutral-800">
                 {data.stations.map((s: any, i: number) => {
-                  const isNormal = s.station_status === 10 || s.station_status === '正常';
+                  const statusStyles: Record<string, { dot: string; text: string }> = {
+                    正常: { dot: 'bg-emerald-500', text: '正常' },
+                    离线: { dot: 'bg-neutral-400', text: '离线' },
+                    告警: { dot: 'bg-amber-500', text: '告警' },
+                    故障: { dot: 'bg-red-500', text: '故障' },
+                  };
+                  const status = statusStyles[s.station_status] || {
+                    dot: 'bg-neutral-300',
+                    text: '未知',
+                  };
                   return (
                     <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
                       <td className="py-2 px-3 text-neutral-400 font-mono text-[11px]">{i + 1}</td>
@@ -498,17 +531,19 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
                         <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-neutral-100/90">
                           <span
                             className={`w-1.5 h-1.5 rounded-full ${
-                              isNormal ? 'bg-emerald-500' : 'bg-amber-500'
+                              status.dot
                             }`}
                           />
-                          <span className="text-neutral-700">{isNormal ? '正常 (10)' : '告警/离线'}</span>
+                          <span className="text-neutral-700">{status.text}</span>
                         </span>
                       </td>
                       <td className="py-2 px-3 text-neutral-600">
                         {s.location || s.group_name || '-'}
                       </td>
                       <td className="py-2 px-3 text-neutral-400 text-[11px] whitespace-nowrap">
-                        类型 {s.station_type ?? 1}
+                        {typeof s.station_type === 'string' && s.station_type.trim()
+                          ? s.station_type
+                          : '未知'}
                       </td>
                     </tr>
                   );
@@ -551,9 +586,9 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
                   <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
                     <td className="py-1 px-3 text-neutral-400">{i + 1}</td>
                     <td className="py-1 px-3 text-neutral-600 whitespace-nowrap">{p.time}</td>
-                    <td className="py-1 px-3">{Number(p.n).toFixed(3)}</td>
-                    <td className="py-1 px-3">{Number(p.e).toFixed(3)}</td>
-                    <td className="py-1 px-3">{Number(p.u).toFixed(3)}</td>
+                    <td className="py-1 px-3">{formatGnssValue(p.n)}</td>
+                    <td className="py-1 px-3">{formatGnssValue(p.e)}</td>
+                    <td className="py-1 px-3">{formatGnssValue(p.u)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -563,31 +598,16 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
       );
     }
 
-    // 4. 通用 Key-Value 简约表格（全量展示所有键值）
+    // 4. 未知结果只作为二次折叠的技术详情，不进入默认业务展示。
     if (data && typeof data === 'object') {
-      const entries = Object.entries(data);
-      if (entries.length > 0) {
+      if (Object.keys(data).length > 0) {
         return (
-          <div className="border border-neutral-200/90 rounded-lg bg-white max-h-64 overflow-auto overscroll-contain shadow-sm">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="sticky top-0 z-10 bg-[#f9fafb] text-neutral-600 font-semibold border-b border-neutral-200/90 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
-                <tr>
-                  <th className="py-2 px-3 w-1/3 whitespace-nowrap">字段 / 参数</th>
-                  <th className="py-2 px-3">对应数值或内容</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-neutral-100 text-neutral-800">
-                {entries.map(([k, v], i) => (
-                  <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
-                    <td className="py-2 px-3 text-neutral-500 font-medium whitespace-nowrap">{k}</td>
-                    <td className="py-2 px-3 font-mono text-[11px] text-neutral-800 break-all">
-                      {typeof v === 'object' ? JSON.stringify(v) : String(v)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <details className="rounded-lg border border-neutral-200/90 bg-neutral-50 px-3 py-2 text-xs text-neutral-500">
+            <summary className="cursor-pointer select-none font-medium">技术详情</summary>
+            <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-neutral-700">
+              {JSON.stringify(data, null, 2)}
+            </pre>
+          </details>
         );
       }
     }
@@ -596,7 +616,10 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
     return (
       <div className="p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
         {data ? (
-          <span className="font-mono text-neutral-700 break-all">{String(data)}</span>
+          <details>
+            <summary className="cursor-pointer select-none font-medium">技术详情</summary>
+            <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] text-neutral-700">{String(data)}</pre>
+          </details>
         ) : (
           '该步骤已完成，无详细数据输出'
         )}

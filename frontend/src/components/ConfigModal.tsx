@@ -20,13 +20,15 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ isOpen, onClose, onSav
     setTestMsg('正在连接 LangGraph 服务...');
     try {
       const client = createLangGraphClient(apiUrl.trim());
-      // 尝试调用 assistants.search 或 threads.search
-      const res = await client.assistants.search({ limit: 5 });
+      const assistant = await client.assistants.get('lma-agent');
+      if (assistant.assistant_id !== 'lma-agent' && assistant.graph_id !== 'lma-agent') {
+        throw new Error('目标 Assistant 标识不匹配');
+      }
       setTestStatus('success');
-      setTestMsg(`连接成功！发现 ${res?.length || 0} 个注册的 Assistant 图 (包含 lma-agent)`);
+      setTestMsg('连接成功，已验证 lma-agent Assistant 可用。');
     } catch (e: any) {
       setTestStatus('error');
-      setTestMsg(`连接失败: ${e?.message || '请确保 langgraph dev 已在指定端口运行'}`);
+      setTestMsg(`连接失败: ${e?.message || '请检查服务地址与目标 Assistant 配置'}`);
     }
   };
 
@@ -60,11 +62,11 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({ isOpen, onClose, onSav
               type="text"
               value={apiUrl}
               onChange={(e) => setApiUrl(e.target.value)}
-              placeholder="http://localhost:2024 或 /langgraph-api"
+              placeholder="请输入 LangGraph API 地址或 /langgraph-api"
               className="w-full border border-neutral-200 rounded-xl px-3 py-2 text-neutral-800 outline-none focus:border-indigo-500 font-mono text-xs"
             />
             <p className="text-[11px] text-neutral-400 mt-1">
-              后端启动命令：<code>langgraph dev --port 2024 --no-browser</code>
+              测试时会同时验证服务连通性与目标 Assistant。
             </p>
           </div>
 

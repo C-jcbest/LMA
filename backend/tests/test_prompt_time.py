@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langgraph.errors import NodeError
 
 from app.agent import context, graph, reasoning, retry, site, title, tools, vision, weather
-from app.agent.prompting import SYSTEM_PROMPT_TEMPLATE, VISION_PROMPT, build_system_prompt
+from app.agent.prompting import SYSTEM_PROMPT_TEMPLATE, VISION_PROMPT, build_system_prompt, build_time_context
 from app.business_time import BUSINESS_TZ, business_now
 from app.config import Settings
 
@@ -112,19 +112,21 @@ class PromptTimeTests(unittest.TestCase):
             "检查趋势",
         )
 
-    def test_templates_match_business_source(self):
-        source = (Path(__file__).resolve().parents[2] / "prompt.md").read_text(encoding="utf-8-sig")
-        system, visual = source.split("# VISION_PROMPT", 1)
-        self.assertEqual(SYSTEM_PROMPT_TEMPLATE.strip(), system.removeprefix("# SYSTEM_PROMPT").strip())
-        self.assertTrue(VISION_PROMPT.startswith(visual.strip()))
+    def test_formal_prompt_files_are_the_only_sources(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        prompt_dir = repo_root / "backend" / "app" / "agent" / "prompts"
+        self.assertEqual(SYSTEM_PROMPT_TEMPLATE, (prompt_dir / "system.md").read_text(encoding="utf-8"))
+        self.assertEqual(VISION_PROMPT, (prompt_dir / "vision.md").read_text(encoding="utf-8"))
+        self.assertFalse((repo_root / "prompt.md").exists())
 
     def test_utc_rollover_and_explicit_windows(self):
         prompt = build_system_prompt("2026-09-13T16:05:00+00:00")
         self.assertIn("当前业务时间：2026-09-14 00:05:00", prompt)
-        self.assertIn("2026-09-07 00:05:00 至 2026-09-14 00:05:00", prompt)
-        self.assertIn("2026-06-16 00:05:00 至 2026-09-14 00:05:00", prompt)
+        self.assertNotIn("近期默认参考窗口", build_time_context("2026-09-13T16:05:00+00:00"))
+        self.assertNotIn("长期默认参考窗口", build_time_context("2026-09-13T16:05:00+00:00"))
         self.assertNotIn("{{CURRENT_TIME}}", prompt)
-        self.assertIn("只看指定时段", prompt)
+        self.assertIn("不主动扩展范围", prompt)
+        self.assertIn("默认起点，不是固定分析窗口", prompt)
 
     def test_leap_day_and_year_boundary(self):
         self.assertIn("“昨天”：2024-02-29", build_system_prompt("2024-03-01T00:00:00+08:00"))
@@ -325,8 +327,13 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         first = datetime(2026, 9, 13, 23, 59, tzinfo=BUSINESS_TZ)
         second = first + timedelta(minutes=2)
         state = {"messages": [HumanMessage(content="今天怎么样")], "context_summary": "旧摘要"}
-        with patch.object(graph, "manage_context", AsyncMock(return_value={})), patch.object(graph, "business_now", side_effect=[first, second]):
-            state.update(await graph.manage_context_node(state))
+        with patch.object(graph, "manage_context", AsyncMock(return_value={})), patch.object(
+            graph, "business_now", side_effect=[first, first, first, second]
+        ):
+            context_update = await graph.manage_context_node(state)
+            stamped_message = context_update.pop("messages")[0]
+            self.assertEqual(stamped_message.additional_kwargs["created_at"], first.isoformat(timespec="seconds"))
+            state.update(context_update)
             llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="需核查")))
             with patch.object(graph, "_get_llm_with_tools", return_value=llm):
                 await graph.agent_node(state)
@@ -410,10 +417,15 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             "context_summary": "",
             "context_usage": {},
         }
+        response_time = datetime(2026, 9, 14, 10, 0, 3, tzinfo=BUSINESS_TZ)
         with patch.object(graph, "_get_llm_with_tools", return_value=llm), patch.object(
             graph, "perf_counter", side_effect=[10.0, 11.25]
-        ):
+        ), patch.object(graph, "business_now", return_value=response_time):
             update = await graph.agent_node(state)
+        self.assertEqual(
+            update["messages"][0].additional_kwargs["created_at"],
+            "2026-09-14T10:00:03+08:00",
+        )
         self.assertEqual(
             update["messages"][0].additional_kwargs["lma_thinking_duration_ms"],
             1250,

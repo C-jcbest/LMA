@@ -226,7 +226,6 @@ async def list_station_groups() -> str:
     """查询北斗监测平台上当前用户有权访问的全部监测点分组。
 
     返回分组列表，包含分组名称、分组内监测点数量和分组描述。
-    适用于“有哪些分组/分组情况”这类事实查询。
     """
     async with _build_client() as client:
         groups = await client.get_station_groups()
@@ -308,17 +307,12 @@ async def get_daily_gnss_data(
         sampling_frequency: 可选采样频率，如 "1h"/"2h"/"3h"/"6h" 或整数分钟，
             不传则返回默认每小时一条。
         sample_times: 可选固定每日取样时刻（Asia/Shanghai），如 ["03:00", "15:00"]（必须为整点，HH:mm），
-            传入后优先于 sampling_frequency。分析长段时间趋势时推荐使用：每小时的数据
-            会表现出每日周期性变化，掩盖长周期的持续形变，而对比每日固定时刻的数据能
-            更清晰分辨；每日只取一个点时按业务惯例取 15 时数据，即 ["15:00"]。
-            需要观察日内波动或短时段细节时再改用 sampling_frequency。
+            传入后优先于 sampling_frequency。
 
     返回的数据点包含时间以及 N（北向坐标，m）、E（东向坐标，m）、U（垂直坐标，m）。
-    可多次以不同参数调用本工具进行对比验证（不同时刻组合 / 不同采样粒度 / 不同时间范围）：
-    固定时刻的同刻对比适合判断整体趋势，小时级数据适合观察周期变化与异常细节。
     数据量自动控制：预计超过 1500 条时自动调整采样间隔（固定时刻模式按天抽稀），
     仍超出时等间隔降采样（时间范围仍完整覆盖），调整方式记录在 sampling 字段；
-    并附 summary 统计摘要（各方向首末值/变化量/极值及缺失时段），趋势分析请优先使用 summary。
+    并附 summary 统计摘要（各方向首末值/变化量/极值及缺失时段）。
     """
     try:
         _validate_time(begin_time)

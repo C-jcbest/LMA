@@ -109,7 +109,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   const samplePrompts = [
     'ZJ-MS10 2025年10月监测数据稳定性如何',
     '查询 ZJ-MS04 站点周边近期的天气与降雨情况',
-    '北京今日天气',
+    '对比某监测点近期趋势与长期变化背景',
     '平台当前有权访问的分组和监测点数量是多少？',
   ];
 
@@ -359,7 +359,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               onKeyDown={handleKeyDown}
               maxLength={MAX_LENGTH}
               disabled={isGenerating}
-              placeholder="询问滑坡监测数据、气象降雨风险或计算判定方案..."
+              placeholder="询问监测数据、变化趋势、降雨关联或场地环境..."
               className="flex-1 bg-transparent text-neutral-800 placeholder:text-neutral-400 text-sm outline-none resize-none leading-relaxed px-1 py-1 max-h-28"
             />
 

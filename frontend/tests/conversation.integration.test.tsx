@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatWindow } from '../src/components/ChatWindow';
 import { InlineToolCall } from '../src/components/InlineToolCall';
+import { MessageActions } from '../src/components/MessageActions';
 import { getUnansweredToolCalls, projectLangGraphMessages, projectThreadSessions } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
@@ -127,6 +128,110 @@ describe('会话关键路径集成回归', () => {
     );
     expect(screen.getByText('获取北斗GNSS日监测数据（已停止）')).toBeInTheDocument();
     expect(screen.queryByText('正在执行')).not.toBeInTheDocument();
+  });
+
+  it('GNSS 空值与非有限值显示为缺测，不会转换为零', async () => {
+    render(
+      <InlineToolCall
+        toolCall={{
+          id: 'call-gnss',
+          name: 'get_daily_gnss_data',
+          display_name: 'GNSS 数据',
+          status: 'success',
+          detail: {
+            station_name: '测试站',
+            points: [
+              { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
+              { time: '2026-09-15 09:00:00', n: Number.NaN, e: Number.POSITIVE_INFINITY, u: '12.5' },
+              { time: '2026-09-15 10:00:00', n: 0, e: '0', u: 0 },
+            ],
+          },
+        }}
+      />
+    );
+    await userEvent.click(screen.getByText('获取北斗GNSS日监测数据'));
+    expect(screen.getAllByText('—')).toHaveLength(5);
+    expect(screen.getAllByText('0.000')).toHaveLength(3);
+    expect(screen.getByText('12.500')).toBeInTheDocument();
+  });
+
+  it('GNSS 折线在缺测点处分段，不把缺测绘制为零或跨段连线', async () => {
+    const { container } = render(
+      <InlineToolCall
+        toolCall={{
+          id: 'call-chart',
+          name: 'analyze_gnss_chart',
+          display_name: '视觉复核',
+          status: 'success',
+          detail: { station_name: '测试站', observations: {}, total_points: 5 },
+          chartPoints: [
+            { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
+            { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
+            { t: '2026-09-15 10:00:00', n: null, e: '', u: Number.NaN },
+            { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
+            { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
+          ],
+        }}
+      />
+    );
+    await userEvent.click(screen.getByText('视觉复核'));
+    const polylines = Array.from(container.querySelectorAll('polyline'));
+    expect(polylines).toHaveLength(6);
+    expect(polylines.every((line) => !line.getAttribute('points')?.includes('50.00,'))).toBe(true);
+  });
+
+  it('站点状态分别展示，旧数字状态和缺失类型均显示未知', async () => {
+    render(
+      <InlineToolCall
+        toolCall={{
+          id: 'call-stations',
+          name: 'list_stations',
+          display_name: '监测点列表',
+          status: 'success',
+          detail: {
+            stations: [
+              { station_name: 'A', station_status: '正常', station_type: '基准站' },
+              { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
+              { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
+              { station_name: 'D', station_status: '故障', station_type: '中继站' },
+              { station_name: 'E', station_status: 10 },
+            ],
+          },
+        }}
+      />
+    );
+    await userEvent.click(screen.getByText('查询监测点列表'));
+    for (const label of ['正常', '离线', '告警', '故障']) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.getAllByText('未知')).toHaveLength(2);
+    expect(screen.queryByText('正常 (10)')).not.toBeInTheDocument();
+  });
+
+  it('未知工具结果只在折叠的技术详情中展示', async () => {
+    const { container } = render(
+      <InlineToolCall
+        toolCall={{
+          id: 'call-internal',
+          name: 'internal_step',
+          display_name: '',
+          status: 'success',
+          detail: { internal_field: 'value' },
+        }}
+      />
+    );
+    expect(screen.queryByText('internal_step')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('执行技术步骤'));
+    expect(screen.getByText('技术详情')).toBeInTheDocument();
+    expect(container.querySelector('details')).not.toHaveAttribute('open');
+  });
+
+  it('消息时间只显示服务端时间并按 Asia/Shanghai 格式化', () => {
+    const { rerender } = render(<MessageActions getText={() => '消息'} timestamp="2026-09-15T00:05:00Z" />);
+    expect(screen.getByText('08:05')).toBeInTheDocument();
+    rerender(<MessageActions getText={() => '消息'} />);
+    expect(screen.queryByText('08:05')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制' })).toBeInTheDocument();
   });
 
   it('输入框发送按钮左侧可查看上下文 token 明细', async () => {

@@ -9,17 +9,14 @@ interface MessageActionsProps {
 
 const formatDisplayTime = (ts?: string) => {
   if (!ts) return '';
-  try {
-    const d = new Date(ts);
-    if (!isNaN(d.getTime())) {
-      const hours = d.getHours().toString().padStart(2, '0');
-      const minutes = d.getMinutes().toString().padStart(2, '0');
-      return `${hours}:${minutes}`;
-    }
-  } catch {
-    // 降级原样返回
-  }
-  return ts;
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(date);
 };
 
 /**
@@ -28,13 +25,7 @@ const formatDisplayTime = (ts?: string) => {
 export const MessageActions: React.FC<MessageActionsProps> = ({ getText, align = 'left', timestamp }) => {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
-  const [initialTime] = useState(() => {
-    if (timestamp) return formatDisplayTime(timestamp);
-    const now = new Date();
-    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-  });
-
-  const displayTime = timestamp ? formatDisplayTime(timestamp) : initialTime;
+  const displayTime = formatDisplayTime(timestamp);
 
   const handleCopy = async () => {
     const text = getText();
@@ -55,7 +46,7 @@ export const MessageActions: React.FC<MessageActionsProps> = ({ getText, align =
         align === 'right' ? 'justify-end' : 'justify-start'
       }`}
     >
-      {align === 'left' && (
+      {align === 'left' && displayTime && (
         <span className="font-mono text-[11px] text-neutral-400 select-none tracking-tight">
           {displayTime}
         </span>
@@ -77,7 +68,7 @@ export const MessageActions: React.FC<MessageActionsProps> = ({ getText, align =
         {copied && <span className="text-[11px] text-neutral-400 select-none">已复制</span>}
         {copyError && <span className="text-[11px] text-red-500 select-none">复制失败</span>}
       </div>
-      {align === 'right' && (
+      {align === 'right' && displayTime && (
         <span className="font-mono text-[11px] text-neutral-400 select-none tracking-tight">
           {displayTime}
         </span>

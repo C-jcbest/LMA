@@ -8,7 +8,6 @@ import {
   Check,
   X,
   PanelLeftClose,
-  User,
   Settings,
   Server,
   RefreshCw,
@@ -233,7 +232,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <div className="h-px bg-neutral-100 my-1" />
             <div className="px-3 py-1.5 text-[11px] text-neutral-400">
-              当前状态: {isLiveServer ? '已连接后端 (2024)' : '未连接后端服务'}
+              当前状态: {isLiveServer ? '已连接监测服务' : '未连接监测服务'}
             </div>
           </div>
         )}
@@ -243,11 +242,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
           className="flex items-center gap-2.5 p-1.5 rounded-xl hover:bg-neutral-200/50 cursor-pointer transition-colors"
         >
           <div className="w-8 h-8 rounded-full bg-neutral-200/70 border border-neutral-300 flex items-center justify-center shrink-0">
-            <User className="w-4 h-4 text-neutral-600" />
+            <Server className="w-4 h-4 text-neutral-600" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-semibold text-neutral-800 truncate">admin</div>
-            <div className="text-[10px] text-neutral-400 truncate">监测中心用户</div>
+            <div className="text-xs font-semibold text-neutral-800 truncate">LMA 监测服务</div>
+            <div className="text-[10px] text-neutral-400 truncate">系统与连接设置</div>
           </div>
         </div>
       </div>

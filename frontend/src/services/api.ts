@@ -10,9 +10,9 @@ export interface ToolCallImage {
 // 视觉复核随 artifact 转发的全量图表数据序列（后端 chart_points）
 export interface ChartPoint {
   t: string;
-  n?: number | null;
-  e?: number | null;
-  u?: number | null;
+  n?: number | string | null;
+  e?: number | string | null;
+  u?: number | string | null;
 }
 
 export interface SiteStation {
@@ -354,10 +354,8 @@ export function projectLangGraphMessages(
     const type = message?.type || message?.getType?.() || message?._getType?.() || message?.role;
     const text = messageText(message);
     const thinking = messageThinking(message);
-    const msgCreatedAt =
-      message?.additional_kwargs?.created_at ||
-      message?.response_metadata?.created_at ||
-      message?.created_at;
+    const rawCreatedAt = message?.additional_kwargs?.created_at || message?.created_at;
+    const msgCreatedAt = typeof rawCreatedAt === 'string' ? rawCreatedAt : undefined;
 
     if (type === 'human' || type === 'user') {
       flushAssistant('');

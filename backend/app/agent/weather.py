@@ -183,8 +183,7 @@ async def query_weather(
     end_date: str | None = None,
     forecast_days: int = 7,
 ) -> str:
-    """查询天气数据（Open-Meteo），支持按监测点或经纬度灵活查询，返回当前天气、
-    历史降雨/风况和未来预报，适用于天气、降雨、风况类问题。
+    """查询 Open-Meteo 当前天气、历史降雨/风况和未来预报。
 
     Args:
         station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID，

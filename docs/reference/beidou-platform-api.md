@@ -133,9 +133,9 @@ POST [http://39.96.80.62/bdjc-api/API/UserLogin/doLogin.php](http://39.96.80.62/
 ```
 {
 
- "Username": "admin",
+ "Username": "<INVALID_USERNAME>",
 
- "Password": "tfszMEQZawvY"
+ "Password": "<INVALID_PASSWORD>"
 
 }
 ```
@@ -149,7 +149,7 @@ POST [http://39.96.80.62/bdjc-api/API/UserLogin/doLogin.php](http://39.96.80.62/
 
    "ResponseMsg": "操作成功",
 
-   "SessionUUID": "bdd22dff-cd4d-335a-8033-c42c231b88af"
+   "SessionUUID": "<INVALID_SESSION_UUID>"
 
 }
 ```
@@ -163,7 +163,7 @@ def login():
 
    # 将用户名和密码替换为自己的用户名和密码
 
-   payload = {"Username": "admin", "Password": "tfszMEQZawvY"}
+   payload = {"Username": "<INVALID_USERNAME>", "Password": "<INVALID_PASSWORD>"}
 
    r = requests.post(url, headers=HEADERS, json=payload)
 
@@ -224,7 +224,7 @@ POST [http://39.96.80.62/bdjc-api/API/Station/getStationGroupListInfo.php](http:
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000"
+ "SessionUUID": "<INVALID_SESSION_UUID>"
 
 }
 ```
@@ -376,7 +376,7 @@ POST [http://39.96.80.62/bdjc-api/API/Station/getStationListInfo.php](http://39.
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000",
+ "SessionUUID": "<INVALID_SESSION_UUID>",
 
  "StationGroupUUID": "8ba7b810-9dad-11d1-80b4-00c04fd430c8",
 
@@ -566,7 +566,7 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000",
+ "SessionUUID": "<INVALID_SESSION_UUID>",
 
  "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
 
@@ -584,7 +584,7 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000",
+ "SessionUUID": "<INVALID_SESSION_UUID>",
 
  "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
 
@@ -604,7 +604,7 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000",
+ "SessionUUID": "<INVALID_SESSION_UUID>",
 
  "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
 
@@ -782,7 +782,7 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000",
+ "SessionUUID": "<INVALID_SESSION_UUID>",
 
  "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
 
@@ -798,7 +798,7 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000",
+ "SessionUUID": "<INVALID_SESSION_UUID>",
 
  "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
 
@@ -816,7 +816,7 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://
 ```
 {
 
- "SessionUUID": "550e8400-e29b-41d4-a716-446655440000",
+ "SessionUUID": "<INVALID_SESSION_UUID>",
 
  "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
 

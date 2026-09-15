@@ -128,8 +128,8 @@ async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, A
 async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict[str, Any]]:
     """调查一个监测点的空间环境，并生成可交互地图所需的结构化数据。
 
-    适用于用户询问站点位置、同组点分布、海拔、坡度、坡向、局部高差、
-    地质单元、岩性或断层背景。结果中的地形与地质是外部公开数据，属于辅助证据。
+    结果包含站点位置、同组点分布、海拔、坡度、坡向、局部高差，以及可用的
+    地质单元、岩性或断层背景；地形与地质字段来自外部公开数据源。
 
     Args:
         station_name_or_uuid: 监测点名称（需能唯一确定）或 36 位 UUID。

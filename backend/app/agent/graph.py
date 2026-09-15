@@ -87,6 +87,15 @@ async def agent_node(state: AgentState) -> dict:
     started_at = perf_counter()
     response: BaseMessage = await llm_with_tools.ainvoke(messages)
     elapsed_ms = max(0, round((perf_counter() - started_at) * 1000))
+    response = response.model_copy(
+        update={
+            "additional_kwargs": {
+                **response.additional_kwargs,
+                # 使用模型响应返回后的服务端真实时间；前端不自行补造消息时间。
+                "created_at": business_now().isoformat(timespec="seconds"),
+            }
+        }
+    )
     reasoning_content = (
         response.additional_kwargs.get("reasoning_content")
         or response.additional_kwargs.get("reasoning")
@@ -123,8 +132,23 @@ async def manage_context_node(state: AgentState) -> dict:
         system_prompt=build_system_prompt(current_time),
         bound_tools=tools,
     )
+    message_updates = list(updates.get("messages", []))
+    if state["messages"] and state["messages"][-1].type == "human":
+        current_message = state["messages"][-1]
+        message_updates.append(
+            current_message.model_copy(
+                update={
+                    "additional_kwargs": {
+                        **current_message.additional_kwargs,
+                        # 覆盖客户端可能携带的值，确保展示时间来自服务端。
+                        "created_at": current_time,
+                    }
+                }
+            )
+        )
     return {
         **updates,
+        **({"messages": message_updates} if message_updates else {}),
         "business_time": current_time,
         # 新回合开始先清除上轮推荐，避免在新回答完成前误展示旧项。
         "recommendations": [],
