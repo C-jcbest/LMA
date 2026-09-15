@@ -194,9 +194,15 @@ class PromptTimeTests(unittest.TestCase):
         self.assertFalse(retry.is_transient_error(httpx.HTTPStatusError("400", request=request, response=bad_request)))
         self.assertFalse(retry.is_transient_error(ValueError("业务参数错误")))
         self.assertTrue(retry.is_transient_error(APIConnectionError(request=request)))
-        for status, expected in ((429, True), (503, True), (400, False), (401, False), (403, False)):
+        for status, expected in ((408, True), (429, True), (500, True), (502, True), (503, True), (504, True), (400, False), (401, False), (403, False), (404, False), (501, False), (505, False)):
             error = APIStatusError("test error", response=httpx.Response(status, request=request), body=None)
             self.assertEqual(retry.is_transient_error(error), expected)
+
+    def test_mixed_exception_group_is_not_retried(self):
+        self.assertFalse(retry.is_transient_error(ExceptionGroup("mixed", [TimeoutError(), ValueError()])))
+        self.assertTrue(retry.is_transient_error(ExceptionGroup("network", [TimeoutError(), ConnectionError()])))
+        self.assertTrue(retry.is_transient_error(httpx.RemoteProtocolError("server disconnected")))
+        self.assertFalse(retry.is_transient_error(httpx.LocalProtocolError("invalid request")))
 
     def test_context_budget_counts_fixed_prompt_tools_and_output_reserve(self):
         settings = SimpleNamespace(

@@ -63,7 +63,8 @@ class StubHandler(BaseHTTPRequestHandler):
                 "usage": {"prompt_tokens": 1000, "completion_tokens": 20, "total_tokens": 1020}})
         last_user = max(i for i, m in enumerate(messages) if m["role"] == "user")
         missing_station = "不存在的监测点" in messages[last_user]["content"]
-        needs_tool = (("分组" in messages[last_user]["content"] or missing_station)
+        looping = "循环分组" in messages[last_user]["content"]
+        needs_tool = looping or (("分组" in messages[last_user]["content"] or missing_station)
                       and not any(m["role"] == "tool" for m in messages[last_user + 1:]))
         deltas = ([{"role": "assistant", "content": "", "tool_calls": [{
             "index": 0, "id": "test-call", "type": "function",
@@ -129,6 +130,7 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "LLM_BASE_URL": stub_url + "/v1", "LLM_API_KEY": "INVALID_TEST_KEY",
             "LLM_MODEL": "lma-test-model", "LLM_THINKING": "true",
             "RECOMMEND_ENABLED": "false", "CONTEXT_MODEL_CONTEXT": "1048576",
+            "AGENT_MODEL_RUN_LIMIT": "3", "AGENT_TOOL_RUN_LIMIT": "2",
             "CONTEXT_TOKEN_THRESHOLD": "50000", "CONTEXT_KEEP_TOKENS": "1000",
             "BEIDOU_API_BASE_URL": stub_url, "BEIDOU_USERNAME": "INVALID_TEST_USER",
             "BEIDOU_PASSWORD": "INVALID_TEST_PASSWORD", "LANGSMITH_TRACING": "false",
@@ -233,4 +235,13 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("未找到", failed_tool["artifact"]["data"]["message"])
         self.assertEqual(failed_tool["artifact"]["error"]["category"], "business")
         self.assertNotIn("INVALID_TEST_SESSION", str(failed_tool))
+        limited_events = [event async for event in client.runs.stream(thread_id, "lma-agent",
+            input={"messages": [{"role": "user", "content": "循环分组查询"}]}, stream_mode=["values", "updates"])]
+        limit_errors = [event.data for event in limited_events if event.event == "error"]
+        self.assertTrue(limit_errors)
+        self.assertIn("ModelCallLimitExceededError", str(limit_errors))
+        limited = (await client.threads.get_state(thread_id))["values"]
+        self.assertTrue(any(m.get("status") == "error" and
+            m.get("content") == "Tool call limit exceeded. Do not make additional tool calls."
+            for m in limited["messages"]))
         await client.threads.delete(thread_id)

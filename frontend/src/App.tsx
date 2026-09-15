@@ -1,3 +1,4 @@
+import { runErrorMessage } from './services/api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStream } from '@langchain/react';
 import { Sidebar } from './components/Sidebar';
@@ -244,7 +245,7 @@ export const App: React.FC = () => {
           threadId: targetSession.thread_id,
           multitaskStrategy: 'reject',
           onError: (error) =>
-            setSubmissionError(error instanceof Error ? error.message : '连接智能体服务失败'),
+            setSubmissionError(runErrorMessage(error)),
         }
       );
     } finally {

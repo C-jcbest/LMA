@@ -62,7 +62,7 @@ def _get_title_llm():
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.3,
-        max_tokens=48,
+        max_tokens=48, max_retries=0,
         **thinking_options(settings.title_thinking),
     )
 

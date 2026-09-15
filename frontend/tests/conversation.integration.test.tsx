@@ -6,7 +6,7 @@ import { ChatWindow } from '../src/components/ChatWindow';
 import { InlineToolCall } from '../src/components/InlineToolCall';
 import { MessageActions } from '../src/components/MessageActions';
 import { Sidebar } from '../src/components/Sidebar';
-import { getUnansweredToolCalls, projectLangGraphMessages, projectThreadSessions } from '../src/services/api';
+import { getUnansweredToolCalls, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
   it('官方内部摘要不成为用户气泡，普通同文消息仍展示', () => {
@@ -277,6 +277,22 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     await userEvent.click(screen.getByText('视觉复核（未完成）'));
     expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
+  });
+
+  it('官方预算错误只展示中文限制说明，内部异常不直接展示', () => {
+    expect(runErrorMessage({ name: 'ModelCallLimitExceededError', message: 'internal counts' })).toContain('分析次数已达到上限');
+    expect(runErrorMessage(new Error('secret://internal'))).not.toContain('secret:');
+    const messages = projectLangGraphMessages([
+      { type: 'ai', tool_calls: [{ id: 'c', name: 'list_stations', args: {} }] },
+      { type: 'tool', tool_call_id: 'c', name: 'list_stations', status: 'error',
+        content: 'Tool call limit exceeded. Do not make additional tool calls.' },
+      { type: 'ai', content: '说明限制。' },
+    ]);
+    const part = messages[0].parts?.[0];
+    if (part?.type !== 'tool') throw new Error('缺少工具');
+    render(<InlineToolCall toolCall={part.toolCall} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('查询次数已达到上限');
+    expect(screen.queryByText(/Tool call limit/)).not.toBeInTheDocument();
   });
 
   it('消息时间只显示服务端时间并按 Asia/Shanghai 格式化', () => {

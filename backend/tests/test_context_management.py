@@ -19,7 +19,8 @@ def turn(index):
 
 class ContextManagementTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        settings = SimpleNamespace(recommend_enabled=False, llm_model="test", context_token_threshold=10000,
+        settings = SimpleNamespace(recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
+            agent_model_run_limit=20, agent_tool_run_limit=40, llm_model="test", context_token_threshold=10000,
             context_model_context=100000, context_keep_tokens=1000,
             context_summary_max_tokens=2000, context_output_reserve_tokens=100,
             context_safety_margin_tokens=20, context_token_estimate_factor=1.0, context_chars_per_token=1.6667)

@@ -1,7 +1,7 @@
 """GNSS 时序图表的视觉复核工具，供智能体调用。
 
 仿照 landslide-monitoring-agent 的 ChartVisionService 裁剪为本项目极简实现：
-单一工具、单一提示词、单次视觉调用（失败时降级重试一次）。
+单一工具、单一提示词；每次工具尝试只有一次视觉调用。
 流程：拉取该时间范围的全量 GNSS 数据 → matplotlib 渲染多张分析图
 （原始时序/累计位移/合成位移）→ 视觉模型输出事实观察 + 形态学推断（interpretation，
 非确定措辞）→ Pydantic 结构化校验（时间窗/方向白名单）→ 对每个异常候选区间经
@@ -77,8 +77,7 @@ class VisionObservations(BaseModel):
     """视觉模型输出（服务端校验后）。
 
     列表字段不加 max_length 约束：超量时由 _validate_observations 截断，
-    避免模型多报一条导致整个响应被拒。candidates 不设上限，
-    由提示词约束其尽量少而准。interpretation 为形态学推断（非事实观察），
+    避免模型多报一条导致整个响应被拒。candidates 不静默截断；有效候选超过服务端预算时明确拒绝数值回查。interpretation 为形态学推断（非事实观察），
     由提示词约束其使用非确定措辞。
     """
 
@@ -108,7 +107,7 @@ def _get_vision_llm():
         # 内部思考（reasoning），正文 JSON 另需 ~1000+；预算不足时正文被
         # 截断导致 JSON 解析间歇性失败
         max_completion_tokens=8000,
-        timeout=120,
+        timeout=120, max_retries=0,
     )
 
 
@@ -368,7 +367,7 @@ def _validate_observations(
         fact_text=observations.fact_text[:800],
         limitations=observations.limitations[:4],
     )
-    # candidates 不设数量上限：只做方向白名单与时间窗校验（越界视为幻觉剔除）
+    # 此处做方向与时间窗校验，不静默截断；主工具在回查前校验有效候选预算。
     for candidate in observations.candidates:
         if candidate.metric not in ("N", "E", "U"):
             continue
@@ -601,40 +600,6 @@ async def _recheck_candidates(
     return list(await asyncio.gather(*(_bounded(c) for c in candidates)))
 
 
-def _build_retry_content(
-    charts: list[dict],
-    station_name: str,
-    begin_time: str,
-    end_time: str,
-    total_points: int,
-    baseline_desc: str,
-    last_error: str,
-) -> list[dict] | None:
-    """重试时重建请求内容：仅保留累计位移图（异常识别的主要视图），
-    大幅降低载荷，并强调必须基于图像返回观察。"""
-    cumulative = next((c for c in charts if c["name"] == _CHART_CUMULATIVE), None)
-    if cumulative is None:
-        cumulative = charts[0] if charts else None
-    if cumulative is None:
-        return None
-    return [
-        {
-            "type": "text",
-            "text": (
-                f"监测点 {station_name}，时间范围 {begin_time} ~ {end_time} (Asia/Shanghai)，"
-                f"共 {total_points} 个数据点（全量绘图）。"
-                f"本图为{baseline_desc}的累计位移 ΔN/ΔE/ΔU（mm），橙色阴影为缺测时段。"
-                f"上一次调用失败（{last_error}）。请仔细查看随后的图片，"
-                f"基于图中可见的形态返回 JSON 观察结果，不要返回空结果。"
-            ),
-        },
-        {
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{cumulative['png_base64']}"},
-        },
-    ]
-
-
 @tool(response_format="content_and_artifact", args_schema=TimeWindowInput)
 async def analyze_gnss_chart(
     station_name_or_uuid: str,
@@ -741,85 +706,65 @@ async def analyze_gnss_chart(
                 }
             )
 
-        # 视觉调用与解析：JSON 解析/校验失败、或返回“未接收到图像”式空观察时重试；
-        # 重试时降为累计位移单图（信息密度最高、载荷最小），提高大载荷场景成功率
-        last_error = ""
-        for attempt in range(2):
-            attempt_content = content if attempt == 0 else _build_retry_content(
-                charts, station.station_name, begin_time, end_time, len(points),
-                baseline_desc, last_error,
+        # 每次工具尝试只调用一次视觉模型；只有瞬时失败交给官方工具重试。
+        try:
+            response = await _get_vision_llm().ainvoke(
+                [SystemMessage(content=VISION_PROMPT), HumanMessage(content=content)],
+                config={"callbacks": []},
             )
-            if attempt_content is None:
-                # 无可用图表可降级，直接失败
-                break
-            try:
-                response = await _get_vision_llm().ainvoke(
-                    [SystemMessage(content=VISION_PROMPT), HumanMessage(content=attempt_content)],
-                    # 传空 callbacks：阻断工具内部 LLM 调用的 token 流
-                    # 被 langgraph messages 流捕获上报（否则前端会收到数百个
-                    # 假 tool 事件导致刷屏）
-                    config={"callbacks": []},
-                )
-            except Exception as e:
-                logging.getLogger(__name__).warning("vision model request failed", exc_info=True)
-                if is_transient_error(e):
-                    raise
-                raise ToolFailure("视觉模型调用失败，未获得形态复核结果；图表可供人工查看。", artifact=artifact)
+        except Exception as e:
+            logging.getLogger(__name__).warning("vision model request failed", exc_info=True)
+            if is_transient_error(e):
+                raise
+            raise ToolFailure("视觉模型调用失败，未获得形态复核结果；图表可供人工查看。", artifact=artifact) from e
+        validated = _validate_observations(
+            response.content if isinstance(response.content, str) else str(response.content), time_start, time_end)
+        if isinstance(validated, str):
+            raise ToolFailure("视觉复核失败：" + validated + "；图表可供人工查看。", artifact=artifact)
+        if _is_empty_observation(validated):
+            raise ToolFailure("视觉模型未返回有效观察，图表可供人工查看。", artifact=artifact)
+        if len(validated.candidates) > settings.vision_max_candidates:
+            raise ToolFailure("视觉候选数量超过本次复核预算，尚未进行数值确认；请缩小查询时间范围。",
+                category="budget", artifact=artifact)
 
-            validated = _validate_observations(
-                response.content if isinstance(response.content, str) else str(response.content),
-                time_start,
-                time_end,
-            )
-            if isinstance(validated, str):
-                last_error = validated
-                continue
-            if _is_empty_observation(validated):
-                # 合法 JSON 但毫无观察：模型未读到图片（大载荷偶发）
-                last_error = "视觉模型未接收到图像（返回空观察）"
-                continue
-
-            # 数值证据（纯数据接口回查，无额外视觉调用）：
-            # 全部异常候选经网络回查（首次全量拉取可能被降采样，回查保证窗口内
-            # 小时级全分辨率）计算五类数值特征；global_features 为整个调用范围的
-            # 同一套数值特征独立覆盖整个调用范围，用于与视觉候选交叉核验
-            pad_hours = settings.vision_recheck_pad_hours
-            rechecks = await _recheck_candidates(
-                client, station.station_uuid, validated.candidates,
-                baseline, pad_hours, time_start, time_end,
-            )
-            observations_out = validated.model_dump()
-            observations_out["candidates"] = [
-                {**candidate.model_dump(), "features": recheck}
-                for candidate, recheck in zip(validated.candidates, rechecks)
-            ]
-            observations_out["global_features"] = _window_features(points, baseline)
-            observations_out["feature_note"] = (
-                "candidates[].features 为对相应区间（已向两侧各外扩 "
-                f"{max(0, pad_hours)} 小时）经网络回查原始数据（小时级全分辨率）计算的数值特征，"
-                "global_features 为整个查询范围的同一套特征："
-                "累计位移 cum_start_mm/cum_end_mm（相对基线，mm）、窗口净变化 net_change_mm、"
-                "鲁棒斜率 robust_slope_mm_day（Theil–Sen，mm/天）、最大单步变化 max_step_mm 及"
-                "发生时刻 max_step_time、跳变前后水平差 level_shift_mm 与跳后持续性 "
-                "jump_persistence（持续/回落/样本不足）。"
-                "interpretation 为视觉模型的形态学推断（非事实观察），转述时必须保持"
-                "“可能/疑似/不排除”等非确定语气。"
-                "判断持续形变时优先参考 global_features 的鲁棒斜率与净变化。"
-                "向用户转述时必须使用中文业务语言：不得出现 features、global_features、"
-                "recheck、interpretation 等字段名与英文判定码；三类结论分别表述为"
-                "“数值证据支持 / 存在变化但证据不足 / 复核未获数值支持（视觉误判）”；"
-                "核验范围比视觉定位区间略宽时，说明为“核验时向区间两侧适当放宽了时间窗”；"
-                "极值出现时刻与候选区间不一致时，应指出实际偏离发生的时间。"
-            )
-            if any(not item.get("ok") for item in rechecks):
-                raise ToolFailure("部分视觉候选未能完成数值复核，不能将这些候选认定为已确认变化。",
-                    facts={"ok": False, **base_result, "observations": observations_out},
-                    artifact={**artifact, "data": {**base_result, "observations": validated.model_dump()}})
-            return tool_result({
-                        "ok": True,
-                        **base_result,
-                        "observations": observations_out,
-                    }, artifact=artifact, display={"ok": True, **base_result, "observations": validated.model_dump()})
-
-        raise ToolFailure(f"视觉复核失败：{last_error or '视觉模型未能从图表中提取有效观察'}，"
-                "图表已随结果返回供人工查看。", artifact=artifact)
+        # 数值证据（纯数据接口回查，无额外视觉调用）：
+        # 全部异常候选经网络回查（首次全量拉取可能被降采样，回查保证窗口内
+        # 小时级全分辨率）计算五类数值特征；global_features 为整个调用范围的
+        # 同一套数值特征独立覆盖整个调用范围，用于与视觉候选交叉核验
+        pad_hours = settings.vision_recheck_pad_hours
+        rechecks = await _recheck_candidates(
+            client, station.station_uuid, validated.candidates,
+            baseline, pad_hours, time_start, time_end,
+        )
+        observations_out = validated.model_dump()
+        observations_out["candidates"] = [
+            {**candidate.model_dump(), "features": recheck}
+            for candidate, recheck in zip(validated.candidates, rechecks)
+        ]
+        observations_out["global_features"] = _window_features(points, baseline)
+        observations_out["feature_note"] = (
+            "candidates[].features 为对相应区间（已向两侧各外扩 "
+            f"{max(0, pad_hours)} 小时）经网络回查原始数据（小时级全分辨率）计算的数值特征，"
+            "global_features 为整个查询范围的同一套特征："
+            "累计位移 cum_start_mm/cum_end_mm（相对基线，mm）、窗口净变化 net_change_mm、"
+            "鲁棒斜率 robust_slope_mm_day（Theil–Sen，mm/天）、最大单步变化 max_step_mm 及"
+            "发生时刻 max_step_time、跳变前后水平差 level_shift_mm 与跳后持续性 "
+            "jump_persistence（持续/回落/样本不足）。"
+            "interpretation 为视觉模型的形态学推断（非事实观察），转述时必须保持"
+            "“可能/疑似/不排除”等非确定语气。"
+            "判断持续形变时优先参考 global_features 的鲁棒斜率与净变化。"
+            "向用户转述时必须使用中文业务语言：不得出现 features、global_features、"
+            "recheck、interpretation 等字段名与英文判定码；三类结论分别表述为"
+            "“数值证据支持 / 存在变化但证据不足 / 复核未获数值支持（视觉误判）”；"
+            "核验范围比视觉定位区间略宽时，说明为“核验时向区间两侧适当放宽了时间窗”；"
+            "极值出现时刻与候选区间不一致时，应指出实际偏离发生的时间。"
+        )
+        if any(not item.get("ok") for item in rechecks):
+            raise ToolFailure("部分视觉候选未能完成数值复核，不能将这些候选认定为已确认变化。",
+                facts={"ok": False, **base_result, "observations": observations_out},
+                artifact={**artifact, "data": {**base_result, "observations": validated.model_dump()}})
+        return tool_result({
+                    "ok": True,
+                    **base_result,
+                    "observations": observations_out,
+                }, artifact=artifact, display={"ok": True, **base_result, "observations": validated.model_dump()})

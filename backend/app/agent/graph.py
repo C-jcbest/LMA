@@ -12,7 +12,7 @@ from functools import lru_cache
 from time import perf_counter
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
-from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware, ToolRetryMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware, ToolRetryMiddleware, ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
@@ -95,12 +95,13 @@ class LmaMiddleware(AgentMiddleware):
         return replace(response, result=stamped)
 
     async def aafter_model(self, state, runtime):
-        message = state["messages"][-1]
+        index = next(i for i in range(len(state["messages"]) - 1, -1, -1) if state["messages"][i].type == "ai")
+        message = state["messages"][index]
         usage = getattr(message, "usage_metadata", None) or {}
         input_tokens = usage.get("input_tokens")
         if isinstance(input_tokens, int) and not isinstance(input_tokens, bool) and input_tokens >= 0:
             budget = build_context_budget(
-                state["messages"][:-1],
+                state["messages"][:index],
                 system_prompt=build_system_prompt(state["business_time"]), bound_tools=self.bound_tools,
             )
             return {"context_usage": budget.usage_snapshot(usage)}
@@ -160,7 +161,7 @@ def _get_recommend_llm():
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         temperature=0.3,
-        max_tokens=200,
+        max_tokens=200, max_retries=0,
         **thinking_options(settings.recommend_thinking),
     )
 
@@ -252,8 +253,9 @@ async def generate_recommendations(state: AgentState) -> dict:
     )
 
 
-def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=0.5, summary_model=None):
+def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None):
     """生产与回归测试共用同一个官方 Agent 工厂。"""
+    settings = get_settings()
     bound_tools = tools if agent_tools is None else agent_tools
     for agent_tool in bound_tools:
         agent_tool.handle_validation_error = VALIDATION_MESSAGE
@@ -265,10 +267,14 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,
             ),
-            ModelRetryMiddleware(max_retries=2, retry_on=is_transient_error,
-                                 on_failure="error", initial_delay=retry_delay),
-            ToolRetryMiddleware(max_retries=2, retry_on=is_transient_error,
-                                on_failure="error", initial_delay=retry_delay),
+            ModelCallLimitMiddleware(run_limit=settings.agent_model_run_limit, exit_behavior="error"),
+            ToolCallLimitMiddleware(run_limit=settings.agent_tool_run_limit, exit_behavior="continue"),
+            ModelRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
+                on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
+                max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),
+            ToolRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
+                on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
+                max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),
         ],
     )
 

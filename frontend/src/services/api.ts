@@ -380,7 +380,9 @@ export function projectLangGraphMessages(
               : message.status === 'error'
                 ? 'error'
                 : 'success',
-          data: artifact?.data && typeof artifact.data === 'object' && !Array.isArray(artifact.data)
+          data: message.status === 'error' && text === 'Tool call limit exceeded. Do not make additional tool calls.'
+            ? { message: '本轮查询次数已达到上限，未执行此查询；请依据已有证据继续分析。' }
+            : artifact?.data && typeof artifact.data === 'object' && !Array.isArray(artifact.data)
             ? artifact.data
             : undefined,
           images: Array.isArray(artifact?.images)
@@ -509,4 +511,14 @@ export async function closeInterruptedToolCalls(
     } as any,
     asNode: 'tools',
   });
+}
+
+/** 主 Run 的失败只展示受控说明，内部异常留在服务端。 */
+export function runErrorMessage(error: unknown): string {
+  const value = error as { name?: unknown; message?: unknown } | null;
+  if (value?.name === 'ModelCallLimitExceededError' ||
+      (typeof value?.message === 'string' && value.message.startsWith('Model call limits exceeded:'))) {
+    return '本轮分析次数已达到上限，已保留现有记录。请缩小查询范围后继续。';
+  }
+  return '本次请求未完成，已保留现有记录，请稍后重试。';
 }

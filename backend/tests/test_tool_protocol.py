@@ -13,7 +13,8 @@ from runtime_fixtures import ScriptedModel
 
 class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        settings = SimpleNamespace(recommend_enabled=False, llm_model="test", context_token_threshold=800000,
+        settings = SimpleNamespace(recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
+            agent_model_run_limit=20, agent_tool_run_limit=40, llm_model="test", context_token_threshold=800000,
             context_model_context=1048576, context_keep_tokens=400000, context_summary_max_tokens=2000,
             context_output_reserve_tokens=100, context_safety_margin_tokens=20,
             context_token_estimate_factor=1.0, context_chars_per_token=1.6667)
@@ -150,3 +151,29 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.artifact["chart_points"][0]["t"], "DISPLAY_ONLY")
         self.assertNotIn("DISPLAY_ONLY", str(convert_to_openai_messages([message])))
         self.assertIn("net_change_mm", message.content)
+
+    async def test_vision_invalid_output_and_excess_candidates_do_not_retry(self):
+        for output in ("not-json", "many"):
+            with self.subTest(output=output):
+                client = AsyncMock()
+                client.__aenter__.return_value = client
+                client.get_daily_data.return_value = [SimpleNamespace(data_time=f"2026-09-01 0{i}:00:00", n="1", e="2", u="3") for i in range(5)]
+                station = SimpleNamespace(station_type=3, station_uuid="test", station_name="测试站")
+                model = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="not-json")))
+                settings = SimpleNamespace(vision_base_url="https://test.invalid", vision_api_key="INVALID", vision_model="test", vision_max_candidates=1)
+                observations = vision.VisionObservations(candidates=[vision.VisualCandidate(metric="N",
+                    start_at="2026-09-01 01:00:00", end_at="2026-09-01 02:00:00") for _ in range(2)])
+                with patch.object(vision, "_build_client", return_value=client), \
+                     patch.object(vision, "_resolve_station", AsyncMock(return_value=station)), \
+                     patch.object(vision, "_resolve_baseline", return_value=None), \
+                     patch.object(vision, "_render_all_charts", return_value=[{"name": "cumulative_displacement", "png_base64": "TEST"}]), \
+                     patch.object(vision, "get_settings", return_value=settings), \
+                     patch.object(vision, "_get_vision_llm", return_value=model), \
+                     patch.object(vision, "_validate_observations", return_value=observations if output == "many" else "视觉模型返回的不是有效 JSON"), \
+                     patch.object(vision, "_recheck_candidates", new_callable=AsyncMock) as recheck:
+                    message, _ = await self.run_tool(vision.analyze_gnss_chart, {"station_name_or_uuid": "测试站",
+                        "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
+                self.assertEqual(message.status, "error")
+                self.assertEqual(model.ainvoke.await_count, 1)
+                recheck.assert_not_called()
+                self.assertEqual(len(message.artifact["chart_points"]), 5)

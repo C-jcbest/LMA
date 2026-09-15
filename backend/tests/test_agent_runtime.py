@@ -16,7 +16,8 @@ from runtime_fixtures import ScriptedModel, call
 class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.settings = SimpleNamespace(
-            recommend_enabled=False, context_token_threshold=800_000,
+            recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
+            agent_model_run_limit=20, agent_tool_run_limit=40, context_token_threshold=800_000,
             context_model_context=1_048_576,
             context_keep_tokens=400000, context_output_reserve_tokens=100,
             context_safety_margin_tokens=20, context_token_estimate_factor=1.0,
@@ -165,3 +166,61 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.additional_kwargs["lma_thinking_duration_ms"], 1250)
         self.assertFalse(any("agent" in update or "recommend" in update or "manage_context" in update
                              for update in updates))
+
+    async def test_model_budget_stops_loop_and_resets_next_run(self):
+        from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
+        self.settings.agent_model_run_limit = 2
+        calls = []
+        @tool
+        def station():
+            """读取站点证据。"""
+            calls.append(1)
+            return "已取得证据"
+        model = ScriptedModel(script=[call("c1"), call("c2"), AIMessage(content="下一轮可以继续")])
+        agent = graph.create_lma_agent(model, agent_tools=[station], checkpointer=InMemorySaver())
+        config = {"configurable": {"thread_id": "limited"}}
+        with self.assertRaises(ModelCallLimitExceededError):
+            await agent.ainvoke({"messages": [HumanMessage(content="循环查询")]}, config)
+        self.assertEqual(len(model.inputs), 2)
+        self.assertEqual(len(calls), 2)
+        state = (await agent.aget_state(config)).values
+        self.assertEqual(len([m for m in state["messages"] if m.type == "tool"]), 2)
+        result = await agent.ainvoke({"messages": [HumanMessage(content="下一轮")]}, config)
+        self.assertEqual(result["messages"][-1].content, "下一轮可以继续")
+
+    async def test_tool_budget_blocks_only_exceeded_calls_and_preserves_usage(self):
+        self.settings.agent_tool_run_limit = 1
+        calls = []
+        @tool
+        def station():
+            """读取站点。"""
+            calls.append(1)
+            return "真实证据"
+        request = AIMessage(content="", tool_calls=[*call("c1").tool_calls, *call("c2").tool_calls])
+        model = ScriptedModel(script=[request, AIMessage(content="说明限制",
+            usage_metadata={"input_tokens": 123, "output_tokens": 2, "total_tokens": 125})])
+        result = await graph.create_lma_agent(model, agent_tools=[station]).ainvoke({"messages": [HumanMessage(content="查询")]})
+        self.assertEqual(len(calls), 1)
+        results = [m for m in result["messages"] if m.type == "tool"]
+        self.assertEqual(len(results), 2)
+        self.assertEqual({m.status for m in results}, {"success", "error"})
+        self.assertEqual(result["context_usage"]["input_tokens"], 123)
+
+    async def test_official_retry_backoff_for_model_and_tool(self):
+        for target in ("model", "tool"):
+            with self.subTest(target=target):
+                attempts = []
+                @tool
+                def station():
+                    """测试指数退避。"""
+                    attempts.append(1)
+                    if len(attempts) < 3:
+                        raise TimeoutError()
+                    return "证据"
+                script = [TimeoutError(), TimeoutError(), AIMessage(content="完成")] if target == "model" else [call(), AIMessage(content="完成")]
+                agent = graph.create_lma_agent(ScriptedModel(script=script), agent_tools=[station])
+                with patch("langchain.agents.middleware._retry.random.uniform", return_value=0), \
+                     patch(f"langchain.agents.middleware.{target}_retry.asyncio.sleep", new_callable=AsyncMock) as sleep:
+                    await agent.ainvoke({"messages": [HumanMessage(content="查询")]})
+                delays = [c.args[0] for c in sleep.await_args_list if c.args[0] > 0]
+                self.assertEqual(delays, [0.5, 1.0])

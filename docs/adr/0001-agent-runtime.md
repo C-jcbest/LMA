@@ -34,13 +34,23 @@ TODO 6 使用官方 Pydantic args_schema、content_and_artifact 和 ToolMessage.
 
 前端只消费 artifact.data 及明确的图表/地图字段，不再解析 content 或 detail/raw/result 历史包装，不提供通用技术详情。错误原因常驻，已获得的图表/地图仍可查看。artifact 只是与模型上下文分离，会随 Thread 发送客户端，不能承载秘密或原始诊断。公开证据来源链接不属于内部请求 URL。
 
+## 官方重试与预算
+
+TODO 7 保留官方重试算法和参数，不写本地重试循环。仅网络超时/中断及408/429/500/502/503/504重试；混合非瞬时异常组、本地请求协议错误、参数、权限、业务拒绝和空数据不重试。默认max_retries=2，initial_delay=0.5，backoff_factor=2，max_delay=4，jitter=True。基础延时先封顶再按官方规则抖动，实际延时可能超过基础上限25%。
+
+接入官方ModelCallLimitMiddleware(run_limit=20, exit_behavior=error)和ToolCallLimitMiddleware(run_limit=40, exit_behavior=continue)。这些是每Run逻辑调用计数，不包含一次调用的重试次数，不是全HTTP请求或时间预算。主模型失败显式终止Run，工具超额按官方配对error阻止执行，下一Run计数重置。LMA用量展示定位本轮AI消息，避免官方注入的ToolMessage覆盖主usage。
+
+视觉SDK关闭重试，工具内每次尝试只有一次视觉调用，校验失败或空观察直接error；有效候选超过VISION_MAX_CANDIDATES（默认12）时明确拒绝数值回查，不静默截断。标题/推荐SDK亦不重试；摘要SDK已为0，其摘要重试仍走官方中间件。北斗会话过期认证刷新维持一次，不作为通用失败重试。
+
+前端只将锁定版本官方预算错误投影成中文说明；主Run异常不直接展示message。官方私有计数、请求地址、堆栈和供应商原始错误不进入业务UI。
+
 ## 验证证据
 
 - `test_tool_protocol.py`：生产参数校验、业务错误、瞬时重试耗尽、原始异常隔离、部分场地证据及视觉未配置时图表保留。
 - `test_agent_runtime.py`：生产工厂的模型/工具循环、并行工具部分失败、单工具重试耗尽、非瞬时错误、interrupt 传播、多轮持久化、时间、usage/思考耗时与推荐开关。
 - `test_agent_server_runtime.py`：真正启动隔离 langgraph dev，使用生产 graph 工厂与 HTTP OpenAI-compatible / 北斗 Stub；SDK stream 取得模型消息和工具 updates，模型和工具 503 重试通过，新客户端恢复 Thread 并完成第二轮。测试在临时目录运行，不读取项目 .env 或改写已有服务。
 - 显式执行：PowerShell 在 backend 下设置 `$env:LMA_RUN_SERVER_E2E='1'`，运行 `.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_agent_server_runtime.py -v`。默认常规测试不启动服务。
-- 当前后端43项常规测试、1项隔离Server E2E、前端19项会话测试及生产构建通过。浏览器全面 E2E、真实模型和线上北斗服务不是本轮完成证据。
+- 当前后端49项常规测试、1项隔离Server E2E、前端21项会话测试及生产构建通过。浏览器全面 E2E、真实模型和线上北斗服务不是本轮完成证据。
 
 旧候选 factory 与旧压缩测试已删除。生产回归统一使用 create_lma_agent。test_context_management.py 验证官方token触发和保留；Server E2E 还实际触发摘要与摘要503重试，确认内部 token 不混入主消息流，压缩后的 Thread 与主模型 usage 正常恢复。
 
