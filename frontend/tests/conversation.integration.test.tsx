@@ -8,6 +8,17 @@ import { MessageActions } from '../src/components/MessageActions';
 import { getUnansweredToolCalls, projectLangGraphMessages, projectThreadSessions } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
+  it('官方内部摘要不成为用户气泡，普通同文消息仍展示', () => {
+    const raw = [
+      { type: 'human', id: 'summary', content: '历史摘要', additional_kwargs: { lc_source: 'summarization' } },
+      { type: 'human', id: 'user', content: '历史摘要' },
+      { type: 'ai', id: 'answer', content: '回答' },
+    ];
+    expect(projectLangGraphMessages(raw)).toEqual([
+      { id: 'user', role: 'user', content: '历史摘要', created_at: undefined },
+      { id: 'answer', role: 'assistant', content: '回答', created_at: undefined },
+    ]);
+  });
   it('停止后将未闭合工具调用投影为已停止，并识别需要补齐的调用', () => {
     const raw = [
       { type: 'human', id: 'u1', content: '查询站点' },

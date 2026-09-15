@@ -20,7 +20,6 @@ import {
 
 interface LmaState {
   messages: unknown[];
-  context_summary?: string;
   recommendations?: string[];
   recommendations_error?: string;
   business_time?: string;
@@ -100,8 +99,12 @@ export const App: React.FC = () => {
         : [],
     [stream.values?.recommendations]
   );
-  const contextSummary =
-    typeof stream.values?.context_summary === 'string' ? stream.values.context_summary : '';
+  const contextSummary = useMemo(() => {
+    const summary = (stream.values?.messages || []).find((message: any) =>
+      message?.additional_kwargs?.lc_source === 'summarization'
+    ) as { content?: unknown } | undefined;
+    return typeof summary?.content === 'string' ? summary.content : '';
+  }, [stream.values?.messages]);
   const recommendationError =
     typeof stream.values?.recommendations_error === 'string'
       ? stream.values.recommendations_error

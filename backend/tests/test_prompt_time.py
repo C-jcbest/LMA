@@ -6,10 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from openai import APIConnectionError, APIStatusError
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
-from langgraph.errors import NodeError
 
-from app.agent import context, graph, reasoning, retry, site, title, tools, vision, weather
+from app.agent import context, graph, reasoning, retry, site, summarization, title, tools, vision, weather
 from app.agent.prompting import SYSTEM_PROMPT_TEMPLATE, VISION_PROMPT, build_system_prompt, build_time_context
 from app.business_time import BUSINESS_TZ, business_now
 from app.config import Settings
@@ -44,9 +44,7 @@ class PromptTimeTests(unittest.TestCase):
             title_thinking=False,
             recommend_enabled=True,
             recommend_thinking=False,
-            compress_model="",
-            compress_api_key="",
-            compress_base_url="",
+            context_summary_max_tokens=2000,
             compress_thinking=False,
             vision_model="vision-model",
             vision_api_key="test-key",
@@ -56,7 +54,7 @@ class PromptTimeTests(unittest.TestCase):
         factories = (
             (title, title._get_title_llm),
             (graph, graph._get_recommend_llm),
-            (context, context._get_compress_llm),
+            (summarization, summarization._get_summary_model),
             (vision, vision._get_vision_llm),
         )
         try:
@@ -192,25 +190,17 @@ class PromptTimeTests(unittest.TestCase):
         self.assertTrue(retry.is_transient_error(httpx.HTTPStatusError("503", request=request, response=server_error)))
         self.assertFalse(retry.is_transient_error(httpx.HTTPStatusError("400", request=request, response=bad_request)))
         self.assertFalse(retry.is_transient_error(ValueError("业务参数错误")))
-
-    def test_retry_exhaustion_returns_explainable_tool_message(self):
-        state = {
-            "messages": [
-                AIMessage(content="", tool_calls=[{"id": "call-1", "name": "query_weather", "args": {}}])
-            ]
-        }
-        update = graph._tool_retry_exhausted(state, NodeError("tools", TimeoutError("timeout")))
-        self.assertEqual(len(update["messages"]), 1)
-        self.assertIsInstance(update["messages"][0], ToolMessage)
-        self.assertEqual(update["messages"][0].tool_call_id, "call-1")
-        self.assertIn("重试", update["messages"][0].content)
+        self.assertTrue(retry.is_transient_error(APIConnectionError(request=request)))
+        for status, expected in ((429, True), (503, True), (400, False), (401, False), (403, False)):
+            error = APIStatusError("test error", response=httpx.Response(status, request=request), body=None)
+            self.assertEqual(retry.is_transient_error(error), expected)
 
     def test_context_budget_counts_fixed_prompt_tools_and_output_reserve(self):
         settings = SimpleNamespace(
             context_token_threshold=10_000,
             context_model_context=100_000,
             context_compress_ratio=0.8,
-            context_target_ratio=0.5,
+            context_keep_messages=20,
             context_output_reserve_tokens=1000,
             context_safety_margin_tokens=200,
             context_token_estimate_factor=1.0,
@@ -220,7 +210,6 @@ class PromptTimeTests(unittest.TestCase):
         with patch.object(context, "get_settings", return_value=settings):
             budget = context.build_context_budget(
                 [HumanMessage(content="查询监测点")],
-                "历史摘要",
                 system_prompt="系统规则" * 100,
                 bound_tools=[tools.list_stations],
             )
@@ -274,7 +263,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(graph, "get_settings", return_value=settings), patch.object(
             graph, "_get_recommend_llm"
         ) as get_llm:
-            update = await graph.recommend_node(state)
+            update = await graph.generate_recommendations(state)
         self.assertEqual(update["recommendations"], [])
         self.assertEqual(update["recommendations_error"], "")
         get_llm.assert_not_called()
@@ -312,124 +301,6 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(environment["center_station"]["station_name"], "ZJ-MS10")
         self.assertEqual(environment["terrain"], terrain)
         self.assertEqual(environment["geology"], geology)
-
-    async def test_compression_separates_historical_data_from_instructions(self):
-        llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="摘要")))
-        with patch.object(context, "_get_compress_llm", return_value=llm):
-            result = await context.compress_history(["用户：今天如何"], "此前视觉候选，尚未确认")
-        self.assertEqual(result, "摘要")
-        messages = llm.ainvoke.call_args.args[0]
-        self.assertEqual([m.type for m in messages], ["system", "human", "human"])
-        self.assertIn("缺少锚点不得推算", messages[0].content)
-        self.assertIn("不得将视觉候选改写为已确认异常", messages[0].content)
-
-    async def test_turn_refresh_loop_stability_and_recommendations(self):
-        first = datetime(2026, 9, 13, 23, 59, tzinfo=BUSINESS_TZ)
-        second = first + timedelta(minutes=2)
-        state = {"messages": [HumanMessage(content="今天怎么样")], "context_summary": "旧摘要"}
-        with patch.object(graph, "manage_context", AsyncMock(return_value={})), patch.object(
-            graph, "business_now", side_effect=[first, first, first, second]
-        ):
-            context_update = await graph.manage_context_node(state)
-            stamped_message = context_update.pop("messages")[0]
-            self.assertEqual(stamped_message.additional_kwargs["created_at"], first.isoformat(timespec="seconds"))
-            state.update(context_update)
-            llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="需核查")))
-            with patch.object(graph, "_get_llm_with_tools", return_value=llm):
-                await graph.agent_node(state)
-                await graph.agent_node(state)
-            calls = llm.ainvoke.call_args_list
-            self.assertEqual(calls[0].args[0][0].content, calls[1].args[0][0].content)
-            self.assertEqual(calls[0].args[0][1].type, "human")
-            self.assertEqual(len(state["messages"]), 1)
-            state["messages"].append(AIMessage(content="需要继续复核"))
-            recommend_llm = SimpleNamespace(
-                ainvoke=AsyncMock(return_value=AIMessage(content='["查看近期趋势", "对比同组测点"]'))
-            )
-            with patch.object(graph, "_get_recommend_llm", return_value=recommend_llm):
-                await graph.recommend_node(state)
-            self.assertIn("2026-09-13 23:59:00", recommend_llm.ainvoke.call_args.args[0][0].content)
-            state.update(await graph.manage_context_node(state))
-            self.assertEqual(state["business_time"], second.isoformat(timespec="seconds"))
-
-    async def test_agent_prefers_provider_reported_usage_metadata(self):
-        response = AIMessage(
-            content="完成",
-            usage_metadata={"input_tokens": 321, "output_tokens": 20, "total_tokens": 341},
-        )
-        llm = SimpleNamespace(ainvoke=AsyncMock(return_value=response))
-        state = {
-            "messages": [HumanMessage(content="查询监测点")],
-            "business_time": "2026-09-14T10:00:00+08:00",
-            "context_summary": "",
-            "context_usage": {"context_limit_tokens": 1000, "is_estimate": True},
-        }
-        settings = SimpleNamespace(
-            context_token_threshold=800,
-            context_model_context=1000,
-            context_compress_ratio=0.8,
-            context_target_ratio=0.5,
-            context_output_reserve_tokens=100,
-            context_safety_margin_tokens=20,
-            context_token_estimate_factor=1.0,
-            context_chars_per_token=1.6667,
-            llm_model="deepseek-flash",
-        )
-        with patch.object(graph, "_get_llm_with_tools", return_value=llm), patch.object(
-            context, "get_settings", return_value=settings
-        ):
-            update = await graph.agent_node(state)
-        self.assertEqual(update["context_usage"]["input_tokens"], 321)
-        self.assertEqual(update["context_usage"]["remaining_tokens"], 559)
-        self.assertEqual(update["context_usage"]["counter"], "provider_reported")
-        self.assertEqual(
-            update["context_usage"]["estimated_fixed_input_tokens"]
-            + update["context_usage"]["estimated_history_tokens"]
-            + update["context_usage"]["accounting_difference_tokens"],
-            321,
-        )
-
-    async def test_agent_preserves_last_usage_when_provider_omits_usage(self):
-        previous = {"counter": "provider_reported", "input_tokens": 123}
-        llm = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="完成")))
-        state = {
-            "messages": [HumanMessage(content="查询监测点")],
-            "business_time": "2026-09-14T10:00:00+08:00",
-            "context_summary": "",
-            "context_usage": previous,
-        }
-        with patch.object(graph, "_get_llm_with_tools", return_value=llm):
-            update = await graph.agent_node(state)
-        self.assertNotIn("context_usage", update)
-
-    async def test_agent_records_model_call_duration_for_reasoning(self):
-        llm = SimpleNamespace(
-            ainvoke=AsyncMock(
-                return_value=AIMessage(
-                    content="完成",
-                    additional_kwargs={"reasoning_content": "核对证据"},
-                )
-            )
-        )
-        state = {
-            "messages": [HumanMessage(content="查询监测点")],
-            "business_time": "2026-09-14T10:00:00+08:00",
-            "context_summary": "",
-            "context_usage": {},
-        }
-        response_time = datetime(2026, 9, 14, 10, 0, 3, tzinfo=BUSINESS_TZ)
-        with patch.object(graph, "_get_llm_with_tools", return_value=llm), patch.object(
-            graph, "perf_counter", side_effect=[10.0, 11.25]
-        ), patch.object(graph, "business_now", return_value=response_time):
-            update = await graph.agent_node(state)
-        self.assertEqual(
-            update["messages"][0].additional_kwargs["created_at"],
-            "2026-09-14T10:00:03+08:00",
-        )
-        self.assertEqual(
-            update["messages"][0].additional_kwargs["lma_thinking_duration_ms"],
-            1250,
-        )
 
     async def test_invalid_title_is_reported_instead_of_fabricated(self):
         with self.assertRaises(ValueError):

@@ -1,105 +1,31 @@
-# 项目状态与决策记录
+# 项目状态与有效决策
 
-### 2026-09-15 - 遗留界面、伪数据表达与 Prompt 权威来源收敛
+更新：2026-09-15。只保留当前实现、持续有效的决策及未完成事项。产品行为以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，待办以 [现行 TODO](TODO_2026-09-15.md) 为准。
 
-- 类型：纠正 / 决策 / 完成 / 文档同步
-- 范围：前端、Agent Prompt、工具契约、测试、安全、接口参考文档
-- 记录：移除偏离滑坡监测业务的快捷问题、伪造用户身份、固定开发端口文案和无引用组件；GNSS 空值与非有限值统一显示为缺测并从折线取值中排除；消息时间仅展示服务端时间且按 Asia/Shanghai 格式化；站点状态只接受中文业务枚举，未知值不再套用旧数字兼容。服务配置连通性测试会精确验证 `lma-agent`，通用内部字段仅置于二次折叠的“技术详情”。
-- 决策：`backend/app/agent/prompts/system.md` 与 `vision.md` 分别是业务和视觉策略唯一可编辑来源；`prompting.py` 只注入客观时间上下文与接口限制。具体窗口与同刻采样参数只在主 Prompt 中维护为可调整的默认起点，明确“只看指定时段”不得扩展，状态判断不得忽略慢速形变背景。
-- 安全：北斗参考文档中的账号、密码和 SessionUUID 示例已替换为明显无效占位符；工具结果和模型输出继续按不可信数据处理，不作为默认业务 UI 或副作用输入。
-- 预防：新增业务策略只写入对应正式 Prompt；工具 docstring 只说明参数、数据能力、数据源限制和返回契约；任何空值不得通过宽松数值转换伪造成 0。
-- 关联：`AGENTS.md`、`业务流程说明.md`、`backend/app/agent/prompts/`、`backend/app/agent/prompting.py`、`frontend/src/components/`、`docs/reference/beidou-platform-api.md`
+## 当前实现
 
-### 2026-09-14 - 撤回下一步建议流式预取
+- 后端生产入口 `backend/app/agent/graph.py:graph` 为官方图工厂：create_agent 负责 ReAct 与工具并行执行，官方 middleware 负责模型/工具重试；LMA middleware 保留时间、Prompt、用量/思考耗时及推荐契约；历史由官方 SummarizationMiddleware 管理。持久化仍由 Agent Server Thread/Checkpoint 提供。
+- 前端使用 `@langchain/react useStream`，现有服务层仍有会话取消、消息/工具展示适配；这些代码将按新 TODO 逐项复核，旧清单的完成状态不代表官方能力重构已完成。
+- 第一阶段 TODO 1–3 已完成：遗留界面与无引用组件清理；敏感示例替换；GNSS 缺测不转成 0；消息只显示服务端时间且按 Asia/Shanghai 展示；站点未知状态不猜测；配置检查精确验证 lma-agent；内部字段默认折叠；正式 Prompt 单一来源。
+- 2026-09-15 TODO 4 已完成生产代码入口迁移，langchain==1.3.18 已纳入运行依赖，删除手写路由、循环边、ToolNode 装配及节点级批量 retry/exhausted。旧候选 factory 与候选测试已在 TODO 5 清除；架构和部署要求见 [ADR 0001](adr/0001-agent-runtime.md)。本轮未对现有服务执行部署。
 
-- 类型：纠正 / 行为回退
-- 范围：主 Agent 流式输出、下一步建议、部署配置
-- 记录：保留 `RECOMMEND_ENABLED` 总开关及 `RECOMMEND_THINKING` 独立思考配置；撤回“正文流达到 120 字后并行预取建议”，下一步建议恢复为主回答最终完成后生成。
-- 边界：开启建议时只依据完整最终回答生成；关闭时继续清空建议并跳过建议模型调用。主回答流式回调不再创建后台建议任务。
-- 预防：除非产品再次明确要求，不得依据未完成的回答前段提前生成建议，也不得恢复固定字数触发阈值。
-- 关联：`prd.md`、`docs/TODO.md`、`backend/app/agent/graph.py`、`backend/app/config.py`
+## 持续有效的决定
 
-### 2026-09-14 - 下一步建议并行预取与总开关
+- 主 Agent 根据目标与证据自主编排；禁止固定调查顺序、章节和模板化建议。业务/视觉策略分别只编辑 `system.md` / `vision.md`。
+- 推荐仅基于完整最终回答；保留 RECOMMEND_ENABLED 与 RECOMMEND_THINKING，不恢复固定字数触发的流式预取。不合适时可为空，失败显式呈现。
+- LLM_THINKING 仅控制主模型；标题、推荐、压缩和视觉有独立开关，默认关闭。当前供应商 reasoning 适配仍在，标准化迁移属于 TODO 16–17；不得拼造思考内容。
+- TODO 5 已替换旧压缩算法：官方摘要消息为 checkpoint 中唯一摘要来源；保留近期完整回合，按 lc_source 标记投影。摘要使用当前 LLM 配置与独立思考开关，失败显式终止本次请求，历史不被删除。
+- 地图弹窗通过 textContent 构造，瓦片源为受信代码配置；外部数据保留来源与坐标信息。Macrostrat 不能可靠提供最近断层距离，应明确缺失。
+- 当前不建设内部用户管理；部署认证、访问控制与生产 Server 暴露边界仍待 TODO 25。镜像构建通过 .dockerignore 排除环境文件和本地开发内容。
 
-- 类型：决策 / 性能优化 / 配置
-- 状态：已被“撤回下一步建议流式预取”取代，仅保留为历史记录。
-- 范围：主 Agent 流式输出、下一步建议、部署配置、成本控制
-- 记录：新增 `RECOMMEND_ENABLED`（默认开启）。关闭时清空建议并跳过模型调用；开启时在主回答正文流达到可用长度后启动建议预取，与剩余正文生成并行，降低正文结束后的等待。
-- 边界：预取只使用用户问题和已输出的回答前段；主模型若返回工具调用，必须取消或丢弃预取结果。短回答未达到预取长度时仍在回答结束后生成，以避免仅凭过短片段降低建议质量。
-- 预防：不得为了即时展示而使用固定模板或伪造建议；并行任务必须跟随主模型取消，辅助 token 不得混入主消息流。
-- 关联：`prd.md`、`backend/app/agent/graph.py`、`backend/app/config.py`、`backend/.env.example`
+## 未完成与验证边界
 
-### 2026-09-14 - 辅助模型思考配置与主模型隔离
+- TODO 5 的生产测试覆盖长会话摘要、近期完整回合保留、重复压缩、停止后工具配对、失败/空摘要保全和内部模型流隔离。Server E2E 使用真实生产工厂与 HTTP Stub 验证官方摘要、瞬时重试、Thread 恢复及主 usage 保留。
+- 本轮后端35项常规测试、1项隔离Server E2E、前端16项会话测试和生产构建通过（常规发现36项，其中服务E2E默认跳过并另行执行）；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
+- 下一项为 TODO 6 Tool 协议标准化；推荐退出主 Run 属于 TODO 23。
 
-- 类型：纠正 / 配置边界 / 成本控制
-- 范围：主 Agent、会话标题、下一步建议、历史压缩、视觉复核、部署配置
-- 记录：`LLM_THINKING` 只控制主 Agent。标题、下一步建议、历史压缩和视觉复核分别由 `TITLE_THINKING`、`RECOMMEND_THINKING`、`COMPRESS_THINKING`、`VISION_THINKING` 控制，四项默认均为关闭。
-- 行为：任何思考开关为关闭时都不发送 `enable_thinking`，不能继承或复用主模型开关；只有对应开关明确开启时才发送该供应商扩展参数。
-- 预防：新增辅助 LLM 场景时必须声明独立的思考配置和默认值，不得直接读取 `LLM_THINKING`，以避免非必要延迟和 reasoning token 消耗。
-- 关联：`prd.md`、`backend/app/config.py`、`backend/app/agent/reasoning.py`、`backend/.env.example`
+## 2026-09-15 用户纠正：直接替换，不保留兼容代码
 
-### 2026-09-14 - 主模型思考过程可视化
+用户明确要求保证当前新实现可运行，并持续移除历史包袱。重构不保留旧 checkpoint、字段、API 或旧算法兼容分支，也不为旧会话增加自动迁移。该规则已写入 AGENTS.md。本轮直接删除旧摘要状态、淘汰算法、相关配置及候选实现，未删除用户历史数据。
 
-- 类型：决策 / 产品行为变更 / 文档同步
-- 范围：主模型配置、LangGraph 消息协议、前端会话、测试、安全
-- 记录：主模型默认开启兼容接口的 `enable_thinking`；仅透传模型接口显式返回的 `reasoning_content`，按每次模型调用与工具步骤的原始顺序折叠展示，并记录该次调用墙钟耗时。展开态采用区别于最终回答的弱化排版。
-- 边界：不得从系统提示词、LangGraph 状态或工具原始结果拼造思考过程；模型内容继续按不可信文本处理，不直接作为 HTML 或副作用输入。接口不支持思考参数时明确报错，不静默伪装为已启用。
-- 预防：后续更换模型或供应商时，必须验证 `enable_thinking`、`reasoning_content`、流式合并与 checkpoint 恢复四项契约。
-- 关联：`prd.md`、`backend/app/agent/reasoning.py`、`backend/app/agent/graph.py`、`frontend/src/services/api.ts`、`frontend/src/components/ThinkingBlock.tsx`
-
-### 2026-09-14 - 兼容分支与兜底策略必须先告知
-
-- 类型：纠正 / 长期实现约束
-- 范围：前后端错误处理、兼容代码、降级与兜底展示
-- 记录：新增兼容性分支或兜底策略前，必须先说明触发条件、可见结果和误导风险；若不设置会导致数据丢失、会话损坏或其他风险，需用户明确同意后再实现。
-- 禁止：不得以伪造进度、技术 ID 标题、本地假成功或模板化建议掩盖配置缺失、请求失败或状态不确定。
-- 预期行为：可验证的错误应显式呈现；暂时未取得新状态时，保留上一个已确认状态。
-- 本轮清理：移除本地会话假数据/假成功、技术工具名补造、标题静默成功、正则/模板推荐、非法采样频率默认每小时、剪贴板弃用 API 降级；错误分别由界面或工具结果明确呈现。
-- 保留的数据保护：压缩失败或只剩最近两段时不删除 checkpoint；工具输出超硬上限时抽稀并在 `sampling/downsampled/notes` 中披露；瞬时工具失败按既有重试策略耗尽后写入明确错误。这些路径不伪造事实。
-- 待用户决定：未配置独立压缩模型时复用主模型是既有策略；直接移除可能导致长会话无法压缩，本轮不改变。如需取消，应先确定“禁用压缩”还是“强制独立模型配置”。
-- 安全修复：新增 `backend/.dockerignore`，排除 `.env`、虚拟环境、测试和调试文件；当前 agent 镜像已重建并确认不含 `/deps/outer-backend/src/.env`。
-- 关联：`AGENTS.md`、`docs/TODO.md`、`prd.md`
-
-### 2026-09-14 - TODO 17–18 交互收敛与上下文用量完成
-
-- 类型：完成 / 规范对齐 / 稳定性修复
-- 范围：LangGraph 上下文、Run 取消、会话创建、推荐动作、地图 Marker、前端用量面板
-- 记录：每次主模型调用完成后使用 `AIMessage.usage_metadata` 实际用量；LangChain `count_tokens_approximately` 仅用于系统提示、工具 schema、历史与摘要的分项预算，并记录与实际输入的核算差值。新增持久化 `context_usage` 及输入框环形明细入口。同时修复 Marker 跨界、首轮重复 Thread/技术标题闪现，并在 interrupt 取消等待收敛后才闭合未完成 tool_call。
-- 证据边界：模型窗口配置缺失或非法时启动报错；缺少真实 usage 或旧 checkpoint 时不显示上下文入口。下一步建议仅由模型判断适用性，生成或校验失败显式报错，不使用正则和固定模板降级；取消补齐只使用 checkpoint 中已有的 tool_call id。
-- 验证：以本次实现完成后的自动化测试、生产构建和差异检查结果为准。
-- 关联：`docs/TODO.md`、`prd.md`、`backend/app/agent/context.py`、`backend/app/agent/graph.py`、`frontend/src/App.tsx`、`frontend/src/components/ContextUsageIndicator.tsx`
-
-### 2026-09-14 - TODO 14–16 交互回归与地图修复完成
-
-- 类型：完成 / 纠正 / 测试基线
-- 范围：前端会话、LangGraph checkpoint、地图、测试、产品文档
-- 记录：修复推荐动作晚到不可见、回到底部位置、标题轮询闪现技术名、取消后工具调用悬挂及下一轮协议错误；地图测点改为独立 DOM Marker，展开态改为可通过按钮、遮罩和 Esc 关闭的全屏浮层，并提高初始缩放、补充监测人员关注信息。
-- 安全边界：取消收尾只写入与服务端已发出 tool_call id 对应的结构化 ToolMessage；地图弹窗使用 textContent 构造，不把站点或模型文本作为 HTML；远程图层地址仍为代码内受信配置。
-- 验证：后端 15 项单元测试通过；前端 4 项会话集成测试通过；TypeScript 与 Vite 生产构建通过；真实浏览器确认 4 个 Marker、全屏地图、右上角关闭与 Esc 关闭正常。真实模型措辞、上游数据和外部瓦片继续由部署环境验收。
-- 关联：`docs/TODO.md`、`prd.md`、`frontend/src/App.tsx`、`frontend/src/services/api.ts`、`frontend/src/components/ChatWindow.tsx`、`frontend/src/components/SiteEnvironmentCard.tsx`、`frontend/tests/conversation.integration.test.tsx`
-
-### 2026-09-14 - TODO 8–13 实施完成
-
-- 类型：完成 / 前后端能力升级
-- 范围：LangGraph 流式会话、工具重试、上下文预算、站点空间字段、标题、内联地图
-- 记录：前端已由 `@langchain/react useStream` 直接投影 Thread 权威消息，移除手工流缓冲与 Run 引用；工具节点只重试超时、连接、HTTP 429/5xx，并在耗尽后向智能体返回可解释的 ToolMessage；上下文预算已纳入动态系统提示、工具 schema、输出预留与安全余量；站点输出补齐 WGS84 经纬度和海拔；标题不再使用固定意图模板或破坏性截断；新增版本化 `site_environment` 工具结果与惰性 MapLibre 地图卡片。
-- 证据边界：地图使用代码内固定的受信瓦片源；Open-Meteo/Copernicus DEM 与 Macrostrat 图层均显示来源。Macrostrat 公开能力不足以可靠计算最近断层距离，因此仅展示构造线并明确缺失，不做模型补写。
-- 验证：后端 15 项单元测试通过；上下文脚本 18 项自测通过；前端 TypeScript 与 Vite 生产构建通过；`git diff --check` 通过。
-- 关联：`docs/TODO.md`、`backend/app/agent/graph.py`、`backend/app/agent/site.py`、`frontend/src/App.tsx`、`frontend/src/components/SiteEnvironmentCard.tsx`
-
-### 2026-09-14 - 保持智能体灵活性
-
-- 类型：纠正 / 约束 / 文档同步
-- 范围：智能体、提示词、工具编排、前后端、测试
-- 记录：智能体应根据用户意图、上下文与实际证据动态选择分析路径和回答结构；不得通过固定模板、固定章节或固定工具调用顺序填充结果，导致行为僵化。
-- 边界：灵活性不覆盖安全和事实约束。平台事实需由工具获取，外部内容和模型输出均不可信，高风险结论保持证据边界，工具维持最小权限。
-- 预防：评审提示词和编排变更时，检查新增内容是“目标/边界/可选策略”还是“强制脚本”；除接口 schema 和安全校验外，优先删除不必要的固定格式与固定流程。
-- 关联：`AGENTS.md`、`docs/TODO.md`、`prd.md`
-
-### 2026-09-14 - TODO 8–13 形成实施方案
-
-- 类型：状态 / 决策
-- 范围：前端、后端、智能体、地图、测试
-- 记录：第 8–13 项均已补充依赖关系、增量方案和验收标准，但尚未标记为完成。
-- 预防：只能在实现、回归测试和文档同步全部完成后，将对应事项改为“已完成”。
-- 关联：`docs/TODO.md`
+历史上被撤回的推荐预取、旧 TODO 编号实施方案和已被替代的流式补丁说明已清除。未来不得从这些旧方案恢复兼容逻辑；新增兜底继续按 AGENTS.md 告知与审批边界执行。

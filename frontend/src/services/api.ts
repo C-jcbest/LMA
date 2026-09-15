@@ -351,6 +351,8 @@ export function projectLangGraphMessages(
   };
 
   for (const message of rawMsgs || []) {
+    // 官方内部摘要是带来源标记的 HumanMessage，不属于真实用户发言。
+    if (message?.additional_kwargs?.lc_source === 'summarization') continue;
     const type = message?.type || message?.getType?.() || message?._getType?.() || message?.role;
     const text = messageText(message);
     const thinking = messageThinking(message);

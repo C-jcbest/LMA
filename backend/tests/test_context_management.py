@@ -1,93 +1,93 @@
+"""生产官方摘要的长对话、消息配对与失败路径回归。"""
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
-
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
-
-from app.agent import context
-
-
-def _settings(**overrides):
-    values = {
-        "context_token_threshold": 400,
-        "context_model_context": 1_000,
-        "context_compress_ratio": 0.8,
-        "context_target_ratio": 0.5,
-        "context_output_reserve_tokens": 0,
-        "context_safety_margin_tokens": 0,
-        "context_token_estimate_factor": 1.0,
-        "context_chars_per_token": 1.0,
-        "context_min_turns": 2,
-        "llm_model": "test-model",
-    }
-    values.update(overrides)
-    return SimpleNamespace(**values)
+from unittest.mock import patch
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from app.agent import context, graph, summarization
+from runtime_fixtures import ScriptedModel
 
 
-def _turn(index: int, payload: str = ""):
-    call_id = f"call-{index}"
-    return [
-        HumanMessage(id=f"human-{index}", content=f"第 {index} 轮查询"),
-        AIMessage(
-            id=f"tool-request-{index}",
-            content="",
-            tool_calls=[{"id": call_id, "name": "get_daily_gnss_data", "args": {}}],
-        ),
-        ToolMessage(
-            id=f"tool-result-{index}",
-            tool_call_id=call_id,
-            name="get_daily_gnss_data",
-            content=payload or '{"points": []}',
-        ),
-        AIMessage(id=f"answer-{index}", content=f"第 {index} 轮回答"),
-    ]
+def turn(index):
+    return [HumanMessage(id=f"u{index}", content=f"站点甲 第{index}轮 2026-09-15 Asia/Shanghai"),
+        AIMessage(id=f"a{index}", content="", tool_calls=[{"id": f"c{index}", "name": "query", "args": {}}]),
+        ToolMessage(id=f"t{index}", content="缺测；视觉候选尚未确认；" + "x" * 12000,
+                    tool_call_id=f"c{index}", name="query"),
+        AIMessage(id=f"f{index}", content="证据有限，不能判断滑坡")]
 
 
 class ContextManagementTests(unittest.IsolatedAsyncioTestCase):
-    async def test_below_threshold_keeps_messages_untouched(self):
-        messages = _turn(1)
-        with patch.object(
-            context,
-            "get_settings",
-            return_value=_settings(context_token_threshold=100_000, context_model_context=200_000),
-        ):
-            self.assertEqual(await context.manage_context(messages, ""), {})
-        self.assertEqual(len(messages), 4)
+    def setUp(self):
+        settings = SimpleNamespace(recommend_enabled=False, llm_model="test", context_token_threshold=10000,
+            context_model_context=100000, context_compress_ratio=0.8, context_keep_messages=4,
+            context_min_turns=2, context_summary_max_tokens=2000, context_output_reserve_tokens=100,
+            context_safety_margin_tokens=20, context_token_estimate_factor=1.0, context_chars_per_token=1.6667)
+        for module in (context, graph, summarization):
+            patcher = patch.object(module, "get_settings", return_value=settings)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.config = {"configurable": {"thread_id": "summary-test"}}
+        self.summary = ScriptedModel(script=[AIMessage(content=
+            "站点甲；2026-09-15 Asia/Shanghai；缺测，视觉候选未确认，不能推定气象因果。") for _ in range(3)])
+        self.model = ScriptedModel(script=[AIMessage(content="继续核实") for _ in range(3)])
 
-    async def test_compression_evicts_whole_oldest_turns_and_keeps_recent_turns(self):
-        messages = []
-        for index in range(1, 5):
-            messages.extend(_turn(index, "x" * 500))
+    def build(self):
+        return graph.create_lma_agent(self.model, agent_tools=[], summary_model=self.summary,
+                                      checkpointer=InMemorySaver())
 
-        with (
-            patch.object(context, "get_settings", return_value=_settings()),
-            patch.object(context, "compress_history", AsyncMock(return_value="压缩摘要")),
-        ):
-            update = await context.manage_context(messages, "")
+    async def test_summary_persists_and_preserves_complete_recent_turns(self):
+        agent = self.build()
+        history = turn(1) + turn(2) + turn(3) + [HumanMessage(id="current", content="继续")]
+        result = await agent.ainvoke({"messages": history}, self.config)
+        messages = result["messages"]
+        self.assertEqual(messages[0].additional_kwargs["lc_source"], "summarization")
+        self.assertNotIn("context_summary", result)
+        self.assertEqual([m.id for m in messages[1:-1]], [m.id for m in history[8:]])
+        self.assertIn("视觉候选未确认", self.model.inputs[0][1].content)
+        self.assertIn("2026-09-15", self.summary.inputs[0][0].content)
+        self.assertIn("缺少锚点不得推算", self.summary.inputs[0][0].content)
+        next_result = await agent.ainvoke({"messages": [HumanMessage(content="同一站点呢？")]}, self.config)
+        self.assertEqual(len([m for m in next_result["messages"]
+            if m.additional_kwargs.get("lc_source") == "summarization"]), 1)
+        self.assertIn("站点甲", str(self.model.inputs[-1]))
 
-        removed = {message.id for message in update["messages"]}
-        self.assertTrue(all(isinstance(message, RemoveMessage) for message in update["messages"]))
-        self.assertEqual(removed, {message.id for message in messages[:8]})
-        self.assertFalse(removed & {message.id for message in messages[-8:]})
-        self.assertEqual(update["context_summary"], "压缩摘要")
+    async def test_minimum_turns_protected_even_over_budget(self):
+        result = await self.build().ainvoke({"messages": turn(1) + [HumanMessage(content="继续")]}, self.config)
+        self.assertEqual(len(result["messages"]), 6)
+        self.assertFalse(self.summary.inputs)
 
-    async def test_compression_failure_preserves_checkpoint_messages(self):
-        messages = _turn(1, "x" * 500) + _turn(2, "x" * 500) + _turn(3, "x" * 500)
-        with (
-            patch.object(context, "get_settings", return_value=_settings()),
-            patch.object(context, "compress_history", AsyncMock(side_effect=RuntimeError("failed"))),
-        ):
-            with self.assertLogs(context.logger, level="WARNING"):
-                self.assertEqual(await context.manage_context(messages, ""), {})
+    async def test_invalid_or_empty_summary_does_not_delete_history(self):
+        for response in (ValueError("invalid summary config"), AIMessage(content="")):
+            self.summary.script = [response]
+            self.summary.inputs.clear()
+            agent = self.build()
+            history = turn(1) + turn(2) + turn(3) + [HumanMessage(content="继续")]
+            with self.assertRaises(ValueError):
+                await agent.ainvoke({"messages": history}, self.config)
+            self.assertEqual(len(self.summary.inputs), 1)
+            self.assertFalse(self.model.inputs)
+            self.assertEqual(len((await agent.aget_state(self.config)).values["messages"]), len(history))
 
-    def test_turn_split_and_evictable_text_keep_message_protocol_intact(self):
-        messages = _turn(1) + _turn(2)
-        self.assertEqual([len(turn) for turn in context.split_turns(messages)], [4, 4])
-        self.assertIsNone(context._evictable_text(messages[2]))
-        self.assertIsNone(context._evictable_text(messages[1]))
-        self.assertIn("用户", context._evictable_text(messages[0]) or "")
-        self.assertIn("助手", context._evictable_text(messages[3]) or "")
+    async def test_stopped_parallel_tools_stay_paired_after_compression(self):
+        stopped = [HumanMessage(content="上一轮"), AIMessage(content="", tool_calls=[
+            {"id": "p1", "name": "query", "args": {}}, {"id": "p2", "name": "query", "args": {}}]),
+            ToolMessage(content="已完成", tool_call_id="p1", name="query"),
+            ToolMessage(content="由用户停止", tool_call_id="p2", name="query", status="error")]
+        await self.build().ainvoke({"messages": turn(1) + turn(2) + stopped + [HumanMessage(content="继续")]}, self.config)
+        pending = set()
+        for message in self.model.inputs[0]:
+            if message.type == "ai":
+                pending.update(c["id"] for c in message.tool_calls)
+            elif message.type == "tool":
+                self.assertIn(message.tool_call_id, pending)
+                pending.remove(message.tool_call_id)
+        self.assertFalse(pending)
+        self.assertEqual(len([m for m in self.model.inputs[0] if m.type == "tool"]), 2)
 
-
-if __name__ == "__main__":
-    unittest.main()
+    async def test_summary_tokens_do_not_enter_main_message_stream(self):
+        events = [event async for event in self.build().astream({
+            "messages": turn(1) + turn(2) + turn(3) + [HumanMessage(content="继续")],
+        }, self.config, stream_mode="messages")]
+        self.assertTrue(self.summary.inputs)
+        self.assertFalse(any(metadata.get("lc_source") == "summarization" for _, metadata in events))
+        self.assertTrue(any(message.content == "继续核实" for message, _ in events))
