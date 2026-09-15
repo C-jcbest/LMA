@@ -12,9 +12,12 @@ import {
   createLangGraphClient,
   ThreadSession,
   Message,
-  closeInterruptedToolCalls,
+  prepareThreadInput,
   generateSessionTitle,
   getSessions,
+  getSessionStatuses,
+  mergeThreadSessions,
+  THREAD_PAGE_SIZE,
   getStoredApiUrl,
   projectLangGraphMessages,
   projectThreadSessions,
@@ -29,26 +32,28 @@ interface LmaState {
   context_usage?: ContextUsage;
 }
 
+const readSelectedThreadId = () => new URL(window.location.href).searchParams.get('threadId') || null;
+
 export const App: React.FC = () => {
   const [sessions, setSessions] = useState<ThreadSession[]>([]);
   // URL 仅记录选择态；消息和运行状态始终由官方 SDK 恢复。
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
-    () => new URL(window.location.href).searchParams.get('threadId')
+    readSelectedThreadId
   );
   const selectedThreadRef = useRef(activeThreadId);
   selectedThreadRef.current = activeThreadId;
   const isNewSessionDraft = activeThreadId === null;
-  const selectThread = useCallback((id: string | null) => {
+  const selectThread = useCallback((id: string | null, mode: 'push' | 'replace' = 'push') => {
     const url = new URL(window.location.href);
     if (id) url.searchParams.set('threadId', id);
     else url.searchParams.delete('threadId');
-    window.history.replaceState(null, '', url);
+    if (url.href !== window.location.href) {
+      // 用户导航留下历史；SDK 分配 ID 和删除等原位更新不添加额外记录。
+      if (mode === 'push') window.history.pushState(window.history.state, '', url);
+      else window.history.replaceState(window.history.state, '', url);
+    }
+    selectedThreadRef.current = id;
     setActiveThreadId(id);
-  }, []);
-  useEffect(() => {
-    const onPopState = () => setActiveThreadId(new URL(window.location.href).searchParams.get('threadId'));
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
   }, []);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -62,10 +67,15 @@ export const App: React.FC = () => {
   const [isStopping, setIsStopping] = useState(false);
   const [isStartingRun, setIsStartingRun] = useState(false);
   const isSubmittingRef = useRef(false);
+  const isStoppingRef = useRef(false);
 
   // 仅保存标题展示任务；不预创建 Thread，不复制权威消息历史。
   const [titleViews, setTitleViews] = useState<Record<string, 'pending' | 'creation_error' | 'save_error'>>({});
-  const [newThreadOrder, setNewThreadOrder] = useState<string[]>([]);
+  const [hasMoreSessions, setHasMoreSessions] = useState(false);
+  const [isListLoading, setIsListLoading] = useState(false);
+  const [sessionListError, setSessionListError] = useState('');
+  const nextOffsetRef = useRef(0);
+  const listLoadingRef = useRef(false);
   const titleJobsRef = useRef(new Map<string, { text: string; client: Client; creationNotified: boolean; titleStarted?: boolean }>());
   const firstInputRef = useRef<{ text: string; client: Client } | null>(null);
   const sessionRequestRef = useRef(0);
@@ -78,27 +88,48 @@ export const App: React.FC = () => {
       return next;
     });
   }, []);
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (append = false) => {
     if (currentClientRef.current !== client || deletingThreadsRef.current.size) return;
+    if (append && listLoadingRef.current) return;
     const request = ++sessionRequestRef.current;
+    listLoadingRef.current = true;
+    setIsListLoading(true);
     try {
-      const res = await getSessions(client);
+      let offset = append ? nextOffsetRef.current : 0;
+      const target = append ? offset + THREAD_PAGE_SIZE : Math.max(THREAD_PAGE_SIZE, nextOffsetRef.current);
+      let collected: ThreadSession[] = [];
+      let more = false;
+      do {
+        const res = await getSessions(client, offset);
+        if (request !== sessionRequestRef.current) return;
+        collected = mergeThreadSessions(collected, res.sessions);
+        offset = res.nextOffset;
+        more = res.hasMore;
+      } while (more && offset < target);
       if (request !== sessionRequestRef.current) return;
-      setIsLiveServer(res.isLive);
-      setSessions(res.sessions);
+      nextOffsetRef.current = offset;
+      setHasMoreSessions(more);
+      setIsLiveServer(true);
+      setSessionListError('');
+      setSessions((current) => append ? mergeThreadSessions(current, collected) : collected);
     } catch (error) {
       if (request !== sessionRequestRef.current) return;
       console.warn('loadSessions err:', error);
       setIsLiveServer(false);
+      setSessionListError('会话列表加载失败，已保留当前列表。请刷新重试。');
+    } finally {
+      if (request === sessionRequestRef.current) {
+        listLoadingRef.current = false;
+        setIsListLoading(false);
+      }
     }
   }, [client]);
 
   const onThreadId = useCallback((id: string) => {
     if (currentClientRef.current !== client) return;
-    selectThread(id);
+    selectThread(id, 'replace');
     const input = firstInputRef.current;
     if (input) {
-      setNewThreadOrder((ids) => [id, ...ids.filter((item) => item !== id)]);
       titleJobsRef.current.set(id, { ...input, creationNotified: false });
       setTitleViews((current) => ({ ...current, [id]: 'pending' }));
     }
@@ -135,9 +166,7 @@ export const App: React.FC = () => {
           if (titleJobsRef.current.get(id) !== job) return;
           const confirmed = projectThreadSessions([thread]);
           ++sessionRequestRef.current;
-          setSessions((items) => [
-            ...items.filter((item) => item.thread_id !== id), ...confirmed,
-          ]);
+          setSessions((items) => mergeThreadSessions(items, confirmed));
           clearTitleView(id);
           void loadSessions();
         } catch (error) {
@@ -162,6 +191,20 @@ export const App: React.FC = () => {
     onCreated,
   });
 
+  useEffect(() => {
+    const onPopState = () => {
+      const id = readSelectedThreadId();
+      if (id === selectedThreadRef.current) return;
+      // 仅断开客户端订阅；服务器 Run 与 checkpoint 仍由官方 SDK 管理。
+      stream.disconnect();
+      setSubmissionError('');
+      selectedThreadRef.current = id;
+      setActiveThreadId(id);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [stream.disconnect]);
+
   const sidebarSessions = useMemo<SidebarSession[]>(() => {
     const items: SidebarSession[] = sessions.map((session) => ({ ...session }));
     for (const [id, phase] of Object.entries(titleViews)) {
@@ -174,15 +217,12 @@ export const App: React.FC = () => {
       if (index >= 0) items[index] = display;
       else items.unshift(display);
     }
-    const order = new Map(newThreadOrder.map((id, index) => [id, index]));
-    return items.sort((a, b) => (order.get(a.thread_id) ?? newThreadOrder.length) - (order.get(b.thread_id) ?? newThreadOrder.length));
-  }, [sessions, titleViews, newThreadOrder]);
+    return items;
+  }, [sessions, titleViews]);
 
   useEffect(() => {
     void loadSessions();
-    const timer = window.setInterval(() => void loadSessions(), 3000);
     return () => {
-      window.clearInterval(timer);
       ++sessionRequestRef.current;
     };
   }, [loadSessions]);
@@ -215,19 +255,51 @@ export const App: React.FC = () => {
       : '';
   const generatingThreadIds = useMemo(() => {
     const busy = sessions
-      .filter((session) => session.thread_id !== activeThreadId && session.status === 'busy')
+      .filter((session) => session.status === 'busy')
       .map((session) => session.thread_id);
     if (stream.isLoading && activeThreadId && !busy.includes(activeThreadId)) busy.push(activeThreadId);
     return busy;
   }, [sessions, stream.isLoading, activeThreadId]);
 
+  const busyIdsKey = [...new Set([
+    ...sessions.filter((session) => session.status === 'busy').map((session) => session.thread_id),
+    ...(stream.isLoading && activeThreadId ? [activeThreadId] : []),
+  ])].sort().join(',');
+  useEffect(() => {
+    if (!busyIdsKey) return;
+    let disposed = false;
+    let refreshing = false;
+    const refreshBusy = async () => {
+      if (refreshing || listLoadingRef.current || deletingThreadsRef.current.size) return;
+      refreshing = true;
+      const request = sessionRequestRef.current;
+      try {
+        const refreshed = await getSessionStatuses(client, busyIdsKey.split(','));
+        if (disposed || request !== sessionRequestRef.current) return;
+        setSessions((items) => mergeThreadSessions(items, refreshed));
+        setIsLiveServer(true);
+        setSessionListError('');
+      } catch (error) {
+        if (disposed || request !== sessionRequestRef.current) return;
+        console.warn('refresh busy sessions error:', error);
+        setIsLiveServer(false);
+        setSessionListError('运行状态刷新失败，已保留上次确认状态。请刷新重试。');
+      } finally { refreshing = false; }
+    };
+    // 仅有已知 busy Thread 时，每3秒查询这些 ID 的列表字段，不刷新所有分页。
+    const timer = window.setInterval(() => void refreshBusy(), 3000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [busyIdsKey, client]);
+
   const handleSelectSession = (session: Pick<ThreadSession, 'thread_id'>) => {
+    if (session.thread_id === selectedThreadRef.current) return;
     stream.disconnect();
     setSubmissionError('');
     selectThread(session.thread_id);
   };
 
   const handleCreateSession = () => {
+    if (selectedThreadRef.current === null) return;
     stream.disconnect();
     setSubmissionError('');
     selectThread(null);
@@ -235,13 +307,10 @@ export const App: React.FC = () => {
 
   const handleRenameSession = async (sessionId: string, newName: string) => {
     try {
-      await renameSession(client, sessionId, newName);
+      const renamed = await renameSession(client, sessionId, newName);
       if (currentClientRef.current !== client) return;
-      setSessions((current) =>
-        current.map((session) =>
-          session.thread_id === sessionId ? { ...session, name: newName } : session
-        )
-      );
+      setSessions((current) => mergeThreadSessions(current, projectThreadSessions([renamed])));
+      void loadSessions();
     } catch (error) {
       if (currentClientRef.current !== client) return;
       console.warn('rename session error:', error);
@@ -266,11 +335,10 @@ export const App: React.FC = () => {
       console.info('delete session confirmed:', { threadId: sessionId });
       stage = 'display';
       ++sessionRequestRef.current;
-      setNewThreadOrder((ids) => ids.filter((id) => id !== sessionId));
       clearTitleView(sessionId);
       titleJobsRef.current.delete(sessionId);
       setSessions((current) => current.filter((session) => session.thread_id !== sessionId));
-      if (selectedThreadRef.current === sessionId) selectThread(null);
+      if (selectedThreadRef.current === sessionId) selectThread(null, 'replace');
       setSubmissionError('');
     } catch (error) {
       if (currentClientRef.current !== client) return;
@@ -301,9 +369,12 @@ export const App: React.FC = () => {
     const isFirstMessage = activeThreadId === null;
     if (isFirstMessage) firstInputRef.current = { text, client: stream.client };
     try {
+      const inputMessages = activeThreadId ? await prepareThreadInput(client, activeThreadId, text)
+        : [{ type: 'human' as const, content: text }];
+      if (currentClientRef.current !== client || selectedThreadRef.current !== activeThreadId) return;
       // 乐观消息由官方 SDK 注入并与 checkpoint 协调，不在应用中复制消息。
       await stream.submit(
-        { messages: [{ type: 'human', content: text }] },
+        { messages: inputMessages },
         {
           multitaskStrategy: 'reject',
           onError: (error) => {
@@ -331,22 +402,21 @@ export const App: React.FC = () => {
   };
 
   const handleStopGeneration = async () => {
-    if (!activeThreadId) return;
-    const rawMessages = [...(stream.messages || [])] as unknown[];
+    if (!activeThreadId || !stream.isLoading || isStoppingRef.current) return;
+    isStoppingRef.current = true;
     setSubmissionError('');
     setIsStopping(true);
     try {
       await stream.stop();
-      if (currentClientRef.current !== client) return;
-      await closeInterruptedToolCalls(client, activeThreadId, rawMessages);
     } catch (error) {
       if (currentClientRef.current !== client) return;
-      console.warn('stop generation cleanup error:', error);
-      setSubmissionError('已停止生成，但会话状态清理失败，请刷新后重试');
+      console.warn('stop generation error:', error);
+      setSubmissionError('停止请求未完成，请检查会话运行状态后重试。');
     } finally {
       if (currentClientRef.current === client) {
         await loadSessions();
         setIsStopping(false);
+        isStoppingRef.current = false;
       }
     }
   };
@@ -367,6 +437,11 @@ export const App: React.FC = () => {
           onToggleCollapse={() => setIsSidebarCollapsed(true)}
           onOpenConfig={() => setIsConfigOpen(true)}
           isLiveServer={isLiveServer}
+          hasMoreSessions={hasMoreSessions}
+          isListLoading={isListLoading}
+          sessionListError={sessionListError}
+          onLoadMore={() => void loadSessions(true)}
+          onRefresh={() => void loadSessions()}
         />
       )}
 
@@ -400,14 +475,19 @@ export const App: React.FC = () => {
           isSubmittingRef.current = false;
           setIsStartingRun(false);
           setIsStopping(false);
+          isStoppingRef.current = false;
           setTitleViews({});
-          setNewThreadOrder([]);
+          nextOffsetRef.current = 0;
+          listLoadingRef.current = false;
+          setHasMoreSessions(false);
+          setIsListLoading(false);
+          setSessionListError('');
           deletingThreadsRef.current.clear();
           setDeletingThreadIds([]);
           setSessions([]);
           setIsLiveServer(false);
           setSubmissionError('');
-          selectThread(null);
+          selectThread(null, 'replace');
           setApiUrl(nextUrl);
         }}
       />

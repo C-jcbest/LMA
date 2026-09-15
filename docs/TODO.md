@@ -3,5 +3,5 @@
 当前实施与验收清单见 [TODO_2026-09-15.md](TODO_2026-09-15.md)。旧版 2026-09-14 清单已完成，其补丁方案和旧编号不再适用于官方能力重构，故移除，避免与现行清单冲突。
 
 - 第一阶段 TODO 1–3 已完成，保留测试回归。
-- TODO 4–9 已完成：官方 Agent Runtime、摘要、工具协议、调用预算、会话生命周期及唯一 Client / Transport 配置源。下一项为 TODO 10 URL 完整生命周期验收。架构与部署边界见 [ADR 0001](adr/0001-agent-runtime.md)。
+- TODO 4–12 已完成：官方 Agent Runtime、摘要、工具协议、调用预算、会话生命周期、唯一Client、URL选择态、Thread归属/分页/轻量刷新及Stop协议。下一项为 TODO 13 状态分层。架构与部署边界见 [ADR 0001](adr/0001-agent-runtime.md)。
 - 当前实现与持续有效决策见 [project-status.md](project-status.md)。

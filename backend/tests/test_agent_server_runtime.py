@@ -37,6 +37,9 @@ class StubHandler(BaseHTTPRequestHandler):
         if self.path.endswith("doLogin.php"):
             return self.send_json({"ResponseCode": "200", "SessionUUID": "INVALID_TEST_SESSION"})
         if self.path.endswith("getStationGroupListInfo.php"):
+            if self.server.pause_groups:
+                self.server.tool_started.set()
+                self.server.release_tool.wait(timeout=15)
             self.server.group_calls += 1
             if self.server.group_calls == 1:
                 return self.send_json({"error": "transient test error"}, 503)
@@ -118,6 +121,9 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
         cls.stub.model_calls = 0
         cls.stub.summary_calls = 0
         cls.stub.model_inputs = []
+        cls.stub.pause_groups = False
+        cls.stub.tool_started = threading.Event()
+        cls.stub.release_tool = threading.Event()
         threading.Thread(target=cls.stub.serve_forever, daemon=True).start()
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
@@ -246,6 +252,50 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
             for m in limited["messages"]))
         await client.threads.delete(thread_id)
 
+    async def test_stop_preserves_checkpoint_and_next_input_pairs_missing_tool(self):
+        """真实 interrupt 不写取消结果；下一轮单次提交协议消息与用户输入。"""
+        import asyncio
+
+        client = get_client(url=self.url)
+        thread_id = (await client.threads.create())["thread_id"]
+        self.stub.tool_started.clear()
+        self.stub.release_tool.clear()
+        self.stub.pause_groups = True
+        try:
+            run = await client.runs.create(thread_id, "lma-agent", input={
+                "messages": [{"type": "human", "content": "查询监测分组"}],
+            })
+            for _ in range(150):
+                if self.stub.tool_started.is_set():
+                    break
+                await asyncio.sleep(0.05)
+            self.assertTrue(self.stub.tool_started.is_set())
+            await client.runs.cancel(thread_id, run["run_id"])
+            await client.runs.join(thread_id, run["run_id"])
+            latest = await client.runs.list(thread_id, limit=1)
+            self.assertEqual(latest[0]["run_id"], run["run_id"])
+            self.assertEqual(latest[0]["status"], "interrupted")
+            state = await client.threads.get_state(thread_id)
+            messages = state["values"]["messages"]
+            self.assertEqual([m["type"] for m in messages], ["human", "ai"])
+            call = messages[-1]["tool_calls"][0]
+            self.stub.pause_groups = False
+            self.stub.release_tool.set()
+            resumed = await client.runs.wait(thread_id, "lma-agent", input={"messages": [{
+                "type": "tool", "tool_call_id": call["id"], "name": call["name"],
+                "status": "error", "content": "该工具调用在完成前被用户中止，未获得结果。",
+                "additional_kwargs": {"lma_protocol": "interrupted_tool_call"},
+            }, {"type": "human", "content": "继续说明已有证据"}]})
+            self.assertNotIn("__error__", resumed, resumed)
+            self.assertEqual([m["type"] for m in resumed["messages"]],
+                             ["human", "ai", "tool", "human", "ai"])
+            self.assertEqual(resumed["messages"][2]["status"], "error")
+            self.assertEqual((await client.runs.list(thread_id, limit=1))[0]["status"], "success")
+        finally:
+            self.stub.pause_groups = False
+            self.stub.release_tool.set()
+            await client.threads.delete(thread_id)
+
     async def test_v2_first_run_creates_thread_and_rejection_leaves_no_thread(self):
         """当前 React SDK 使用的 run.start 协议，不通过 threads.create 预创建。"""
         import asyncio
@@ -281,6 +331,40 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
             state = await client.threads.get_state(thread_id)
             self.assertTrue(state["checkpoint"]["checkpoint_id"])
             self.assertTrue(state["values"]["messages"])
+            confirmed_thread = await client.threads.get(thread_id)
+            self.assertEqual(confirmed_thread["metadata"]["graph_id"], "lma-agent")
+            owned = await client.threads.search(metadata={"graph_id": "lma-agent"},
+                ids=[thread_id], sort_by="updated_at", sort_order="desc",
+                select=["thread_id", "created_at", "updated_at", "metadata", "status"])
+            self.assertEqual([item["thread_id"] for item in owned], [thread_id])
+            self.assertNotIn("values", owned[0])
             await client.threads.update(thread_id, metadata={"name": "新会话"})
             self.assertEqual((await client.threads.get(thread_id))["metadata"]["name"], "新会话")
             await client.threads.delete(thread_id)
+
+    async def test_thread_search_graph_filter_and_125_thread_pagination(self):
+        """只操作本测试启动的隔离服务，验证真实搜索过滤、分页和轻量字段。"""
+        client = get_client(url=self.url)
+        created = []
+        try:
+            for index in range(125):
+                thread = await client.threads.create(metadata={"graph_id": "lma-agent", "name": f"分页测试{index}"})
+                created.append(thread["thread_id"])
+            auxiliary = await client.threads.create(metadata={"graph_id": "session-title", "name": "辅助图有名称也不进入主列表"})
+            created.append(auxiliary["thread_id"])
+            found = []
+            offset = 0
+            while True:
+                page = await client.threads.search(metadata={"graph_id": "lma-agent"}, limit=20, offset=offset,
+                    sort_by="updated_at", sort_order="desc", select=["thread_id", "created_at", "updated_at", "metadata", "status"])
+                found.extend(page)
+                offset += len(page)
+                if len(page) < 20:
+                    break
+            self.assertEqual(len(found), 125)
+            self.assertEqual({item["thread_id"] for item in found}, set(created[:-1]))
+            self.assertEqual([item["updated_at"] for item in found], sorted([item["updated_at"] for item in found], reverse=True))
+            self.assertTrue(all("values" not in item for item in found))
+        finally:
+            for thread_id in created:
+                await client.threads.delete(thread_id)

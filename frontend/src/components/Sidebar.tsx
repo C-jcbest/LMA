@@ -16,7 +16,7 @@ import {
 import { ThreadSession } from '../services/api';
 
 // SDK 已分配 ID 的骨架只含展示字段，不伪造服务端 created_at。
-export type SidebarSession = Omit<ThreadSession, 'created_at'> & { created_at?: string; titlePending?: boolean };
+export type SidebarSession = Omit<ThreadSession, 'created_at' | 'updated_at'> & { created_at?: string; updated_at?: string; titlePending?: boolean };
 
 interface SidebarProps {
   sessions: SidebarSession[];
@@ -33,6 +33,11 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   onOpenConfig: () => void;
   isLiveServer: boolean;
+  hasMoreSessions?: boolean;
+  isListLoading?: boolean;
+  sessionListError?: string;
+  onLoadMore?: () => void;
+  onRefresh?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -48,6 +53,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   onOpenConfig,
   isLiveServer,
+  hasMoreSessions = false,
+  isListLoading = false,
+  sessionListError = '',
+  onLoadMore,
+  onRefresh,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -150,6 +160,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* 历史会话列表 */}
+      <div className="px-4 pb-2 flex items-center justify-between text-xs text-neutral-500">
+        <span>历史会话</span>
+        <button type="button" onClick={onRefresh} disabled={isListLoading} aria-label="刷新会话列表" className="p-1 rounded hover:bg-neutral-100 disabled:opacity-40">
+          <RefreshCw className={`w-3.5 h-3.5 ${isListLoading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+      {sessionListError && <div role="alert" className="px-4 pb-2 text-xs text-amber-700">{sessionListError}</div>}
       <div className="flex-1 overflow-y-auto px-2 space-y-1">
         {sessions.length === 0 && !isNewSessionDraft ? (
           <div className="h-36 flex flex-col items-center justify-center text-neutral-400 text-xs px-4 text-center select-none">
@@ -236,6 +253,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           );
         }))}
+        {hasMoreSessions && <button type="button" onClick={onLoadMore} disabled={isListLoading} className="w-full py-2 text-xs text-neutral-500 hover:bg-neutral-100 rounded-lg disabled:opacity-40">
+          {isListLoading ? '正在加载会话…' : '加载更多会话'}
+        </button>}
       </div>
 
       {/* 底部用户卡片 */}

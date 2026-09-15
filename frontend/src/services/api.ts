@@ -95,6 +95,7 @@ export interface ThreadSession {
   thread_id: string;
   name: string;
   created_at: string;
+  updated_at: string;
   status?: string;
 }
 
@@ -126,26 +127,50 @@ export const createLangGraphClient = (apiUrl: string, defaultHeaders?: Record<st
 
 export function projectThreadSessions(threads: any[]): ThreadSession[] {
   return threads
-    .filter((thread) => typeof thread.metadata?.name === 'string' && thread.metadata.name.trim())
+    .filter((thread) => thread.metadata?.graph_id === LMA_ASSISTANT_ID)
     .map((thread) => {
       if (!thread.created_at) throw new Error(`Thread ${thread.thread_id} 缺少 created_at`);
+      if (!thread.updated_at || !Number.isFinite(Date.parse(thread.updated_at))) throw new Error('会话缺少有效更新时间');
       return {
         thread_id: thread.thread_id,
-        name: thread.metadata.name.trim(),
+        name: typeof thread.metadata.name === 'string' && thread.metadata.name.trim() ? thread.metadata.name.trim() : '新会话',
         created_at: thread.created_at,
+        updated_at: thread.updated_at,
         status: thread.status,
       };
     });
 }
 
 /**
- * 获取会话列表。只展示具有明确会话名称的业务 Thread；
- * session-title 无状态运行产生的临时 Thread 没有该元数据，不进入会话列表。
+ * 按官方 graph_id 归属分页，只查询列表字段，不拉取 checkpoint/values。
  */
-export async function getSessions(client: Client): Promise<{ sessions: ThreadSession[]; isLive: boolean }> {
-  const threads = await client.threads.search({ limit: 20 });
+export async function getSessions(client: Client, offset = 0): Promise<{ sessions: ThreadSession[]; isLive: boolean; nextOffset: number; hasMore: boolean }> {
+  const threads = await client.threads.search({ metadata: { graph_id: LMA_ASSISTANT_ID }, limit: THREAD_PAGE_SIZE, offset,
+    sortBy: 'updated_at', sortOrder: 'desc', select: [...THREAD_LIST_FIELDS] });
   const sessions = projectThreadSessions(threads);
-  return { sessions, isLive: true };
+  return { sessions, isLive: true, nextOffset: offset + threads.length, hasMore: threads.length === THREAD_PAGE_SIZE };
+}
+
+// 会话列表固定每页20条；单位为条，适用于分页，不限制会话总数。
+export const THREAD_PAGE_SIZE = 20;
+const THREAD_LIST_FIELDS = ['thread_id', 'created_at', 'updated_at', 'metadata', 'status'] as const;
+
+export function mergeThreadSessions(...pages: ThreadSession[][]): ThreadSession[] {
+  const byId = new Map<string, ThreadSession>();
+  for (const session of pages.flat()) {
+    const previous = byId.get(session.thread_id);
+    if (!previous || Date.parse(session.updated_at) >= Date.parse(previous.updated_at)) byId.set(session.thread_id, session);
+  }
+  return [...byId.values()].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at) || a.thread_id.localeCompare(b.thread_id));
+}
+
+export async function getSessionStatuses(client: Client, ids: string[]): Promise<ThreadSession[]> {
+  if (!ids.length) return [];
+  const threads = await client.threads.search({ ids, metadata: { graph_id: LMA_ASSISTANT_ID }, limit: ids.length,
+    select: [...THREAD_LIST_FIELDS], sortBy: 'updated_at', sortOrder: 'desc' });
+  const sessions = projectThreadSessions(threads);
+  if (ids.some((id) => !sessions.some((session) => session.thread_id === id))) throw new Error('部分会话未返回运行状态');
+  return sessions;
 }
 
 /**
@@ -192,8 +217,8 @@ export async function generateSessionTitle(client: Client, userMessage: string):
 /**
  * 重命名会话
  */
-export async function renameSession(client: Client, threadId: string, newName: string): Promise<void> {
-  await client.threads.update(threadId, {
+export async function renameSession(client: Client, threadId: string, newName: string) {
+  return await client.threads.update(threadId, {
     metadata: { name: newName },
   });
 }
@@ -343,6 +368,10 @@ export function projectLangGraphMessages(
         index >= 0 && pendingParts[index].type === 'tool'
           ? pendingParts[index].toolCall
           : undefined;
+      if (message.additional_kwargs?.lma_protocol === 'interrupted_tool_call') {
+        if (existingTool) existingTool.status = 'cancelled';
+        continue;
+      }
       const toolName = message.name || existingTool?.name;
       if (!callId || !toolName) {
         console.error('忽略缺少 tool_call_id 或 name 的非法 ToolMessage', message);
@@ -356,9 +385,7 @@ export function projectLangGraphMessages(
           name: toolName,
           display_name: message.name || existingTool?.display_name || toolName,
           status:
-            message.additional_kwargs?.lma_status === 'cancelled'
-              ? 'cancelled'
-              : message.status === 'error'
+            message.status === 'error'
                 ? 'error'
                 : 'success',
           data: message.status === 'error' && text === 'Tool call limit exceeded. Do not make additional tool calls.'
@@ -420,78 +447,42 @@ export function projectLangGraphMessages(
 }
 
 /**
- * Run 被用户中止时，服务端 checkpoint 可能停在 ai(tool_calls) 而没有对应
- * ToolMessage。先补齐结构化的取消结果，避免下一轮请求形成非法消息序列。
+ * 仅检查服务端消息最后一个真实用户回合中的最新AI工具批次。
+ * 此函数只构造协议消息；是否属于已中止Run由调用方读取Server确认。
  */
-export function getUnansweredToolCalls(
+export function getInterruptedToolMessages(
   rawMessages: unknown[]
-): Array<{ id: string; name?: string }> {
+) {
   const messages = rawMessages as any[];
-  const answered = new Set<string>();
-  for (const message of messages) {
-    const type = message?.type || message?.getType?.() || message?._getType?.() || message?.role;
-    if (type === 'tool') {
-      const id = message.tool_call_id || message.toolCallId;
-      if (id) answered.add(id);
-    }
+  let userIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.type === 'human' && messages[i]?.additional_kwargs?.lc_source !== 'summarization') { userIndex = i; break; }
   }
-
-  const pending: Array<{ id: string; name?: string }> = [];
-  const pendingIds = new Set<string>();
-  for (const message of messages) {
-    const calls = Array.isArray(message?.tool_calls)
-      ? message.tool_calls
-      : Array.isArray(message?.toolCalls)
-        ? message.toolCalls
-        : [];
-    for (const call of calls) {
-      if (call?.id && !answered.has(call.id) && !pendingIds.has(call.id)) {
-        pendingIds.add(call.id);
-        pending.push({ id: call.id, name: call.name });
-      }
-    }
+  if (userIndex < 0) return [];
+  let batchIndex = -1;
+  for (let i = messages.length - 1; i > userIndex; i--) {
+    if (messages[i]?.type === 'ai' && Array.isArray(messages[i].tool_calls) && messages[i].tool_calls.length) { batchIndex = i; break; }
   }
-  return pending;
+  if (batchIndex < 0) return [];
+  const answered = new Set(messages.slice(batchIndex + 1).filter((message) => message?.type === 'tool').map((message) => message.tool_call_id));
+  const calls = messages[batchIndex].tool_calls as Array<{ id: string; name: string }>;
+  if (calls.some((call) => !call.id || !call.name) || new Set(calls.map((call) => call.id)).size !== calls.length) throw new Error('工具批次协议无效');
+  return calls.filter((call) => !answered.has(call.id)).map((call) => ({
+    type: 'tool' as const, content: '该工具调用在完成前被用户中止，未获得结果。',
+    tool_call_id: call.id, name: call.name, status: 'error' as const,
+    additional_kwargs: { lma_protocol: 'interrupted_tool_call' },
+  }));
 }
 
-export async function closeInterruptedToolCalls(
-  client: Client,
-  threadId: string,
-  rawMessages: unknown[] = []
-): Promise<void> {
-  // useStream.stop() 会发出服务端 interrupt 取消，但默认不等待服务端完全停止。
-  // 按官方 cancel(wait=true, action='interrupt') 收敛仍在运行/排队的 run，
-  // 再更新 checkpoint，避免工具结果与手工补齐发生竞态。
-  const [running, pendingRuns] = await Promise.all([
-    client.runs.list(threadId, { status: 'running', limit: 10 }),
-    client.runs.list(threadId, { status: 'pending', limit: 10 }),
-  ]);
-  await Promise.all(
-    [...running, ...pendingRuns].map((run) =>
-      client.runs.cancel(threadId, run.run_id, true, 'interrupt')
-    )
-  );
-
-  const state = await client.threads.getState(threadId);
-  const checkpointMessages = Array.isArray((state.values as any)?.messages)
-    ? ((state.values as any).messages as unknown[])
-    : rawMessages;
-  const unanswered = getUnansweredToolCalls(checkpointMessages);
-  if (unanswered.length === 0) return;
-
-  await client.threads.updateState(threadId, {
-    values: {
-      messages: unanswered.map((call) => ({
-        type: 'tool',
-        content: '该工具调用已由用户停止。',
-        tool_call_id: call.id,
-        name: call.name,
-        status: 'error',
-        additional_kwargs: { lma_status: 'cancelled' },
-      })),
-    } as any,
-    asNode: 'tools',
-  });
+export async function prepareThreadInput(client: Client, threadId: string, text: string) {
+  const thread = await client.threads.get(threadId);
+  if (thread.status === 'busy') throw new Error('会话仍在运行');
+  const [latestRuns, state] = await Promise.all([client.runs.list(threadId, { limit: 1 }), client.threads.getState(threadId)]);
+  if (latestRuns[0]?.status === 'pending' || latestRuns[0]?.status === 'running') throw new Error('会话仍在运行');
+  const messages = (state.values as any)?.messages;
+  if (!Array.isArray(messages)) throw new Error('服务端会话历史不可用');
+  const protocol = latestRuns[0]?.status === 'interrupted' ? getInterruptedToolMessages(messages) : [];
+  return [...protocol, { type: 'human' as const, content: text }];
 }
 
 /** 主 Run 的失败只展示受控说明，内部异常留在服务端。 */

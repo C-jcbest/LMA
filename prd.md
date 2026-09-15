@@ -626,6 +626,8 @@ Agent 应优先使用高可靠数据解释低可靠数据，而不能反过来�
 
 ## 17.1 并发会话
 
+当前会话选择保存在 URL 的 `threadId` 查询参数，刷新或直接链接由该 ID 驱动官方 SDK 和侧栏，不能由列表首项覆盖。用户选择不同会话或新建应添加浏览器历史；SDK 首次分配 ID、当前会话删除确认和服务切换原位替换当前记录。后退/前进仅断开旧客户端订阅并切换选择，不取消服务器 Run。重复选择不增加历史；删除非当前会话不改变选择。URL 不保存消息、标题、工具或运行状态，其他查询参数和 hash 保留。
+
 用户切换会话时：
 
 - 当前正在生成的会话不得中断；
@@ -634,6 +636,8 @@ Agent 应优先使用高可靠数据解释低可靠数据，而不能反过来�
 - 不得因为切换会话导致已生成文本丢失或重新开始。
 
 ## 17.2 会话列表状态
+
+主会话列表按官方 `metadata.graph_id=lma-agent` 归属过滤，不以标题有无判定归属；缺失归属的旧 Thread 不自动补写或迁移。列表每页20条，可加载更多，已确认条目按服务端 `updated_at` 降序并按 Thread ID 去重；未命名主会话显示“新会话”。闲置时不持续轮询，只有已知busy会话时才每3秒查询这些ID的列表字段，转idle后停止。手动刷新重取已加载范围，列表/状态请求失败保留上次确认状态并显示原因。官方offset分页不提供跨请求快照，并发更新可能使相邻页重叠，可通过刷新重取范围；不将其描述为动态数据零遗漏保证。
 
 正在回复的会话应显示 loading 状态。
 
@@ -645,9 +649,9 @@ Agent 应优先使用高可靠数据解释低可靠数据，而不能反过来�
 
 生成完成后恢复正常操作。
 
-点击新建后中央消息区域空白，sidebar 不提前创建空 Thread。首条输入通过官方 useStream submit；onThreadId 写入 URL 并立即插入 skeleton，SDK optimistic messages 显示用户输入。onCreated(runId) 后异步启动独立标题生成，不等待主 Agent。标题成功保存 metadata.name 后原位替换骨架，生成失败保存“新会话”后原位替换，不影响聊天；metadata 保存失败明确显示未保存，不伪造成功。主 Run 结束只取消 sidebar 运行中 loading，标题 pending/成功/失败独立处理；轮询不得吞掉骨架或改变行顺序。用户停止生成后，任何已发出但未返回结果的工具调用必须记录为“已停止”并闭合消息协议，确保同一 Thread 可以继续提问。用户上翻消息时，“回到底部”按钮显示在输入框上方居中，回到底部后隐藏。
+点击新建后中央消息区域空白，sidebar 不提前创建空 Thread。首条输入通过官方 useStream submit；onThreadId 写入 URL 并立即插入 skeleton，SDK optimistic messages 显示用户输入。onCreated(runId) 后异步启动独立标题生成，不等待主 Agent。标题成功保存 metadata.name 后原位替换骨架，生成失败保存“新会话”后原位替换，不影响聊天；metadata 保存失败明确显示未保存，不伪造成功。主 Run 结束只取消 sidebar 运行中 loading，标题 pending/成功/失败独立处理；轮询不得吞掉骨架或改变行顺序。Stop只调用官方stream.stop，不在停止阶段记录取消ToolMessage或修改checkpoint；已有真实工具结果保持不变。用户上翻消息时，“回到底部”按钮显示在输入框上方居中，回到底部后隐藏。
 
-首次发送必须同步防重；新会话 threadId=null，由官方 useStream submit 与 Agent Server run.start 完成 ID 分配及 Thread/Run 创建。onThreadId 只通知 SDK 分配的 ID，onThreadId 后仅插入展示 skeleton，onCreated 后启动标题；服务端保存标题 metadata 后才展示已确认的会话名称。URL 仅记录 Thread 选择态，轮询不得把草稿切回历史会话。停止生成采用 LangGraph interrupt 取消语义；只有在服务端确认 run 停止后，才能修复确实未闭合的工具消息，不得与迟到结果并发写入。
+首次发送必须同步防重；新会话 threadId=null，由官方 useStream submit 与 Agent Server run.start 完成 ID 分配及 Thread/Run 创建。onThreadId 只通知 SDK 分配的 ID，onThreadId 后仅插入展示 skeleton，onCreated 后启动标题；服务端保存标题 metadata 后才展示已确认的会话名称。URL 仅记录 Thread 选择态，轮询不得把草稿切回历史会话。停止生成采用官方当前Run的interrupt取消语义，不扫描或批量取消其他Run；切换会话仅disconnect，后台Run继续。SDK本地停止不代表服务端终止。下一次发送前读取Thread、最新Run及checkpoint：busy/pending/running拒绝发送，读取失败明确报错而非使用本地历史。仅最新Run已interrupted时，检查最后真实用户回合最新AI工具批次，逐tool_call_id补缺失协议消息，文本为“该工具调用在完成前被用户中止，未获得结果。”、status为error；隐藏正文，与新human一次submit提交，不提前updateState，不补早期回合/批次或兼容迁移旧checkpoint。真实结果保留，协议消息不能成为成功证据。
 
 ## 17.2.1 官方历史摘要（2026-09-15 更新）
 

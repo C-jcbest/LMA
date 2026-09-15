@@ -5,7 +5,7 @@
 ## 当前实现
 
 - 后端生产入口 `backend/app/agent/graph.py:graph` 为官方图工厂：create_agent 负责 ReAct 与工具并行执行，官方 middleware 负责模型/工具重试；LMA middleware 保留时间、Prompt、用量/思考耗时及推荐契约；历史由官方 SummarizationMiddleware 管理。持久化仍由 Agent Server Thread/Checkpoint 提供。
-- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建与重复草稿状态已删除，标题 skeleton 仅作为展示态；Client 已统一，URL 完整生命周期与停止协议仍待 TODO 10–13。
+- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL仅保存选择态，消息/checkpoint由SDK恢复。Client、URL生命周期、Thread列表归属/分页/轻量刷新与Stop协议已完成，状态分层仍待 TODO 13。
 - 第一阶段 TODO 1–3 已完成：遗留界面与无引用组件清理；敏感示例替换；GNSS 缺测不转成 0；消息只显示服务端时间且按 Asia/Shanghai 展示；站点未知状态不猜测；配置检查精确验证 lma-agent；内部字段默认折叠；正式 Prompt 单一来源。
 - 2026-09-15 TODO 4 已完成生产代码入口迁移，langchain==1.3.18 已纳入运行依赖，删除手写路由、循环边、ToolNode 装配及节点级批量 retry/exhausted。旧候选 factory 与候选测试已在 TODO 5 清除；架构和部署要求见 [ADR 0001](adr/0001-agent-runtime.md)。本轮未对现有服务执行部署。
 
@@ -25,7 +25,27 @@
 
 - TODO 5 的生产测试覆盖长会话摘要、近期token budget保留、重复压缩、停止后工具配对、摘要失败保全和内部模型流隔离。Server E2E 使用真实生产工厂与 HTTP Stub 验证官方摘要、瞬时重试、Thread 恢复及主 usage 保留。
 - 本轮后端49项常规测试、2项隔离Server E2E、前端39项测试和生产构建通过（常规发现51项，服务E2E默认跳过并另行执行）。真实官方 React SDK 测试覆盖首次 run.start 拒绝，隔离服务覆盖新版协议首次创建与 checkpoint；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
-- TODO 9 已完成唯一 Client / Transport 配置源；下一项为 TODO 10 URL 完整生命周期验收；推荐退出主 Run 属于 TODO 23。
+- TODO 9–12 已完成唯一Client、URL选择态、Thread列表及Stop协议；下一项为 TODO 13 状态分层；推荐退出主Run属于 TODO 23。
+
+## 2026-09-15 TODO 12：Stop与下一轮协议输入
+
+- Stop只调用stream.stop，同步防重复，不扫描/批量取消Run，不写checkpoint；切换仅disconnect。删除旧全历史扫描、closeInterruptedToolCalls、asNode=tools和lma_status取消分支，不保留兼容实现。
+- SDK本地停止不等于Server已停止。续聊前只读Thread、最新Run及checkpoint；busy/pending/running拒绝发送，服务端读取失败明确报错。仅最新interrupted Run按最后真实用户回合最新AI工具批次逐ID补缺失项，error协议消息与新human一次submit，隐藏协议正文但不把中止当成功或证据。不得补早期批次/回合或迁移旧checkpoint。
+- llm-security技能用于检查协议消息不伪造证据与最小副作用，project-status-recorder同步产品和验收口径。前端69项测试、生产构建通过；后端49项常规通过（发现53项，4项隔离Server E2E默认跳过），4项隔离Server E2E另行通过，新增真实工具中止后checkpoint无取消结果及续聊无INVALID_CHAT_HISTORY验证。未部署、未操作真实会话；浏览器全链路仍属TODO 26。构建注释/大包警告与Windows transport ResourceWarning仍存在，取消测试HTTP Stub收到连接中止属于取消后的测试连接行为。
+
+## 2026-09-15 TODO 11：Thread归属、分页和轻量状态刷新
+
+- 搜索使用官方metadata.graph_id=lma-agent，每页20条、offset分页、updated_at降序；按ID去重且不让较旧服务端时间覆盖较新条目。缺失graph归属的旧Thread不自动迁移，辅助图即使有名称也排除；合法未命名主Thread仅显示“新会话”，不表示标题成功。
+- 闲置不轮询，只有已知busy时才每3秒按这些ID查询列表字段，不取values/checkpoint；当前与后台busy均受保护，取得idle后停表。提供加载更多与手动刷新，刷新重取已加载范围，失败保留条目/offset并说明限制。旧响应和删除/连接切换竞态继续受请求失效保护。
+- 删除永久新会话置顶排序；未确认标题仍独立显示骨架，已确认条目按服务端updated_at排序。offset不提供跨请求快照，并发更新可能产生页重叠；去重与刷新不能被描述为动态数据零遗漏保证。
+- 前端53项测试、生产构建、git diff --check通过；后端49项常规测试通过（发现52项、3项Server E2E默认跳过），另行执行3项隔离Server E2E全部通过，包含首次run.start自动graph元数据和125条真实Thread分页/轻量字段验证。未部署、未操作真实会话；测试只清理隔离服务测试数据。构建依赖注释/大包警告及Windows异步transport ResourceWarning未在本项处理，真实浏览器全链路仍属TODO 26。
+
+## 2026-09-15 TODO 10：URL 选择态与原生浏览器历史
+
+- 用户选择/新建使用 pushState，首次 SDK ID、当前会话删除成功和服务切换使用 replaceState；重复选择不加历史。popstate 仅断开客户端订阅并同步选择，不取消后台 Run。侧栏与 SDK 共用 URL 恢复的 ID，列表刷新不能反向选择首项。
+- 其他 query/hash 保留；消息、标题和运行状态不写入 URL/history state。只更新当前浏览器记录，不修补其他历史链接、不添加本地会话迁移。
+- 新增5项 jsdom集成测试，前端共46项测试通过。直接链接/重新挂载及原生back/forward验证的是选择与消息投影，不冒充真实浏览器/Server hydration联调；后者仍属 TODO 26。未部署、未删除或迁移真实会话。
+- 前端生产构建与 git diff --check 通过；后端常规发现51项，49项通过、2项隔离Server E2E默认跳过。构建仍有依赖注释及大包体积警告，不在本项处理。
 
 ## 2026-09-15 TODO 9：统一 Client 与连接切换边界
 

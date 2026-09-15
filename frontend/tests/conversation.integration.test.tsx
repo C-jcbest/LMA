@@ -6,7 +6,7 @@ import { ChatWindow } from '../src/components/ChatWindow';
 import { InlineToolCall } from '../src/components/InlineToolCall';
 import { MessageActions } from '../src/components/MessageActions';
 import { Sidebar } from '../src/components/Sidebar';
-import { getUnansweredToolCalls, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
+import { getInterruptedToolMessages, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
   it('官方内部摘要不成为用户气泡，普通同文消息仍展示', () => {
@@ -31,7 +31,7 @@ describe('会话关键路径集成回归', () => {
       },
     ];
 
-    expect(getUnansweredToolCalls(raw)).toEqual([{ id: 'call-1', name: 'list_stations' }]);
+    expect(getInterruptedToolMessages(raw)).toMatchObject([{ tool_call_id: 'call-1', name: 'list_stations', status: 'error' }]);
     const projected = projectLangGraphMessages(raw, { isRunActive: false });
     const assistant = projected[1];
     expect(assistant.parts?.[0]).toMatchObject({
@@ -47,7 +47,7 @@ describe('会话关键路径集成回归', () => {
       { type: 'ai', content: '查询完成。' },
     ];
 
-    expect(getUnansweredToolCalls(raw)).toEqual([]);
+    expect(getInterruptedToolMessages(raw)).toEqual([]);
     const projected = projectLangGraphMessages(raw, { isRunActive: false });
     expect(projected[0].parts?.[0]).toMatchObject({ type: 'tool', toolCall: { status: 'success' } });
     expect(projected[0].parts?.[1]).toMatchObject({ type: 'text', content: '查询完成。' });
@@ -363,12 +363,15 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByRole('button', { name: /查看近期趋势/ })).not.toBeInTheDocument();
   });
 
-  it('会话列表过滤 session-title 产生的无名称临时 Thread', () => {
+  it('会话列表以 graph_id 而非标题判断归属', () => {
     expect(projectThreadSessions([
-      { thread_id: 'temp', created_at: '2026-09-14T00:00:00Z', metadata: {} },
-      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', metadata: { name: '  站点分析  ' } },
+      { thread_id: 'temp', created_at: '2026-09-14T00:00:00Z', metadata: { graph_id: 'session-title', name: '辅助标题' } },
+      { thread_id: 'unrelated', metadata: { name: '无归属标题' } },
+      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', updated_at: '2026-09-14T00:00:02Z', metadata: { graph_id: 'lma-agent', name: '  站点分析  ' } },
+      { thread_id: 'unnamed', created_at: '2026-09-14T00:00:01Z', updated_at: '2026-09-14T00:00:02Z', metadata: { graph_id: 'lma-agent' } },
     ])).toEqual([
-      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', name: '站点分析', status: undefined },
+      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', updated_at: '2026-09-14T00:00:02Z', name: '站点分析', status: undefined },
+      { thread_id: 'unnamed', created_at: '2026-09-14T00:00:01Z', updated_at: '2026-09-14T00:00:02Z', name: '新会话', status: undefined },
     ]);
   });
 

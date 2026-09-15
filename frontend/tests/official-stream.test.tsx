@@ -1,9 +1,42 @@
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { Client } from '@langchain/langgraph-sdk';
 import { createLangGraphClient, getSessions, generateSessionTitle, renameSession } from '../src/services/api';
 import { useStream } from '@langchain/react';
 import { expect, it, vi } from 'vitest';
 import { useMemo } from 'react';
+
+it.each(['stop', 'disconnect'] as const)('真实官方 Hook %s 只操作当前 Run，不扫描或修改 checkpoint', async (action) => {
+  const fetchStub = vi.fn(async (_url: any, options: any) => {
+    const body = JSON.parse(options?.body || '{}');
+    if (body.method === 'run.start') {
+      return new Response(JSON.stringify({ id: body.id, result: { run_id: 'run-current' } }),
+        { headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(new ReadableStream({ start(controller) {
+      options?.signal?.addEventListener('abort', () => controller.close(), { once: true });
+    } }), { headers: { 'content-type': 'text/event-stream' } });
+  });
+  const client = new Client({ apiUrl: 'http://localhost:2024', fetch: fetchStub, callerOptions: { maxRetries: 0 } });
+  const cancel = vi.spyOn(client.runs, 'cancel').mockResolvedValue(undefined);
+  const list = vi.spyOn(client.runs, 'list');
+  const update = vi.spyOn(client.threads, 'updateState');
+  const onCreated = vi.fn();
+  const { result, unmount } = renderHook(() => useStream({ assistantId: 'lma-agent', client, threadId: null, onCreated }));
+  let submission!: Promise<void>;
+  try {
+    await act(async () => { submission = result.current.submit({ messages: [{ type: 'human', content: '查询' }] }); });
+    await waitFor(() => expect(onCreated).toHaveBeenCalledTimes(1));
+    const threadId = result.current.getThread()!.threadId;
+    await act(async () => { await result.current[action](); await submission; });
+    if (action === 'stop') {
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(cancel).toHaveBeenCalledWith(threadId, onCreated.mock.calls[0][0].runId);
+    }
+    else expect(cancel).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  } finally { unmount(); }
+});
 
 it('真实官方 Hook、Thread CRUD 和标题共享 Client，URL/header 切换一致', async () => {
   const requests: { url: string; auth: string | null; body: any }[] = [];
