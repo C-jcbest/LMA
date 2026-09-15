@@ -245,3 +245,42 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
             m.get("content") == "Tool call limit exceeded. Do not make additional tool calls."
             for m in limited["messages"]))
         await client.threads.delete(thread_id)
+
+    async def test_v2_first_run_creates_thread_and_rejection_leaves_no_thread(self):
+        """当前 React SDK 使用的 run.start 协议，不通过 threads.create 预创建。"""
+        import asyncio
+        from uuid import uuid4
+
+        client = get_client(url=self.url)
+        async with httpx.AsyncClient(base_url=self.url, timeout=30) as http:
+            rejected_id = str(uuid4())
+            rejected = await http.post(f"/threads/{rejected_id}/commands", json={
+                "id": 1, "method": "run.start", "params": {},
+            })
+            self.assertEqual(rejected.status_code, 200)
+            self.assertIn("error", rejected.json())
+            self.assertEqual((await http.get(f"/threads/{rejected_id}")).status_code, 404)
+            thread_id = str(uuid4())
+            accepted = await http.post(f"/threads/{thread_id}/commands", json={
+                "id": 2, "method": "run.start", "params": {
+                    "assistant_id": "lma-agent", "input": {
+                        "messages": [{"type": "human", "content": "继续说明已有证据"}],
+                    }, "multitaskStrategy": "reject",
+                },
+            })
+            self.assertEqual(accepted.status_code, 200)
+            payload = accepted.json()
+            self.assertNotIn("error", payload, payload)
+            run_id = payload["result"]["run_id"]
+            for _ in range(100):
+                run = await client.runs.get(thread_id, run_id)
+                if run["status"] not in ("pending", "running"):
+                    break
+                await asyncio.sleep(0.1)
+            self.assertEqual(run["status"], "success", run)
+            state = await client.threads.get_state(thread_id)
+            self.assertTrue(state["checkpoint"]["checkpoint_id"])
+            self.assertTrue(state["values"]["messages"])
+            await client.threads.update(thread_id, metadata={"name": "新会话"})
+            self.assertEqual((await client.threads.get(thread_id))["metadata"]["name"], "新会话")
+            await client.threads.delete(thread_id)

@@ -152,18 +152,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         ) : (
           sessions.map((session) => {
-            if (session.isGeneratingTitle) {
-              return (
-                <div
-                  key={session.thread_id}
-                  className="flex items-center gap-2.5 h-9 px-3 rounded-xl border border-neutral-200/90 bg-neutral-100 animate-pulse select-none"
-                >
-                  <MessageSquare className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
-                  <div className="h-2.5 bg-neutral-200 rounded w-20"></div>
-                </div>
-              );
-            }
-
             const isActive = !isNewSessionDraft && session.thread_id === activeSessionId;
             const isEditing = editingId === session.thread_id;
             const isGenerating = generatingThreadIds.includes(session.thread_id);

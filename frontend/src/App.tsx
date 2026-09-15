@@ -9,7 +9,6 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   ThreadSession,
   Message,
-  createSession,
   closeInterruptedToolCalls,
   deleteSession,
   generateSessionTitle,
@@ -29,8 +28,23 @@ interface LmaState {
 
 export const App: React.FC = () => {
   const [sessions, setSessions] = useState<ThreadSession[]>([]);
-  const [activeSession, setActiveSession] = useState<ThreadSession | null>(null);
-  const [isNewSessionDraft, setIsNewSessionDraft] = useState(false);
+  // URL 仅记录选择态；消息和运行状态始终由官方 SDK 恢复。
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(
+    () => new URL(window.location.href).searchParams.get('threadId')
+  );
+  const isNewSessionDraft = activeThreadId === null;
+  const selectThread = useCallback((id: string | null) => {
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set('threadId', id);
+    else url.searchParams.delete('threadId');
+    window.history.replaceState(null, '', url);
+    setActiveThreadId(id);
+  }, []);
+  useEffect(() => {
+    const onPopState = () => setActiveThreadId(new URL(window.location.href).searchParams.get('threadId'));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isLiveServer, setIsLiveServer] = useState(false);
@@ -39,46 +53,25 @@ export const App: React.FC = () => {
   const [isStopping, setIsStopping] = useState(false);
   const [isStartingRun, setIsStartingRun] = useState(false);
   const isSubmittingRef = useRef(false);
-  const titleGenerationIdsRef = useRef(new Set<string>());
 
-  const activeThreadId = isNewSessionDraft ? null : activeSession?.thread_id ?? null;
   const stream = useStream<LmaState>({
     assistantId: 'lma-agent',
     apiUrl,
     threadId: activeThreadId,
     messagesKey: 'messages',
+    onThreadId: selectThread,
   });
 
   const loadSessions = useCallback(async () => {
     try {
       const res = await getSessions();
       setIsLiveServer(res.isLive);
-      setSessions((current) => {
-        const currentById = new Map(current.map((session) => [session.thread_id, session]));
-        return (res.sessions || []).map((session) => {
-          const existing = currentById.get(session.thread_id);
-          return titleGenerationIdsRef.current.has(session.thread_id) || existing?.isGeneratingTitle
-            ? { ...session, name: '', isGeneratingTitle: true }
-            : session;
-        });
-      });
-      setActiveSession((current) => {
-        if (isNewSessionDraft) return current;
-        if (current) {
-          const refreshed = res.sessions.find((item) => item.thread_id === current.thread_id);
-          if (refreshed) {
-            return titleGenerationIdsRef.current.has(refreshed.thread_id) || current.isGeneratingTitle
-              ? { ...refreshed, name: '', isGeneratingTitle: true }
-              : refreshed;
-          }
-        }
-        return res.sessions[0] || null;
-      });
+      setSessions(res.sessions);
     } catch (error) {
       console.warn('loadSessions err:', error);
       setIsLiveServer(false);
     }
-  }, [isNewSessionDraft]);
+  }, []);
 
   useEffect(() => {
     void loadSessions();
@@ -121,15 +114,13 @@ export const App: React.FC = () => {
   const handleSelectSession = (session: ThreadSession) => {
     stream.disconnect();
     setSubmissionError('');
-    setIsNewSessionDraft(false);
-    setActiveSession(session);
+    selectThread(session.thread_id);
   };
 
   const handleCreateSession = () => {
     stream.disconnect();
     setSubmissionError('');
-    setIsNewSessionDraft(true);
-    setActiveSession(null);
+    selectThread(null);
   };
 
   const handleRenameSession = async (sessionId: string, newName: string) => {
@@ -140,11 +131,9 @@ export const App: React.FC = () => {
           session.thread_id === sessionId ? { ...session, name: newName } : session
         )
       );
-      setActiveSession((current) =>
-        current?.thread_id === sessionId ? { ...current, name: newName } : current
-      );
     } catch (error) {
-      setSubmissionError(error instanceof Error ? `重命名失败：${error.message}` : '重命名失败');
+      console.warn('rename session error:', error);
+      setSubmissionError('重命名失败，请稍后重试');
     }
   };
 
@@ -157,11 +146,11 @@ export const App: React.FC = () => {
       if (sessionId === activeThreadId) {
         stream.disconnect();
         setSubmissionError('');
-        setActiveSession(remaining[0] || null);
-        setIsNewSessionDraft(remaining.length === 0);
+        selectThread(remaining[0]?.thread_id ?? null);
       }
     } catch (error) {
-      setSubmissionError(error instanceof Error ? `删除失败：${error.message}` : '删除失败');
+      console.warn('delete session error:', error);
+      setSubmissionError('删除失败，请稍后重试');
     }
   };
 
@@ -173,81 +162,50 @@ export const App: React.FC = () => {
     setIsStartingRun(true);
     setSubmissionError('');
 
-    let targetSession = activeSession;
-    if (isNewSessionDraft || !targetSession) {
-      const pendingThreadId = crypto.randomUUID();
-      // 先登记客户端指定的 thread id，轮询即使抢先看到服务端 Thread，
-      // 也只会展示标题骨架而不会闪现“监测会话-xxxxxx”。
-      titleGenerationIdsRef.current.add(pendingThreadId);
-      try {
-        const created = await createSession('新会话', pendingThreadId);
-        targetSession = { ...created, name: '', isGeneratingTitle: true };
-        setSessions((current) => [targetSession!, ...current.filter((item) => item.thread_id !== created.thread_id)]);
-        setActiveSession(targetSession);
-        setIsNewSessionDraft(false);
-
-        void (async () => {
-          try {
-            const generatedTitle = await generateSessionTitle(text);
-            if (generatedTitle) {
-              await renameSession(created.thread_id, generatedTitle);
-              setSessions((current) =>
-                current.map((session) =>
-                  session.thread_id === created.thread_id
-                    ? { ...session, name: generatedTitle, isGeneratingTitle: false }
-                    : session
-                )
-              );
-              setActiveSession((current) =>
-                current?.thread_id === created.thread_id
-                  ? { ...current, name: generatedTitle, isGeneratingTitle: false }
-                  : current
-              );
-              return;
-            }
-          } catch (error) {
-            console.warn('generateSessionTitle error:', error);
-            setSubmissionError(error instanceof Error ? `会话标题生成失败：${error.message}` : '会话标题生成失败');
-          } finally {
-            titleGenerationIdsRef.current.delete(created.thread_id);
-          }
-          setSessions((current) =>
-            current.map((session) =>
-              session.thread_id === created.thread_id
-                ? { ...session, name: '新会话', isGeneratingTitle: false }
-                : session
-            )
-          );
-          setActiveSession((current) =>
-            current?.thread_id === created.thread_id
-              ? { ...current, name: '新会话', isGeneratingTitle: false }
-              : current
-          );
-        })();
-      } catch (error) {
-        titleGenerationIdsRef.current.delete(pendingThreadId);
-        setSubmissionError(error instanceof Error ? error.message : '无法创建会话');
-        isSubmittingRef.current = false;
-        setIsStartingRun(false);
-        return;
-      }
-    }
-
-    if (!targetSession) {
-      isSubmittingRef.current = false;
-      setIsStartingRun(false);
-      return;
-    }
+    const isFirstMessage = activeThreadId === null;
+    let failed = false;
     try {
-      await stream.submit(
+      // 不预创建 Thread、不分配 ID、不覆盖 SDK 当前 Thread。
+      const submission = stream.submit(
         { messages: [{ type: 'human', content: text }] },
         {
-          threadId: targetSession.thread_id,
           multitaskStrategy: 'reject',
-          onError: (error) =>
-            setSubmissionError(runErrorMessage(error)),
+          onError: (error) => {
+            failed = true;
+            setSubmissionError(runErrorMessage(error));
+          },
         }
       );
+      // 在 await 前读取 SDK 绑定的 ID，切换会话不改变本次元数据更新目标。
+      const submittedThreadId = stream.getThread()?.threadId;
+      await submission;
+      if (isFirstMessage && submittedThreadId) {
+        // 创建与 Run 的提交由 SDK 的 run.start 管理；拿到 ID 不等于已落库。
+        // 只登记服务端确认接受了 Run 或 checkpoint 的会话，失败诊断不进聊天。
+        void (async () => {
+          try {
+            const runs = await stream.client.runs.list(submittedThreadId, { limit: 1 });
+            const state = await stream.client.threads.getState(submittedThreadId);
+            const history = await stream.client.threads.getHistory(submittedThreadId, { limit: 1 });
+            if (!runs.length && !history.length && !state.checkpoint?.checkpoint_id) return;
+            const thread = await stream.client.threads.get(submittedThreadId);
+            if (thread.metadata?.name) return;
+            await stream.client.threads.update(submittedThreadId, { metadata: { name: '新会话' } });
+            await loadSessions();
+            if (failed) return;
+            const title = await generateSessionTitle(text);
+            // 不覆盖用户在标题生成期间确认的手动重命名。
+            const current = await stream.client.threads.get(submittedThreadId);
+            if (current.metadata?.name !== '新会话') return;
+            await stream.client.threads.update(submittedThreadId, { metadata: { name: title } });
+            await loadSessions();
+          } catch (error) {
+            console.warn('session metadata update error:', error);
+          }
+        })();
+      }
+    } catch (error) {
+      setSubmissionError(runErrorMessage(error));
     } finally {
       isSubmittingRef.current = false;
       setIsStartingRun(false);
@@ -277,7 +235,7 @@ export const App: React.FC = () => {
       {!isSidebarCollapsed && (
         <Sidebar
           sessions={sessions}
-          activeSessionId={activeSession?.thread_id || null}
+          activeSessionId={activeThreadId}
           isNewSessionDraft={isNewSessionDraft}
           generatingThreadIds={generatingThreadIds}
           onSelectSession={handleSelectSession}

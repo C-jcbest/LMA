@@ -95,8 +95,6 @@ export interface ThreadSession {
   thread_id: string;
   name: string;
   created_at: string;
-  messages?: Message[];
-  isGeneratingTitle?: boolean;
   status?: string;
 }
 
@@ -144,41 +142,23 @@ export async function getSessions(): Promise<{ sessions: ThreadSession[]; isLive
 }
 
 /**
- * 新建会话（Thread）
- */
-export async function createSession(name?: string, threadId?: string): Promise<ThreadSession> {
-  const sessionName = name !== undefined ? name : '新建监测会话';
-  const client = createLangGraphClient();
-  const thread = await client.threads.create({
-    threadId,
-    metadata: { name: sessionName },
-  });
-  return {
-    thread_id: thread.thread_id,
-    name: sessionName,
-    created_at: thread.created_at,
-    messages: [],
-  };
-}
-
-/**
  * 根据用户首条消息生成会话标题
  * 优先调用 LangGraph Server 的 session-title 无状态图（设置超时）。
- * 生成失败时抛出错误；调用方保留已确认的“新会话”状态并明确展示错误。
+ * 生成失败时抛出错误；调用方保留服务端已确认的“新会话”，不污染聊天错误。
  */
 export async function generateSessionTitle(userMessage: string): Promise<string> {
   const cleanInput = userMessage?.trim();
   if (!cleanInput) throw new Error('会话标题缺少首条消息');
 
   const client = createLangGraphClient();
-  // 使用 Promise.race 设置 3.5 秒超时，避免阻塞用户感知
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error('会话标题生成超时')), 3500)
-  );
+  // 官方 SDK 接收 AbortSignal；超时取消请求，完成后清除计时器。
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3500);
 
   const runPromise = (async () => {
     const res = await client.runs.wait(null, 'session-title', {
       input: { input_text: cleanInput },
+      signal: controller.signal,
     });
     if (res && typeof res === 'object') {
       const title = (res as any).title;
@@ -195,7 +175,11 @@ export async function generateSessionTitle(userMessage: string): Promise<string>
     throw new Error('服务端未返回有效会话标题');
   })();
 
-  return Promise.race([runPromise, timeoutPromise]);
+  try {
+    return await runPromise;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 
