@@ -11,7 +11,7 @@ import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ToastContainer, useToast } from '../src/components/Toast';
 import { RunFailureCard } from '../src/components/RunFailureCard';
 import { STREAM_CONTROLLER } from '@langchain/react';
-import { getIncompleteToolCallMessageUpdates, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
+import { getIncompleteToolCallMessageUpdates, projectLangGraphMessages, projectThreadSessions } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
   it('官方内部摘要不成为用户气泡，普通同文消息仍展示', () => {
@@ -321,8 +321,6 @@ describe('会话关键路径集成回归', () => {
   });
 
   it('官方预算错误只展示中文限制说明，内部异常不直接展示', () => {
-    expect(runErrorMessage({ name: 'ModelCallLimitExceededError', message: 'internal counts' })).toContain('分析次数已达到上限');
-    expect(runErrorMessage(new Error('secret://internal'))).not.toContain('secret:');
     const messages = projectLangGraphMessages([
       { type: 'ai', tool_calls: [{ id: 'c', name: 'list_stations', args: {} }] },
       { type: 'tool', tool_call_id: 'c', name: 'list_stations', status: 'error',
@@ -607,8 +605,25 @@ it('用户消息发送失败显示“发送失败 · 重试”，点击重试触
 it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成”与“关闭”，且关闭不修改权威状态', () => {
   const onRegenerate = vi.fn();
   const onDismiss = vi.fn();
+  const snapshotMap = new Map([
+    ['u1', { parentCheckpointId: 'chk-checkpoint-before-u1', optimisticStatus: 'sent' }],
+  ]);
+  const fakeStream = {
+    messages: [
+      { id: 'u1', type: 'human', content: '查询边坡稳定情况' },
+      { id: 'a1', type: 'ai', content: '' },
+    ],
+    isLoading: false,
+    [STREAM_CONTROLLER]: {
+      messageMetadataStore: {
+        getSnapshot: () => snapshotMap,
+        subscribe: () => () => undefined,
+      },
+    },
+  } as any;
   render(
     <ChatWindow
+      stream={fakeStream}
       messages={[{ id: 'u1', role: 'user', content: '查询边坡稳定情况' }]}
       onSendMessage={vi.fn()}
       threadLoading={false}
@@ -626,6 +641,7 @@ it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成�
   expect(screen.queryByText(/error|exception|status|runId|checkpoint/i)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
   expect(onRegenerate).toHaveBeenCalledTimes(1);
+  expect(onRegenerate).toHaveBeenCalledWith('chk-checkpoint-before-u1', expect.objectContaining({ id: 'u1', type: 'human' }));
   fireEvent.click(screen.getByRole('button', { name: '关闭' }));
   expect(onDismiss).toHaveBeenCalledTimes(1);
 });
@@ -655,33 +671,11 @@ it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”
   expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
-it('Stop 收尾异常显示“会话记录尚未同步”并提供真实操作“重新同步”与“关闭”，不暴露技术细节', () => {
-  const onResync = vi.fn();
+it('Stop 收尾异常显示“会话记录尚未同步”并提供真实操作“重新整理”与“关闭”，不暴露技术细节', () => {
+  const onResyncCleanup = vi.fn();
+  const onRetryStop = vi.fn();
+  const onRefreshStop = vi.fn();
   const onDismiss = vi.fn();
-  render(
-    <ChatWindow
-      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      stopReconciling={false}
-      hasRunningTool={false}
-      stopError={{ message: '会话记录尚未同步', action: 'resync' }}
-      onResyncStop={onResync}
-      onDismissStopError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('会话记录尚未同步')).toBeInTheDocument();
-  expect(screen.queryByText(/cleanup|hydrate|checkpoint|join|ToolMessage/i)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重新同步' }));
-  expect(onResync).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-  expect(onDismiss).toHaveBeenCalledTimes(1);
-});
-
-it('Server 不可达时在顶部轻量中性展示，不写入聊天历史；初始 unknown 状态不展示', () => {
   const { rerender } = render(
     <ChatWindow
       messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
@@ -690,16 +684,21 @@ it('Server 不可达时在顶部轻量中性展示，不写入聊天历史；初
       runActive={false}
       stopReconciling={false}
       hasRunningTool={false}
-      serverReachability="unreachable"
+      stopError={{ message: '会话记录尚未同步', action: 'resync_cleanup' }}
+      onResyncCleanup={onResyncCleanup}
+      onDismissStopError={onDismiss}
       isSidebarCollapsed={false}
       onToggleSidebar={vi.fn()}
     />
   );
-  expect(screen.getByText('暂时无法连接监测服务')).toBeInTheDocument();
-  expect(screen.queryByText(/离线模式/)).not.toBeInTheDocument();
-  expect(screen.getByLabelText('对话消息').textContent).not.toContain('暂时无法连接监测服务');
+  expect(screen.getByText('会话记录尚未同步')).toBeInTheDocument();
+  expect(screen.queryByText(/cleanup|hydrate|checkpoint|join|ToolMessage/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重新整理' }));
+  expect(onResyncCleanup).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
 
-  // unknown 初始状态不展示
+  // retry_stop 动作测试
   rerender(
     <ChatWindow
       messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
@@ -708,12 +707,108 @@ it('Server 不可达时在顶部轻量中性展示，不写入聊天历史；初
       runActive={false}
       stopReconciling={false}
       hasRunningTool={false}
+      stopError={{ message: '停止请求未确认，请重试', action: 'retry_stop' }}
+      onRetryStop={onRetryStop}
+      onDismissStopError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('停止请求未确认，请重试')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重试停止' }));
+  expect(onRetryStop).toHaveBeenCalledTimes(1);
+
+  // refresh 动作测试
+  rerender(
+    <ChatWindow
+      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
+      stopError={{ message: '当前显示可能未更新', action: 'refresh' }}
+      onRefreshStop={onRefreshStop}
+      onDismissStopError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('当前显示可能未更新')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+  expect(onRefreshStop).toHaveBeenCalledTimes(1);
+});
+
+it('Server 不可达时在侧边栏以状态指示灯中性展示，不写入聊天历史；初始 unknown 状态显示正在连接', () => {
+  const { rerender } = render(
+    <Sidebar
+      sessions={[]}
+      activeSessionId={null}
+      isNewSessionDraft={true}
+      busyThreadIds={[]}
+      onSelectSession={vi.fn()}
+      onCreateSession={vi.fn()}
+      onRenameSession={vi.fn()}
+      onDeleteSession={vi.fn()}
+      onToggleCollapse={vi.fn()}
+      onOpenConfig={vi.fn()}
+      serverReachability="unreachable"
+    />
+  );
+  expect(screen.getByTitle('未连接后端服务')).toBeInTheDocument();
+
+  // unknown 初始状态展示正在连接
+  rerender(
+    <Sidebar
+      sessions={[]}
+      activeSessionId={null}
+      isNewSessionDraft={true}
+      busyThreadIds={[]}
+      onSelectSession={vi.fn()}
+      onCreateSession={vi.fn()}
+      onRenameSession={vi.fn()}
+      onDeleteSession={vi.fn()}
+      onToggleCollapse={vi.fn()}
+      onOpenConfig={vi.fn()}
       serverReachability="unknown"
+    />
+  );
+  expect(screen.getByTitle('正在连接监测服务…')).toBeInTheDocument();
+
+  // reachable 状态展示已连接
+  rerender(
+    <Sidebar
+      sessions={[]}
+      activeSessionId={null}
+      isNewSessionDraft={true}
+      busyThreadIds={[]}
+      onSelectSession={vi.fn()}
+      onCreateSession={vi.fn()}
+      onRenameSession={vi.fn()}
+      onDeleteSession={vi.fn()}
+      onToggleCollapse={vi.fn()}
+      onOpenConfig={vi.fn()}
+      serverReachability="reachable"
+    />
+  );
+  expect(screen.getByTitle('LangGraph 服务已连接')).toBeInTheDocument();
+
+  // 对话消息区不被不可达状态污染
+  render(
+    <ChatWindow
+      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
       isSidebarCollapsed={false}
       onToggleSidebar={vi.fn()}
     />
   );
   expect(screen.queryByText('暂时无法连接监测服务')).not.toBeInTheDocument();
+  expect(screen.queryByText(/离线模式/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('对话消息').textContent).not.toContain('暂时无法连接监测服务');
 });
 
 it('Toast 组件支持自动消失、手动关闭与消息去重，最多同时显示 3 条', () => {
@@ -804,7 +899,7 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
 });
 
 it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，并在 submit 中重传原 HumanMessage，新分支规范历史保持单一 U1', async () => {
-  const lastHumanMsg = { id: 'u1', role: 'user' as const, content: '查询边坡稳定情况' };
+  const lastHumanMsg = { id: 'u1', type: 'human' as const, content: '查询边坡稳定情况' };
   const mockSubmit = vi.fn().mockResolvedValue(undefined);
 
   const snapshotMap = new Map([
@@ -837,7 +932,7 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
   render(
     <ChatWindow
       stream={fakeStream}
-      messages={[lastHumanMsg]}
+      messages={[{ id: 'u1', role: 'user', content: '查询边坡稳定情况' }]}
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}

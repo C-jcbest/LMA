@@ -144,13 +144,13 @@ export function projectThreadSessions(threads: any[]): ThreadSession[] {
 export const SESSION_PAGE_SIZE = 20;
 
 /** 服务端负责业务归属、排序与分页；返回原始页长度用于 offset，不按展示数量推算。 */
-export async function getSessions(client: Client, offset = 0): Promise<{ sessions: ThreadSession[]; isLive: boolean; nextOffset: number; hasMore: boolean }> {
+export async function getSessions(client: Client, offset = 0): Promise<{ sessions: ThreadSession[]; nextOffset: number; hasMore: boolean }> {
   const threads = await client.threads.search({
     metadata: { graph_id: LMA_ASSISTANT_ID }, limit: SESSION_PAGE_SIZE, offset,
     sortBy: 'updated_at', sortOrder: 'desc', select: ['thread_id', 'metadata', 'created_at', 'updated_at', 'status'],
   });
   const sessions = projectThreadSessions(threads);
-  return { sessions, isLive: true, nextOffset: offset + threads.length, hasMore: threads.length === SESSION_PAGE_SIZE };
+  return { sessions, nextOffset: offset + threads.length, hasMore: threads.length === SESSION_PAGE_SIZE };
 }
 
 export async function getBusySessions(client: Client, ids: string[]): Promise<ThreadSession[]> {
@@ -488,14 +488,4 @@ export async function removeIncompleteToolCallMessages(
   await client.threads.updateState(threadId, {
     values: { messages: updates } as any,
   });
-}
-
-/** 主 Run 的失败只展示受控说明，内部异常留在服务端。 */
-export function runErrorMessage(error: unknown): string {
-  const value = error as { name?: unknown; message?: unknown } | null;
-  if (value?.name === 'ModelCallLimitExceededError' ||
-      (typeof value?.message === 'string' && value.message.startsWith('Model call limits exceeded:'))) {
-    return '本轮分析次数已达到上限，已保留现有记录。请缩小查询范围后继续。';
-  }
-  return '本次请求未完成，已保留现有记录，请稍后重试。';
 }

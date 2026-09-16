@@ -34,7 +34,6 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onToggleCollapse: () => void;
   onOpenConfig: () => void;
-  isLiveServer?: boolean;
   serverReachability?: ServerReachability;
   hasMoreSessions?: boolean;
   isListLoading?: boolean;
@@ -55,7 +54,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onDeleteSession,
   onToggleCollapse,
   onOpenConfig,
-  isLiveServer,
   serverReachability,
   hasMoreSessions = false,
   isListLoading = false,
@@ -63,7 +61,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLoadMore,
   onRefreshSessions,
 }) => {
-  const reachability: ServerReachability = serverReachability ?? (isLiveServer ? 'reachable' : 'unreachable');
+  const reachability: ServerReachability = serverReachability ?? 'unknown';
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);

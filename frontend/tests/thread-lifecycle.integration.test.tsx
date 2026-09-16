@@ -5,7 +5,8 @@ const mock = vi.hoisted(() => ({
   controller: Symbol('controller'),
   options: null as any, current: null as string | null, loading: false,
   messages: [] as any[], toolCalls: [] as any[], messageMetadata: {} as Record<string, any>, finishRun: null as null | (() => void),
-  remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(), join: vi.fn(),
+  remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(), join: vi.fn(), listRuns: vi.fn(),
+  getAssistant: vi.fn(),
   sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(), stop: vi.fn(), hydrate: vi.fn(), cleanup: vi.fn(),
   factory: vi.fn(),
 }));
@@ -48,8 +49,12 @@ describe('标题与 Agent Run 独立生命周期', () => {
     vi.restoreAllMocks(); vi.resetAllMocks(); window.history.replaceState(null, '', '/');
     mock.current = null; mock.loading = false; mock.messages = []; mock.toolCalls = []; mock.messageMetadata = {}; mock.finishRun = null;
     localStorage.clear();
+    mock.listRuns.mockResolvedValue([]);
+    mock.getAssistant.mockResolvedValue({});
     mock.factory.mockImplementation(() => ({
-      threads: { delete: mock.remove, get: mock.get, update: mock.update }, runs: { get: mock.run, join: mock.join },
+      threads: { delete: mock.remove, get: mock.get, update: mock.update },
+      runs: { get: mock.run, join: mock.join, list: mock.listRuns },
+      assistants: { get: mock.getAssistant },
     }));
     mock.sessions.mockResolvedValue({ sessions: [], isLive: true });
     mock.remove.mockResolvedValue(undefined);
