@@ -29,7 +29,10 @@ vi.mock('../src/services/api', async (original) => ({ ...await original<any>(),
 vi.mock('../src/components/ChatWindow', () => ({ ChatWindow: (props: any) =>
   <><button onClick={() => void props.onSendMessage('首条消息')}>发送测试消息</button>
     <button onClick={() => void props.onStopGeneration()}>停止测试生成</button>
-    <span>{props.errorMessage}</span>{props.messages.map((message: any, index: number) => <p key={index}>{message.content}</p>)}</> }));
+    {props.runError && <span>本次回答未能完成</span>}
+    {props.stopError && <span>{props.stopError.message}</span>}
+    {props.hydrationError && <span>会话加载失败</span>}
+    {props.messages.map((message: any, index: number) => <p key={index}>{message.content}</p>)}</> }));
 import { App } from '../src/App';
 const thread = (name?: string) => ({ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z',
   metadata: name ? { name, graph_id: 'lma-agent' } : { graph_id: 'lma-agent' }, status: 'busy' });
@@ -231,7 +234,7 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mock.cleanup.mockRejectedValue(new Error('private cleanup failure'));
     render(<App />);
     fireEvent.click(screen.getByText('停止测试生成'));
-    await waitFor(() => expect(screen.getByText('已停止生成，但未完成工具记录清理失败，请刷新后重试')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('会话记录尚未同步')).toBeInTheDocument());
     expect(mock.hydrate).not.toHaveBeenCalled();
     expect(screen.queryByText(/private cleanup failure/)).not.toBeInTheDocument();
   });
@@ -338,10 +341,10 @@ describe('标题与 Agent Run 独立生命周期', () => {
     expect(new URL(window.location.href).searchParams.get('view')).toBe('monitor');
     expect(window.location.hash).toBe('#details');
   });
-  it('metadata 保存失败不伪装成标题成功，不写聊天错误', async () => {
+  it('metadata 保存失败不伪装成标题成功，静默降级保留新会话不写聊天错误', async () => {
     mock.update.mockRejectedValue(new Error('private metadata failure'));
     render(<App />); fireEvent.click(screen.getByText('发送测试消息')); await acceptRun();
-    await waitFor(() => expect(screen.getByText('会话名称未保存')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('新会话')).toBeInTheDocument());
     expect(screen.queryByText('正式标题')).not.toBeInTheDocument();
     expect(screen.queryByText(/private metadata failure/)).not.toBeInTheDocument();
     await finishRun();

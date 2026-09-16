@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatWindow } from '../src/components/ChatWindow';
@@ -7,6 +7,8 @@ import { InlineToolCall } from '../src/components/InlineToolCall';
 import { MessageActions } from '../src/components/MessageActions';
 import { Sidebar } from '../src/components/Sidebar';
 import { OptimisticMessageStatus } from '../src/components/OptimisticMessageStatus';
+import { ErrorBoundary } from '../src/components/ErrorBoundary';
+import { ToastContainer, useToast } from '../src/components/Toast';
 import { STREAM_CONTROLLER } from '@langchain/react';
 import { getIncompleteToolCallMessageUpdates, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
 
@@ -584,4 +586,201 @@ it('用户消息直接读取官方 optimistic pending/failed 状态', () => {
     <OptimisticMessageStatus stream={stream} messageId="failed-id" /></>);
   expect(screen.getByText('发送中…')).toBeInTheDocument();
   expect(screen.getByText('发送失败')).toBeInTheDocument();
+});
+
+it('用户消息发送失败显示“发送失败 · 重试”，点击重试触发回调', () => {
+  const onRetry = vi.fn();
+  const metadata = new Map([
+    ['failed-id', { parentCheckpointId: undefined, optimisticStatus: 'failed' }],
+  ]);
+  const store = { subscribe: () => () => undefined, getSnapshot: () => metadata };
+  const stream = { [STREAM_CONTROLLER]: { messageMetadataStore: store } } as any;
+  render(<OptimisticMessageStatus stream={stream} messageId="failed-id" onRetry={onRetry} />);
+  expect(screen.getByText('发送失败')).toBeInTheDocument();
+  const retryBtn = screen.getByRole('button', { name: '重试' });
+  expect(retryBtn).toBeInTheDocument();
+  fireEvent.click(retryBtn);
+  expect(onRetry).toHaveBeenCalledTimes(1);
+});
+
+it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成”与“关闭”，且关闭不修改权威状态', () => {
+  const onRegenerate = vi.fn();
+  const onDismiss = vi.fn();
+  render(
+    <ChatWindow
+      messages={[{ id: 'u1', role: 'user', content: '查询边坡稳定情况' }]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
+      runError={true}
+      onRegenerate={onRegenerate}
+      onDismissRunError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('本次回答未能完成')).toBeInTheDocument();
+  expect(screen.queryByText(/error|exception|status|runId|checkpoint/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
+  expect(onRegenerate).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+});
+
+it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”，提供“重新加载”与“关闭”', () => {
+  const onReload = vi.fn();
+  const onDismiss = vi.fn();
+  render(
+    <ChatWindow
+      messages={[]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
+      hydrationError={true}
+      onReloadThread={onReload}
+      onDismissHydrationError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('会话加载失败')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
+  expect(onReload).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+});
+
+it('Stop 收尾异常显示“会话记录尚未同步”并提供真实操作“重新同步”与“关闭”，不暴露技术细节', () => {
+  const onResync = vi.fn();
+  const onDismiss = vi.fn();
+  render(
+    <ChatWindow
+      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
+      stopError={{ message: '会话记录尚未同步', action: 'resync' }}
+      onResyncStop={onResync}
+      onDismissStopError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('会话记录尚未同步')).toBeInTheDocument();
+  expect(screen.queryByText(/cleanup|hydrate|checkpoint|join|ToolMessage/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重新同步' }));
+  expect(onResync).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+});
+
+it('Server 离线时在顶部轻量展示，不写入聊天历史', () => {
+  render(
+    <ChatWindow
+      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
+      isLiveServer={false}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('未连接监测服务，当前处于离线模式')).toBeInTheDocument();
+  expect(screen.getByLabelText('对话消息').textContent).not.toContain('离线模式');
+});
+
+it('Toast 组件支持自动消失、手动关闭与消息去重，最多同时显示 3 条', () => {
+  vi.useFakeTimers();
+  const TestToastHarness = () => {
+    const { toasts, showToast, dismissToast } = useToast();
+    return (
+      <div>
+        <button onClick={() => showToast('删除失败，请稍后重试', 'error')}>触发删除错误</button>
+        <button onClick={() => showToast('重命名失败，请稍后重试', 'error')}>触发重命名错误</button>
+        <button onClick={() => showToast('提示A')}>提示A</button>
+        <button onClick={() => showToast('提示B')}>提示B</button>
+        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      </div>
+    );
+  };
+  render(<TestToastHarness />);
+
+  // 1. 触发两次相同错误，去重只显示一条
+  fireEvent.click(screen.getByText('触发删除错误'));
+  fireEvent.click(screen.getByText('触发删除错误'));
+  expect(screen.getAllByText('删除失败，请稍后重试')).toHaveLength(1);
+
+  // 2. 手动关闭
+  fireEvent.click(screen.getByRole('button', { name: '关闭通知' }));
+  expect(screen.queryByText('删除失败，请稍后重试')).not.toBeInTheDocument();
+
+  // 3. 自动定时消失
+  fireEvent.click(screen.getByText('触发重命名错误'));
+  expect(screen.getByText('重命名失败，请稍后重试')).toBeInTheDocument();
+  act(() => {
+    vi.advanceTimersByTime(4500);
+  });
+  expect(screen.queryByText('重命名失败，请稍后重试')).not.toBeInTheDocument();
+
+  // 4. 最多 3 条
+  fireEvent.click(screen.getByText('触发删除错误'));
+  fireEvent.click(screen.getByText('触发重命名错误'));
+  fireEvent.click(screen.getByText('提示A'));
+  fireEvent.click(screen.getByText('提示B'));
+  expect(screen.getByLabelText('系统通知').children).toHaveLength(3);
+  expect(screen.queryByText('删除失败，请稍后重试')).not.toBeInTheDocument();
+
+  vi.useRealTimers();
+});
+
+it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页面”，局部级提供“重新加载”与“隐藏”', () => {
+  const ProblematicChild = ({ shouldThrow }: { shouldThrow: boolean }) => {
+    if (shouldThrow) {
+      throw new Error('secret_database_connection_timeout');
+    }
+    return <div>正常内容</div>;
+  };
+
+  const reloadSpy = vi.fn();
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: { ...window.location, reload: reloadSpy },
+  });
+
+  // 局部组件级 ErrorBoundary
+  const onReload = vi.fn();
+  render(
+    <ErrorBoundary level="component" onReload={onReload}>
+      <ProblematicChild shouldThrow={true} />
+    </ErrorBoundary>
+  );
+  expect(screen.getByText('该内容暂时无法显示')).toBeInTheDocument();
+  expect(screen.queryByText(/secret_database_connection_timeout/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '重新加载' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '隐藏' })).toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: '隐藏' }));
+  expect(screen.queryByText('该内容暂时无法显示')).not.toBeInTheDocument();
+
+  // 窗口级 ErrorBoundary
+  render(
+    <ErrorBoundary level="window">
+      <ProblematicChild shouldThrow={true} />
+    </ErrorBoundary>
+  );
+  expect(screen.getByText('会话界面加载异常')).toBeInTheDocument();
+  expect(screen.queryByText(/secret_database_connection_timeout/)).not.toBeInTheDocument();
+  const refreshBtn = screen.getByRole('button', { name: '刷新页面' });
+  expect(refreshBtn).toBeInTheDocument();
+  fireEvent.click(refreshBtn);
+  expect(reloadSpy).toHaveBeenCalled();
 });

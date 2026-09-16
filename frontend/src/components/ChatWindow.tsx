@@ -1,5 +1,17 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Plus, PanelLeftOpen, Sparkles, MessageCircle, ChevronRight, Square, ArrowDown, Archive } from 'lucide-react';
+import {
+  Send,
+  Plus,
+  PanelLeftOpen,
+  Sparkles,
+  ChevronRight,
+  Square,
+  ArrowDown,
+  Archive,
+  AlertCircle,
+  AlertTriangle,
+  RotateCcw,
+} from 'lucide-react';
 import { Message, MessagePart } from '../services/api';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
@@ -18,14 +30,29 @@ interface ChatWindowProps {
   runActive: boolean;
   stopReconciling: boolean;
   hasRunningTool: boolean;
-  renderOptimisticStatus?: (messageId?: string) => React.ReactNode;
+  renderOptimisticStatus?: (messageId?: string, content?: string) => React.ReactNode;
   recommendations?: string[];
   recommendationError?: string;
-  errorMessage?: string;
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   isNewSessionDraft?: boolean;
   onStopGeneration?: () => void;
+
+  // 分层错误 props
+  isLiveServer?: boolean;
+  runError?: boolean;
+  onRegenerate?: () => void;
+  onDismissRunError?: () => void;
+  hydrationError?: boolean;
+  onReloadThread?: () => void;
+  onDismissHydrationError?: () => void;
+  stopError?: {
+    message: string;
+    action: 'resync' | 'refresh';
+  } | null;
+  onResyncStop?: () => void;
+  onRefreshStop?: () => void;
+  onDismissStopError?: () => void;
 }
 
 const MAX_LENGTH = 3000;
@@ -53,11 +80,21 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   renderOptimisticStatus,
   recommendations = [],
   recommendationError = '',
-  errorMessage = '',
   isSidebarCollapsed,
   onToggleSidebar,
   isNewSessionDraft = false,
   onStopGeneration,
+  isLiveServer,
+  runError = false,
+  onRegenerate,
+  onDismissRunError,
+  hydrationError = false,
+  onReloadThread,
+  onDismissHydrationError,
+  stopError = null,
+  onResyncStop,
+  onRefreshStop,
+  onDismissStopError,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showPromptsMenu, setShowPromptsMenu] = useState(false);
@@ -88,7 +125,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
     if (isPinnedRef.current) scrollToBottom();
-  }, [messages, threadLoading, runActive, stopReconciling, recommendations]);
+  }, [messages, threadLoading, runActive, stopReconciling, recommendations, runError, hydrationError]);
 
   const canSubmit = !threadLoading && !runActive && !stopReconciling;
 
@@ -142,6 +179,16 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         )}
       </div>
 
+      {/* 顶部服务离线提示（仅在服务未连接时中性展示，不写入聊天历史） */}
+      {isLiveServer === false && (
+        <div className="h-7 px-5 bg-amber-50/90 border-b border-amber-200/70 text-[11px] text-amber-800 flex items-center justify-between shrink-0 select-none">
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+            <span>未连接监测服务，当前处于离线模式</span>
+          </div>
+        </div>
+      )}
+
       {/* 消息滚动区域 */}
       <div
         ref={scrollContainerRef}
@@ -162,6 +209,36 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               </div>
             </div>
             <SummaryCard summary={contextSummary} />
+          </div>
+        )}
+
+        {/* 会话加载失败状态卡 */}
+        {hydrationError && (
+          <div className="max-w-4xl mx-auto w-full my-3 p-3 rounded-xl border border-amber-200 bg-amber-50/70 text-xs text-neutral-800 flex items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>会话加载失败</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {onReloadThread && (
+                <button
+                  type="button"
+                  onClick={onReloadThread}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-neutral-200 text-xs font-medium text-neutral-700 hover:bg-neutral-50 transition-colors shadow-xs"
+                >
+                  重新加载
+                </button>
+              )}
+              {onDismissHydrationError && (
+                <button
+                  type="button"
+                  onClick={onDismissHydrationError}
+                  className="px-2 py-1 rounded-lg text-xs text-neutral-500 hover:text-neutral-800 transition-colors"
+                >
+                  关闭
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -238,7 +315,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                     getText={() => getMessageText(msg)}
                     timestamp={msg.created_at}
                   />
-                  {isUser && renderOptimisticStatus?.(msg.id)}
+                  {isUser && renderOptimisticStatus?.(msg.id, msg.content)}
                 </div>
               </div>
             </div>
@@ -266,6 +343,44 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         {canSubmit && recommendationError && (
           <div className="mx-auto w-full max-w-4xl pl-11 text-xs text-amber-700" role="status">
             {recommendationError}
+          </div>
+        )}
+
+        {/* 主 Run 失败轻量卡（在回答位置显示，提供重新生成与关闭） */}
+        {runError && !runActive && (
+          <div className="max-w-4xl mx-auto w-full flex items-start gap-3.5">
+            <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center shrink-0 text-xs font-bold text-white select-none shadow-sm">
+              AI
+            </div>
+            <div className="flex-1 min-w-0 max-w-full items-start">
+              <div className="rounded-2xl border border-red-100 bg-red-50/60 p-3.5 text-xs text-neutral-800 shadow-xs space-y-2.5">
+                <div className="flex items-center gap-2 font-medium text-neutral-800">
+                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                  <span>本次回答未能完成</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {onRegenerate && (
+                    <button
+                      type="button"
+                      onClick={onRegenerate}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white border border-neutral-200 text-xs font-medium text-neutral-700 hover:bg-neutral-50 hover:border-neutral-300 shadow-xs transition-colors"
+                    >
+                      <RotateCcw className="w-3 h-3 text-neutral-500" />
+                      <span>重新生成</span>
+                    </button>
+                  )}
+                  {onDismissRunError && (
+                    <button
+                      type="button"
+                      onClick={onDismissRunError}
+                      className="px-2.5 py-1 rounded-lg text-xs text-neutral-500 hover:text-neutral-800 transition-colors"
+                    >
+                      关闭
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -301,11 +416,45 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       {/* 底部悬浮卡片输入区 */}
       <div className="p-4 bg-white shrink-0 z-20">
         <div className="max-w-4xl mx-auto relative">
-          {errorMessage && (
-            <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
-              {errorMessage}
+          {/* Stop 收尾同步异常轻量提示 */}
+          {stopError && (
+            <div className="mb-2 max-w-4xl mx-auto flex items-center justify-between p-2.5 rounded-xl border border-amber-200 bg-amber-50/80 text-xs text-amber-900 shadow-xs">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                <span>{stopError.message}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {stopError.action === 'resync' && onResyncStop && (
+                  <button
+                    type="button"
+                    onClick={onResyncStop}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
+                  >
+                    重新同步
+                  </button>
+                )}
+                {stopError.action === 'refresh' && onRefreshStop && (
+                  <button
+                    type="button"
+                    onClick={onRefreshStop}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
+                  >
+                    刷新
+                  </button>
+                )}
+                {onDismissStopError && (
+                  <button
+                    type="button"
+                    onClick={onDismissStopError}
+                    className="px-2 py-1 rounded-lg text-xs text-amber-700 hover:text-amber-900 transition-colors"
+                  >
+                    关闭
+                  </button>
+                )}
+              </div>
             </div>
           )}
+
           {stopReconciling && (
             <div className="mb-2 text-center text-xs text-neutral-500" role="status">正在结束本轮并同步记录…</div>
           )}

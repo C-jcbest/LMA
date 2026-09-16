@@ -593,8 +593,8 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
       </div>
 
       {toolCall.status === 'error' && (
-        <div role="alert" className="mt-1 max-w-3xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-          {typeof data?.message === 'string' ? data.message : '本次工具调用未完成，未取得可展示的数据。'}
+        <div role="alert" className="mt-1 max-w-3xl rounded-lg border border-amber-200/80 bg-amber-50/60 p-2.5 text-xs text-amber-900">
+          {typeof data?.message === 'string' && data.message ? data.message : '未获得结果'}
         </div>
       )}
 

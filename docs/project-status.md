@@ -14,6 +14,7 @@
 - TODO 11 已完成：官方 metadata.graph_id 过滤与20条offset分页；服务端 updated_at 排序，标题完成后不永久置顶。空闲时无列表轮询，只刷新已知busy IDs；事件刷新已加载范围，分页失败不推进offset并保留已确认列表。辅助图即使有标题也不展示，不增加旧会话迁移。
 - TODO 12 已按用户纠正完成：Stop 仅 interrupt 当前 Run，等待该 Run 收敛后读取最终 checkpoint；全未完成 AI tool-call 消息用 RemoveMessage 删除，并行部分完成时原位保留成功 calls/ToolMessages。删除 cancelled ToolMessage、cancelled UI、asNode="tools"、Run扫描/批量取消和 resume；下一条用户消息普通 submit 新 Run。rollback 会回退整轮，不用于“仅丢弃未完成部分”。
 - TODO 13 已完成：删除聚合 `isGenerating` 和 `isStartingRun`；hydration/Run 分别使用 `stream.isThreadLoading`/`stream.isLoading`，工具运行使用 `useToolCalls`，用户消息 pending/sent/failed 使用 `useMessageMetadata`。仅 `stopReconciling` 为 LMA 本地过渡态，清理时可输入但不可发送。Run ID 从产生 Run 的 submission 关联，不从当前 UI 选择推断；Sidebar busy 与中央 Run 状态分离。
+- TODO 14 已完成：彻底移除全局 `submissionError`；错误按其发生的交互归属显示在正确位置（主 Run 失败卡显示在 assistant 回答位置并支持分叉重生成、用户消息失败就地重试、工具错误限制在单工具卡内、Thread 重命名/删除使用独立 Toast 浮层、Stop 收尾在输入框上方显示同步状态、辅助标题生成失败静默保留“新会话”、ErrorBoundary 隐藏内部堆栈并提供真实刷新/重新加载/隐藏动作）。绝不展示内部异常、堆栈、HTTP 或 checkpoint 诊断。
 
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 
@@ -39,7 +40,7 @@
 
 - TODO 5 的生产测试覆盖长会话摘要、近期token budget保留、重复压缩、停止后工具配对、摘要失败保全和内部模型流隔离。Server E2E 使用真实生产工厂与 HTTP Stub 验证官方摘要、瞬时重试、Thread 恢复及主 usage 保留。
 - 本轮后端49项常规测试、2项隔离Server E2E、前端39项测试和生产构建通过（常规发现51项，服务E2E默认跳过并另行执行）。真实官方 React SDK 测试覆盖首次 run.start 拒绝，隔离服务覆盖新版协议首次创建与 checkpoint；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
-- TODO 9–13 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载、Stop 清理协议及官方生命周期投影；下一项为 TODO 14 分层错误模型；推荐退出主 Run 属于 TODO 23。
+- TODO 9–14 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载、Stop 清理协议、官方生命周期投影及分层错误交互模型；下一项为 TODO 15 移除自定义 Message/Tool 状态机；推荐退出主 Run 属于 TODO 23。
 
 ## 2026-09-15 TODO 9：统一 Client 与连接切换边界
 

@@ -8,6 +8,7 @@ import { ConfigModal } from './components/ConfigModal';
 import { ContextUsage } from './components/ContextUsageIndicator';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OptimisticMessageStatus } from './components/OptimisticMessageStatus';
+import { ToastContainer, useToast } from './components/Toast';
 import {
   LMA_ASSISTANT_ID,
   createLangGraphClient,
@@ -64,14 +65,21 @@ export const App: React.FC = () => {
   const client = useMemo(() => createLangGraphClient(apiUrl), [apiUrl]);
   const currentClientRef = useRef(client);
   currentClientRef.current = client;
-  const [submissionError, setSubmissionError] = useState('');
+
   // 官方 stream.isLoading 已覆盖 Run 启动与执行；本地仅保留 Stop 后的 checkpoint 清理过渡态。
   const [stopReconciling, setStopReconciling] = useState(false);
   const stopReconcilingRef = useRef(false);
   const isSubmittingRef = useRef(false);
 
+  // 分层错误交互模型（彻底替代全局 submissionError）
+  const { toasts, showToast, dismissToast } = useToast();
+  const [runError, setRunError] = useState<{ threadId: string; userMessageId?: string } | null>(null);
+  const [hydrationError, setHydrationError] = useState(false);
+  const [stopError, setStopError] = useState<{ message: string; action: 'resync' | 'refresh' } | null>(null);
+  const lastHumanMsgIdRef = useRef<string | undefined>(undefined);
+
   // 仅保存标题展示任务；不预创建 Thread，不复制权威消息历史。
-  const [titleViews, setTitleViews] = useState<Record<string, 'pending' | 'creation_error' | 'save_error'>>({});
+  const [titleViews, setTitleViews] = useState<Record<string, 'pending'>>({});
   const [newThreadOrder, setNewThreadOrder] = useState<string[]>([]);
   const titleJobsRef = useRef(new Map<string, { text: string; client: Client; creationNotified: boolean; titleStarted?: boolean }>());
   const activeRunRef = useRef<{ threadId: string; runId: string } | null>(null);
@@ -178,9 +186,15 @@ export const App: React.FC = () => {
           clearTitleView(id);
           void loadSessions();
         } catch (error) {
+          // 辅助能力静默降级：保留“新会话”，写日志，不打扰用户
           console.warn('session title metadata save error:', error);
           if (titleJobsRef.current.get(id) === job) {
-            setTitleViews((current) => ({ ...current, [id]: 'save_error' }));
+            setSessions((items) => mergeSessions(items, [{
+              thread_id: id,
+              name: '新会话',
+              created_at: new Date().toISOString(),
+            }]));
+            clearTitleView(id);
           }
         } finally {
           if (titleJobsRef.current.get(id) === job) titleJobsRef.current.delete(id);
@@ -199,11 +213,49 @@ export const App: React.FC = () => {
     onCreated,
     onCompleted: ({ runId, reason }: { runId?: string; reason?: string }) => {
       if (!runId || activeRunRef.current?.runId === runId) activeRunRef.current = null;
-      if (reason === 'success' && activeSubmissionRef.current?.runId === runId) setSubmissionError('');
+      if (reason === 'success') {
+        setRunError(null);
+      }
     },
   });
   const toolCalls = useToolCalls(stream);
   const hasRunningTool = toolCalls.some((toolCall) => toolCall.status === 'running');
+
+  // 监听 Thread hydration 状态
+  useEffect(() => {
+    if (!activeThreadId) {
+      setHydrationError(false);
+      return;
+    }
+    let active = true;
+    stream.hydrationPromise?.then(
+      () => {
+        if (active && selectedThreadRef.current === activeThreadId) {
+          setHydrationError(false);
+        }
+      },
+      (error) => {
+        if (active && selectedThreadRef.current === activeThreadId) {
+          console.warn('thread hydration error:', error);
+          setHydrationError(true);
+        }
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, [activeThreadId, stream.hydrationPromise]);
+
+  const handleReloadThread = async () => {
+    if (!activeThreadId) return;
+    setHydrationError(false);
+    try {
+      await (stream as any)[STREAM_CONTROLLER]?.hydrate(activeThreadId);
+    } catch (error) {
+      console.warn('reload thread failed:', error);
+      setHydrationError(true);
+    }
+  };
 
   useEffect(() => {
     const onPopState = () => {
@@ -211,7 +263,8 @@ export const App: React.FC = () => {
       if (selectedThreadRef.current === id) return;
       // 导航只断开订阅，服务端 Run 继续；历史由 SDK 根据 URL ID 恢复。
       stream.disconnect();
-      setSubmissionError('');
+      setRunError(null);
+      setStopError(null);
       selectedThreadRef.current = id;
       setActiveThreadId(id);
     };
@@ -225,7 +278,7 @@ export const App: React.FC = () => {
       const index = items.findIndex((session) => session.thread_id === id);
       const display = {
         ...(index >= 0 ? items[index] : { thread_id: id }),
-        name: phase === 'pending' ? '' : phase === 'creation_error' ? '会话创建未确认' : '会话名称未保存',
+        name: phase === 'pending' ? '' : items[index]?.name || '新会话',
         titlePending: phase === 'pending',
       };
       if (index >= 0) items[index] = display;
@@ -298,13 +351,15 @@ export const App: React.FC = () => {
 
   const handleSelectSession = (session: Pick<ThreadSession, 'thread_id'>) => {
     stream.disconnect();
-    setSubmissionError('');
+    setRunError(null);
+    setStopError(null);
     selectThread(session.thread_id);
   };
 
   const handleCreateSession = () => {
     stream.disconnect();
-    setSubmissionError('');
+    setRunError(null);
+    setStopError(null);
     selectThread(null);
   };
 
@@ -321,7 +376,7 @@ export const App: React.FC = () => {
     } catch (error) {
       if (currentClientRef.current !== client) return;
       console.warn('rename session error:', error);
-      setSubmissionError('重命名失败，请稍后重试');
+      showToast('重命名失败，请稍后重试', 'error');
     }
   };
 
@@ -347,16 +402,19 @@ export const App: React.FC = () => {
       titleJobsRef.current.delete(sessionId);
       setSessions((current) => current.filter((session) => session.thread_id !== sessionId));
       if (selectedThreadRef.current === sessionId) selectThread(null, 'replace');
-      setSubmissionError('');
     } catch (error) {
       if (currentClientRef.current !== client) return;
       console.warn('delete session error:', error);
-      const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+      const status = error && typeof error === 'object' && 'status' in error ? (error as any).status : undefined;
       console.warn('delete session failed stage:', { threadId: sessionId, stage, status });
-      setSubmissionError(status === 404
-        ? '此会话已不存在'
-        : status === 409 ? '会话正在运行，请停止后再删除'
-        : '删除失败，请稍后重试');
+      showToast(
+        status === 404
+          ? '此会话已不存在'
+          : status === 409
+            ? '会话正在运行，请停止后再删除'
+            : '删除失败，请稍后重试',
+        'error'
+      );
     } finally {
       if (currentClientRef.current === client) {
         deletingThreadsRef.current.delete(sessionId);
@@ -371,7 +429,8 @@ export const App: React.FC = () => {
     if (!text || stream.isThreadLoading || stream.isLoading || stopReconciling || isSubmittingRef.current) return;
     // 在第一个 await 前同步上锁，防止快速回车/双击同时创建两个 Thread。
     isSubmittingRef.current = true;
-    setSubmissionError('');
+    setRunError(null);
+    setStopError(null);
 
     const isFirstMessage = activeThreadId === null;
     const submission = { client, threadId: activeThreadId, stopped: false, runId: undefined as string | undefined };
@@ -383,7 +442,7 @@ export const App: React.FC = () => {
       const threadId = submission.threadId;
       const runId = submission.runId;
       if (!threadId || !runId) {
-        setSubmissionError(runErrorMessage(error));
+        // 未创建 Run 的情况由 optimistic failed 处理，不产生 assistant 错误卡
         return;
       }
 
@@ -402,15 +461,16 @@ export const App: React.FC = () => {
         if (submission.stopped || currentClientRef.current !== submission.client) return;
         if (run.status === 'success') {
           await stream[STREAM_CONTROLLER].hydrate(threadId);
-          if (!submission.stopped && currentClientRef.current === submission.client) setSubmissionError('');
+          if (!submission.stopped && currentClientRef.current === submission.client) setRunError(null);
           return;
         }
         if (run.status === 'interrupted' && submission.stopped) return;
-        setSubmissionError(runErrorMessage(error));
+        console.warn('submitted run error:', runErrorMessage(error));
+        setRunError({ threadId, userMessageId: lastHumanMsgIdRef.current });
       } catch (reconcileError) {
         console.warn('reconcile submitted run error:', reconcileError);
         if (!submission.stopped && currentClientRef.current === submission.client) {
-          setSubmissionError(runErrorMessage(error));
+          setRunError({ threadId, userMessageId: lastHumanMsgIdRef.current });
         }
       }
     };
@@ -425,7 +485,8 @@ export const App: React.FC = () => {
             recoveryPromise ??= reconcileRunError(error);
             for (const [id, job] of titleJobsRef.current) {
               if (!job.creationNotified) {
-                setTitleViews((current) => ({ ...current, [id]: 'creation_error' }));
+                clearTitleView(id);
+                titleJobsRef.current.delete(id);
               }
             }
           },
@@ -435,10 +496,83 @@ export const App: React.FC = () => {
     } catch (error) {
       if (submission.stopped || currentClientRef.current !== submission.client) return;
       if (recoveryPromise) await recoveryPromise;
-      else setSubmissionError(runErrorMessage(error));
+      else if (submission.runId) {
+        setRunError({ threadId: submission.threadId || '', userMessageId: lastHumanMsgIdRef.current });
+      }
     } finally {
       if (currentClientRef.current === client) {
         firstInputRef.current = null;
+        if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
+        isSubmittingRef.current = false;
+        void loadSessions();
+      }
+    }
+  };
+
+  // 重新生成：使用官方 parentCheckpointId + submit(null, { forkFrom })，不追加 HumanMessage
+  const handleRegenerate = async (forkFromCheckpointId?: string) => {
+    if (stream.isLoading || isSubmittingRef.current || stopReconcilingRef.current) return;
+    const currentThreadId = activeThreadId;
+    if (!currentThreadId) return;
+
+    const humanMsgs = messages.filter((m) => m.role === 'user');
+    const lastHumanMsg = humanMsgs[humanMsgs.length - 1];
+    if (!lastHumanMsg?.id) return;
+
+    const checkpointId =
+      forkFromCheckpointId ||
+      (stream as any)[STREAM_CONTROLLER]?.messageMetadataStore?.getSnapshot?.()?.get(lastHumanMsg.id)?.parentCheckpointId;
+
+    isSubmittingRef.current = true;
+    setRunError(null);
+    const submission = { client, threadId: currentThreadId, stopped: false, runId: undefined as string | undefined };
+    activeSubmissionRef.current = submission;
+
+    let recoveryPromise: Promise<void> | null = null;
+    const reconcileRunError = async (error: unknown) => {
+      if (submission.stopped || currentClientRef.current !== submission.client) return;
+      const threadId = submission.threadId;
+      const runId = submission.runId;
+      if (!threadId || !runId) return;
+      try {
+        let run = await submission.client.runs.get(threadId, runId);
+        if (run.status === 'pending' || run.status === 'running') {
+          try { await submission.client.runs.join(threadId, runId); } catch {}
+          run = await submission.client.runs.get(threadId, runId);
+        }
+        if (submission.stopped || currentClientRef.current !== submission.client) return;
+        if (run.status === 'success') {
+          await stream[STREAM_CONTROLLER].hydrate(threadId);
+          return;
+        }
+        if (run.status === 'interrupted' && submission.stopped) return;
+        setRunError({ threadId, userMessageId: lastHumanMsg.id });
+      } catch (err) {
+        console.warn('reconcile regenerate error:', err);
+        if (!submission.stopped && currentClientRef.current === submission.client) {
+          setRunError({ threadId, userMessageId: lastHumanMsg.id });
+        }
+      }
+    };
+
+    try {
+      await stream.submit(null, {
+        forkFrom: checkpointId,
+        multitaskStrategy: 'reject',
+        onError: (error) => {
+          if (submission.stopped || currentClientRef.current !== submission.client) return;
+          recoveryPromise ??= reconcileRunError(error);
+        },
+      });
+      if (recoveryPromise) await recoveryPromise;
+    } catch (error) {
+      if (submission.stopped || currentClientRef.current !== submission.client) return;
+      if (recoveryPromise) await recoveryPromise;
+      else if (submission.runId) {
+        setRunError({ threadId: currentThreadId, userMessageId: lastHumanMsg.id });
+      }
+    } finally {
+      if (currentClientRef.current === client) {
         if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
         isSubmittingRef.current = false;
         void loadSessions();
@@ -451,7 +585,7 @@ export const App: React.FC = () => {
     stopReconcilingRef.current = true;
     const activeRun = activeRunRef.current?.threadId === activeThreadId ? activeRunRef.current : null;
     if (activeSubmissionRef.current?.threadId === activeThreadId) activeSubmissionRef.current.stopped = true;
-    setSubmissionError('');
+    setStopError(null);
     setStopReconciling(true);
     let stage: 'stop' | 'join' | 'cleanup' | 'hydrate' = 'stop';
     try {
@@ -471,18 +605,28 @@ export const App: React.FC = () => {
     } catch (error) {
       if (currentClientRef.current !== client) return;
       console.warn('stop generation failed:', { stage, error });
-      setSubmissionError(
-        stage === 'stop' ? '停止当前运行失败，请稍后重试'
-          : stage === 'join' ? '已请求停止，但等待运行结束失败，请刷新后重试'
-            : stage === 'hydrate' ? '未完成工具记录已清理，请刷新页面同步显示'
-              : '已停止生成，但未完成工具记录清理失败，请刷新后重试'
-      );
+      if (stage === 'hydrate') {
+        setStopError({ message: '当前显示可能未更新', action: 'refresh' });
+      } else {
+        setStopError({ message: '会话记录尚未同步', action: 'resync' });
+      }
     } finally {
       if (currentClientRef.current === client) {
         await loadSessions();
         setStopReconciling(false);
         stopReconcilingRef.current = false;
       }
+    }
+  };
+
+  const handleRefreshStop = async () => {
+    if (!activeThreadId) return;
+    setStopError(null);
+    try {
+      await (stream as any)[STREAM_CONTROLLER]?.hydrate(activeThreadId);
+    } catch (error) {
+      console.warn('refresh after stop failed:', error);
+      setStopError({ message: '当前显示可能未更新', action: 'refresh' });
     }
   };
 
@@ -510,7 +654,7 @@ export const App: React.FC = () => {
         />
       )}
 
-      <ErrorBoundary fallbackTitle="会话窗口渲染异常">
+      <ErrorBoundary fallbackTitle="会话界面加载异常" level="window">
         <ChatWindow
           messages={messages}
           contextSummary={contextSummary}
@@ -520,14 +664,30 @@ export const App: React.FC = () => {
           runActive={stream.isLoading}
           stopReconciling={stopReconciling}
           hasRunningTool={hasRunningTool}
-          renderOptimisticStatus={(messageId) => <OptimisticMessageStatus stream={stream} messageId={messageId} />}
+          renderOptimisticStatus={(messageId, content) => (
+            <OptimisticMessageStatus
+              stream={stream}
+              messageId={messageId}
+              onRetry={() => content && handleSendMessage(content)}
+            />
+          )}
           recommendations={recommendations}
           recommendationError={recommendationError}
-          errorMessage={submissionError}
           isSidebarCollapsed={isSidebarCollapsed}
           onToggleSidebar={() => setIsSidebarCollapsed(false)}
           isNewSessionDraft={isNewSessionDraft}
           onStopGeneration={() => void handleStopGeneration()}
+          isLiveServer={isLiveServer}
+          runError={Boolean(runError && runError.threadId === activeThreadId)}
+          onRegenerate={() => void handleRegenerate()}
+          onDismissRunError={() => setRunError(null)}
+          hydrationError={hydrationError}
+          onReloadThread={() => void handleReloadThread()}
+          onDismissHydrationError={() => setHydrationError(false)}
+          stopError={stopError}
+          onResyncStop={() => void handleStopGeneration()}
+          onRefreshStop={() => void handleRefreshStop()}
+          onDismissStopError={() => setStopError(null)}
         />
       </ErrorBoundary>
 
@@ -555,11 +715,15 @@ export const App: React.FC = () => {
           setIsListLoading(false);
           setListError('');
           setIsLiveServer(false);
-          setSubmissionError('');
+          setRunError(null);
+          setStopError(null);
+          setHydrationError(false);
           selectThread(null, 'replace');
           setApiUrl(nextUrl);
         }}
       />
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 };
