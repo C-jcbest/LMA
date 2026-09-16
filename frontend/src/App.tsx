@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStream, useToolCalls } from '@langchain/react';
 import type { Client } from '@langchain/langgraph-sdk';
+import type { BaseMessage } from '@langchain/core/messages';
 import { Sidebar, SidebarSession, ServerReachability } from './components/Sidebar';
 import { ChatWindow } from './components/ChatWindow';
 import { ConfigModal } from './components/ConfigModal';
@@ -28,7 +29,6 @@ import {
 interface LmaState {
   messages: unknown[];
   recommendations?: string[];
-  recommendations_error?: string;
   business_time?: string;
   context_usage?: ContextUsage;
 }
@@ -67,20 +67,22 @@ export const App: React.FC = () => {
   currentClientRef.current = client;
 
   // 官方 stream.isLoading 已覆盖 Run 启动与执行；本地仅保留 Stop 后的 checkpoint 清理过渡态，按 Thread 归属精确隔离。
-  const [stopReconcilingThreadId, setStopReconcilingThreadId] = useState<string | null>(null);
-  const stopReconcilingThreadIdRef = useRef<string | null>(null);
-  const stopReconciling = Boolean(activeThreadId && stopReconcilingThreadId === activeThreadId);
+  const [stopReconcilingThreadIds, setStopReconcilingThreadIds] = useState<Set<string>>(new Set());
+  const stopReconcilingThreadIdsRef = useRef<Set<string>>(new Set());
+  const stopReconciling = Boolean(activeThreadId && stopReconcilingThreadIds.has(activeThreadId));
   const isSubmittingRef = useRef(false);
 
   // 分层错误交互模型（彻底替代全局 submissionError，按 Thread 精准隔离）
   const { toasts, showToast, dismissToast } = useToast();
-  const [runError, setRunError] = useState<{ threadId: string } | null>(null);
-  const [hydrationError, setHydrationError] = useState<{ threadId: string } | null>(null);
-  const [stopError, setStopError] = useState<{ threadId: string; message: string; action: 'retry_stop' | 'resync_cleanup' | 'refresh' } | null>(null);
+  const [runErrors, setRunErrors] = useState<Record<string, boolean>>({});
+  const [hydrationErrors, setHydrationErrors] = useState<Record<string, boolean>>({});
+  const [stopErrors, setStopErrors] = useState<
+    Record<string, { message: string; action: 'retry_stop' | 'resync_cleanup' | 'refresh' }>
+  >({});
 
-  const visibleRunError = Boolean(runError && runError.threadId === activeThreadId);
-  const visibleHydrationError = Boolean(hydrationError && hydrationError.threadId === activeThreadId);
-  const visibleStopError = stopError?.threadId === activeThreadId ? stopError : null;
+  const visibleRunError = Boolean(activeThreadId && runErrors[activeThreadId]);
+  const visibleHydrationError = Boolean(activeThreadId && hydrationErrors[activeThreadId]);
+  const visibleStopError = activeThreadId ? (stopErrors[activeThreadId] ?? null) : null;
 
   // 仅保存标题展示任务；不预创建 Thread，不复制权威消息历史。
   const [titleViews, setTitleViews] = useState<Record<string, 'pending'>>({});
@@ -130,9 +132,14 @@ export const App: React.FC = () => {
       console.warn('loadSessions err:', error);
       setListError('会话列表加载失败，请重试');
       // 仅当探测 Assistant 也无法连接时才定性为服务不可达，避免列表接口单点错误误报全局不可达
-      client?.assistants?.get?.(LMA_ASSISTANT_ID)?.catch(() => {
-        if (request === sessionRequestRef.current) setServerReachability('unreachable');
-      });
+      client?.assistants
+        ?.get?.(LMA_ASSISTANT_ID)
+        ?.then(() => {
+          if (request === sessionRequestRef.current) setServerReachability('reachable');
+        })
+        ?.catch(() => {
+          if (request === sessionRequestRef.current) setServerReachability('unreachable');
+        });
     } finally {
       if (request === sessionRequestRef.current) {
         listPendingRef.current = false;
@@ -214,11 +221,8 @@ export const App: React.FC = () => {
     optimistic: true,
     onThreadId,
     onCreated,
-    onCompleted: ({ runId, reason }: { runId?: string; reason?: string }) => {
+    onCompleted: ({ runId }: { runId?: string; reason?: string }) => {
       if (!runId || activeRunRef.current?.runId === runId) activeRunRef.current = null;
-      if (reason === 'success') {
-        setRunError(null);
-      }
     },
   });
   const toolCalls = useToolCalls(stream);
@@ -227,7 +231,6 @@ export const App: React.FC = () => {
   // 监听 Thread hydration 状态（按 Thread 精确隔离）
   useEffect(() => {
     if (!activeThreadId) {
-      setHydrationError(null);
       return;
     }
     const targetThreadId = activeThreadId;
@@ -235,13 +238,18 @@ export const App: React.FC = () => {
     stream.hydrationPromise?.then(
       () => {
         if (active && selectedThreadRef.current === targetThreadId) {
-          setHydrationError((prev) => (prev?.threadId === targetThreadId ? null : prev));
+          setHydrationErrors((prev) => {
+            if (!prev[targetThreadId]) return prev;
+            const next = { ...prev };
+            delete next[targetThreadId];
+            return next;
+          });
         }
       },
       (error) => {
         if (active && selectedThreadRef.current === targetThreadId) {
           console.warn('thread hydration error:', error);
-          setHydrationError({ threadId: targetThreadId });
+          setHydrationErrors((prev) => ({ ...prev, [targetThreadId]: true }));
         }
       }
     );
@@ -253,13 +261,20 @@ export const App: React.FC = () => {
   const handleReloadThread = async () => {
     if (!activeThreadId) return;
     const targetThreadId = activeThreadId;
-    setHydrationError((prev) => (prev?.threadId === targetThreadId ? null : prev));
+    setHydrationErrors((prev) => {
+      if (!prev[targetThreadId]) return prev;
+      const next = { ...prev };
+      delete next[targetThreadId];
+      return next;
+    });
     try {
-      await rehydrateThread(stream, targetThreadId);
+      if (selectedThreadRef.current === targetThreadId) {
+        await rehydrateThread(stream, targetThreadId);
+      }
     } catch (error) {
       console.warn('reload thread failed:', error);
       if (selectedThreadRef.current === targetThreadId) {
-        setHydrationError({ threadId: targetThreadId });
+        setHydrationErrors((prev) => ({ ...prev, [targetThreadId]: true }));
       }
     }
   };
@@ -270,8 +285,6 @@ export const App: React.FC = () => {
       if (selectedThreadRef.current === id) return;
       // 导航只断开订阅，服务端 Run 继续；历史由 SDK 根据 URL ID 恢复。
       stream.disconnect();
-      setRunError(null);
-      setStopError(null);
       selectedThreadRef.current = id;
       setActiveThreadId(id);
     };
@@ -344,15 +357,6 @@ export const App: React.FC = () => {
     ) as { content?: unknown } | undefined;
     return typeof summary?.content === 'string' ? summary.content : '';
   }, [stream.values?.messages, isNewSessionDraft]);
-  const recommendationError =
-    typeof stream.values?.recommendations_error === 'string'
-      ? stream.values.recommendations_error
-      : '';
-  useEffect(() => {
-    if (recommendationError) {
-      console.warn('recommendations failed, downgraded silently:', recommendationError);
-    }
-  }, [recommendationError]);
   const busyThreadIds = useMemo(() => {
     const busy = sessions
       .filter((session) => session.thread_id !== activeThreadId && session.status === 'busy')
@@ -363,15 +367,11 @@ export const App: React.FC = () => {
 
   const handleSelectSession = (session: Pick<ThreadSession, 'thread_id'>) => {
     stream.disconnect();
-    setRunError(null);
-    setStopError(null);
     selectThread(session.thread_id);
   };
 
   const handleCreateSession = () => {
     stream.disconnect();
-    setRunError(null);
-    setStopError(null);
     selectThread(null);
   };
 
@@ -441,8 +441,20 @@ export const App: React.FC = () => {
     if (!text || stream.isThreadLoading || stream.isLoading || stopReconciling || isSubmittingRef.current) return;
     // 在第一个 await 前同步上锁，防止快速回车/双击同时创建两个 Thread。
     isSubmittingRef.current = true;
-    setRunError(null);
-    setStopError(null);
+    if (activeThreadId) {
+      setRunErrors((prev) => {
+        if (!prev[activeThreadId]) return prev;
+        const next = { ...prev };
+        delete next[activeThreadId];
+        return next;
+      });
+      setStopErrors((prev) => {
+        if (!prev[activeThreadId]) return prev;
+        const next = { ...prev };
+        delete next[activeThreadId];
+        return next;
+      });
+    }
 
     const isFirstMessage = activeThreadId === null;
     const submission = { client, threadId: activeThreadId, stopped: false, runId: undefined as string | undefined };
@@ -472,9 +484,16 @@ export const App: React.FC = () => {
         }
         if (submission.stopped || currentClientRef.current !== submission.client) return;
         if (run.status === 'success') {
-          await rehydrateThread(stream, threadId);
+          if (selectedThreadRef.current === threadId) {
+            await rehydrateThread(stream, threadId);
+          }
           if (!submission.stopped && currentClientRef.current === submission.client) {
-            setRunError((prev) => (prev?.threadId === threadId ? null : prev));
+            setRunErrors((prev) => {
+              if (!prev[threadId]) return prev;
+              const next = { ...prev };
+              delete next[threadId];
+              return next;
+            });
           }
           return;
         }
@@ -485,11 +504,11 @@ export const App: React.FC = () => {
           status: run?.status,
           error,
         });
-        setRunError({ threadId });
+        setRunErrors((prev) => ({ ...prev, [threadId]: true }));
       } catch (reconcileError) {
         console.warn('reconcile submitted run error:', reconcileError);
         if (!submission.stopped && currentClientRef.current === submission.client) {
-          setRunError({ threadId });
+          setRunErrors((prev) => ({ ...prev, [threadId]: true }));
         }
       }
     };
@@ -515,8 +534,8 @@ export const App: React.FC = () => {
     } catch (error) {
       if (submission.stopped || currentClientRef.current !== submission.client) return;
       if (recoveryPromise) await recoveryPromise;
-      else if (submission.runId) {
-        setRunError({ threadId: submission.threadId || '' });
+      else if (submission.runId && submission.threadId) {
+        setRunErrors((prev) => ({ ...prev, [submission.threadId!]: true }));
       }
     } finally {
       if (currentClientRef.current === client) {
@@ -529,19 +548,26 @@ export const App: React.FC = () => {
   };
 
   // 重新生成：遵循官方 Retry an AI turn 规范，通过 parentCheckpointId 分叉，并重新提交官方 BaseMessage 对象
-  const handleRegenerate = async (checkpointId: string, lastHumanMsg: any) => {
+  const handleRegenerate = async (checkpointId: string, lastHumanMsg?: BaseMessage) => {
     if (stream.isLoading || isSubmittingRef.current || stopReconciling) return;
     const currentThreadId = activeThreadId;
     if (!currentThreadId || !checkpointId) return;
 
     // 从 stream.messages 中寻找该轮次最后一条 HumanMessage（保留其完整属性）
-    const lastHuman = [...(stream.messages || [])]
-      .reverse()
-      .find((m: any) => m.type === 'human' || m.role === 'user') || lastHumanMsg;
+    const lastHuman =
+      ([...(stream.messages || [])]
+        .reverse()
+        .find((m: any) => m.type === 'human' || m._getType?.() === 'human') as BaseMessage | undefined) ||
+      lastHumanMsg;
     if (!lastHuman) return;
 
     isSubmittingRef.current = true;
-    setRunError((prev) => (prev?.threadId === currentThreadId ? null : prev));
+    setRunErrors((prev) => {
+      if (!prev[currentThreadId]) return prev;
+      const next = { ...prev };
+      delete next[currentThreadId];
+      return next;
+    });
     const submission = { client, threadId: currentThreadId, stopped: false, runId: undefined as string | undefined };
     activeSubmissionRef.current = submission;
 
@@ -559,7 +585,17 @@ export const App: React.FC = () => {
         }
         if (submission.stopped || currentClientRef.current !== submission.client) return;
         if (run.status === 'success') {
-          await rehydrateThread(stream, threadId);
+          if (selectedThreadRef.current === threadId) {
+            await rehydrateThread(stream, threadId);
+          }
+          if (!submission.stopped && currentClientRef.current === submission.client) {
+            setRunErrors((prev) => {
+              if (!prev[threadId]) return prev;
+              const next = { ...prev };
+              delete next[threadId];
+              return next;
+            });
+          }
           return;
         }
         if (run.status === 'interrupted' && submission.stopped) return;
@@ -569,11 +605,11 @@ export const App: React.FC = () => {
           status: run?.status,
           error,
         });
-        setRunError({ threadId });
+        setRunErrors((prev) => ({ ...prev, [threadId]: true }));
       } catch (err) {
         console.warn('reconcile regenerate error:', err);
         if (!submission.stopped && currentClientRef.current === submission.client) {
-          setRunError({ threadId });
+          setRunErrors((prev) => ({ ...prev, [threadId]: true }));
         }
       }
     };
@@ -595,7 +631,7 @@ export const App: React.FC = () => {
       if (submission.stopped || currentClientRef.current !== submission.client) return;
       if (recoveryPromise) await recoveryPromise;
       else if (submission.runId) {
-        setRunError({ threadId: currentThreadId });
+        setRunErrors((prev) => ({ ...prev, [currentThreadId]: true }));
       }
     } finally {
       if (currentClientRef.current === client) {
@@ -609,27 +645,33 @@ export const App: React.FC = () => {
   const handleStopGeneration = async () => {
     const targetThreadId = activeThreadId;
     const targetClient = client;
-    if (!targetThreadId || stopReconcilingThreadIdRef.current === targetThreadId) return;
+    if (!targetThreadId || stopReconcilingThreadIdsRef.current.has(targetThreadId)) return;
 
-    stopReconcilingThreadIdRef.current = targetThreadId;
-    setStopReconcilingThreadId(targetThreadId);
+    stopReconcilingThreadIdsRef.current.add(targetThreadId);
+    setStopReconcilingThreadIds(new Set(stopReconcilingThreadIdsRef.current));
     if (activeSubmissionRef.current?.threadId === targetThreadId) {
       activeSubmissionRef.current.stopped = true;
     }
-    setStopError((prev) => (prev?.threadId === targetThreadId ? null : prev));
+    setStopErrors((prev) => {
+      if (!prev[targetThreadId]) return prev;
+      const next = { ...prev };
+      delete next[targetThreadId];
+      return next;
+    });
 
     let stage: 'stop' | 'terminal_confirm' | 'cleanup' | 'hydrate' = 'stop';
     try {
+      // 0. 在 stop 之前同步捕获已知的 runId
+      let runId = activeRunRef.current?.threadId === targetThreadId ? activeRunRef.current.runId : undefined;
+
       // 1. 发送停止请求：官方 stop 默认只对当前 Run 发出 interrupt cancel；不是 HITL，也没有 resume。
       stage = 'stop';
       await stream.stop({ cancel: true });
-      if (selectedThreadRef.current !== targetThreadId || currentClientRef.current !== targetClient) return;
+      if (currentClientRef.current !== targetClient) return;
 
       // 2. 确认 Run 已达到终态 (terminal confirmation)：这是执行 checkpoint cleanup 的绝对前置条件。
       stage = 'terminal_confirm';
-      let runId = activeRunRef.current?.threadId === targetThreadId ? activeRunRef.current.runId : undefined;
       if (!runId && typeof targetClient?.runs?.list === 'function') {
-        // 重新挂载、刷新或离开再切回时本地可能无 activeRunRef；主动查询未完成的 Run
         try {
           const activeRuns = await targetClient.runs.list(targetThreadId, { limit: 5 });
           const inFlight = activeRuns?.find((r: any) => r.status === 'pending' || r.status === 'running');
@@ -641,35 +683,61 @@ export const App: React.FC = () => {
       }
 
       if (runId) {
-        await targetClient.runs.join(targetThreadId, runId);
-        const run = await targetClient.runs.get(targetThreadId, runId);
+        // 先检查 Run 状态；若仍在 pending/running，官方 stream.stop 的 cancel 可能被吞或未生效，显式二次 cancel
+        let run = await targetClient.runs.get(targetThreadId, runId);
         if (run.status === 'pending' || run.status === 'running') {
+          try {
+            if (typeof targetClient?.runs?.cancel === 'function') {
+              await targetClient.runs.cancel(targetThreadId, runId, true, 'interrupt');
+            }
+          } catch (cancelErr) {
+            console.warn('secondary runs.cancel failed:', cancelErr);
+          }
+        }
+        // 等待收敛
+        try {
+          await targetClient.runs.join(targetThreadId, runId);
+        } catch (joinErr) {
+          console.warn('join run after cancel failed:', joinErr);
+        }
+        run = await targetClient.runs.get(targetThreadId, runId);
+        const terminalStatuses = ['interrupted', 'success', 'error', 'timeout'];
+        if (!terminalStatuses.includes(run.status)) {
           throw new Error(`Run ${runId} 未能收敛为终态 (当前状态: ${run.status})`);
         }
       }
 
-      // 3. 清理未完成工具调用
+      // 3. 清理未完成工具调用 (即使用户切走，服务端清理也必须继续完成)
       stage = 'cleanup';
       await removeIncompleteToolCallMessages(targetClient, targetThreadId);
 
-      // 4. 重新投影权威 checkpoint
+      // 4. 重新投影权威 checkpoint（铁律：仅当当前仍选中该 Thread 时才调用客户端 hydrate，防止串染当前浏览的 Thread）
       stage = 'hydrate';
-      await rehydrateThread(stream, targetThreadId);
+      if (selectedThreadRef.current === targetThreadId) {
+        await rehydrateThread(stream, targetThreadId);
+      }
     } catch (error) {
       if (currentClientRef.current !== targetClient) return;
       console.warn('stop generation failed:', { stage, threadId: targetThreadId, error });
       if (stage === 'stop' || stage === 'terminal_confirm') {
-        setStopError({ threadId: targetThreadId, message: '停止请求未确认，请重试', action: 'retry_stop' });
+        setStopErrors((prev) => ({
+          ...prev,
+          [targetThreadId]: { message: '停止请求未确认，请重试', action: 'retry_stop' },
+        }));
       } else if (stage === 'hydrate') {
-        setStopError({ threadId: targetThreadId, message: '当前显示可能未更新', action: 'refresh' });
+        setStopErrors((prev) => ({
+          ...prev,
+          [targetThreadId]: { message: '当前显示可能未更新', action: 'refresh' },
+        }));
       } else {
-        setStopError({ threadId: targetThreadId, message: '会话记录尚未同步', action: 'resync_cleanup' });
+        setStopErrors((prev) => ({
+          ...prev,
+          [targetThreadId]: { message: '会话记录尚未同步', action: 'resync_cleanup' },
+        }));
       }
     } finally {
-      if (stopReconcilingThreadIdRef.current === targetThreadId) {
-        stopReconcilingThreadIdRef.current = null;
-      }
-      setStopReconcilingThreadId((prev) => (prev === targetThreadId ? null : prev));
+      stopReconcilingThreadIdsRef.current.delete(targetThreadId);
+      setStopReconcilingThreadIds(new Set(stopReconcilingThreadIdsRef.current));
       if (currentClientRef.current === targetClient) {
         await loadSessions();
       }
@@ -679,31 +747,42 @@ export const App: React.FC = () => {
   const handleCleanupAfterStop = async () => {
     const targetThreadId = activeThreadId;
     const targetClient = client;
-    if (!targetThreadId || stopReconcilingThreadIdRef.current === targetThreadId) return;
+    if (!targetThreadId || stopReconcilingThreadIdsRef.current.has(targetThreadId)) return;
 
-    stopReconcilingThreadIdRef.current = targetThreadId;
-    setStopReconcilingThreadId(targetThreadId);
-    setStopError((prev) => (prev?.threadId === targetThreadId ? null : prev));
+    stopReconcilingThreadIdsRef.current.add(targetThreadId);
+    setStopReconcilingThreadIds(new Set(stopReconcilingThreadIdsRef.current));
+    setStopErrors((prev) => {
+      if (!prev[targetThreadId]) return prev;
+      const next = { ...prev };
+      delete next[targetThreadId];
+      return next;
+    });
 
     let stage: 'cleanup' | 'hydrate' = 'cleanup';
     try {
       stage = 'cleanup';
       await removeIncompleteToolCallMessages(targetClient, targetThreadId);
       stage = 'hydrate';
-      await rehydrateThread(stream, targetThreadId);
+      if (selectedThreadRef.current === targetThreadId) {
+        await rehydrateThread(stream, targetThreadId);
+      }
     } catch (error) {
       if (currentClientRef.current !== targetClient) return;
       console.warn('cleanup after stop failed:', { stage, threadId: targetThreadId, error });
       if (stage === 'hydrate') {
-        setStopError({ threadId: targetThreadId, message: '当前显示可能未更新', action: 'refresh' });
+        setStopErrors((prev) => ({
+          ...prev,
+          [targetThreadId]: { message: '当前显示可能未更新', action: 'refresh' },
+        }));
       } else {
-        setStopError({ threadId: targetThreadId, message: '会话记录尚未同步', action: 'resync_cleanup' });
+        setStopErrors((prev) => ({
+          ...prev,
+          [targetThreadId]: { message: '会话记录尚未同步', action: 'resync_cleanup' },
+        }));
       }
     } finally {
-      if (stopReconcilingThreadIdRef.current === targetThreadId) {
-        stopReconcilingThreadIdRef.current = null;
-      }
-      setStopReconcilingThreadId((prev) => (prev === targetThreadId ? null : prev));
+      stopReconcilingThreadIdsRef.current.delete(targetThreadId);
+      setStopReconcilingThreadIds(new Set(stopReconcilingThreadIdsRef.current));
       if (currentClientRef.current === targetClient) {
         await loadSessions();
       }
@@ -713,12 +792,38 @@ export const App: React.FC = () => {
   const handleRefreshStop = async () => {
     const targetThreadId = activeThreadId;
     if (!targetThreadId) return;
-    setStopError((prev) => (prev?.threadId === targetThreadId ? null : prev));
+    setStopErrors((prev) => {
+      if (!prev[targetThreadId]) return prev;
+      const next = { ...prev };
+      delete next[targetThreadId];
+      return next;
+    });
     try {
-      await rehydrateThread(stream, targetThreadId);
+      if (selectedThreadRef.current === targetThreadId) {
+        await rehydrateThread(stream, targetThreadId);
+      }
     } catch (error) {
       console.warn('refresh after stop failed:', { threadId: targetThreadId, error });
-      setStopError({ threadId: targetThreadId, message: '当前显示可能未更新', action: 'refresh' });
+      setStopErrors((prev) => ({
+        ...prev,
+        [targetThreadId]: { message: '当前显示可能未更新', action: 'refresh' },
+      }));
+    }
+  };
+
+  const handleDiscardOptimisticMessage = async () => {
+    if (activeThreadId) {
+      const targetThreadId = activeThreadId;
+      try {
+        if (selectedThreadRef.current === targetThreadId) {
+          await rehydrateThread(stream, targetThreadId);
+        }
+      } catch (error) {
+        console.warn('discard optimistic message failed to rehydrate:', error);
+      }
+    } else {
+      stream.disconnect();
+      selectThread(null, 'replace');
     }
   };
 
@@ -743,6 +848,7 @@ export const App: React.FC = () => {
           listError={listError}
           onLoadMore={() => void loadSessions(true)}
           onRefreshSessions={() => void loadSessions()}
+          onDismissListError={() => setListError('')}
         />
       )}
 
@@ -762,6 +868,7 @@ export const App: React.FC = () => {
               stream={stream}
               messageId={messageId}
               onRetry={() => content && handleSendMessage(content)}
+              onDiscard={() => void handleDiscardOptimisticMessage()}
             />
           )}
           recommendations={recommendations}
@@ -771,15 +878,39 @@ export const App: React.FC = () => {
           onStopGeneration={() => void handleStopGeneration()}
           runError={visibleRunError}
           onRegenerate={(checkpointId, message) => void handleRegenerate(checkpointId, message)}
-          onDismissRunError={() => setRunError((prev) => (prev?.threadId === activeThreadId ? null : prev))}
+          onDismissRunError={() =>
+            activeThreadId &&
+            setRunErrors((prev) => {
+              if (!prev[activeThreadId]) return prev;
+              const next = { ...prev };
+              delete next[activeThreadId];
+              return next;
+            })
+          }
           hydrationError={visibleHydrationError}
           onReloadThread={() => void handleReloadThread()}
-          onDismissHydrationError={() => setHydrationError((prev) => (prev?.threadId === activeThreadId ? null : prev))}
+          onDismissHydrationError={() =>
+            activeThreadId &&
+            setHydrationErrors((prev) => {
+              if (!prev[activeThreadId]) return prev;
+              const next = { ...prev };
+              delete next[activeThreadId];
+              return next;
+            })
+          }
           stopError={visibleStopError}
           onRetryStop={() => void handleStopGeneration()}
           onResyncCleanup={() => void handleCleanupAfterStop()}
           onRefreshStop={() => void handleRefreshStop()}
-          onDismissStopError={() => setStopError((prev) => (prev?.threadId === activeThreadId ? null : prev))}
+          onDismissStopError={() =>
+            activeThreadId &&
+            setStopErrors((prev) => {
+              if (!prev[activeThreadId]) return prev;
+              const next = { ...prev };
+              delete next[activeThreadId];
+              return next;
+            })
+          }
         />
       </ErrorBoundary>
 
@@ -794,8 +925,8 @@ export const App: React.FC = () => {
           titleJobsRef.current.clear();
           firstInputRef.current = null;
           isSubmittingRef.current = false;
-          setStopReconcilingThreadId(null);
-          stopReconcilingThreadIdRef.current = null;
+          setStopReconcilingThreadIds(new Set());
+          stopReconcilingThreadIdsRef.current = new Set();
           setTitleViews({});
           setNewThreadOrder([]);
           deletingThreadsRef.current.clear();
@@ -807,9 +938,9 @@ export const App: React.FC = () => {
           setIsListLoading(false);
           setListError('');
           setServerReachability('unknown');
-          setRunError(null);
-          setStopError(null);
-          setHydrationError(null);
+          setRunErrors({});
+          setStopErrors({});
+          setHydrationErrors({});
           selectThread(null, 'replace');
           setApiUrl(nextUrl);
         }}

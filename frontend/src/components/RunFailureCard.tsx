@@ -1,12 +1,12 @@
 import React from 'react';
 import { AlertCircle, RotateCcw } from 'lucide-react';
 import { useMessageMetadata, type AnyStream } from '@langchain/react';
-import type { Message } from '../services/api';
+import type { BaseMessage } from '@langchain/core/messages';
 
 export interface RunFailureCardProps {
   stream: AnyStream;
-  lastHumanMessage?: Message | any;
-  onRegenerate?: (checkpointId: string, message: any) => void;
+  lastHumanMessage?: BaseMessage;
+  onRegenerate?: (checkpointId: string, message: BaseMessage) => void;
   onDismiss?: () => void;
 }
 
@@ -33,9 +33,9 @@ export const RunFailureCard: React.FC<RunFailureCardProps> = ({
         AI
       </div>
       <div className="flex-1 min-w-0 max-w-full items-start">
-        <div className="rounded-2xl border border-red-100 bg-red-50/60 p-3.5 text-xs text-neutral-800 shadow-xs space-y-2.5">
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3.5 text-xs text-neutral-800 shadow-xs space-y-2.5">
           <div className="flex items-center gap-2 font-medium text-neutral-800">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>本次回答未能完成</span>
           </div>
           <div className="flex items-center gap-2">

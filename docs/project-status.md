@@ -27,7 +27,7 @@
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 
 - 主 Agent 根据目标与证据自主编排；禁止固定调查顺序、章节和模板化建议。业务/视觉策略分别只编辑 `system.md` / `vision.md`。
-- 推荐仅基于完整最终回答；保留 RECOMMEND_ENABLED 与 RECOMMEND_THINKING，不恢复固定字数触发的流式预取。不合适时可为空，失败显式呈现。
+- 推荐仅基于完整最终回答；保留 RECOMMEND_ENABLED 与 RECOMMEND_THINKING，不恢复固定字数触发的流式预取。不合适时可为空，失败静默降级不干扰主流程。
 - LLM_THINKING 仅控制主模型；标题、推荐、压缩和视觉有独立开关，默认关闭。当前供应商 reasoning 适配仍在，标准化迁移属于 TODO 16–17；不得拼造思考内容。
 - TODO 5 已替换旧压缩算法：官方摘要消息为 checkpoint 中唯一摘要来源；按官方token阈值触发和token budget保留，按lc_source标记投影。摘要使用当前 LLM 配置与独立思考开关，失败显式终止本次请求，历史不被删除。
 - TODO 6 已统一六个工具的官方 content/artifact/status 协议和请求前 Pydantic 校验。参数、业务、基础设施及内部错误区分；失败原因常驻，部分证据可查看。模型只读事实，前端只消费展示 artifact，不解析 content、不暴露通用 JSON；原始诊断只写后端日志，artifact 不能放秘密。
@@ -39,11 +39,14 @@
 ## 未完成与验证边界
 
 - 2026-09-16 TODO 14 分层错误与官方协议纠正（完全收口）：
-  - 重新生成：遵循官方 fork retry 规范，提取官方 `stream.messages` 中的 `BaseMessage` 原型对象进行 `submit({ messages: [lastHuman] }, { forkFrom, multitaskStrategy: 'reject' })`；`RunFailureCard` 强制要求 `stream` 并通过公开 Hook `useMessageMetadata` 提取 `parentCheckpointId`，彻底删除 fallback 与伪造的假数据；
-  - Stop 收尾四阶段与终态铁律：严格拆分 `stop` -> `terminal_confirm` -> `cleanup` -> `hydrate`。在确认 Run 达到终态（`interrupted`/`success`/`error`）之前绝不调用 `removeIncompleteToolCallMessages`，防止向仍处于 pending/running 的 Run 发送 RemoveMessage；无本地 runId 时从 `client.runs.list` 检索活跃 run 并 join；`stop` 与 `terminal_confirm` 失败均提示“停止请求未确认，请重试”（`retry_stop`）；`cleanup` 失败提示“会话记录尚未同步”（`resync_cleanup`）；`hydrate` 失败提示“当前显示可能未更新”（`refresh`）；
-  - 状态隔离与集中适配：`stopReconcilingThreadId`、`stopError: { threadId, action, message }`、`hydrationError: { threadId }` 按 `threadId` 严格隔离，会话切换不串态；创建 `frontend/src/services/streamCompat.ts` 集中封装 `rehydrateThread(stream, threadId)`，消除私有内部符号直接调用的代码散落；
-  - 语义与死状态清理：会话列表失败只影响侧边栏 `listError`，不强推断全局服务不可达；彻底删除 `runErrorMessage()`、`recommendationError`、`isLiveServer`、`ChatWindow` 顶栏不可达横条、`onResyncStop` 以及 `lastHumanMsgIdRef` 等废弃代码与冗余属性；
-  - 验证：前端 72 项测试全数通过，生产构建通过，后端常规 51 项（49 项通过、2 项 Server E2E 默认跳过）全数通过，`git diff --check` 无违规。
+  - 重新生成：遵循官方 fork retry 规范，提取官方 `stream.messages` 中的 `BaseMessage` 原型对象进行 `submit({ messages: [lastHuman] }, { forkFrom, multitaskStrategy: 'reject' })`；严格保证原消息对象同一性，`RunFailureCard` 强制要求 `stream` 并通过公开 Hook `useMessageMetadata` 提取 `parentCheckpointId`，彻底删除 fallback 与伪造的假数据；
+  - Stop 收尾四阶段与显式二次 cancel：严格拆分 `stop` -> `terminal_confirm` -> `cleanup` -> `hydrate`。在确认 Run 达到终态（`interrupted`/`success`/`error`/`timeout`）之前绝不调用 `removeIncompleteToolCallMessages`；若 `stream.stop({ cancel: true })` 后 Run 仍处于 pending/running，显式调用 `runs.cancel(threadId, runId, true, 'interrupt')` 并 join，防止 cancel 异常被官方 SDK 吞掉；无本地 runId 时从 `client.runs.list` 检索活跃 run；`stop` 与 `terminal_confirm` 失败均提示“停止请求未确认，请重试”（`retry_stop`）；`cleanup` 失败提示“会话记录尚未同步”（`resync_cleanup`）；`hydrate` 失败提示“当前显示可能未更新”（`refresh`）；
+  - 并发 Stop 隔离与 Stale Thread 保护：`stopReconcilingThreadIds` 改用 `Set<string>` 与 ref，多会话并发 Stop 互不覆盖与误清；铁律贯彻——只有 `selectedThreadRef.current === targetThreadId` 时才允许触发客户端 `rehydrateThread`，后台 Thread 只做服务端 cleanup，绝对不调用 hydrate 污染当前浏览的会话；
+  - 错误精确归属与独立隔离：`runErrors`、`stopErrors`、`hydrationErrors` 改用 `Record<string, ...>` 映射；删除 `onCompleted(success)` 全局误清 `setRunError(null)`；发送新消息仅清理当前 Thread 的对应错误；
+  - 失败交互补齐与视觉中性化：Sidebar `listError` 增加关闭按钮；optimistic 发送失败增加“丢弃”（有 activeThreadId 则调用 `rehydrateThread` 丢弃本地未持久化消息，新建 draft 则 `disconnect`）；技术类通知与失败卡全面采用 neutral/amber 样式（避免滥用告警红）；
+  - 兼容层 fail-closed 与依赖锁定：`frontend/src/services/streamCompat.ts` 在缺失 `controller.hydrate` 时必须 throw；精确锁定 `@langchain/react: 1.1.0`；
+  - 辅助能力与语义清理：会话列表失败只影响侧边栏 `listError`，不强推断全局服务不可达；探测成功显式标记 `reachable`；彻底删除 `recommendations_error`、`runErrorMessage()`、`isLiveServer`、`ChatWindow` 顶栏不可达横条、`onResyncStop` 以及 `lastHumanMsgIdRef` 等废弃代码与冗余属性；
+  - 验证：前端 75 项测试（覆盖分层错误专项、二次 cancel / stale thread hydrate 隔离、并发 Stop、forkFrom 对象同一性、fail-closed 等）全数通过，生产构建通过，后端常规 51 项（49 项通过、2 项 Server E2E 默认跳过）全数通过，`git diff --check` 无违规。
 - 2026-09-16 TODO 12：用户纠正原“补隐藏 cancelled ToolMessage”方案，要求未完成工具从 messages 删除。实现保留成功 ToolMessage；全未完成删除 AIMessage，部分完成收窄 AIMessage，保证下一轮消息协议有效。锁定版 React SDK 没有公开的外部 updateState 刷新入口，当前使用导出的内部 STREAM_CONTROLLER.hydrate 作最窄适配；仅在清理成功后触发，不伪造状态，TODO 15 或 SDK 提供公开入口时删除。真实 Agent Server 已验证 RemoveMessage；完整浏览器 E2E 尚未执行。
 - TODO 12 验证：前端55项测试与生产构建通过；后端常规51项中49项通过、2项Server E2E默认跳过。覆盖思考阶段、单批/多批未完成、失败重试追加 HumanMessage、并行部分完成、严格相邻配对、全部完成、重复Stop、清理失败、权威重载和下一条普通submit。为恢复本次受影响会话，已删除确认无 ToolMessage 的 AI 工具调用消息并读回验证。
 - 2026-09-16 Stop 线上纠正：首次真实操作证明 Agent Server 0.14.1 不接受远程 updateState 中的简写 `{type:"remove", id}`，返回 MESSAGE_COERCION_FAILURE；必须发送 LangChain RemoveMessage/AIMessage 实例，由 SDK 序列化为 lc constructor。已恢复官方实例并增加真实 SDK wire-format 回归。失败会话中确认的1条全未完成 AIMessage 已重新清理并读回验证，其他消息未删除；临时协议测试 Thread 已删除。错误日志现记录 stop/join/cleanup/hydrate 阶段，UI按实际阶段说明。此前“未修改真实会话”的记录被本条取代。

@@ -40,6 +40,7 @@ interface SidebarProps {
   listError?: string;
   onLoadMore?: () => void;
   onRefreshSessions?: () => void;
+  onDismissListError?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -60,6 +61,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   listError = '',
   onLoadMore,
   onRefreshSessions,
+  onDismissListError,
 }) => {
   const reachability: ServerReachability = serverReachability ?? 'unknown';
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -252,7 +254,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           );
         }))}
-        {listError && <p role="alert" className="px-3 py-2 text-xs text-red-600">{listError}<button onClick={onRefreshSessions} disabled={isListLoading} className="ml-2 underline">重试加载会话</button></p>}
+        {listError && (
+          <div role="alert" className="mx-2 my-1.5 p-2 rounded-xl border border-amber-200 bg-amber-50/80 text-xs text-amber-900 flex items-center justify-between gap-1 shadow-xs">
+            <span className="truncate">{listError}</span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {onRefreshSessions && (
+                <button
+                  type="button"
+                  onClick={onRefreshSessions}
+                  disabled={isListLoading}
+                  className="underline hover:text-amber-950 transition-colors cursor-pointer"
+                >
+                  重试加载会话
+                </button>
+              )}
+              {onDismissListError && (
+                <button
+                  type="button"
+                  onClick={onDismissListError}
+                  className="p-0.5 rounded hover:bg-amber-100/80 text-amber-700 hover:text-amber-950 transition-colors"
+                  title="关闭"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
         {isListLoading ? <p role="status" className="py-2 text-center text-xs text-neutral-500">正在加载会话</p> : hasMoreSessions && <button onClick={onLoadMore} className="w-full py-2 text-xs text-neutral-600 hover:bg-neutral-100 rounded-xl">加载更多会话</button>}
       </div>
 

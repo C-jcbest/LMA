@@ -6,6 +6,7 @@ const mock = vi.hoisted(() => ({
   options: null as any, current: null as string | null, loading: false,
   messages: [] as any[], toolCalls: [] as any[], messageMetadata: {} as Record<string, any>, finishRun: null as null | (() => void),
   remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(), join: vi.fn(), listRuns: vi.fn(),
+  cancel: vi.fn(),
   getAssistant: vi.fn(),
   sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(), stop: vi.fn(), hydrate: vi.fn(), cleanup: vi.fn(),
   factory: vi.fn(),
@@ -50,15 +51,16 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mock.current = null; mock.loading = false; mock.messages = []; mock.toolCalls = []; mock.messageMetadata = {}; mock.finishRun = null;
     localStorage.clear();
     mock.listRuns.mockResolvedValue([]);
+    mock.cancel.mockResolvedValue({});
     mock.getAssistant.mockResolvedValue({});
     mock.factory.mockImplementation(() => ({
       threads: { delete: mock.remove, get: mock.get, update: mock.update },
-      runs: { get: mock.run, join: mock.join, list: mock.listRuns },
+      runs: { get: mock.run, join: mock.join, list: mock.listRuns, cancel: mock.cancel },
       assistants: { get: mock.getAssistant },
     }));
     mock.sessions.mockResolvedValue({ sessions: [], isLive: true });
     mock.remove.mockResolvedValue(undefined);
-    mock.run.mockResolvedValue({ run_id: 'run-1' });
+    mock.run.mockResolvedValue({ run_id: 'run-1', status: 'interrupted' });
     mock.join.mockResolvedValue({});
     mock.get.mockResolvedValue(thread());
     mock.update.mockImplementation(async (_id: string, payload: any) => thread(payload.metadata.name));
@@ -234,6 +236,43 @@ describe('标题与 Agent Run 独立生命周期', () => {
     await waitFor(() => expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread'));
     expect(screen.queryByText('本次请求未完成，已保留现有记录，请稍后重试。')).not.toBeInTheDocument();
   });
+  it('Stop 若 Run 仍为 running 则显式二次 cancel，并在用户切走时禁止 hydrate 污染当前会话', async () => {
+    window.history.replaceState(null, '', '/?threadId=thread-a');
+    mock.current = 'thread-a';
+    mock.sessions.mockResolvedValue({
+      sessions: [
+        { thread_id: 'thread-a', name: '会话甲', status: 'busy' },
+        { thread_id: 'thread-b', name: '会话乙', status: 'idle' },
+      ],
+      isLive: true,
+      nextOffset: 2,
+      hasMore: false,
+    });
+    mock.run
+      .mockResolvedValueOnce({ run_id: 'run-1', status: 'running' })
+      .mockResolvedValueOnce({ run_id: 'run-1', status: 'interrupted' });
+
+    let finishCleanup!: () => void;
+    mock.cleanup.mockImplementation(() => new Promise<void>((resolve) => { finishCleanup = resolve; }));
+
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('会话乙')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('发送测试消息'));
+    await acceptRun();
+
+    fireEvent.click(screen.getByText('停止测试生成'));
+
+    await waitFor(() => expect(mock.cancel).toHaveBeenCalledWith('sdk-thread', 'run-1', true, 'interrupt'));
+
+    fireEvent.click(screen.getByText('会话乙'));
+
+    await act(async () => { finishCleanup(); });
+
+    expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread');
+    expect(mock.hydrate).not.toHaveBeenCalledWith('sdk-thread');
+    await finishRun();
+  });
+
   it('停止后清理失败不伪造成功，且不 hydrate 未确认状态', async () => {
     window.history.replaceState(null, '', '/?threadId=sdk-thread');
     mock.cleanup.mockRejectedValue(new Error('private cleanup failure'));

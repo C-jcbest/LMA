@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Message, MessagePart } from '../services/api';
 import type { AnyStream } from '@langchain/react';
+import type { BaseMessage } from '@langchain/core/messages';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
@@ -42,7 +43,7 @@ interface ChatWindowProps {
 
   // 分层错误 props
   runError?: boolean;
-  onRegenerate?: (checkpointId: string, message: any) => void;
+  onRegenerate?: (checkpointId: string, message: BaseMessage) => void;
   onDismissRunError?: () => void;
   hydrationError?: boolean;
   onReloadThread?: () => void;
@@ -336,7 +337,11 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         {runError && !runActive && stream && (
           <RunFailureCard
             stream={stream}
-            lastHumanMessage={[...(stream.messages || [])].reverse().find((m: any) => m.type === 'human') || messages.filter((m) => m.role === 'user').slice(-1)[0]}
+            lastHumanMessage={
+              [...(stream.messages || [])]
+                .reverse()
+                .find((m: any) => m.type === 'human' || m._getType?.() === 'human') as BaseMessage | undefined
+            }
             onRegenerate={(checkpointId, message) => onRegenerate?.(checkpointId, message)}
             onDismiss={() => onDismissRunError?.()}
           />

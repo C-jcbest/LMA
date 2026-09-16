@@ -587,19 +587,25 @@ it('用户消息直接读取官方 optimistic pending/failed 状态', () => {
   expect(screen.getByText('发送失败')).toBeInTheDocument();
 });
 
-it('用户消息发送失败显示“发送失败 · 重试”，点击重试触发回调', () => {
+it('用户消息发送失败显示“发送失败 · 重试 · 丢弃”，分别点击重试与丢弃触发对应回调', () => {
   const onRetry = vi.fn();
+  const onDiscard = vi.fn();
   const metadata = new Map([
     ['failed-id', { parentCheckpointId: undefined, optimisticStatus: 'failed' }],
   ]);
   const store = { subscribe: () => () => undefined, getSnapshot: () => metadata };
   const stream = { [STREAM_CONTROLLER]: { messageMetadataStore: store } } as any;
-  render(<OptimisticMessageStatus stream={stream} messageId="failed-id" onRetry={onRetry} />);
+  render(<OptimisticMessageStatus stream={stream} messageId="failed-id" onRetry={onRetry} onDiscard={onDiscard} />);
   expect(screen.getByText('发送失败')).toBeInTheDocument();
   const retryBtn = screen.getByRole('button', { name: '重试' });
   expect(retryBtn).toBeInTheDocument();
   fireEvent.click(retryBtn);
   expect(onRetry).toHaveBeenCalledTimes(1);
+
+  const discardBtn = screen.getByRole('button', { name: '丢弃' });
+  expect(discardBtn).toBeInTheDocument();
+  fireEvent.click(discardBtn);
+  expect(onDiscard).toHaveBeenCalledTimes(1);
 });
 
 it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成”与“关闭”，且关闭不修改权威状态', () => {
@@ -908,7 +914,7 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
   // 模拟官方 useStream 句柄及其内部 controller store
   const fakeStream = {
     messages: [
-      { id: 'u1', type: 'human', content: '查询边坡稳定情况' },
+      lastHumanMsg,
       { id: 'a1', type: 'ai', content: '' }, // 失败的 AI turn
     ],
     isLoading: false,
@@ -922,9 +928,9 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
   } as any;
 
   const onRegenerate = vi.fn(async (checkpointId: string, message: any) => {
-    // 模拟 handleRegenerate 的核心协议行为
+    // 模拟 handleRegenerate 的核心协议行为：重新提交原 BaseMessage 实例
     await fakeStream.submit(
-      { messages: [{ type: 'human', content: message.content }] },
+      { messages: [message] },
       { forkFrom: checkpointId, multitaskStrategy: 'reject' }
     );
   });
@@ -951,16 +957,14 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
 
   fireEvent.click(regenButton);
 
-  // 1. 验证回调参数：正确拿到 parentCheckpointId 与原 HumanMessage
+  // 1. 验证回调参数：正确拿到 parentCheckpointId 与原 HumanMessage 对象
   expect(onRegenerate).toHaveBeenCalledWith('chk-checkpoint-before-u1', lastHumanMsg);
 
   // 2. 核心真实协议断言：
-  // 必须把原问题作为新 continuation 输入重新提交，绝不能传 submit(null, { forkFrom })！
+  // 必须把原 BaseMessage 作为新 continuation 输入重新提交，保证对象同一性，绝不能传 submit(null, { forkFrom })！
   expect(mockSubmit).toHaveBeenCalledTimes(1);
   const [submitPayload, submitOptions] = mockSubmit.mock.calls[0];
-  expect(submitPayload).toEqual({
-    messages: [{ type: 'human', content: '查询边坡稳定情况' }],
-  });
+  expect(submitPayload.messages[0]).toBe(lastHumanMsg);
   expect(submitPayload).not.toBeNull();
   expect(submitOptions).toMatchObject({
     forkFrom: 'chk-checkpoint-before-u1',
@@ -1035,4 +1039,40 @@ it('Stop 收尾异常细分为重试停止、重新整理与刷新，各阶段�
   expect(screen.getByText('当前显示可能未更新')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '刷新' }));
   expect(onRefreshStop).toHaveBeenCalledTimes(1);
+});
+
+it('Sidebar 列表加载失败时以 amber 样式呈现，支持重试与关闭', () => {
+  const onRefresh = vi.fn();
+  const onDismiss = vi.fn();
+  render(
+    <Sidebar
+      sessions={[]}
+      activeSessionId={null}
+      isNewSessionDraft={true}
+      busyThreadIds={[]}
+      onSelectSession={vi.fn()}
+      onCreateSession={vi.fn()}
+      onRenameSession={vi.fn()}
+      onDeleteSession={vi.fn()}
+      onToggleCollapse={vi.fn()}
+      onOpenConfig={vi.fn()}
+      listError="会话列表加载失败，请重试"
+      onRefreshSessions={onRefresh}
+      onDismissListError={onDismiss}
+    />
+  );
+  expect(screen.getByText('会话列表加载失败，请重试')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重试加载会话' }));
+  expect(onRefresh).toHaveBeenCalledTimes(1);
+
+  fireEvent.click(screen.getByTitle('关闭'));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
+});
+
+it('rehydrateThread 在 stream 缺少 controller.hydrate 时必须抛出异常 (fail-closed)', async () => {
+  const { rehydrateThread } = await import('../src/services/streamCompat');
+  const invalidStream = {} as any;
+  await expect(rehydrateThread(invalidStream, 'thread-1')).rejects.toThrow(
+    'StreamController.hydrate is not available on stream handle'
+  );
 });

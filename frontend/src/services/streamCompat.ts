@@ -12,5 +12,7 @@ export async function rehydrateThread(stream: AnyStream | undefined, threadId: s
   const controller = (stream as any)[STREAM_CONTROLLER];
   if (typeof controller?.hydrate === 'function') {
     await controller.hydrate(threadId);
+  } else {
+    throw new Error('StreamController.hydrate is not available on stream handle');
   }
 }
