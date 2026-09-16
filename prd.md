@@ -649,6 +649,10 @@ Agent 应优先使用高可靠数据解释低可靠数据，而不能反过来�
 
 首次发送必须同步防重；新会话 threadId=null，由官方 useStream submit 与 Agent Server run.start 完成 ID 分配及 Thread/Run 创建。onThreadId 只通知 SDK 分配的 ID，onThreadId 后仅插入展示 skeleton，onCreated 后启动标题；服务端保存标题 metadata 后才展示已确认的会话名称。URL 仅记录 Thread 选择态，轮询不得把草稿切回历史会话。停止生成采用 LangGraph interrupt 取消语义；只有在服务端确认 run 停止后，才能修复确实未闭合的工具消息，不得与迟到结果并发写入。
 
+刷新及外部链接按 URL 的 threadId 恢复会话；Sidebar 和 Stream 共用该选择。切换与新建会话新增浏览器导航记录，重复选择不新增；SDK 分配首条消息的 ID 时替换草稿记录。后退/前进断开旧订阅后由 SDK 恢复目标会话，服务器 Run 继续。删除当前会话成功及更换服务地址后替换清空当前 URL 选择，保留其他 query 与 hash；不存在的 Thread 显式报错，不自动切换到列表首项。
+
+历史列表只包含 graph_id=lma-agent 的业务 Thread，不以标题是否存在判定归属。按服务端 updated_at 降序分页，每页20条，通过“加载更多会话”增量加载并按 Thread ID 去重；未命名的已确认业务会话显示“新会话”，标题生成骨架独立展示。空闲时不定时查询全列表，仅对已知 busy 会话刷新轻量状态。删除、重命名、标题保存、Run结束及手动刷新同步已加载范围；列表加载失败保留已有条目并提供真实重试。并发更新下的 offset 分页通过事件或手动刷新重新同步，不声明跨页快照。
+
 ## 17.2.1 官方历史摘要（2026-09-15 更新）
 
 直接使用 LangChain SummarizationMiddleware。压缩由 CONTEXT_TOKEN_THRESHOLD 的消息 token 阈值触发，近期上下文由 CONTEXT_KEEP_TOKENS 的 token budget 保留。计数、触发、安全切点、AI/Tool 配对、摘要重试和消息替换全部沿用官方逻辑，无固定回合数或消息数保留下限，无自定义子类、裁剪算法或空摘要修补。

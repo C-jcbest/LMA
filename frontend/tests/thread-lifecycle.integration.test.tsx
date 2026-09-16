@@ -5,7 +5,7 @@ const mock = vi.hoisted(() => ({
   options: null as any, current: null as string | null, loading: false,
   messages: [] as any[], finishRun: null as null | (() => void),
   remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(),
-  sessions: vi.fn(), title: vi.fn(), disconnect: vi.fn(),
+  sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(),
   factory: vi.fn(),
 }));
 vi.mock('@langchain/react', () => ({ useStream: (options: any) => {
@@ -17,6 +17,7 @@ vi.mock('@langchain/react', () => ({ useStream: (options: any) => {
 } }));
 vi.mock('../src/services/api', async (original) => ({ ...await original<any>(),
   getSessions: mock.sessions, generateSessionTitle: mock.title,
+  getBusySessions: mock.busy,
   createLangGraphClient: mock.factory,
 }));
 vi.mock('../src/components/ChatWindow', () => ({ ChatWindow: (props: any) =>
@@ -24,7 +25,7 @@ vi.mock('../src/components/ChatWindow', () => ({ ChatWindow: (props: any) =>
     <span>{props.errorMessage}</span>{props.messages.map((message: any, index: number) => <p key={index}>{message.content}</p>)}</> }));
 import { App } from '../src/App';
 const thread = (name?: string) => ({ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z',
-  metadata: name ? { name } : {}, status: 'busy' });
+  metadata: name ? { name, graph_id: 'lma-agent' } : { graph_id: 'lma-agent' }, status: 'busy' });
 async function acceptRun() {
   await act(async () => { mock.options.onCreated({ runId: 'run-1' }); });
 }
@@ -72,7 +73,7 @@ describe('标题与 Agent Run 独立生命周期', () => {
     fireEvent.click(screen.getByText('保存并应用'));
     const nextClient = mock.options.client;
     expect(nextClient).not.toBe(firstClient);
-    await waitFor(() => expect(mock.sessions).toHaveBeenCalledWith(nextClient));
+    await waitFor(() => expect(mock.sessions).toHaveBeenCalledWith(nextClient, 0));
     expect(mock.options.threadId).toBeNull();
     await act(async () => {
       finishList({ sessions: [{ thread_id: 'old', name: '旧服务会话', created_at: '2026-09-15T00:00:00Z' }], isLive: true });
@@ -139,6 +140,94 @@ describe('标题与 Agent Run 独立生命周期', () => {
     fireEvent.click(screen.getByText('新建监测会话'));
     expect(mock.options.threadId).toBeNull(); expect(new URL(window.location.href).searchParams.has('threadId')).toBe(false);
   });
+  it('分页失败保留列表，重试不跳页，分页重叠去重并按服务端更新时间排序', async () => {
+    const row = (id: string, updated_at: string) => ({ thread_id: id, name: id, created_at: updated_at, updated_at, status: 'idle' });
+    mock.sessions.mockResolvedValueOnce({ sessions: [row('甲', '2026-09-16T00:00:00Z')], isLive: true, nextOffset: 20, hasMore: true })
+      .mockRejectedValueOnce(new Error('unavailable'));
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('加载更多会话')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('加载更多会话'));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('会话列表加载失败'));
+    expect(screen.getByText('甲')).toBeInTheDocument();
+    mock.sessions.mockResolvedValueOnce({ sessions: [row('甲', '2026-09-16T02:00:00Z'), row('乙', '2026-09-16T01:00:00Z')], isLive: true, nextOffset: 22, hasMore: false });
+    fireEvent.click(screen.getByText('加载更多会话'));
+    await waitFor(() => expect(screen.getByText('乙')).toBeInTheDocument());
+    expect(mock.sessions.mock.calls.slice(1).map((call) => call[1])).toEqual([20, 20]);
+    expect([...document.querySelectorAll('[data-thread-id]')].map((node) => node.getAttribute('data-thread-id'))).toEqual(['甲', '乙']);
+    expect(screen.queryByText('加载更多会话')).not.toBeInTheDocument();
+  });
+  it('空闲无列表轮询；busy 仅刷新指定 ID，恢复 idle 后停止定时刷新', async () => {
+    let poll!: () => void;
+    const interval = vi.spyOn(window, 'setInterval').mockImplementation((callback: any) => { poll = callback; return 123; });
+    const clear = vi.spyOn(window, 'clearInterval');
+    mock.sessions.mockResolvedValue({ sessions: [{ thread_id: '忙碌', name: '忙碌', status: 'busy' }, { thread_id: '空闲', name: '空闲', status: 'idle' }], isLive: true, nextOffset: 2, hasMore: false });
+    mock.busy.mockResolvedValue([{ thread_id: '忙碌', name: '忙碌', status: 'idle' }]);
+    render(<App />);
+    await waitFor(() => expect(interval).toHaveBeenCalledTimes(1));
+    await act(async () => { poll(); });
+    expect(mock.busy).toHaveBeenCalledWith(mock.options.client, ['忙碌']);
+    expect(mock.sessions).toHaveBeenCalledTimes(1);
+    expect(clear).toHaveBeenCalledWith(123);
+    expect(screen.queryByTitle('生成中，暂不可重命名或删除')).not.toBeInTheDocument();
+  });
+  it('空闲列表不创建刷新定时器，事件刷新保留已加载页范围', async () => {
+    const interval = vi.spyOn(window, 'setInterval');
+    const row = (id: string) => ({ thread_id: id, name: id, status: 'idle' });
+    mock.sessions.mockResolvedValueOnce({ sessions: [row('第一页')], isLive: true, nextOffset: 20, hasMore: true })
+      .mockResolvedValueOnce({ sessions: [row('第二页')], isLive: true, nextOffset: 21, hasMore: false })
+      .mockResolvedValueOnce({ sessions: [row('第一页')], isLive: true, nextOffset: 20, hasMore: true })
+      .mockResolvedValueOnce({ sessions: [row('第二页')], isLive: true, nextOffset: 21, hasMore: false });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('加载更多会话')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('加载更多会话'));
+    await waitFor(() => expect(screen.getByText('第二页')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('刷新会话列表'));
+    await waitFor(() => expect(mock.sessions).toHaveBeenCalledTimes(4));
+    expect(screen.getByText('第二页')).toBeInTheDocument();
+    expect(mock.sessions.mock.calls.map((call) => call[1])).toEqual([0, 20, 0, 20]);
+    expect(interval.mock.calls.filter((call) => call[1] === 3000)).toHaveLength(0);
+  });
+  it('直接链接与重新挂载保留 URL 选择，不被列表首项或空列表改写', async () => {
+    window.history.replaceState(null, '', '/?view=monitor&threadId=linked#details');
+    mock.sessions.mockResolvedValue({ sessions: [{ thread_id: 'first', name: '列表首项' }], isLive: true });
+    const mounted = render(<App />);
+    await waitFor(() => expect(screen.getByText('列表首项')).toBeInTheDocument());
+    expect(mock.options.threadId).toBe('linked');
+    mounted.unmount();
+    mock.sessions.mockResolvedValue({ sessions: [], isLive: true });
+    mock.busy.mockResolvedValue([]);
+    render(<App />);
+    expect(mock.options.threadId).toBe('linked');
+    expect(window.location.search).toBe('?view=monitor&threadId=linked');
+    expect(window.location.hash).toBe('#details');
+  });
+  it('选择与新建支持真实后退前进，同一会话不重复插入历史', async () => {
+    window.history.replaceState(null, '', '/?view=monitor&threadId=alpha#details');
+    mock.sessions.mockResolvedValue({ sessions: [
+      { thread_id: 'alpha', name: '会话甲' }, { thread_id: 'beta', name: '会话乙' },
+    ], isLive: true });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('会话乙')).toBeInTheDocument());
+    const push = vi.spyOn(window.history, 'pushState');
+    fireEvent.click(screen.getByText('会话乙'));
+    expect(mock.options.threadId).toBe('beta');
+    expect(document.querySelector('[data-thread-id="beta"]')?.className).toContain('bg-neutral-200/75');
+    fireEvent.click(screen.getByText('会话乙'));
+    expect(push).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByText('新建监测会话'));
+    expect(mock.options.threadId).toBeNull();
+    mock.disconnect.mockClear();
+    act(() => window.history.back());
+    await waitFor(() => expect(mock.options.threadId).toBe('beta'));
+    expect(mock.disconnect).toHaveBeenCalledTimes(1);
+    act(() => window.history.back());
+    await waitFor(() => expect(mock.options.threadId).toBe('alpha'));
+    act(() => window.history.forward());
+    await waitFor(() => expect(mock.options.threadId).toBe('beta'));
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(new URL(window.location.href).searchParams.get('view')).toBe('monitor');
+    expect(window.location.hash).toBe('#details');
+  });
   it('metadata 保存失败不伪装成标题成功，不写聊天错误', async () => {
     mock.update.mockRejectedValue(new Error('private metadata failure'));
     render(<App />); fireEvent.click(screen.getByText('发送测试消息')); await acceptRun();
@@ -153,25 +242,20 @@ describe('标题与 Agent Run 独立生命周期', () => {
     await acceptRun(); await acceptRun();
     expect(mock.title).toHaveBeenCalledTimes(1);
   });
-  it('删除成功后迟到的旧轮询不能复活会话', async () => {
+  it('删除成功后迟到的旧列表刷新不能复活会话', async () => {
     const existing = { thread_id: 'sdk-thread', name: '待删除会话', created_at: '2026-09-15T00:00:00Z', status: 'idle' };
-    let poll!: () => void;
     let resolveOld!: (value: any) => void;
-    const interval = vi.spyOn(window, 'setInterval').mockImplementation((callback: any) => { poll = callback; return 123; });
     mock.sessions.mockResolvedValueOnce({ sessions: [existing], isLive: true })
       .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }))
       .mockResolvedValue({ sessions: [], isLive: true });
     render(<App />);
-    const refresh = poll;
-    interval.mockRestore();
     await waitFor(() => expect(screen.getByText('待删除会话')).toBeInTheDocument());
-    await act(async () => { refresh(); });
+    fireEvent.click(screen.getByText('刷新会话列表'));
     fireEvent.click(screen.getByTitle('删除')); fireEvent.click(screen.getByText('确认删除'));
     await waitFor(() => expect(screen.queryByText('待删除会话')).not.toBeInTheDocument());
     await act(async () => { resolveOld({ sessions: [existing], isLive: true }); });
     expect(screen.queryByText('待删除会话')).not.toBeInTheDocument();
     expect(mock.remove).toHaveBeenCalledTimes(1);
-    interval.mockRestore();
   });
   it('DELETE 未确认前保留会话并禁止重复请求，先断开当前订阅', async () => {
     window.history.replaceState(null, '', '/?threadId=sdk-thread');
@@ -220,7 +304,7 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mock.sessions.mockImplementation(async () => ({ sessions: [...rows], isLive: true }));
     mock.remove.mockImplementation(async (id: string) => { rows = rows.filter((row) => row.thread_id !== id); });
     render(<App />); await waitFor(() => expect(screen.getByText('会话甲')).toBeInTheDocument());
-    expect(mock.sessions).toHaveBeenCalledWith(mock.options.client);
+    expect(mock.sessions).toHaveBeenCalledWith(mock.options.client, 0);
     expect(mock.factory).toHaveBeenCalledTimes(1);
     fireEvent.click(document.querySelector('[data-thread-id="sdk-thread"] button[title="删除"]')!);
     fireEvent.click(screen.getByText('确认删除'));

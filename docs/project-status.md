@@ -1,15 +1,19 @@
 # 项目状态与有效决策
 
-更新：2026-09-15。只保留当前实现、持续有效的决策及未完成事项。产品行为以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，待办以 [现行 TODO](TODO_2026-09-15.md) 为准。
+更新：2026-09-16。只保留当前实现、持续有效的决策及未完成事项。产品行为以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，待办以 [现行 TODO](TODO_2026-09-15.md) 为准。
 
 ## 当前实现
 
 - 后端生产入口 `backend/app/agent/graph.py:graph` 为官方图工厂：create_agent 负责 ReAct 与工具并行执行，官方 middleware 负责模型/工具重试；LMA middleware 保留时间、Prompt、用量/思考耗时及推荐契约；历史由官方 SummarizationMiddleware 管理。持久化仍由 Agent Server Thread/Checkpoint 提供。
-- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建与重复草稿状态已删除，标题 skeleton 仅作为展示态；Client 已统一，URL 完整生命周期与停止协议仍待 TODO 10–13。
+- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建与重复草稿状态已删除，标题 skeleton 仅作为展示态；Client、URL 选择及列表归属/增量加载已完成，停止与状态协议仍待 TODO 12–13。
 - 第一阶段 TODO 1–3 已完成：遗留界面与无引用组件清理；敏感示例替换；GNSS 缺测不转成 0；消息只显示服务端时间且按 Asia/Shanghai 展示；站点未知状态不猜测；配置检查精确验证 lma-agent；内部字段默认折叠；正式 Prompt 单一来源。
 - 2026-09-15 TODO 4 已完成生产代码入口迁移，langchain==1.3.18 已纳入运行依赖，删除手写路由、循环边、ToolNode 装配及节点级批量 retry/exhausted。旧候选 factory 与候选测试已在 TODO 5 清除；架构和部署要求见 [ADR 0001](adr/0001-agent-runtime.md)。本轮未对现有服务执行部署。
 
 ## 持续有效的决定
+
+- TODO 11 已完成：官方 metadata.graph_id 过滤与20条offset分页；服务端 updated_at 排序，标题完成后不永久置顶。空闲时无列表轮询，只刷新已知busy IDs；事件刷新已加载范围，分页失败不推进offset并保留已确认列表。辅助图即使有标题也不展示，不增加旧会话迁移。
+
+- TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 
 - 主 Agent 根据目标与证据自主编排；禁止固定调查顺序、章节和模板化建议。业务/视觉策略分别只编辑 `system.md` / `vision.md`。
 - 推荐仅基于完整最终回答；保留 RECOMMEND_ENABLED 与 RECOMMEND_THINKING，不恢复固定字数触发的流式预取。不合适时可为空，失败显式呈现。
@@ -23,9 +27,11 @@
 
 ## 未完成与验证边界
 
+- 2026-09-16 TODO 11：前端47项测试、生产构建通过；后端51项中49项通过，2项Server E2E默认跳过。105条分页由真实SDK/HTTP Stub验证，界面覆盖分页失败、去重、busy结束、空闲无轮询及迟到请求隔离。未部署、未修改真实历史、未执行真实浏览器E2E。PRD与TODO已同步；下一项TODO 12。
+
 - TODO 5 的生产测试覆盖长会话摘要、近期token budget保留、重复压缩、停止后工具配对、摘要失败保全和内部模型流隔离。Server E2E 使用真实生产工厂与 HTTP Stub 验证官方摘要、瞬时重试、Thread 恢复及主 usage 保留。
 - 本轮后端49项常规测试、2项隔离Server E2E、前端39项测试和生产构建通过（常规发现51项，服务E2E默认跳过并另行执行）。真实官方 React SDK 测试覆盖首次 run.start 拒绝，隔离服务覆盖新版协议首次创建与 checkpoint；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
-- TODO 9 已完成唯一 Client / Transport 配置源；下一项为 TODO 10 URL 完整生命周期验收；推荐退出主 Run 属于 TODO 23。
+- TODO 9–11 已完成唯一 Client / Transport、URL 生命周期及列表归属与增量加载；下一项为 TODO 12 停止协议；推荐退出主 Run 属于 TODO 23。
 
 ## 2026-09-15 TODO 9：统一 Client 与连接切换边界
 
@@ -52,3 +58,8 @@
 容器日志显示同一 Thread 先 DELETE 204、约两秒后再次 DELETE 404。已复现旧轮询可恢复已删除条目，但不能仅凭重复 Thread ID 将本次问题归因为用户重复点击。用户确认连续删除的是不同会话；浏览器控制台证实报错位于 SDK HTTP DELETE 404。SDK 网络自动重试是另一个重复请求路径，最初重发原因尚无完整网络证据。现使用 useStream.client 的官方 threads.delete：删除前断开当前订阅；请求期间暂停轮询写回并禁止重复操作；成功后使旧请求失效、按最新状态移除条目，并取消对应标题展示任务。404 明确提示会话已不存在并重新同步列表，409 提示停止运行后删除；其他失败保留已确认状态，内部诊断只写控制台。回归覆盖旧轮询、重复点击、204、404、409；不把 404 转成删除成功，不删除用户历史作排查测试。
 
 用户纠正后补充：SDK HTTP maxRetries 固定为0，复用稳定配置对象，防止一次有副作用请求因网络错误自动重发；不影响后端官方模型/工具重试。删除控制台记录目标Thread ID、确认结果和失败阶段；不将请求日志中的重复ID解释为用户重复点击。连续删除不同Thread与网络异常不重发由回归约束，未删除用户真实会话来复现。
+
+## 2026-09-16 TODO 10：URL 会话导航验收
+
+- 直接链接与重新挂载不被列表首项或空列表覆盖；真实 history.back/forward 测试验证选择与 SDK ID 同步，重复选择不增加导航记录，其他 query/hash 保留。现有删除成功与新建测试验证 URL 清理。PRD 与 TODO 已同步。
+- 前端43项测试、生产构建通过；后端常规51项测试，49项通过、2项隔离Server E2E默认跳过。本项未改后端、未部署或操作真实历史。浏览器及线上全面 E2E仍待后续验收。下一项 TODO 11，本轮按清单只处理一个复杂事项。

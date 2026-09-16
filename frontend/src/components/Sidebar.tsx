@@ -33,6 +33,11 @@ interface SidebarProps {
   onToggleCollapse: () => void;
   onOpenConfig: () => void;
   isLiveServer: boolean;
+  hasMoreSessions?: boolean;
+  isListLoading?: boolean;
+  listError?: string;
+  onLoadMore?: () => void;
+  onRefreshSessions?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -48,6 +53,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   onOpenConfig,
   isLiveServer,
+  hasMoreSessions = false,
+  isListLoading = false,
+  listError = '',
+  onLoadMore,
+  onRefreshSessions,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -151,6 +161,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 历史会话列表 */}
       <div className="flex-1 overflow-y-auto px-2 space-y-1">
+        {onRefreshSessions && <button onClick={onRefreshSessions} disabled={isListLoading} className="w-full py-2 text-xs text-neutral-500 disabled:opacity-50">刷新会话列表</button>}
         {sessions.length === 0 && !isNewSessionDraft ? (
           <div className="h-36 flex flex-col items-center justify-center text-neutral-400 text-xs px-4 text-center select-none">
             <MessageSquare className="w-7 h-7 mb-2 opacity-30 text-neutral-500" />
@@ -236,6 +247,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           );
         }))}
+        {listError && <p role="alert" className="px-3 py-2 text-xs text-red-600">{listError}<button onClick={onRefreshSessions} disabled={isListLoading} className="ml-2 underline">重试加载会话</button></p>}
+        {isListLoading ? <p role="status" className="py-2 text-center text-xs text-neutral-500">正在加载会话</p> : hasMoreSessions && <button onClick={onLoadMore} className="w-full py-2 text-xs text-neutral-600 hover:bg-neutral-100 rounded-xl">加载更多会话</button>}
       </div>
 
       {/* 底部用户卡片 */}

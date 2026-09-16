@@ -1,9 +1,39 @@
 import { act, renderHook } from '@testing-library/react';
 import { Client } from '@langchain/langgraph-sdk';
-import { createLangGraphClient, getSessions, generateSessionTitle, renameSession } from '../src/services/api';
+import { createLangGraphClient, getSessions, getBusySessions, mergeSessions, generateSessionTitle, renameSession } from '../src/services/api';
 import { useStream } from '@langchain/react';
 import { expect, it, vi } from 'vitest';
 import { useMemo } from 'react';
+
+it('真实 SDK 查询105个业务 Thread：归属、offset、轻量字段与busy IDs 写入 HTTP 请求', async () => {
+  const rows = Array.from({ length: 105 }, (_, index) => ({ thread_id: `thread-${index}`, created_at: '2026-09-16T00:00:00Z', updated_at: new Date(Date.UTC(2026, 8, 16, 0, 0, 105 - index)).toISOString(), metadata: { graph_id: 'lma-agent', ...(index ? { name: `会话${index}` } : {}) }, status: 'idle' }));
+  const requests: any[] = [];
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url: any, options: any) => {
+    const body = JSON.parse(options.body);
+    requests.push(body);
+    expect(body.metadata).toEqual({ graph_id: 'lma-agent' });
+    expect(body.select).not.toContain('values');
+    return new Response(JSON.stringify(body.ids ? rows.filter((row) => body.ids.includes(row.thread_id)) : rows.slice(body.offset, body.offset + body.limit)), { headers: { 'content-type': 'application/json' } });
+  });
+  try {
+    const client = createLangGraphClient('http://test-server:2024');
+    let offset = 0;
+    let sessions: Awaited<ReturnType<typeof getSessions>>['sessions'] = [];
+    let more = true;
+    while (more) {
+      const page = await getSessions(client, offset);
+      sessions = mergeSessions(sessions, page.sessions);
+      offset = page.nextOffset; more = page.hasMore;
+    }
+    expect(sessions).toHaveLength(105);
+    expect(sessions[0].name).toBe('新会话');
+    expect(sessions.map((item) => item.thread_id)).toEqual(rows.map((item) => item.thread_id));
+    expect(requests.map((item) => item.offset)).toEqual([0, 20, 40, 60, 80, 100]);
+    expect(requests.every((item) => item.sort_by === 'updated_at' && item.sort_order === 'desc')).toBe(true);
+    await getBusySessions(client, ['thread-0', 'thread-1']);
+    expect(requests.at(-1).ids).toEqual(['thread-0', 'thread-1']);
+  } finally { fetchSpy.mockRestore(); }
+});
 
 it('真实官方 Hook、Thread CRUD 和标题共享 Client，URL/header 切换一致', async () => {
   const requests: { url: string; auth: string | null; body: any }[] = [];

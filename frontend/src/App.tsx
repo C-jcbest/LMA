@@ -15,6 +15,8 @@ import {
   closeInterruptedToolCalls,
   generateSessionTitle,
   getSessions,
+  getBusySessions,
+  mergeSessions,
   getStoredApiUrl,
   projectLangGraphMessages,
   projectThreadSessions,
@@ -31,6 +33,11 @@ interface LmaState {
 
 export const App: React.FC = () => {
   const [sessions, setSessions] = useState<ThreadSession[]>([]);
+  const [hasMoreSessions, setHasMoreSessions] = useState(false);
+  const [isListLoading, setIsListLoading] = useState(false);
+  const [listError, setListError] = useState('');
+  const nextOffsetRef = useRef(0);
+  const listPendingRef = useRef(false);
   // URL 仅记录选择态；消息和运行状态始终由官方 SDK 恢复。
   const [activeThreadId, setActiveThreadId] = useState<string | null>(
     () => new URL(window.location.href).searchParams.get('threadId')
@@ -38,17 +45,15 @@ export const App: React.FC = () => {
   const selectedThreadRef = useRef(activeThreadId);
   selectedThreadRef.current = activeThreadId;
   const isNewSessionDraft = activeThreadId === null;
-  const selectThread = useCallback((id: string | null) => {
+  const selectThread = useCallback((id: string | null, mode: 'push' | 'replace' = 'push') => {
     const url = new URL(window.location.href);
+    if (url.searchParams.get('threadId') === id) return;
     if (id) url.searchParams.set('threadId', id);
     else url.searchParams.delete('threadId');
-    window.history.replaceState(null, '', url);
+    if (mode === 'push') window.history.pushState(null, '', url);
+    else window.history.replaceState(null, '', url);
+    selectedThreadRef.current = id;
     setActiveThreadId(id);
-  }, []);
-  useEffect(() => {
-    const onPopState = () => setActiveThreadId(new URL(window.location.href).searchParams.get('threadId'));
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
   }, []);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -78,24 +83,43 @@ export const App: React.FC = () => {
       return next;
     });
   }, []);
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (append = false) => {
     if (currentClientRef.current !== client || deletingThreadsRef.current.size) return;
+    if (append && listPendingRef.current) return;
+    listPendingRef.current = true;
+    setIsListLoading(true);
+    setListError('');
     const request = ++sessionRequestRef.current;
     try {
-      const res = await getSessions(client);
+      // 事件刷新重新获取已加载范围，避免删除/更新后 offset 位移；空闲时不轮询全列表。
+      let res = await getSessions(client, append ? nextOffsetRef.current : 0);
+      let rows = res.sessions;
+      const loadedEnd = nextOffsetRef.current;
+      while (!append && res.hasMore && res.nextOffset < loadedEnd) {
+        res = await getSessions(client, res.nextOffset);
+        rows = mergeSessions(rows, res.sessions);
+      }
       if (request !== sessionRequestRef.current) return;
       setIsLiveServer(res.isLive);
-      setSessions(res.sessions);
+      setSessions((current) => mergeSessions(append ? current : [], rows));
+      nextOffsetRef.current = res.nextOffset;
+      setHasMoreSessions(res.hasMore);
     } catch (error) {
       if (request !== sessionRequestRef.current) return;
       console.warn('loadSessions err:', error);
       setIsLiveServer(false);
+      setListError('会话列表加载失败，请重试');
+    } finally {
+      if (request === sessionRequestRef.current) {
+        listPendingRef.current = false;
+        setIsListLoading(false);
+      }
     }
   }, [client]);
 
   const onThreadId = useCallback((id: string) => {
     if (currentClientRef.current !== client) return;
-    selectThread(id);
+    selectThread(id, 'replace');
     const input = firstInputRef.current;
     if (input) {
       setNewThreadOrder((ids) => [id, ...ids.filter((item) => item !== id)]);
@@ -135,9 +159,7 @@ export const App: React.FC = () => {
           if (titleJobsRef.current.get(id) !== job) return;
           const confirmed = projectThreadSessions([thread]);
           ++sessionRequestRef.current;
-          setSessions((items) => [
-            ...items.filter((item) => item.thread_id !== id), ...confirmed,
-          ]);
+          setSessions((items) => mergeSessions(items, confirmed));
           clearTitleView(id);
           void loadSessions();
         } catch (error) {
@@ -162,6 +184,20 @@ export const App: React.FC = () => {
     onCreated,
   });
 
+  useEffect(() => {
+    const onPopState = () => {
+      const id = new URL(window.location.href).searchParams.get('threadId');
+      if (selectedThreadRef.current === id) return;
+      // 导航只断开订阅，服务端 Run 继续；历史由 SDK 根据 URL ID 恢复。
+      stream.disconnect();
+      setSubmissionError('');
+      selectedThreadRef.current = id;
+      setActiveThreadId(id);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [stream.disconnect]);
+
   const sidebarSessions = useMemo<SidebarSession[]>(() => {
     const items: SidebarSession[] = sessions.map((session) => ({ ...session }));
     for (const [id, phase] of Object.entries(titleViews)) {
@@ -174,18 +210,38 @@ export const App: React.FC = () => {
       if (index >= 0) items[index] = display;
       else items.unshift(display);
     }
-    const order = new Map(newThreadOrder.map((id, index) => [id, index]));
+    const order = new Map(newThreadOrder.filter((id) => titleViews[id]).map((id, index) => [id, index]));
     return items.sort((a, b) => (order.get(a.thread_id) ?? newThreadOrder.length) - (order.get(b.thread_id) ?? newThreadOrder.length));
   }, [sessions, titleViews, newThreadOrder]);
 
   useEffect(() => {
     void loadSessions();
-    const timer = window.setInterval(() => void loadSessions(), 3000);
     return () => {
-      window.clearInterval(timer);
       ++sessionRequestRef.current;
     };
   }, [loadSessions]);
+
+  const busyIds = sessions.filter((item) => item.status === 'busy').map((item) => item.thread_id).sort().join(',');
+  useEffect(() => {
+    if (!busyIds) return;
+    let disposed = false;
+    let pending = false;
+    const timer = window.setInterval(() => {
+      if (pending || deletingThreadsRef.current.size || listPendingRef.current) return;
+      pending = true;
+      const request = sessionRequestRef.current;
+      void getBusySessions(client, busyIds.split(',')).then((rows) => {
+        if (disposed || request !== sessionRequestRef.current || currentClientRef.current !== client) return;
+        setSessions((current) => mergeSessions(current, rows));
+        setListError('');
+      }).catch((error) => {
+        if (disposed || request !== sessionRequestRef.current) return;
+        console.warn('busy session refresh error:', error);
+        setListError('会话状态刷新失败，请重试');
+      }).finally(() => { pending = false; });
+    }, 3000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [client, busyIds]);
 
   const messages = useMemo<Message[]>(() => {
     if (isNewSessionDraft) return [];
@@ -242,6 +298,7 @@ export const App: React.FC = () => {
           session.thread_id === sessionId ? { ...session, name: newName } : session
         )
       );
+      void loadSessions();
     } catch (error) {
       if (currentClientRef.current !== client) return;
       console.warn('rename session error:', error);
@@ -270,7 +327,7 @@ export const App: React.FC = () => {
       clearTitleView(sessionId);
       titleJobsRef.current.delete(sessionId);
       setSessions((current) => current.filter((session) => session.thread_id !== sessionId));
-      if (selectedThreadRef.current === sessionId) selectThread(null);
+      if (selectedThreadRef.current === sessionId) selectThread(null, 'replace');
       setSubmissionError('');
     } catch (error) {
       if (currentClientRef.current !== client) return;
@@ -367,6 +424,11 @@ export const App: React.FC = () => {
           onToggleCollapse={() => setIsSidebarCollapsed(true)}
           onOpenConfig={() => setIsConfigOpen(true)}
           isLiveServer={isLiveServer}
+          hasMoreSessions={hasMoreSessions}
+          isListLoading={isListLoading}
+          listError={listError}
+          onLoadMore={() => void loadSessions(true)}
+          onRefreshSessions={() => void loadSessions()}
         />
       )}
 
@@ -405,9 +467,14 @@ export const App: React.FC = () => {
           deletingThreadsRef.current.clear();
           setDeletingThreadIds([]);
           setSessions([]);
+          nextOffsetRef.current = 0;
+          listPendingRef.current = false;
+          setHasMoreSessions(false);
+          setIsListLoading(false);
+          setListError('');
           setIsLiveServer(false);
           setSubmissionError('');
-          selectThread(null);
+          selectThread(null, 'replace');
           setApiUrl(nextUrl);
         }}
       />

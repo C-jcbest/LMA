@@ -363,10 +363,11 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByRole('button', { name: /查看近期趋势/ })).not.toBeInTheDocument();
   });
 
-  it('会话列表过滤 session-title 产生的无名称临时 Thread', () => {
+  it('会话归属依据 graph_id，辅助图即使有名称也不展示', () => {
     expect(projectThreadSessions([
-      { thread_id: 'temp', created_at: '2026-09-14T00:00:00Z', metadata: {} },
-      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', metadata: { name: '  站点分析  ' } },
+      { thread_id: 'temp', created_at: '2026-09-14T00:00:00Z', metadata: { graph_id: 'session-title', name: '辅助名称' } },
+      { thread_id: 'other', created_at: '2026-09-14T00:00:00Z', metadata: { name: '无归属名称' } },
+      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', metadata: { graph_id: 'lma-agent', name: '  站点分析  ' } },
     ])).toEqual([
       { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', name: '站点分析', status: undefined },
     ]);
