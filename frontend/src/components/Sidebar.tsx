@@ -22,8 +22,8 @@ interface SidebarProps {
   sessions: SidebarSession[];
   activeSessionId: string | null;
   isNewSessionDraft: boolean;
-  /** 正在生成回复的会话 thread_id 列表 */
-  generatingThreadIds: string[];
+  /** Thread search busy 或当前官方 Run active 的 thread_id 列表 */
+  busyThreadIds: string[];
   /** 实际 DELETE 请求尚未完成的会话，禁止重复操作。 */
   deletingThreadIds?: string[];
   onSelectSession: (session: Pick<ThreadSession, 'thread_id'>) => void;
@@ -44,7 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   sessions,
   activeSessionId,
   isNewSessionDraft,
-  generatingThreadIds,
+  busyThreadIds,
   deletingThreadIds = [],
   onSelectSession,
   onCreateSession,
@@ -171,7 +171,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           sessions.map((session) => {
             const isActive = !isNewSessionDraft && session.thread_id === activeSessionId;
             const isEditing = editingId === session.thread_id;
-            const isGenerating = generatingThreadIds.includes(session.thread_id);
+            const isBusy = busyThreadIds.includes(session.thread_id);
             const isDeleting = deletingThreadIds.includes(session.thread_id);
 
           return (
@@ -208,7 +208,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               {/* 悬停操作按钮：生成中时替换为 loading 图标，不可重命名/删除 */}
-              <div className={`flex items-center gap-1 transition-opacity ${isGenerating || isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+              <div className={`flex items-center gap-1 transition-opacity ${isBusy || isDeleting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 {isEditing ? (
                   <>
                     <button
@@ -221,7 +221,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <X className="w-3 h-3" />
                     </button>
                   </>
-                ) : isGenerating || isDeleting ? (
+                ) : isBusy || isDeleting ? (
                   <span title={isDeleting ? "删除中，暂不可重复操作" : "生成中，暂不可重命名或删除"} className="p-1 flex">
                     <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
                   </span>

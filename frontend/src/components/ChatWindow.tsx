@@ -14,8 +14,11 @@ interface ChatWindowProps {
   contextSummary?: string;
   contextUsage?: ContextUsage;
   onSendMessage: (text: string) => void;
-  /** 当前查看会话是否正在生成回复 */
-  isGenerating: boolean;
+  threadLoading: boolean;
+  runActive: boolean;
+  stopReconciling: boolean;
+  hasRunningTool: boolean;
+  renderOptimisticStatus?: (messageId?: string) => React.ReactNode;
   recommendations?: string[];
   recommendationError?: string;
   errorMessage?: string;
@@ -43,7 +46,11 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   contextSummary,
   contextUsage,
   onSendMessage,
-  isGenerating,
+  threadLoading,
+  runActive,
+  stopReconciling,
+  hasRunningTool,
+  renderOptimisticStatus,
   recommendations = [],
   recommendationError = '',
   errorMessage = '',
@@ -81,11 +88,13 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
     if (isPinnedRef.current) scrollToBottom();
-  }, [messages, isGenerating, recommendations]);
+  }, [messages, threadLoading, runActive, stopReconciling, recommendations]);
+
+  const canSubmit = !threadLoading && !runActive && !stopReconciling;
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim() || isGenerating) return;
+    if (!inputText.trim() || !canSubmit) return;
     onSendMessage(inputText.trim());
     setInputText('');
     if (textareaRef.current) {
@@ -114,7 +123,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   ];
 
   const lastMessage = messages[messages.length - 1];
-  const waitingForAssistant = isGenerating && (!lastMessage || lastMessage.role === 'user');
+  const waitingForAssistant = runActive && (!lastMessage || lastMessage.role === 'user');
 
   return (
     <div className="flex-1 h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden">
@@ -159,10 +168,11 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         {messages.map((msg, index) => {
           const isUser = msg.role === 'user';
           const isStreamingAssistant =
-            isGenerating && index === messages.length - 1 && msg.role === 'assistant';
+            runActive && index === messages.length - 1 && msg.role === 'assistant';
           const lastPart = msg.parts?.[msg.parts.length - 1];
           const settlingAfterTool =
             isStreamingAssistant &&
+            !hasRunningTool &&
             lastPart?.type === 'tool' &&
             lastPart.toolCall.status === 'success';
           return (
@@ -228,6 +238,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                     getText={() => getMessageText(msg)}
                     timestamp={msg.created_at}
                   />
+                  {isUser && renderOptimisticStatus?.(msg.id)}
                 </div>
               </div>
             </div>
@@ -235,7 +246,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         })}
 
         {/* 下一步推荐动作：点击后自动发送 */}
-        {!isGenerating && recommendations.length > 0 && (
+        {canSubmit && recommendations.length > 0 && (
           <div className="max-w-4xl mx-auto w-full flex flex-wrap items-center gap-2 pl-11">
             <span className="text-[11px] text-neutral-400 select-none shrink-0">下一步</span>
             {recommendations.map((rec, i) => (
@@ -252,7 +263,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
-        {!isGenerating && recommendationError && (
+        {canSubmit && recommendationError && (
           <div className="mx-auto w-full max-w-4xl pl-11 text-xs text-amber-700" role="status">
             {recommendationError}
           </div>
@@ -278,6 +289,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
+        {threadLoading && (
+          <div className="mx-auto w-full max-w-4xl text-center text-xs text-neutral-400" role="status">
+            正在加载会话…
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -288,6 +305,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             <div className="mb-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700" role="alert">
               {errorMessage}
             </div>
+          )}
+          {stopReconciling && (
+            <div className="mb-2 text-center text-xs text-neutral-500" role="status">正在结束本轮并同步记录…</div>
           )}
           {/* 位于输入框正上方，只有离开底部时出现。 */}
           {showJumpToBottom && (
@@ -346,7 +366,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               onChange={handleTextareaChange}
               onKeyDown={handleKeyDown}
               maxLength={MAX_LENGTH}
-              disabled={isGenerating}
+              disabled={threadLoading || runActive}
               placeholder="询问监测数据、变化趋势、降雨关联或场地环境..."
               className="flex-1 bg-transparent text-neutral-800 placeholder:text-neutral-400 text-sm outline-none resize-none leading-relaxed px-1 py-1 max-h-28"
             />
@@ -359,8 +379,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             {/* 上下文窗口用量：点击环形项目标识查看明细 */}
             <ContextUsageIndicator usage={contextUsage} />
 
-            {/* 发送 / 停止按钮：生成中时变为停止按钮 */}
-            {isGenerating ? (
+            {/* Stop 只由当前官方 Run 状态控制；checkpoint 清理期间显示不可发送。 */}
+            {runActive ? (
               <button
                 type="button"
                 onClick={onStopGeneration}
@@ -372,9 +392,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             ) : (
               <button
                 type="submit"
-                disabled={!inputText.trim()}
+                disabled={!inputText.trim() || !canSubmit}
                 className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#8793ea] to-[#99a4f4] hover:brightness-105 active:scale-95 text-white flex items-center justify-center shrink-0 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm"
-                title="发送 (Enter)"
+                title={stopReconciling ? '正在结束本轮' : threadLoading ? '正在加载会话' : '发送 (Enter)'}
               >
                 <Send className="w-3.5 h-3.5 fill-current" />
               </button>

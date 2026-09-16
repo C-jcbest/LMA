@@ -4,12 +4,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mock = vi.hoisted(() => ({
   controller: Symbol('controller'),
   options: null as any, current: null as string | null, loading: false,
-  messages: [] as any[], finishRun: null as null | (() => void),
+  messages: [] as any[], toolCalls: [] as any[], messageMetadata: {} as Record<string, any>, finishRun: null as null | (() => void),
   remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(), join: vi.fn(),
   sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(), stop: vi.fn(), hydrate: vi.fn(), cleanup: vi.fn(),
   factory: vi.fn(),
 }));
-vi.mock('@langchain/react', () => ({ STREAM_CONTROLLER: mock.controller, useStream: (options: any) => {
+vi.mock('@langchain/react', () => ({ STREAM_CONTROLLER: mock.controller,
+  useToolCalls: () => mock.toolCalls,
+  useMessageMetadata: (_stream: any, messageId?: string) => messageId ? mock.messageMetadata[messageId] : undefined,
+  useStream: (options: any) => {
   mock.options = options;
   return { messages: mock.messages, values: {}, isLoading: mock.loading, isThreadLoading: false,
     submit: mock.submit, stop: mock.stop, disconnect: mock.disconnect, getThread: () => ({ threadId: mock.current }),
@@ -40,7 +43,7 @@ async function finishRun() {
 describe('标题与 Agent Run 独立生命周期', () => {
   beforeEach(() => {
     vi.restoreAllMocks(); vi.resetAllMocks(); window.history.replaceState(null, '', '/');
-    mock.current = null; mock.loading = false; mock.messages = []; mock.finishRun = null;
+    mock.current = null; mock.loading = false; mock.messages = []; mock.toolCalls = []; mock.messageMetadata = {}; mock.finishRun = null;
     localStorage.clear();
     mock.factory.mockImplementation(() => ({
       threads: { delete: mock.remove, get: mock.get, update: mock.update }, runs: { get: mock.run, join: mock.join },
@@ -147,8 +150,9 @@ describe('标题与 Agent Run 独立生命周期', () => {
   });
   it('Stop 只停止当前 Run，清理最终 checkpoint 后重新 hydrate；下一条消息仍是普通新 Run', async () => {
     window.history.replaceState(null, '', '/?threadId=sdk-thread');
-    mock.current = 'sdk-thread'; mock.loading = true;
+    mock.current = 'sdk-thread';
     const mounted = render(<App />);
+    fireEvent.click(screen.getByText('发送测试消息'));
     await acceptRun();
     fireEvent.click(screen.getByText('停止测试生成'));
     await waitFor(() => expect(mock.hydrate).toHaveBeenCalledWith('sdk-thread'));
@@ -158,14 +162,32 @@ describe('标题与 Agent Run 独立生命周期', () => {
     expect(mock.stop.mock.invocationCallOrder[0]).toBeLessThan(mock.join.mock.invocationCallOrder[0]);
     expect(mock.join.mock.invocationCallOrder[0]).toBeLessThan(mock.cleanup.mock.invocationCallOrder[0]);
     expect(mock.cleanup.mock.invocationCallOrder[0]).toBeLessThan(mock.hydrate.mock.invocationCallOrder[0]);
-    mock.loading = false;
+    await finishRun();
     mounted.rerender(<App />);
     fireEvent.click(screen.getByText('发送测试消息'));
+    expect(mock.submit).toHaveBeenCalledTimes(2);
     expect(mock.submit).toHaveBeenCalledWith(
       { messages: [{ type: 'human', content: '首条消息' }] },
       expect.objectContaining({ multitaskStrategy: 'reject' })
     );
     expect(mock.submit.mock.calls.at(-1)?.[0]).not.toHaveProperty('command');
+    await finishRun();
+  });
+  it('迟到 onCreated 使用产生 Run 的 submission 归属，不串到此刻选中的 Thread', async () => {
+    window.history.replaceState(null, '', '/?threadId=thread-a');
+    mock.current = 'thread-a';
+    mock.sessions.mockResolvedValue({ sessions: [
+      { thread_id: 'thread-a', name: '会话甲', status: 'busy' },
+      { thread_id: 'thread-b', name: '会话乙', status: 'idle' },
+    ], isLive: true, nextOffset: 2, hasMore: false });
+    render(<App />);
+    await waitFor(() => expect(screen.getByText('会话乙')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('发送测试消息'));
+    fireEvent.click(screen.getByText('会话乙'));
+    await acceptRun();
+    fireEvent.click(screen.getByText('停止测试生成'));
+    await waitFor(() => expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'thread-b'));
+    expect(mock.join).not.toHaveBeenCalled();
     await finishRun();
   });
   it('提交流报错但同一服务端 Run 最终成功时，等待收敛并从权威 checkpoint 恢复', async () => {

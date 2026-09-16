@@ -1,12 +1,13 @@
 import { runErrorMessage } from './services/api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { STREAM_CONTROLLER, useStream } from '@langchain/react';
+import { STREAM_CONTROLLER, useStream, useToolCalls } from '@langchain/react';
 import type { Client } from '@langchain/langgraph-sdk';
 import { Sidebar, SidebarSession } from './components/Sidebar';
 import { ChatWindow } from './components/ChatWindow';
 import { ConfigModal } from './components/ConfigModal';
 import { ContextUsage } from './components/ContextUsageIndicator';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { OptimisticMessageStatus } from './components/OptimisticMessageStatus';
 import {
   LMA_ASSISTANT_ID,
   createLangGraphClient,
@@ -64,9 +65,9 @@ export const App: React.FC = () => {
   const currentClientRef = useRef(client);
   currentClientRef.current = client;
   const [submissionError, setSubmissionError] = useState('');
-  const [isStopping, setIsStopping] = useState(false);
-  const isStoppingRef = useRef(false);
-  const [isStartingRun, setIsStartingRun] = useState(false);
+  // 官方 stream.isLoading 已覆盖 Run 启动与执行；本地仅保留 Stop 后的 checkpoint 清理过渡态。
+  const [stopReconciling, setStopReconciling] = useState(false);
+  const stopReconcilingRef = useRef(false);
   const isSubmittingRef = useRef(false);
 
   // 仅保存标题展示任务；不预创建 Thread，不复制权威消息历史。
@@ -138,10 +139,10 @@ export const App: React.FC = () => {
   }, [selectThread, client]);
 
   const onCreated = useCallback(({ runId }: { runId: string }) => {
-    if (selectedThreadRef.current) activeRunRef.current = { threadId: selectedThreadRef.current, runId };
-    if (activeSubmissionRef.current?.client === client) {
-      activeSubmissionRef.current.threadId = selectedThreadRef.current;
-      activeSubmissionRef.current.runId = runId;
+    const submission = activeSubmissionRef.current?.client === client ? activeSubmissionRef.current : null;
+    if (submission?.threadId) {
+      activeRunRef.current = { threadId: submission.threadId, runId };
+      submission.runId = runId;
     }
     // 官方回调只有 runId。用服务端 Run 确认归属，迟到回调和切换会话不会串标题。
     for (const [id, job] of titleJobsRef.current) {
@@ -201,6 +202,8 @@ export const App: React.FC = () => {
       if (reason === 'success' && activeSubmissionRef.current?.runId === runId) setSubmissionError('');
     },
   });
+  const toolCalls = useToolCalls(stream);
+  const hasRunningTool = toolCalls.some((toolCall) => toolCall.status === 'running');
 
   useEffect(() => {
     const onPopState = () => {
@@ -265,7 +268,7 @@ export const App: React.FC = () => {
     if (isNewSessionDraft) return [];
     const projected = projectLangGraphMessages((stream.messages || []) as unknown[]);
     return projected;
-  }, [stream.messages, stream.isLoading, isNewSessionDraft]);
+  }, [stream.messages, isNewSessionDraft]);
 
   const recommendations = useMemo(
     () =>
@@ -285,7 +288,7 @@ export const App: React.FC = () => {
     typeof stream.values?.recommendations_error === 'string'
       ? stream.values.recommendations_error
       : '';
-  const generatingThreadIds = useMemo(() => {
+  const busyThreadIds = useMemo(() => {
     const busy = sessions
       .filter((session) => session.thread_id !== activeThreadId && session.status === 'busy')
       .map((session) => session.thread_id);
@@ -365,10 +368,9 @@ export const App: React.FC = () => {
 
   const handleSendMessage = async (userText: string) => {
     const text = userText.trim();
-    if (!text || stream.isLoading || isStopping || isSubmittingRef.current) return;
+    if (!text || stream.isThreadLoading || stream.isLoading || stopReconciling || isSubmittingRef.current) return;
     // 在第一个 await 前同步上锁，防止快速回车/双击同时创建两个 Thread。
     isSubmittingRef.current = true;
-    setIsStartingRun(true);
     setSubmissionError('');
 
     const isFirstMessage = activeThreadId === null;
@@ -439,19 +441,18 @@ export const App: React.FC = () => {
         firstInputRef.current = null;
         if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
         isSubmittingRef.current = false;
-        setIsStartingRun(false);
         void loadSessions();
       }
     }
   };
 
   const handleStopGeneration = async () => {
-    if (!activeThreadId || isStoppingRef.current) return;
-    isStoppingRef.current = true;
+    if (!activeThreadId || stopReconcilingRef.current) return;
+    stopReconcilingRef.current = true;
     const activeRun = activeRunRef.current?.threadId === activeThreadId ? activeRunRef.current : null;
     if (activeSubmissionRef.current?.threadId === activeThreadId) activeSubmissionRef.current.stopped = true;
     setSubmissionError('');
-    setIsStopping(true);
+    setStopReconciling(true);
     let stage: 'stop' | 'join' | 'cleanup' | 'hydrate' = 'stop';
     try {
       // 官方 stop 默认只对当前 Run 发出 interrupt cancel；不是 HITL，也没有 resume。
@@ -479,8 +480,8 @@ export const App: React.FC = () => {
     } finally {
       if (currentClientRef.current === client) {
         await loadSessions();
-        setIsStopping(false);
-        isStoppingRef.current = false;
+        setStopReconciling(false);
+        stopReconcilingRef.current = false;
       }
     }
   };
@@ -492,7 +493,7 @@ export const App: React.FC = () => {
           sessions={sidebarSessions}
           activeSessionId={activeThreadId}
           isNewSessionDraft={isNewSessionDraft}
-          generatingThreadIds={generatingThreadIds}
+          busyThreadIds={busyThreadIds}
           deletingThreadIds={deletingThreadIds}
           onSelectSession={handleSelectSession}
           onCreateSession={handleCreateSession}
@@ -515,7 +516,11 @@ export const App: React.FC = () => {
           contextSummary={contextSummary}
           contextUsage={isNewSessionDraft ? undefined : stream.values?.context_usage}
           onSendMessage={handleSendMessage}
-          isGenerating={stream.isLoading || stream.isThreadLoading || isStopping || isStartingRun}
+          threadLoading={stream.isThreadLoading}
+          runActive={stream.isLoading}
+          stopReconciling={stopReconciling}
+          hasRunningTool={hasRunningTool}
+          renderOptimisticStatus={(messageId) => <OptimisticMessageStatus stream={stream} messageId={messageId} />}
           recommendations={recommendations}
           recommendationError={recommendationError}
           errorMessage={submissionError}
@@ -537,9 +542,8 @@ export const App: React.FC = () => {
           titleJobsRef.current.clear();
           firstInputRef.current = null;
           isSubmittingRef.current = false;
-          setIsStartingRun(false);
-          setIsStopping(false);
-          isStoppingRef.current = false;
+          setStopReconciling(false);
+          stopReconcilingRef.current = false;
           setTitleViews({});
           setNewThreadOrder([]);
           deletingThreadsRef.current.clear();

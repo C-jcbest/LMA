@@ -6,6 +6,8 @@ import { ChatWindow } from '../src/components/ChatWindow';
 import { InlineToolCall } from '../src/components/InlineToolCall';
 import { MessageActions } from '../src/components/MessageActions';
 import { Sidebar } from '../src/components/Sidebar';
+import { OptimisticMessageStatus } from '../src/components/OptimisticMessageStatus';
+import { STREAM_CONTROLLER } from '@langchain/react';
 import { getIncompleteToolCallMessageUpdates, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
@@ -85,7 +87,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={projected}
         onSendMessage={() => undefined}
-        isGenerating={false}
+        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
@@ -102,7 +104,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[{ id: 'a1', role: 'assistant', content: '分析完成。' }]}
         onSendMessage={onSend}
-        isGenerating={false}
+        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
         recommendations={['查看同组其他监测点']}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -344,7 +346,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[]}
         onSendMessage={() => undefined}
-        isGenerating={false}
+        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
         contextUsage={{
           input_tokens: 250,
           context_limit_tokens: 1000,
@@ -375,7 +377,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[]}
         onSendMessage={() => undefined}
-        isGenerating={false}
+        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
         contextUsage={{ context_limit_tokens: 1_048_576 }}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -389,7 +391,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[{ role: 'assistant', content: '分析完成。' }]}
         onSendMessage={() => undefined}
-        isGenerating={false}
+        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
         recommendationError="下一步建议返回格式无效。"
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -452,7 +454,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={projected2}
         onSendMessage={() => undefined}
-        isGenerating={true}
+        threadLoading={false} runActive stopReconciling={false} hasRunningTool={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
@@ -474,7 +476,7 @@ describe('会话关键路径集成回归', () => {
         sessions={sessions}
         activeSessionId="thread-1"
         isNewSessionDraft={false}
-        generatingThreadIds={[]}
+        busyThreadIds={[]}
         onSelectSession={() => undefined}
         onCreateSession={() => undefined}
         onRenameSession={() => undefined}
@@ -514,9 +516,72 @@ describe('会话关键路径集成回归', () => {
 });
 
 it('新建会话的中央消息区域为空白，保留输入入口', () => {
-  render(<ChatWindow messages={[]} onSendMessage={vi.fn()} isGenerating={false}
+  render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading={false} runActive={false}
+    stopReconciling={false} hasRunningTool={false}
     isSidebarCollapsed={false} onToggleSidebar={vi.fn()} isNewSessionDraft />);
   expect(screen.getByLabelText('对话消息').textContent).toBe('');
   expect(screen.getByLabelText('对话消息').querySelectorAll('p,h3,svg')).toHaveLength(0);
   expect(screen.queryByText('开启滑坡连续监测业务调查')).not.toBeInTheDocument();
+});
+
+it('Thread hydration 只显示历史加载态，不显示 Stop 或 AI 思考', () => {
+  render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading runActive={false}
+    stopReconciling={false} hasRunningTool={false}
+    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
+  expect(screen.getByText('正在加载会话…')).toBeInTheDocument();
+  expect(screen.queryByTitle('停止生成')).not.toBeInTheDocument();
+  expect(screen.queryByText('智能体正在检索北斗平台与分析监测数据...')).not.toBeInTheDocument();
+  expect(screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...')).toBeDisabled();
+});
+
+it('Run active 才显示 Stop 和思考；Stop reconciliation 允许输入但禁止发送', async () => {
+  const props = {
+    messages: [{ id: 'u1', role: 'user' as const, content: '查询' }],
+    onSendMessage: vi.fn(), threadLoading: false, runActive: true,
+    stopReconciling: false, hasRunningTool: false,
+    isSidebarCollapsed: false, onToggleSidebar: vi.fn(),
+  };
+  const mounted = render(<ChatWindow {...props} />);
+  expect(screen.getByTitle('停止生成')).toBeInTheDocument();
+  expect(screen.getByText('智能体正在检索北斗平台与分析监测数据...')).toBeInTheDocument();
+  expect(screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...')).toBeDisabled();
+
+  mounted.rerender(<ChatWindow {...props} runActive={false} stopReconciling />);
+  const textarea = screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...');
+  expect(screen.queryByTitle('停止生成')).not.toBeInTheDocument();
+  expect(screen.queryByText('智能体正在检索北斗平台与分析监测数据...')).not.toBeInTheDocument();
+  expect(screen.getByText('正在结束本轮并同步记录…')).toBeInTheDocument();
+  expect(textarea).toBeEnabled();
+  await userEvent.type(textarea, '下一条问题');
+  expect(screen.getByTitle('正在结束本轮')).toBeDisabled();
+});
+
+it('工具是否仍在执行来自官方 Tool projection，不把 Run active 等同于工具状态', () => {
+  const message = {
+    id: 'a1', role: 'assistant' as const, content: '',
+    parts: [{ type: 'tool' as const, toolCall: {
+      id: 'c1', name: 'query_weather', display_name: '天气查询', status: 'success' as const,
+    } }],
+  };
+  const mounted = render(<ChatWindow messages={[message]} onSendMessage={vi.fn()} threadLoading={false} runActive
+    stopReconciling={false} hasRunningTool
+    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
+  expect(screen.queryByText('正在根据查询结果整理回答...')).not.toBeInTheDocument();
+  mounted.rerender(<ChatWindow messages={[message]} onSendMessage={vi.fn()} threadLoading={false} runActive
+    stopReconciling={false} hasRunningTool={false}
+    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
+  expect(screen.getByText('正在根据查询结果整理回答...')).toBeInTheDocument();
+});
+
+it('用户消息直接读取官方 optimistic pending/failed 状态', () => {
+  const metadata = new Map([
+    ['pending-id', { parentCheckpointId: undefined, optimisticStatus: 'pending' }],
+    ['failed-id', { parentCheckpointId: undefined, optimisticStatus: 'failed' }],
+  ]);
+  const store = { subscribe: () => () => undefined, getSnapshot: () => metadata };
+  const stream = { [STREAM_CONTROLLER]: { messageMetadataStore: store } } as any;
+  render(<><OptimisticMessageStatus stream={stream} messageId="pending-id" />
+    <OptimisticMessageStatus stream={stream} messageId="failed-id" /></>);
+  expect(screen.getByText('发送中…')).toBeInTheDocument();
+  expect(screen.getByText('发送失败')).toBeInTheDocument();
 });
