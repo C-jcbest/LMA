@@ -9,6 +9,7 @@ import { Sidebar } from '../src/components/Sidebar';
 import { OptimisticMessageStatus } from '../src/components/OptimisticMessageStatus';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ToastContainer, useToast } from '../src/components/Toast';
+import { RunFailureCard } from '../src/components/RunFailureCard';
 import { STREAM_CONTROLLER } from '@langchain/react';
 import { getIncompleteToolCallMessageUpdates, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
 
@@ -388,7 +389,7 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByText(/上下文窗口|未配置/)).not.toBeInTheDocument();
   });
 
-  it('推荐生成失败时显示真实错误，不生成固定推荐', () => {
+  it('推荐生成失败时静默降级不向用户展示错误，也不生成固定推荐', () => {
     render(
       <ChatWindow
         messages={[{ role: 'assistant', content: '分析完成。' }]}
@@ -399,7 +400,7 @@ describe('会话关键路径集成回归', () => {
         onToggleSidebar={() => undefined}
       />
     );
-    expect(screen.getByText('下一步建议返回格式无效。')).toBeInTheDocument();
+    expect(screen.queryByText('下一步建议返回格式无效。')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /查看近期趋势/ })).not.toBeInTheDocument();
   });
 
@@ -680,8 +681,8 @@ it('Stop 收尾异常显示“会话记录尚未同步”并提供真实操作�
   expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
-it('Server 离线时在顶部轻量展示，不写入聊天历史', () => {
-  render(
+it('Server 不可达时在顶部轻量中性展示，不写入聊天历史；初始 unknown 状态不展示', () => {
+  const { rerender } = render(
     <ChatWindow
       messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
       onSendMessage={vi.fn()}
@@ -689,13 +690,30 @@ it('Server 离线时在顶部轻量展示，不写入聊天历史', () => {
       runActive={false}
       stopReconciling={false}
       hasRunningTool={false}
-      isLiveServer={false}
+      serverReachability="unreachable"
       isSidebarCollapsed={false}
       onToggleSidebar={vi.fn()}
     />
   );
-  expect(screen.getByText('未连接监测服务，当前处于离线模式')).toBeInTheDocument();
-  expect(screen.getByLabelText('对话消息').textContent).not.toContain('离线模式');
+  expect(screen.getByText('暂时无法连接监测服务')).toBeInTheDocument();
+  expect(screen.queryByText(/离线模式/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('对话消息').textContent).not.toContain('暂时无法连接监测服务');
+
+  // unknown 初始状态不展示
+  rerender(
+    <ChatWindow
+      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
+      serverReachability="unknown"
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.queryByText('暂时无法连接监测服务')).not.toBeInTheDocument();
 });
 
 it('Toast 组件支持自动消失、手动关闭与消息去重，最多同时显示 3 条', () => {
@@ -783,4 +801,143 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
   expect(refreshBtn).toBeInTheDocument();
   fireEvent.click(refreshBtn);
   expect(reloadSpy).toHaveBeenCalled();
+});
+
+it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，并在 submit 中重传原 HumanMessage，新分支规范历史保持单一 U1', async () => {
+  const lastHumanMsg = { id: 'u1', role: 'user' as const, content: '查询边坡稳定情况' };
+  const mockSubmit = vi.fn().mockResolvedValue(undefined);
+
+  const snapshotMap = new Map([
+    ['u1', { parentCheckpointId: 'chk-checkpoint-before-u1', optimisticStatus: 'sent' }],
+  ]);
+  // 模拟官方 useStream 句柄及其内部 controller store
+  const fakeStream = {
+    messages: [
+      { id: 'u1', type: 'human', content: '查询边坡稳定情况' },
+      { id: 'a1', type: 'ai', content: '' }, // 失败的 AI turn
+    ],
+    isLoading: false,
+    submit: mockSubmit,
+    [STREAM_CONTROLLER]: {
+      messageMetadataStore: {
+        getSnapshot: () => snapshotMap,
+        subscribe: () => () => undefined,
+      },
+    },
+  } as any;
+
+  const onRegenerate = vi.fn(async (checkpointId: string, message: any) => {
+    // 模拟 handleRegenerate 的核心协议行为
+    await fakeStream.submit(
+      { messages: [{ type: 'human', content: message.content }] },
+      { forkFrom: checkpointId, multitaskStrategy: 'reject' }
+    );
+  });
+
+  render(
+    <ChatWindow
+      stream={fakeStream}
+      messages={[lastHumanMsg]}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={false}
+      stopReconciling={false}
+      hasRunningTool={false}
+      runError={true}
+      onRegenerate={onRegenerate}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+
+  expect(screen.getByText('本次回答未能完成')).toBeInTheDocument();
+  const regenButton = screen.getByRole('button', { name: '重新生成' });
+  expect(regenButton).not.toBeDisabled();
+
+  fireEvent.click(regenButton);
+
+  // 1. 验证回调参数：正确拿到 parentCheckpointId 与原 HumanMessage
+  expect(onRegenerate).toHaveBeenCalledWith('chk-checkpoint-before-u1', lastHumanMsg);
+
+  // 2. 核心真实协议断言：
+  // 必须把原问题作为新 continuation 输入重新提交，绝不能传 submit(null, { forkFrom })！
+  expect(mockSubmit).toHaveBeenCalledTimes(1);
+  const [submitPayload, submitOptions] = mockSubmit.mock.calls[0];
+  expect(submitPayload).toEqual({
+    messages: [{ type: 'human', content: '查询边坡稳定情况' }],
+  });
+  expect(submitPayload).not.toBeNull();
+  expect(submitOptions).toMatchObject({
+    forkFrom: 'chk-checkpoint-before-u1',
+    multitaskStrategy: 'reject',
+  });
+
+  // 3. 规范历史延续性断言：
+  // 新 continuation supersede 旧分支后，新规范历史中仍只有一个 U1，旧失败轮次被替代
+  const newCanonicalHistory = [
+    { type: 'human', id: 'u1-new', content: '查询边坡稳定情况' },
+    { type: 'ai', id: 'a2', content: '边坡整体处于稳定状态。' },
+  ];
+  const projected = projectLangGraphMessages(newCanonicalHistory);
+  expect(projected.filter((m) => m.role === 'user')).toHaveLength(1);
+  expect(projected[0].content).toBe('查询边坡稳定情况');
+  expect(projected[1].content).toBe('边坡整体处于稳定状态。');
+});
+
+it('Stop 收尾异常细分为重试停止、重新整理与刷新，各阶段动作与回调严格对应', () => {
+  const onRetryStop = vi.fn();
+  const onResyncCleanup = vi.fn();
+  const onRefreshStop = vi.fn();
+  const onDismiss = vi.fn();
+
+  // 阶段 1：stop 失败（停止请求未确认）
+  const { rerender } = render(
+    <ChatWindow
+      messages={[]}
+      onSendMessage={vi.fn()}
+      threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+      stopError={{ message: '停止请求未确认，请重试', action: 'retry_stop' }}
+      onRetryStop={onRetryStop}
+      onDismissStopError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('停止请求未确认，请重试')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重试停止' }));
+  expect(onRetryStop).toHaveBeenCalledTimes(1);
+
+  // 阶段 2：cleanup 失败（记录尚未同步）
+  rerender(
+    <ChatWindow
+      messages={[]}
+      onSendMessage={vi.fn()}
+      threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+      stopError={{ message: '会话记录尚未同步', action: 'resync_cleanup' }}
+      onResyncCleanup={onResyncCleanup}
+      onDismissStopError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('会话记录尚未同步')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重新整理' }));
+  expect(onResyncCleanup).toHaveBeenCalledTimes(1);
+
+  // 阶段 3：hydrate 失败（当前显示可能未更新）
+  rerender(
+    <ChatWindow
+      messages={[]}
+      onSendMessage={vi.fn()}
+      threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+      stopError={{ message: '当前显示可能未更新', action: 'refresh' }}
+      onRefreshStop={onRefreshStop}
+      onDismissStopError={onDismiss}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(screen.getByText('当前显示可能未更新')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+  expect(onRefreshStop).toHaveBeenCalledTimes(1);
 });

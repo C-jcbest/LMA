@@ -13,6 +13,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { Message, MessagePart } from '../services/api';
+import type { AnyStream } from '@langchain/react';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
@@ -20,8 +21,12 @@ import { ThinkingBlock } from './ThinkingBlock';
 import { SummaryCard } from './SummaryCard';
 import { MessageActions } from './MessageActions';
 import { ContextUsage, ContextUsageIndicator } from './ContextUsageIndicator';
+import { RunFailureCard } from './RunFailureCard';
+
+export type ServerReachability = 'unknown' | 'reachable' | 'unreachable';
 
 interface ChatWindowProps {
+  stream?: AnyStream;
   messages: Message[];
   contextSummary?: string;
   contextUsage?: ContextUsage;
@@ -40,16 +45,19 @@ interface ChatWindowProps {
 
   // 分层错误 props
   isLiveServer?: boolean;
+  serverReachability?: ServerReachability;
   runError?: boolean;
-  onRegenerate?: () => void;
+  onRegenerate?: (checkpointId: string, message: Message) => void;
   onDismissRunError?: () => void;
   hydrationError?: boolean;
   onReloadThread?: () => void;
   onDismissHydrationError?: () => void;
   stopError?: {
     message: string;
-    action: 'resync' | 'refresh';
+    action: 'retry_stop' | 'resync_cleanup' | 'refresh' | 'resync';
   } | null;
+  onRetryStop?: () => void;
+  onResyncCleanup?: () => void;
   onResyncStop?: () => void;
   onRefreshStop?: () => void;
   onDismissStopError?: () => void;
@@ -69,6 +77,7 @@ const getMessageText = (msg: Message): string => {
 };
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({
+  stream,
   messages,
   contextSummary,
   contextUsage,
@@ -79,12 +88,13 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   hasRunningTool,
   renderOptimisticStatus,
   recommendations = [],
-  recommendationError = '',
+  recommendationError: _unusedRecommendationError = '',
   isSidebarCollapsed,
   onToggleSidebar,
   isNewSessionDraft = false,
   onStopGeneration,
   isLiveServer,
+  serverReachability,
   runError = false,
   onRegenerate,
   onDismissRunError,
@@ -92,6 +102,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   onReloadThread,
   onDismissHydrationError,
   stopError = null,
+  onRetryStop,
+  onResyncCleanup,
   onResyncStop,
   onRefreshStop,
   onDismissStopError,
@@ -179,12 +191,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
         )}
       </div>
 
-      {/* 顶部服务离线提示（仅在服务未连接时中性展示，不写入聊天历史） */}
-      {isLiveServer === false && (
+      {/* 顶部服务不可达中性提示（仅在服务确认不可达时提示，初始 unknown 状态不展示，不写入聊天历史） */}
+      {(serverReachability === 'unreachable' || (serverReachability === undefined && isLiveServer === false)) && (
         <div className="h-7 px-5 bg-amber-50/90 border-b border-amber-200/70 text-[11px] text-amber-800 flex items-center justify-between shrink-0 select-none">
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            <span>未连接监测服务，当前处于离线模式</span>
+            <span>暂时无法连接监测服务</span>
           </div>
         </div>
       )}
@@ -340,48 +352,14 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
-        {canSubmit && recommendationError && (
-          <div className="mx-auto w-full max-w-4xl pl-11 text-xs text-amber-700" role="status">
-            {recommendationError}
-          </div>
-        )}
-
-        {/* 主 Run 失败轻量卡（在回答位置显示，提供重新生成与关闭） */}
+        {/* 主 Run 失败轻量卡（在回答位置显示，通过官方 useMessageMetadata 提取 parentCheckpointId 重试） */}
         {runError && !runActive && (
-          <div className="max-w-4xl mx-auto w-full flex items-start gap-3.5">
-            <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center shrink-0 text-xs font-bold text-white select-none shadow-sm">
-              AI
-            </div>
-            <div className="flex-1 min-w-0 max-w-full items-start">
-              <div className="rounded-2xl border border-red-100 bg-red-50/60 p-3.5 text-xs text-neutral-800 shadow-xs space-y-2.5">
-                <div className="flex items-center gap-2 font-medium text-neutral-800">
-                  <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-                  <span>本次回答未能完成</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {onRegenerate && (
-                    <button
-                      type="button"
-                      onClick={onRegenerate}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-white border border-neutral-200 text-xs font-medium text-neutral-700 hover:bg-neutral-50 hover:border-neutral-300 shadow-xs transition-colors"
-                    >
-                      <RotateCcw className="w-3 h-3 text-neutral-500" />
-                      <span>重新生成</span>
-                    </button>
-                  )}
-                  {onDismissRunError && (
-                    <button
-                      type="button"
-                      onClick={onDismissRunError}
-                      className="px-2.5 py-1 rounded-lg text-xs text-neutral-500 hover:text-neutral-800 transition-colors"
-                    >
-                      关闭
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
+          <RunFailureCard
+            stream={stream}
+            lastHumanMessage={messages.filter((m) => m.role === 'user').slice(-1)[0]}
+            onRegenerate={(checkpointId, message) => onRegenerate?.(checkpointId, message)}
+            onDismiss={() => onDismissRunError?.()}
+          />
         )}
 
         {/* 尚未收到第一段权威消息时显示思考状态；消息到达后直接由 messages 渲染。 */}
@@ -424,13 +402,22 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 <span>{stopError.message}</span>
               </div>
               <div className="flex items-center gap-2">
-                {stopError.action === 'resync' && onResyncStop && (
+                {stopError.action === 'retry_stop' && (onRetryStop || onResyncStop) && (
                   <button
                     type="button"
-                    onClick={onResyncStop}
+                    onClick={onRetryStop || onResyncStop}
                     className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
                   >
-                    重新同步
+                    重试停止
+                  </button>
+                )}
+                {(stopError.action === 'resync_cleanup' || stopError.action === 'resync') && (onResyncCleanup || onResyncStop) && (
+                  <button
+                    type="button"
+                    onClick={onResyncCleanup || onResyncStop}
+                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
+                  >
+                    {stopError.action === 'resync_cleanup' ? '重新整理' : '重新同步'}
                   </button>
                 )}
                 {stopError.action === 'refresh' && onRefreshStop && (

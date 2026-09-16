@@ -2,7 +2,7 @@ import { runErrorMessage } from './services/api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { STREAM_CONTROLLER, useStream, useToolCalls } from '@langchain/react';
 import type { Client } from '@langchain/langgraph-sdk';
-import { Sidebar, SidebarSession } from './components/Sidebar';
+import { Sidebar, SidebarSession, ServerReachability } from './components/Sidebar';
 import { ChatWindow } from './components/ChatWindow';
 import { ConfigModal } from './components/ConfigModal';
 import { ContextUsage } from './components/ContextUsageIndicator';
@@ -59,7 +59,8 @@ export const App: React.FC = () => {
   }, []);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [isLiveServer, setIsLiveServer] = useState(false);
+  const [serverReachability, setServerReachability] = useState<ServerReachability>('unknown');
+  const isLiveServer = serverReachability === 'reachable';
   const [apiUrl, setApiUrl] = useState(getStoredApiUrl);
   // 官方 Hook 和所有辅助请求共用实例；业务请求不再重新读取 localStorage。
   const client = useMemo(() => createLangGraphClient(apiUrl), [apiUrl]);
@@ -73,10 +74,9 @@ export const App: React.FC = () => {
 
   // 分层错误交互模型（彻底替代全局 submissionError）
   const { toasts, showToast, dismissToast } = useToast();
-  const [runError, setRunError] = useState<{ threadId: string; userMessageId?: string } | null>(null);
+  const [runError, setRunError] = useState<{ threadId: string } | null>(null);
   const [hydrationError, setHydrationError] = useState(false);
-  const [stopError, setStopError] = useState<{ message: string; action: 'resync' | 'refresh' } | null>(null);
-  const lastHumanMsgIdRef = useRef<string | undefined>(undefined);
+  const [stopError, setStopError] = useState<{ message: string; action: 'retry_stop' | 'resync_cleanup' | 'refresh' } | null>(null);
 
   // 仅保存标题展示任务；不预创建 Thread，不复制权威消息历史。
   const [titleViews, setTitleViews] = useState<Record<string, 'pending'>>({});
@@ -117,14 +117,14 @@ export const App: React.FC = () => {
         rows = mergeSessions(rows, res.sessions);
       }
       if (request !== sessionRequestRef.current) return;
-      setIsLiveServer(res.isLive);
+      setServerReachability(res.isLive ? 'reachable' : 'unreachable');
       setSessions((current) => mergeSessions(append ? current : [], rows));
       nextOffsetRef.current = res.nextOffset;
       setHasMoreSessions(res.hasMore);
     } catch (error) {
       if (request !== sessionRequestRef.current) return;
       console.warn('loadSessions err:', error);
-      setIsLiveServer(false);
+      setServerReachability('unreachable');
       setListError('会话列表加载失败，请重试');
     } finally {
       if (request === sessionRequestRef.current) {
@@ -186,15 +186,11 @@ export const App: React.FC = () => {
           clearTitleView(id);
           void loadSessions();
         } catch (error) {
-          // 辅助能力静默降级：保留“新会话”，写日志，不打扰用户
+          // 辅助能力静默降级：记录日志，清掉 title skeleton，由 loadSessions() 从权威服务端列表同步，绝不伪造 created_at
           console.warn('session title metadata save error:', error);
           if (titleJobsRef.current.get(id) === job) {
-            setSessions((items) => mergeSessions(items, [{
-              thread_id: id,
-              name: '新会话',
-              created_at: new Date().toISOString(),
-            }]));
             clearTitleView(id);
+            void loadSessions();
           }
         } finally {
           if (titleJobsRef.current.get(id) === job) titleJobsRef.current.delete(id);
@@ -341,6 +337,11 @@ export const App: React.FC = () => {
     typeof stream.values?.recommendations_error === 'string'
       ? stream.values.recommendations_error
       : '';
+  useEffect(() => {
+    if (recommendationError) {
+      console.warn('recommendations failed, downgraded silently:', recommendationError);
+    }
+  }, [recommendationError]);
   const busyThreadIds = useMemo(() => {
     const busy = sessions
       .filter((session) => session.thread_id !== activeThreadId && session.status === 'busy')
@@ -466,11 +467,11 @@ export const App: React.FC = () => {
         }
         if (run.status === 'interrupted' && submission.stopped) return;
         console.warn('submitted run error:', runErrorMessage(error));
-        setRunError({ threadId, userMessageId: lastHumanMsgIdRef.current });
+        setRunError({ threadId });
       } catch (reconcileError) {
         console.warn('reconcile submitted run error:', reconcileError);
         if (!submission.stopped && currentClientRef.current === submission.client) {
-          setRunError({ threadId, userMessageId: lastHumanMsgIdRef.current });
+          setRunError({ threadId });
         }
       }
     };
@@ -497,7 +498,7 @@ export const App: React.FC = () => {
       if (submission.stopped || currentClientRef.current !== submission.client) return;
       if (recoveryPromise) await recoveryPromise;
       else if (submission.runId) {
-        setRunError({ threadId: submission.threadId || '', userMessageId: lastHumanMsgIdRef.current });
+        setRunError({ threadId: submission.threadId || '' });
       }
     } finally {
       if (currentClientRef.current === client) {
@@ -509,19 +510,11 @@ export const App: React.FC = () => {
     }
   };
 
-  // 重新生成：使用官方 parentCheckpointId + submit(null, { forkFrom })，不追加 HumanMessage
-  const handleRegenerate = async (forkFromCheckpointId?: string) => {
+  // 重新生成：遵循官方 Retry an AI turn 规范，通过 parentCheckpointId 分叉，并传入 { messages: [lastHuman] }
+  const handleRegenerate = async (checkpointId: string, lastHumanMsg: Message) => {
     if (stream.isLoading || isSubmittingRef.current || stopReconcilingRef.current) return;
     const currentThreadId = activeThreadId;
-    if (!currentThreadId) return;
-
-    const humanMsgs = messages.filter((m) => m.role === 'user');
-    const lastHumanMsg = humanMsgs[humanMsgs.length - 1];
-    if (!lastHumanMsg?.id) return;
-
-    const checkpointId =
-      forkFromCheckpointId ||
-      (stream as any)[STREAM_CONTROLLER]?.messageMetadataStore?.getSnapshot?.()?.get(lastHumanMsg.id)?.parentCheckpointId;
+    if (!currentThreadId || !checkpointId || !lastHumanMsg) return;
 
     isSubmittingRef.current = true;
     setRunError(null);
@@ -546,30 +539,33 @@ export const App: React.FC = () => {
           return;
         }
         if (run.status === 'interrupted' && submission.stopped) return;
-        setRunError({ threadId, userMessageId: lastHumanMsg.id });
+        setRunError({ threadId });
       } catch (err) {
         console.warn('reconcile regenerate error:', err);
         if (!submission.stopped && currentClientRef.current === submission.client) {
-          setRunError({ threadId, userMessageId: lastHumanMsg.id });
+          setRunError({ threadId });
         }
       }
     };
 
     try {
-      await stream.submit(null, {
-        forkFrom: checkpointId,
-        multitaskStrategy: 'reject',
-        onError: (error) => {
-          if (submission.stopped || currentClientRef.current !== submission.client) return;
-          recoveryPromise ??= reconcileRunError(error);
-        },
-      });
+      await stream.submit(
+        { messages: [{ type: 'human', content: lastHumanMsg.content || '' }] },
+        {
+          forkFrom: checkpointId,
+          multitaskStrategy: 'reject',
+          onError: (error) => {
+            if (submission.stopped || currentClientRef.current !== submission.client) return;
+            recoveryPromise ??= reconcileRunError(error);
+          },
+        }
+      );
       if (recoveryPromise) await recoveryPromise;
     } catch (error) {
       if (submission.stopped || currentClientRef.current !== submission.client) return;
       if (recoveryPromise) await recoveryPromise;
       else if (submission.runId) {
-        setRunError({ threadId: currentThreadId, userMessageId: lastHumanMsg.id });
+        setRunError({ threadId: currentThreadId });
       }
     } finally {
       if (currentClientRef.current === client) {
@@ -605,10 +601,40 @@ export const App: React.FC = () => {
     } catch (error) {
       if (currentClientRef.current !== client) return;
       console.warn('stop generation failed:', { stage, error });
+      if (stage === 'stop') {
+        setStopError({ message: '停止请求未确认，请重试', action: 'retry_stop' });
+      } else if (stage === 'hydrate') {
+        setStopError({ message: '当前显示可能未更新', action: 'refresh' });
+      } else {
+        setStopError({ message: '会话记录尚未同步', action: 'resync_cleanup' });
+      }
+    } finally {
+      if (currentClientRef.current === client) {
+        await loadSessions();
+        setStopReconciling(false);
+        stopReconcilingRef.current = false;
+      }
+    }
+  };
+
+  const handleCleanupAfterStop = async () => {
+    if (!activeThreadId || stopReconcilingRef.current) return;
+    stopReconcilingRef.current = true;
+    setStopError(null);
+    setStopReconciling(true);
+    let stage: 'cleanup' | 'hydrate' = 'cleanup';
+    try {
+      stage = 'cleanup';
+      await removeIncompleteToolCallMessages(client, activeThreadId);
+      stage = 'hydrate';
+      await (stream as any)[STREAM_CONTROLLER]?.hydrate(activeThreadId);
+    } catch (error) {
+      if (currentClientRef.current !== client) return;
+      console.warn('cleanup after stop failed:', { stage, error });
       if (stage === 'hydrate') {
         setStopError({ message: '当前显示可能未更新', action: 'refresh' });
       } else {
-        setStopError({ message: '会话记录尚未同步', action: 'resync' });
+        setStopError({ message: '会话记录尚未同步', action: 'resync_cleanup' });
       }
     } finally {
       if (currentClientRef.current === client) {
@@ -646,6 +672,7 @@ export const App: React.FC = () => {
           onToggleCollapse={() => setIsSidebarCollapsed(true)}
           onOpenConfig={() => setIsConfigOpen(true)}
           isLiveServer={isLiveServer}
+          serverReachability={serverReachability}
           hasMoreSessions={hasMoreSessions}
           isListLoading={isListLoading}
           listError={listError}
@@ -656,6 +683,7 @@ export const App: React.FC = () => {
 
       <ErrorBoundary fallbackTitle="会话界面加载异常" level="window">
         <ChatWindow
+          stream={stream}
           messages={messages}
           contextSummary={contextSummary}
           contextUsage={isNewSessionDraft ? undefined : stream.values?.context_usage}
@@ -672,20 +700,21 @@ export const App: React.FC = () => {
             />
           )}
           recommendations={recommendations}
-          recommendationError={recommendationError}
           isSidebarCollapsed={isSidebarCollapsed}
           onToggleSidebar={() => setIsSidebarCollapsed(false)}
           isNewSessionDraft={isNewSessionDraft}
           onStopGeneration={() => void handleStopGeneration()}
           isLiveServer={isLiveServer}
+          serverReachability={serverReachability}
           runError={Boolean(runError && runError.threadId === activeThreadId)}
-          onRegenerate={() => void handleRegenerate()}
+          onRegenerate={(checkpointId, message) => void handleRegenerate(checkpointId, message)}
           onDismissRunError={() => setRunError(null)}
           hydrationError={hydrationError}
           onReloadThread={() => void handleReloadThread()}
           onDismissHydrationError={() => setHydrationError(false)}
           stopError={stopError}
-          onResyncStop={() => void handleStopGeneration()}
+          onRetryStop={() => void handleStopGeneration()}
+          onResyncCleanup={() => void handleCleanupAfterStop()}
           onRefreshStop={() => void handleRefreshStop()}
           onDismissStopError={() => setStopError(null)}
         />
@@ -714,7 +743,7 @@ export const App: React.FC = () => {
           setHasMoreSessions(false);
           setIsListLoading(false);
           setListError('');
-          setIsLiveServer(false);
+          setServerReachability('unknown');
           setRunError(null);
           setStopError(null);
           setHydrationError(false);

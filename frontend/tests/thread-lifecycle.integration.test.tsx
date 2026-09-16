@@ -343,6 +343,8 @@ describe('标题与 Agent Run 独立生命周期', () => {
   });
   it('metadata 保存失败不伪装成标题成功，静默降级保留新会话不写聊天错误', async () => {
     mock.update.mockRejectedValue(new Error('private metadata failure'));
+    const unconfirmedSession = { thread_id: 'sdk-thread', name: '新会话', created_at: '2026-09-15T00:00:00Z', status: 'busy' };
+    mock.sessions.mockResolvedValue({ sessions: [unconfirmedSession], isLive: true });
     render(<App />); fireEvent.click(screen.getByText('发送测试消息')); await acceptRun();
     await waitFor(() => expect(screen.getByText('新会话')).toBeInTheDocument());
     expect(screen.queryByText('正式标题')).not.toBeInTheDocument();

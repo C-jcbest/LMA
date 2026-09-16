@@ -18,6 +18,8 @@ import { ThreadSession } from '../services/api';
 // SDK 已分配 ID 的骨架只含展示字段，不伪造服务端 created_at。
 export type SidebarSession = Omit<ThreadSession, 'created_at'> & { created_at?: string; titlePending?: boolean };
 
+export type ServerReachability = 'unknown' | 'reachable' | 'unreachable';
+
 interface SidebarProps {
   sessions: SidebarSession[];
   activeSessionId: string | null;
@@ -32,7 +34,8 @@ interface SidebarProps {
   onDeleteSession: (sessionId: string) => void;
   onToggleCollapse: () => void;
   onOpenConfig: () => void;
-  isLiveServer: boolean;
+  isLiveServer?: boolean;
+  serverReachability?: ServerReachability;
   hasMoreSessions?: boolean;
   isListLoading?: boolean;
   listError?: string;
@@ -53,12 +56,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
   onOpenConfig,
   isLiveServer,
+  serverReachability,
   hasMoreSessions = false,
   isListLoading = false,
   listError = '',
   onLoadMore,
   onRefreshSessions,
 }) => {
+  const reachability: ServerReachability = serverReachability ?? (isLiveServer ? 'reachable' : 'unreachable');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -133,10 +138,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span className="font-bold text-sm tracking-tight text-neutral-900 truncate">
             LMA Monitor
           </span>
-          {isLiveServer ? (
+          {reachability === 'reachable' ? (
             <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="LangGraph 服务已连接" />
-          ) : (
+          ) : reachability === 'unreachable' ? (
             <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="未连接后端服务" />
+          ) : (
+            <span className="w-2 h-2 rounded-full bg-neutral-300 shrink-0 animate-pulse" title="正在连接监测服务…" />
           )}
         </div>
         <button
@@ -267,7 +274,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <div className="h-px bg-neutral-100 my-1" />
             <div className="px-3 py-1.5 text-[11px] text-neutral-400">
-              当前状态: {isLiveServer ? '已连接监测服务' : '未连接监测服务'}
+              当前状态: {reachability === 'reachable' ? '已连接监测服务' : reachability === 'unreachable' ? '未连接监测服务' : '正在连接监测服务…'}
             </div>
           </div>
         )}
