@@ -645,9 +645,9 @@ Agent 应优先使用高可靠数据解释低可靠数据，而不能反过来�
 
 生成完成后恢复正常操作。
 
-点击新建后中央消息区域空白，sidebar 不提前创建空 Thread。首条输入通过官方 useStream submit；onThreadId 写入 URL 并立即插入 skeleton，SDK optimistic messages 显示用户输入。onCreated(runId) 后异步启动独立标题生成，不等待主 Agent。标题成功保存 metadata.name 后原位替换骨架，生成失败保存“新会话”后原位替换，不影响聊天；metadata 保存失败明确显示未保存，不伪造成功。主 Run 结束只取消 sidebar 运行中 loading，标题 pending/成功/失败独立处理；轮询不得吞掉骨架或改变行顺序。用户停止生成后，任何已发出但未返回结果的工具调用必须记录为“已停止”并闭合消息协议，确保同一 Thread 可以继续提问。用户上翻消息时，“回到底部”按钮显示在输入框上方居中，回到底部后隐藏。
+点击新建后中央消息区域空白，sidebar 不提前创建空 Thread。首条输入通过官方 useStream submit；onThreadId 写入 URL 并立即插入 skeleton，SDK optimistic messages 显示用户输入。onCreated(runId) 后异步启动独立标题生成，不等待主 Agent。标题成功保存 metadata.name 后原位替换骨架，生成失败保存“新会话”后原位替换，不影响聊天；metadata 保存失败明确显示未保存，不伪造成功。主 Run 结束只取消 sidebar 运行中 loading，标题 pending/成功/失败独立处理；轮询不得吞掉骨架或改变行顺序。用户停止生成后，保留已经成功产生的 ToolMessage，未完成工具从权威 messages 中删除且不显示取消卡片；同一 Thread 下一条输入以普通新 Run 继续。用户上翻消息时，“回到底部”按钮显示在输入框上方居中，回到底部后隐藏。
 
-首次发送必须同步防重；新会话 threadId=null，由官方 useStream submit 与 Agent Server run.start 完成 ID 分配及 Thread/Run 创建。onThreadId 只通知 SDK 分配的 ID，onThreadId 后仅插入展示 skeleton，onCreated 后启动标题；服务端保存标题 metadata 后才展示已确认的会话名称。URL 仅记录 Thread 选择态，轮询不得把草稿切回历史会话。停止生成采用 LangGraph interrupt 取消语义；只有在服务端确认 run 停止后，才能修复确实未闭合的工具消息，不得与迟到结果并发写入。
+首次发送必须同步防重；新会话 threadId=null，由官方 useStream submit 与 Agent Server run.start 完成 ID 分配及 Thread/Run 创建。onThreadId 只通知 SDK 分配的 ID，onThreadId 后仅插入展示 skeleton，onCreated 后启动标题；服务端保存标题 metadata 后才展示已确认的会话名称。URL 仅记录 Thread 选择态，轮询不得把草稿切回历史会话。停止生成采用 LangGraph interrupt 取消当前 Run；不是 HITL，不 resume，不使用 rollback，不扫描或取消其它 Run。当前 Run 收敛后读取最终 checkpoint，检查全部 AI tool-call 消息；ToolMessage 只有紧随对应 AIMessage 的连续结果才算有效配对。没有有效 ToolMessage 的 AI tool-call 消息用 RemoveMessage 删除；并行批次部分完成时原位收窄 AIMessage，只保留成功 ToolMessage 对应的 calls。检查不能从最后一个 HumanMessage 开始，以免失败重试追加的用户消息遮蔽旧残留。不得生成 cancelled ToolMessage 或使用 asNode="tools"。UI 重新读取权威 messages 后未完成工具自然消失，下一条 HumanMessage 使用普通 submit 创建新 Run。主动 Stop 导致的旧提交迟到错误不显示为请求失败；前端流异常时只核对已确认的同一 Run，仍在运行则等待，成功后 hydrate 权威 checkpoint，真实失败才报错，不自动重试或另建 Run。取消前工具结果、下一条 HumanMessage 与新 AI 回复保持独立消息边界。
 
 刷新及外部链接按 URL 的 threadId 恢复会话；Sidebar 和 Stream 共用该选择。切换与新建会话新增浏览器导航记录，重复选择不新增；SDK 分配首条消息的 ID 时替换草稿记录。后退/前进断开旧订阅后由 SDK 恢复目标会话，服务器 Run 继续。删除当前会话成功及更换服务地址后替换清空当前 URL 选择，保留其他 query 与 hash；不存在的 Thread 显式报错，不自动切换到列表首项。
 

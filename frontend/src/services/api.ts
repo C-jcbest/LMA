@@ -1,4 +1,5 @@
 import { Client } from '@langchain/langgraph-sdk';
+import { AIMessage, RemoveMessage } from '@langchain/core/messages';
 
 export interface ToolCallImage {
   name: string;
@@ -65,7 +66,7 @@ export interface ToolCallInfo {
   name: string;
   display_name: string;
   icon?: string;
-  status: 'loading' | 'success' | 'error' | 'cancelled';
+  status: 'loading' | 'success' | 'error';
   data?: Record<string, unknown>;
   images?: ToolCallImage[];
   chartPoints?: ChartPoint[];
@@ -324,10 +325,7 @@ const messageThinking = (message: any): ThinkingInfo | undefined => {
  * 将 useStream 的服务端权威消息投影为现有聊天 UI 结构。
  * 该函数无缓存和副作用；每次都从 Thread 消息重新派生，避免维护第二份历史。
  */
-export function projectLangGraphMessages(
-  rawMsgs: any[],
-  options: { isRunActive?: boolean } = {}
-): Message[] {
+export function projectLangGraphMessages(rawMsgs: any[]): Message[] {
   const result: Message[] = [];
   let pendingParts: MessagePart[] = [];
 
@@ -378,12 +376,7 @@ export function projectLangGraphMessages(
           id: callId,
           name: toolName,
           display_name: message.name || existingTool?.display_name || toolName,
-          status:
-            message.additional_kwargs?.lma_status === 'cancelled'
-              ? 'cancelled'
-              : message.status === 'error'
-                ? 'error'
-                : 'success',
+          status: message.status === 'error' ? 'error' : 'success',
           data: message.status === 'error' && text === 'Tool call limit exceeded. Do not make additional tool calls.'
             ? { message: '本轮查询次数已达到上限，未执行此查询；请依据已有证据继续分析。' }
             : artifact?.data && typeof artifact.data === 'object' && !Array.isArray(artifact.data)
@@ -431,89 +424,69 @@ export function projectLangGraphMessages(
       }
     }
   }
-  if (options.isRunActive === false) {
-    pendingParts = pendingParts.map((part) =>
-      part.type === 'tool' && part.toolCall.status === 'loading'
-        ? { ...part, toolCall: { ...part.toolCall, status: 'cancelled' } }
-        : part
-    );
-  }
   flushAssistant('');
   return result;
 }
 
 /**
- * Run 被用户中止时，服务端 checkpoint 可能停在 ai(tool_calls) 而没有对应
- * ToolMessage。先补齐结构化的取消结果，避免下一轮请求形成非法消息序列。
+ * 检查最终 checkpoint 中的全部 AI tool-call 消息，返回需要清除或收窄的消息。
+ * ToolMessage 只有紧随其 AIMessage 的连续工具结果才构成有效配对；整批均未完成时
+ * 删除 AIMessage，并行批次部分完成时原位保留已有 ToolMessage 对应的 calls。
+ *
+ * 不能只检查最后一个 HumanMessage 之后：一次失败重试会先把新的 HumanMessage 写入
+ * checkpoint，使上一次停止遗留的未配对 AIMessage 落到“当前回合”之前。
  */
-export function getUnansweredToolCalls(
-  rawMessages: unknown[]
-): Array<{ id: string; name?: string }> {
+export function getIncompleteToolCallMessageUpdates(rawMessages: unknown[]): Array<RemoveMessage | AIMessage> {
   const messages = rawMessages as any[];
-  const answered = new Set<string>();
-  for (const message of messages) {
-    const type = message?.type || message?.getType?.() || message?._getType?.() || message?.role;
-    if (type === 'tool') {
-      const id = message.tool_call_id || message.toolCallId;
-      if (id) answered.add(id);
-    }
-  }
-
-  const pending: Array<{ id: string; name?: string }> = [];
-  const pendingIds = new Set<string>();
-  for (const message of messages) {
+  const updates: Array<RemoveMessage | AIMessage> = [];
+  const messageType = (message: any) => message?.type || message?.getType?.() || message?._getType?.() || message?.role;
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const type = messageType(message);
+    if (type !== 'ai' && type !== 'assistant') continue;
     const calls = Array.isArray(message?.tool_calls)
       ? message.tool_calls
       : Array.isArray(message?.toolCalls)
         ? message.toolCalls
         : [];
-    for (const call of calls) {
-      if (call?.id && !answered.has(call.id) && !pendingIds.has(call.id)) {
-        pendingIds.add(call.id);
-        pending.push({ id: call.id, name: call.name });
-      }
+    if (!calls.length) continue;
+
+    const answered = new Set<string>();
+    for (let next = index + 1; next < messages.length && messageType(messages[next]) === 'tool'; next += 1) {
+      const id = messages[next]?.tool_call_id || messages[next]?.toolCallId;
+      if (id) answered.add(id);
     }
+    if (calls.every((call: any) => call?.id && answered.has(call.id))) continue;
+    if (!message.id) throw new Error('未完成工具调用缺少消息 ID，无法安全清理');
+    const completedCalls = calls.filter((call: any) => call?.id && answered.has(call.id));
+    if (completedCalls.length === 0) updates.push(new RemoveMessage({ id: message.id }));
+    else updates.push(new AIMessage({
+      id: message.id,
+      content: message.content ?? '',
+      additional_kwargs: message.additional_kwargs ?? {},
+      response_metadata: message.response_metadata ?? {},
+      tool_calls: completedCalls,
+      usage_metadata: message.usage_metadata,
+    }));
   }
-  return pending;
+  return updates;
 }
 
-export async function closeInterruptedToolCalls(
+export async function removeIncompleteToolCallMessages(
   client: Client,
-  threadId: string,
-  rawMessages: unknown[] = []
+  threadId: string
 ): Promise<void> {
-  // useStream.stop() 会发出服务端 interrupt 取消，但默认不等待服务端完全停止。
-  // 按官方 cancel(wait=true, action='interrupt') 收敛仍在运行/排队的 run，
-  // 再更新 checkpoint，避免工具结果与手工补齐发生竞态。
-  const [running, pendingRuns] = await Promise.all([
-    client.runs.list(threadId, { status: 'running', limit: 10 }),
-    client.runs.list(threadId, { status: 'pending', limit: 10 }),
-  ]);
-  await Promise.all(
-    [...running, ...pendingRuns].map((run) =>
-      client.runs.cancel(threadId, run.run_id, true, 'interrupt')
-    )
-  );
-
+  // stop() 已对当前 Run 发出 interrupt cancel；此处只读取最终 checkpoint，不再扫描、
+  // cancel 其它 Run，也不构造 resume/HITL 或 ToolMessage。
   const state = await client.threads.getState(threadId);
-  const checkpointMessages = Array.isArray((state.values as any)?.messages)
-    ? ((state.values as any).messages as unknown[])
-    : rawMessages;
-  const unanswered = getUnansweredToolCalls(checkpointMessages);
-  if (unanswered.length === 0) return;
+  const messages = Array.isArray((state.values as any)?.messages) ? (state.values as any).messages : [];
+  const updates = getIncompleteToolCallMessageUpdates(messages);
+  if (!updates.length) return;
 
+  // 必须传 LangChain Message 实例，让 SDK 序列化为 lc constructor。生产 Agent
+  // Server 不接受 JS 文档中的简写 {type:'remove', id} 作为远程 updateState 输入。
   await client.threads.updateState(threadId, {
-    values: {
-      messages: unanswered.map((call) => ({
-        type: 'tool',
-        content: '该工具调用已由用户停止。',
-        tool_call_id: call.id,
-        name: call.name,
-        status: 'error',
-        additional_kwargs: { lma_status: 'cancelled' },
-      })),
-    } as any,
-    asNode: 'tools',
+    values: { messages: updates } as any,
   });
 }
 

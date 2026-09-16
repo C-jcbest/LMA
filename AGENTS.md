@@ -22,6 +22,7 @@
 - `backend/app/agent/prompts/system.md` 是主业务策略唯一可编辑来源，`vision.md` 是视觉策略唯一可编辑来源；`prompting.py` 仅注入本回合客观时间与接口限制，不维护业务窗口策略。
 - LangGraph checkpoint/thread 是会话历史唯一事实来源；前端状态只保存展示态，不复制一套权威历史。
 - 会话与标题生命周期独立：新建只清空中央选择态，不预创建 Thread；onThreadId 写 URL 并插入标题 skeleton，乐观消息由 SDK 管理；onCreated 即异步生成标题，成功/失败原位显示已保存的标题/“新会话”，不影响聊天。主 Run 结束只取消运行 loading，不等待、取消或收尾标题任务。
+- Stop 只以 interrupt 取消当前 Run，不是 HITL，不 resume、不 rollback、不扫描或批量取消 Thread 的其它 Run。当前 Run 收敛后，检查最终 checkpoint 中全部 AI tool-call 消息：删除没有紧随 ToolMessage 的全未完成消息；并行批次部分完成时原位收窄 AIMessage，只保留紧随其后的已有 ToolMessage 对应 calls。不得把清理范围收窄到最后一个 HumanMessage 之后，否则失败重试追加的新 HumanMessage 会遮蔽旧残留。不得补造 cancelled ToolMessage、使用 asNode="tools" 或在 UI 推断 cancelled 状态；下一条 HumanMessage 必须普通 submit 创建新 Run。主动 Stop 导致的旧提交迟到错误不得显示为新 Run 失败；流连接异常时只核对已确认的同一 Run，仍在运行则等待其收敛，成功后从 checkpoint 恢复，不自动重试或创建替代 Run。
 - 历史压缩直接使用官方 SummarizationMiddleware：token 阈值触发、token budget 保留，计数/切点/配对/摘要替换全部采用官方逻辑；不得添加固定消息数、完整回合下限或自定义压缩子类。LMA预算估算仅用于展示。
 - 重构时直接采用新实现并移除旧实现、过时配置和测试；不为旧 checkpoint、旧字段或旧 API 保留兼容分支，不自动迁移或修补历史会话。保证当前实现的运行与回归验证，持续清除历史包袱。
 - Retry 只处理可判定的瞬时失败，参数错误、权限错误、业务拒绝和数据为空不得盲目重试；所有工具目前均应保持只读。

@@ -2,26 +2,30 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mock = vi.hoisted(() => ({
+  controller: Symbol('controller'),
   options: null as any, current: null as string | null, loading: false,
   messages: [] as any[], finishRun: null as null | (() => void),
-  remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(),
-  sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(),
+  remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(), join: vi.fn(),
+  sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(), stop: vi.fn(), hydrate: vi.fn(), cleanup: vi.fn(),
   factory: vi.fn(),
 }));
-vi.mock('@langchain/react', () => ({ useStream: (options: any) => {
+vi.mock('@langchain/react', () => ({ STREAM_CONTROLLER: mock.controller, useStream: (options: any) => {
   mock.options = options;
   return { messages: mock.messages, values: {}, isLoading: mock.loading, isThreadLoading: false,
-    submit: mock.submit, disconnect: mock.disconnect, getThread: () => ({ threadId: mock.current }),
+    submit: mock.submit, stop: mock.stop, disconnect: mock.disconnect, getThread: () => ({ threadId: mock.current }),
+    [mock.controller]: { hydrate: mock.hydrate },
     client: options.client,
   };
 } }));
 vi.mock('../src/services/api', async (original) => ({ ...await original<any>(),
   getSessions: mock.sessions, generateSessionTitle: mock.title,
   getBusySessions: mock.busy,
+  removeIncompleteToolCallMessages: mock.cleanup,
   createLangGraphClient: mock.factory,
 }));
 vi.mock('../src/components/ChatWindow', () => ({ ChatWindow: (props: any) =>
   <><button onClick={() => void props.onSendMessage('首条消息')}>发送测试消息</button>
+    <button onClick={() => void props.onStopGeneration()}>停止测试生成</button>
     <span>{props.errorMessage}</span>{props.messages.map((message: any, index: number) => <p key={index}>{message.content}</p>)}</> }));
 import { App } from '../src/App';
 const thread = (name?: string) => ({ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z',
@@ -39,11 +43,12 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mock.current = null; mock.loading = false; mock.messages = []; mock.finishRun = null;
     localStorage.clear();
     mock.factory.mockImplementation(() => ({
-      threads: { delete: mock.remove, get: mock.get, update: mock.update }, runs: { get: mock.run },
+      threads: { delete: mock.remove, get: mock.get, update: mock.update }, runs: { get: mock.run, join: mock.join },
     }));
     mock.sessions.mockResolvedValue({ sessions: [], isLive: true });
     mock.remove.mockResolvedValue(undefined);
     mock.run.mockResolvedValue({ run_id: 'run-1' });
+    mock.join.mockResolvedValue({});
     mock.get.mockResolvedValue(thread());
     mock.update.mockImplementation(async (_id: string, payload: any) => thread(payload.metadata.name));
     mock.title.mockResolvedValue('正式标题');
@@ -140,6 +145,88 @@ describe('标题与 Agent Run 独立生命周期', () => {
     fireEvent.click(screen.getByText('新建监测会话'));
     expect(mock.options.threadId).toBeNull(); expect(new URL(window.location.href).searchParams.has('threadId')).toBe(false);
   });
+  it('Stop 只停止当前 Run，清理最终 checkpoint 后重新 hydrate；下一条消息仍是普通新 Run', async () => {
+    window.history.replaceState(null, '', '/?threadId=sdk-thread');
+    mock.current = 'sdk-thread'; mock.loading = true;
+    const mounted = render(<App />);
+    await acceptRun();
+    fireEvent.click(screen.getByText('停止测试生成'));
+    await waitFor(() => expect(mock.hydrate).toHaveBeenCalledWith('sdk-thread'));
+    expect(mock.stop).toHaveBeenCalledWith({ cancel: true });
+    expect(mock.join).toHaveBeenCalledWith('sdk-thread', 'run-1');
+    expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread');
+    expect(mock.stop.mock.invocationCallOrder[0]).toBeLessThan(mock.join.mock.invocationCallOrder[0]);
+    expect(mock.join.mock.invocationCallOrder[0]).toBeLessThan(mock.cleanup.mock.invocationCallOrder[0]);
+    expect(mock.cleanup.mock.invocationCallOrder[0]).toBeLessThan(mock.hydrate.mock.invocationCallOrder[0]);
+    mock.loading = false;
+    mounted.rerender(<App />);
+    fireEvent.click(screen.getByText('发送测试消息'));
+    expect(mock.submit).toHaveBeenCalledWith(
+      { messages: [{ type: 'human', content: '首条消息' }] },
+      expect.objectContaining({ multitaskStrategy: 'reject' })
+    );
+    expect(mock.submit.mock.calls.at(-1)?.[0]).not.toHaveProperty('command');
+    await finishRun();
+  });
+  it('提交流报错但同一服务端 Run 最终成功时，等待收敛并从权威 checkpoint 恢复', async () => {
+    window.history.replaceState(null, '', '/?threadId=sdk-thread');
+    mock.current = 'sdk-thread';
+    mock.run
+      .mockResolvedValueOnce({ run_id: 'run-1', status: 'running' })
+      .mockResolvedValueOnce({ run_id: 'run-1', status: 'success' });
+    render(<App />);
+    fireEvent.click(screen.getByText('发送测试消息'));
+    await acceptRun();
+    const submitOptions = mock.submit.mock.calls[0][1];
+    await act(async () => {
+      submitOptions.onError(new Error('private stream failure'));
+      mock.loading = false;
+      mock.finishRun?.();
+    });
+    await waitFor(() => expect(mock.hydrate).toHaveBeenCalledWith('sdk-thread'));
+    expect(mock.join).toHaveBeenCalledWith('sdk-thread', 'run-1');
+    expect(mock.run).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText('本次请求未完成，已保留现有记录，请稍后重试。')).not.toBeInTheDocument();
+  });
+  it('用户 Stop 导致的旧提交错误不会在清理完成后回写失败弹窗', async () => {
+    window.history.replaceState(null, '', '/?threadId=sdk-thread');
+    mock.current = 'sdk-thread';
+    render(<App />);
+    fireEvent.click(screen.getByText('发送测试消息'));
+    await acceptRun();
+    const submitOptions = mock.submit.mock.calls[0][1];
+    fireEvent.click(screen.getByText('停止测试生成'));
+    await act(async () => {
+      submitOptions.onError(new Error('abort after stop'));
+      mock.loading = false;
+      mock.finishRun?.();
+    });
+    await waitFor(() => expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread'));
+    expect(screen.queryByText('本次请求未完成，已保留现有记录，请稍后重试。')).not.toBeInTheDocument();
+  });
+  it('停止后清理失败不伪造成功，且不 hydrate 未确认状态', async () => {
+    window.history.replaceState(null, '', '/?threadId=sdk-thread');
+    mock.cleanup.mockRejectedValue(new Error('private cleanup failure'));
+    render(<App />);
+    fireEvent.click(screen.getByText('停止测试生成'));
+    await waitFor(() => expect(screen.getByText('已停止生成，但未完成工具记录清理失败，请刷新后重试')).toBeInTheDocument());
+    expect(mock.hydrate).not.toHaveBeenCalled();
+    expect(screen.queryByText(/private cleanup failure/)).not.toBeInTheDocument();
+  });
+  it('重复 Stop 在首个流程完成前只处理一次当前 Run', async () => {
+    window.history.replaceState(null, '', '/?threadId=sdk-thread');
+    let finishStop!: () => void;
+    mock.stop.mockReturnValue(new Promise<void>((resolve) => { finishStop = resolve; }));
+    render(<App />);
+    act(() => {
+      fireEvent.click(screen.getByText('停止测试生成'));
+      fireEvent.click(screen.getByText('停止测试生成'));
+    });
+    expect(mock.stop).toHaveBeenCalledTimes(1);
+    expect(mock.cleanup).not.toHaveBeenCalled();
+    await act(async () => { finishStop(); });
+    await waitFor(() => expect(mock.cleanup).toHaveBeenCalledTimes(1));
+  });
   it('分页失败保留列表，重试不跳页，分页重叠去重并按服务端更新时间排序', async () => {
     const row = (id: string, updated_at: string) => ({ thread_id: id, name: id, created_at: updated_at, updated_at, status: 'idle' });
     mock.sessions.mockResolvedValueOnce({ sessions: [row('甲', '2026-09-16T00:00:00Z')], isLive: true, nextOffset: 20, hasMore: true })
@@ -196,6 +283,7 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mounted.unmount();
     mock.sessions.mockResolvedValue({ sessions: [], isLive: true });
     mock.busy.mockResolvedValue([]);
+    mock.stop.mockResolvedValue(undefined); mock.cleanup.mockResolvedValue(undefined); mock.hydrate.mockResolvedValue(undefined);
     render(<App />);
     expect(mock.options.threadId).toBe('linked');
     expect(window.location.search).toBe('?view=monitor&threadId=linked');

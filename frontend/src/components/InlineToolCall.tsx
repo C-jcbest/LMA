@@ -9,7 +9,6 @@ import {
   Eye,
   ChevronRight,
   Loader2,
-  CircleSlash2,
 } from 'lucide-react';
 import { ToolCallInfo } from '../services/api';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -51,9 +50,6 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
     if (toolCall.status === 'loading') {
       return <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />;
     }
-    if (toolCall.status === 'cancelled') {
-      return <CircleSlash2 className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
-    }
     if (toolCall.name?.includes('group')) {
       return <Layers className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
     }
@@ -77,7 +73,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
 
   // 生成简约的中文动作文案（类似“运行了命令”）
   const getActionText = () => {
-    const suffix = toolCall.status === 'cancelled' ? '（已停止）' : toolCall.status === 'error' ? '（未完成）' : '';
+    const suffix = toolCall.status === 'error' ? '（未完成）' : '';
     if (toolCall.name === 'list_station_groups') {
       return `查询监测点分组${suffix}`;
     }

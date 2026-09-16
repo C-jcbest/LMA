@@ -6,7 +6,7 @@ import { ChatWindow } from '../src/components/ChatWindow';
 import { InlineToolCall } from '../src/components/InlineToolCall';
 import { MessageActions } from '../src/components/MessageActions';
 import { Sidebar } from '../src/components/Sidebar';
-import { getUnansweredToolCalls, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
+import { getIncompleteToolCallMessageUpdates, projectLangGraphMessages, projectThreadSessions, runErrorMessage } from '../src/services/api';
 
 describe('会话关键路径集成回归', () => {
   it('官方内部摘要不成为用户气泡，普通同文消息仍展示', () => {
@@ -20,7 +20,7 @@ describe('会话关键路径集成回归', () => {
       { id: 'answer', role: 'assistant', content: '回答', created_at: undefined },
     ]);
   });
-  it('停止后将未闭合工具调用投影为已停止，并识别需要补齐的调用', () => {
+  it('停止后整批未完成的 AI tool-call 消息生成 RemoveMessage，UI 不保留工具', () => {
     const raw = [
       { type: 'human', id: 'u1', content: '查询站点' },
       {
@@ -31,13 +31,9 @@ describe('会话关键路径集成回归', () => {
       },
     ];
 
-    expect(getUnansweredToolCalls(raw)).toEqual([{ id: 'call-1', name: 'list_stations' }]);
-    const projected = projectLangGraphMessages(raw, { isRunActive: false });
-    const assistant = projected[1];
-    expect(assistant.parts?.[0]).toMatchObject({
-      type: 'tool',
-      toolCall: { id: 'call-1', status: 'cancelled' },
-    });
+    expect(getIncompleteToolCallMessageUpdates(raw).map((message) => ({ type: message.type, id: message.id })))
+      .toEqual([{ type: 'remove', id: 'a1' }]);
+    expect(projectLangGraphMessages([raw[0]])).toEqual([{ id: 'u1', role: 'user', content: '查询站点', created_at: undefined }]);
   });
 
   it('已完成的 ToolMessage 不会被误判为待补齐', () => {
@@ -47,8 +43,8 @@ describe('会话关键路径集成回归', () => {
       { type: 'ai', content: '查询完成。' },
     ];
 
-    expect(getUnansweredToolCalls(raw)).toEqual([]);
-    const projected = projectLangGraphMessages(raw, { isRunActive: false });
+    expect(getIncompleteToolCallMessageUpdates(raw)).toEqual([]);
+    const projected = projectLangGraphMessages(raw);
     expect(projected[0].parts?.[0]).toMatchObject({ type: 'tool', toolCall: { status: 'success' } });
     expect(projected[0].parts?.[1]).toMatchObject({ type: 'text', content: '查询完成。' });
   });
@@ -77,7 +73,7 @@ describe('会话关键路径集成回归', () => {
       },
     ];
 
-    const projected = projectLangGraphMessages(raw, { isRunActive: false });
+    const projected = projectLangGraphMessages(raw);
     expect(projected[0].parts?.map((part) => part.type)).toEqual([
       'thinking',
       'tool',
@@ -127,19 +123,59 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByRole('button', { name: '回到底部' })).toBeInTheDocument();
   });
 
-  it('取消的工具调用不再显示旋转中的执行状态', () => {
-    render(
-      <InlineToolCall
-        toolCall={{
-          id: 'call-1',
-          name: 'get_daily_gnss_data',
-          display_name: 'GNSS 数据',
-          status: 'cancelled',
-        }}
-      />
-    );
-    expect(screen.getByText('获取北斗GNSS日监测数据（已停止）')).toBeInTheDocument();
-    expect(screen.queryByText('正在执行')).not.toBeInTheDocument();
+  it('并行工具部分完成时只从 AIMessage 移除未回答 call，保留成功配对', () => {
+    const updates = getIncompleteToolCallMessageUpdates([
+      { type: 'human', id: 'u1', content: '并行查询' },
+      { type: 'ai', id: 'a1', content: '', tool_calls: [
+        { id: 'done', name: 'list_stations', args: {} },
+        { id: 'pending', name: 'query_weather', args: {} },
+      ] },
+      { type: 'tool', id: 't1', tool_call_id: 'done', name: 'list_stations', content: '成功' },
+    ]);
+    expect(updates).toHaveLength(1);
+    expect((updates[0] as any).type).toBe('ai');
+    expect((updates[0] as any).tool_calls).toEqual([{ id: 'done', name: 'list_stations', args: {} }]);
+  });
+
+  it('失败重试追加 HumanMessage 后仍清理更早残留的多个未完成 AIMessage', () => {
+    const updates = getIncompleteToolCallMessageUpdates([
+      { type: 'human', id: 'old-user', content: '旧问题' },
+      { type: 'ai', id: 'old-ai', tool_calls: [{ id: 'old-call', name: 'query_weather', args: {} }] },
+      { type: 'human', id: 'new-user', content: '新问题' },
+      { type: 'ai', id: 'new-ai-1', tool_calls: [{ id: 'new-call-1', name: 'query_weather', args: {} }] },
+      { type: 'ai', id: 'new-ai-2', tool_calls: [{ id: 'new-call-2', name: 'list_stations', args: {} }] },
+      { type: 'human', id: 'retry-user', content: '重试问题' },
+    ]);
+    expect(updates.map((message) => message.id)).toEqual(['old-ai', 'new-ai-1', 'new-ai-2']);
+    expect(updates.every((message: any) => message.type === 'remove')).toBe(true);
+  });
+
+  it('只接受紧随 AIMessage 的 ToolMessage，不能用其他位置的同 ID 伪造配对', () => {
+    const updates = getIncompleteToolCallMessageUpdates([
+      { type: 'tool', id: 'orphan-before', tool_call_id: 'same-call', content: '错误位置' },
+      { type: 'ai', id: 'a1', tool_calls: [{ id: 'same-call', name: 'query_weather', args: {} }] },
+      { type: 'human', id: 'u1', content: '下一条消息' },
+      { type: 'tool', id: 'orphan-after', tool_call_id: 'same-call', content: '非连续结果' },
+    ]);
+    expect(updates.map((message) => ({ type: message.type, id: message.id })))
+      .toEqual([{ type: 'remove', id: 'a1' }]);
+  });
+
+  it('总结前停止后发送继续，旧工具结果、继续消息和新 AI 回复保持独立顺序', () => {
+    const projected = projectLangGraphMessages([
+      { type: 'human', id: 'u1', content: '查询监测数据' },
+      { type: 'ai', id: 'a1', content: '', tool_calls: [{ id: 'c1', name: 'get_daily_gnss_data', args: {} }] },
+      { type: 'tool', id: 't1', tool_call_id: 'c1', name: 'get_daily_gnss_data', content: '完成' },
+      { type: 'human', id: 'u2', content: '继续' },
+      { type: 'ai', id: 'a2', content: '这是新 Run 的总结。' },
+    ]);
+    expect(projected.map((message) => ({ role: message.role, content: message.content }))).toEqual([
+      { role: 'user', content: '查询监测数据' },
+      { role: 'assistant', content: '' },
+      { role: 'user', content: '继续' },
+      { role: 'assistant', content: '这是新 Run 的总结。' },
+    ]);
+    expect(projected[1].parts?.[0]).toMatchObject({ type: 'tool', toolCall: { id: 'c1', status: 'success' } });
   });
 
   it('GNSS 空值与非有限值显示为缺测，不会转换为零', async () => {
@@ -385,7 +421,7 @@ describe('会话关键路径集成回归', () => {
         ],
       },
     ];
-    const projected1 = projectLangGraphMessages(rawBlocks, { isRunActive: true });
+    const projected1 = projectLangGraphMessages(rawBlocks);
     expect(projected1[0].parts?.[0]).toMatchObject({
       type: 'thinking',
       thinking: { content: '正在实时分析斜坡变形特征…' },
@@ -403,7 +439,7 @@ describe('会话关键路径集成回归', () => {
         content: '<think>正在对比历史雨量与位移数据',
       },
     ];
-    const projected2 = projectLangGraphMessages(rawStreamingThink, { isRunActive: true });
+    const projected2 = projectLangGraphMessages(rawStreamingThink);
     expect(projected2[0].parts?.[0]).toMatchObject({
       type: 'thinking',
       thinking: { content: '正在对比历史雨量与位移数据' },

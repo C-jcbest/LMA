@@ -1,9 +1,76 @@
 import { act, renderHook } from '@testing-library/react';
 import { Client } from '@langchain/langgraph-sdk';
-import { createLangGraphClient, getSessions, getBusySessions, mergeSessions, generateSessionTitle, renameSession } from '../src/services/api';
+import { createLangGraphClient, getSessions, getBusySessions, mergeSessions, generateSessionTitle, removeIncompleteToolCallMessages, renameSession } from '../src/services/api';
 import { useStream } from '@langchain/react';
 import { expect, it, vi } from 'vitest';
 import { useMemo } from 'react';
+
+it('停止清理只读最终 checkpoint 并写 RemoveMessage，不扫描或取消 Run、不伪造 ToolMessage', async () => {
+  const updateState = vi.fn().mockResolvedValue({ configurable: {} });
+  const client = {
+    threads: {
+      getState: vi.fn().mockResolvedValue({ values: { messages: [
+        { type: 'human', id: 'u1', content: '查询' },
+        { type: 'ai', id: 'a1', content: '', tool_calls: [{ id: 'call-1', name: 'query_weather', args: {} }] },
+      ] } }),
+      updateState,
+    },
+    runs: { list: vi.fn(), cancel: vi.fn() },
+  } as any;
+  await removeIncompleteToolCallMessages(client, 'thread-1');
+  expect(client.threads.getState).toHaveBeenCalledWith('thread-1');
+  expect(client.runs.list).not.toHaveBeenCalled();
+  expect(client.runs.cancel).not.toHaveBeenCalled();
+  expect(updateState).toHaveBeenCalledTimes(1);
+  const payload = updateState.mock.calls[0][1];
+  expect(payload).not.toHaveProperty('asNode');
+  expect(payload.values.messages.map((message: any) => ({ type: message.type, id: message.id })))
+    .toEqual([{ type: 'remove', id: 'a1' }]);
+  expect(payload.values.messages.some((message: any) => message.type === 'tool')).toBe(false);
+});
+
+it('思考阶段或工具已经完成时不写 checkpoint，重复清理保持幂等', async () => {
+  const updateState = vi.fn();
+  const getState = vi.fn()
+    .mockResolvedValueOnce({ values: { messages: [{ type: 'human', id: 'u1', content: '问题' }] } })
+    .mockResolvedValueOnce({ values: { messages: [
+      { type: 'human', id: 'u1', content: '问题' },
+      { type: 'ai', id: 'a1', tool_calls: [{ id: 'c1', name: 'query_weather', args: {} }] },
+      { type: 'tool', id: 't1', tool_call_id: 'c1', name: 'query_weather', content: '完成' },
+    ] } });
+  const client = { threads: { getState, updateState } } as any;
+  await removeIncompleteToolCallMessages(client, 'thread-1');
+  await removeIncompleteToolCallMessages(client, 'thread-1');
+  expect(updateState).not.toHaveBeenCalled();
+});
+
+it('真实 SDK 将 RemoveMessage 序列化到 state API，且不发送 as_node 或 ToolMessage', async () => {
+  const requests: Array<{ url: string; method: string; body?: any }> = [];
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: any, options: any = {}) => {
+    const request = { url: String(url), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : undefined };
+    requests.push(request);
+    if (request.method === 'GET') return new Response(JSON.stringify({ values: { messages: [
+      { type: 'human', id: 'u1', content: '查询' },
+      { type: 'ai', id: 'a1', content: '', tool_calls: [{ id: 'c1', name: 'query_weather', args: {} }] },
+    ] } }), { headers: { 'content-type': 'application/json' } });
+    return new Response(JSON.stringify({ configurable: {} }), { headers: { 'content-type': 'application/json' } });
+  });
+  try {
+    await removeIncompleteToolCallMessages(createLangGraphClient('http://test-server:2024'), 'thread-1');
+    expect(requests.map((request) => request.method)).toEqual(['GET', 'POST']);
+    expect(requests[1].url).toContain('/threads/thread-1/state');
+    expect(requests[1].body.as_node).toBeUndefined();
+    expect(requests[1].body.values.messages).toEqual([
+      expect.objectContaining({
+        lc: 1,
+        type: 'constructor',
+        id: ['langchain_core', 'messages', 'RemoveMessage'],
+        kwargs: expect.objectContaining({ id: 'a1' }),
+      }),
+    ]);
+    expect(requests[1].body.values.messages.some((message: any) => message.id?.at(-1) === 'ToolMessage')).toBe(false);
+  } finally { fetchSpy.mockRestore(); }
+});
 
 it('真实 SDK 查询105个业务 Thread：归属、offset、轻量字段与busy IDs 写入 HTTP 请求', async () => {
   const rows = Array.from({ length: 105 }, (_, index) => ({ thread_id: `thread-${index}`, created_at: '2026-09-16T00:00:00Z', updated_at: new Date(Date.UTC(2026, 8, 16, 0, 0, 105 - index)).toISOString(), metadata: { graph_id: 'lma-agent', ...(index ? { name: `会话${index}` } : {}) }, status: 'idle' }));

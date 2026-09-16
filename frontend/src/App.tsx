@@ -1,6 +1,6 @@
 import { runErrorMessage } from './services/api';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useStream } from '@langchain/react';
+import { STREAM_CONTROLLER, useStream } from '@langchain/react';
 import type { Client } from '@langchain/langgraph-sdk';
 import { Sidebar, SidebarSession } from './components/Sidebar';
 import { ChatWindow } from './components/ChatWindow';
@@ -12,7 +12,7 @@ import {
   createLangGraphClient,
   ThreadSession,
   Message,
-  closeInterruptedToolCalls,
+  removeIncompleteToolCallMessages,
   generateSessionTitle,
   getSessions,
   getBusySessions,
@@ -65,6 +65,7 @@ export const App: React.FC = () => {
   currentClientRef.current = client;
   const [submissionError, setSubmissionError] = useState('');
   const [isStopping, setIsStopping] = useState(false);
+  const isStoppingRef = useRef(false);
   const [isStartingRun, setIsStartingRun] = useState(false);
   const isSubmittingRef = useRef(false);
 
@@ -72,6 +73,13 @@ export const App: React.FC = () => {
   const [titleViews, setTitleViews] = useState<Record<string, 'pending' | 'creation_error' | 'save_error'>>({});
   const [newThreadOrder, setNewThreadOrder] = useState<string[]>([]);
   const titleJobsRef = useRef(new Map<string, { text: string; client: Client; creationNotified: boolean; titleStarted?: boolean }>());
+  const activeRunRef = useRef<{ threadId: string; runId: string } | null>(null);
+  const activeSubmissionRef = useRef<{
+    client: Client;
+    threadId: string | null;
+    runId?: string;
+    stopped: boolean;
+  } | null>(null);
   const firstInputRef = useRef<{ text: string; client: Client } | null>(null);
   const sessionRequestRef = useRef(0);
   const deletingThreadsRef = useRef(new Set<string>());
@@ -120,6 +128,7 @@ export const App: React.FC = () => {
   const onThreadId = useCallback((id: string) => {
     if (currentClientRef.current !== client) return;
     selectThread(id, 'replace');
+    if (activeSubmissionRef.current?.client === client) activeSubmissionRef.current.threadId = id;
     const input = firstInputRef.current;
     if (input) {
       setNewThreadOrder((ids) => [id, ...ids.filter((item) => item !== id)]);
@@ -129,6 +138,11 @@ export const App: React.FC = () => {
   }, [selectThread, client]);
 
   const onCreated = useCallback(({ runId }: { runId: string }) => {
+    if (selectedThreadRef.current) activeRunRef.current = { threadId: selectedThreadRef.current, runId };
+    if (activeSubmissionRef.current?.client === client) {
+      activeSubmissionRef.current.threadId = selectedThreadRef.current;
+      activeSubmissionRef.current.runId = runId;
+    }
     // 官方回调只有 runId。用服务端 Run 确认归属，迟到回调和切换会话不会串标题。
     for (const [id, job] of titleJobsRef.current) {
       job.creationNotified = true;
@@ -172,7 +186,7 @@ export const App: React.FC = () => {
         }
       })();
     }
-  }, [clearTitleView, loadSessions]);
+  }, [clearTitleView, loadSessions, client]);
 
   const stream = useStream<LmaState>({
     assistantId: LMA_ASSISTANT_ID,
@@ -182,6 +196,10 @@ export const App: React.FC = () => {
     optimistic: true,
     onThreadId,
     onCreated,
+    onCompleted: ({ runId, reason }: { runId?: string; reason?: string }) => {
+      if (!runId || activeRunRef.current?.runId === runId) activeRunRef.current = null;
+      if (reason === 'success' && activeSubmissionRef.current?.runId === runId) setSubmissionError('');
+    },
   });
 
   useEffect(() => {
@@ -245,9 +263,7 @@ export const App: React.FC = () => {
 
   const messages = useMemo<Message[]>(() => {
     if (isNewSessionDraft) return [];
-    const projected = projectLangGraphMessages((stream.messages || []) as unknown[], {
-      isRunActive: stream.isLoading,
-    });
+    const projected = projectLangGraphMessages((stream.messages || []) as unknown[]);
     return projected;
   }, [stream.messages, stream.isLoading, isNewSessionDraft]);
 
@@ -356,7 +372,46 @@ export const App: React.FC = () => {
     setSubmissionError('');
 
     const isFirstMessage = activeThreadId === null;
+    const submission = { client, threadId: activeThreadId, stopped: false, runId: undefined as string | undefined };
+    activeSubmissionRef.current = submission;
     if (isFirstMessage) firstInputRef.current = { text, client: stream.client };
+    let recoveryPromise: Promise<void> | null = null;
+    const reconcileRunError = async (error: unknown) => {
+      if (submission.stopped || currentClientRef.current !== submission.client) return;
+      const threadId = submission.threadId;
+      const runId = submission.runId;
+      if (!threadId || !runId) {
+        setSubmissionError(runErrorMessage(error));
+        return;
+      }
+
+      try {
+        let run = await submission.client.runs.get(threadId, runId);
+        if (run.status === 'pending' || run.status === 'running') {
+          // 流连接异常不等于服务端 Run 失败。等待已确认的同一 Run 收敛后再判断，
+          // 不重试、不新建 Run，也不把旧 checkpoint 当成成功结果。
+          try {
+            await submission.client.runs.join(threadId, runId);
+          } catch (joinError) {
+            console.warn('join submitted run after stream error failed:', joinError);
+          }
+          run = await submission.client.runs.get(threadId, runId);
+        }
+        if (submission.stopped || currentClientRef.current !== submission.client) return;
+        if (run.status === 'success') {
+          await stream[STREAM_CONTROLLER].hydrate(threadId);
+          if (!submission.stopped && currentClientRef.current === submission.client) setSubmissionError('');
+          return;
+        }
+        if (run.status === 'interrupted' && submission.stopped) return;
+        setSubmissionError(runErrorMessage(error));
+      } catch (reconcileError) {
+        console.warn('reconcile submitted run error:', reconcileError);
+        if (!submission.stopped && currentClientRef.current === submission.client) {
+          setSubmissionError(runErrorMessage(error));
+        }
+      }
+    };
     try {
       // 乐观消息由官方 SDK 注入并与 checkpoint 协调，不在应用中复制消息。
       await stream.submit(
@@ -364,8 +419,8 @@ export const App: React.FC = () => {
         {
           multitaskStrategy: 'reject',
           onError: (error) => {
-            if (currentClientRef.current !== client) return;
-            setSubmissionError(runErrorMessage(error));
+            if (submission.stopped || currentClientRef.current !== submission.client) return;
+            recoveryPromise ??= reconcileRunError(error);
             for (const [id, job] of titleJobsRef.current) {
               if (!job.creationNotified) {
                 setTitleViews((current) => ({ ...current, [id]: 'creation_error' }));
@@ -374,12 +429,15 @@ export const App: React.FC = () => {
           },
         }
       );
+      if (recoveryPromise) await recoveryPromise;
     } catch (error) {
-      if (currentClientRef.current !== client) return;
-      setSubmissionError(runErrorMessage(error));
+      if (submission.stopped || currentClientRef.current !== submission.client) return;
+      if (recoveryPromise) await recoveryPromise;
+      else setSubmissionError(runErrorMessage(error));
     } finally {
       if (currentClientRef.current === client) {
         firstInputRef.current = null;
+        if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
         isSubmittingRef.current = false;
         setIsStartingRun(false);
         void loadSessions();
@@ -388,22 +446,41 @@ export const App: React.FC = () => {
   };
 
   const handleStopGeneration = async () => {
-    if (!activeThreadId) return;
-    const rawMessages = [...(stream.messages || [])] as unknown[];
+    if (!activeThreadId || isStoppingRef.current) return;
+    isStoppingRef.current = true;
+    const activeRun = activeRunRef.current?.threadId === activeThreadId ? activeRunRef.current : null;
+    if (activeSubmissionRef.current?.threadId === activeThreadId) activeSubmissionRef.current.stopped = true;
     setSubmissionError('');
     setIsStopping(true);
+    let stage: 'stop' | 'join' | 'cleanup' | 'hydrate' = 'stop';
     try {
-      await stream.stop();
+      // 官方 stop 默认只对当前 Run 发出 interrupt cancel；不是 HITL，也没有 resume。
+      await stream.stop({ cancel: true });
       if (currentClientRef.current !== client) return;
-      await closeInterruptedToolCalls(client, activeThreadId, rawMessages);
+      // stop 的 cancel 请求默认为 interrupt 且不等待；join 只等待这个已知当前 Run 收敛，
+      // 不扫描或取消 Thread 中其它 Run。
+      stage = 'join';
+      if (activeRun) await client.runs.join(activeThreadId, activeRun.runId);
+      stage = 'cleanup';
+      await removeIncompleteToolCallMessages(client, activeThreadId);
+      // 锁定版本没有公开的外部 updateState 刷新方法；立即重新 hydrate 权威 checkpoint，
+      // 避免 UI 保留已删除的未完成工具。TODO 15 替换消息投影时一并复核此最窄适配。
+      stage = 'hydrate';
+      await stream[STREAM_CONTROLLER].hydrate(activeThreadId);
     } catch (error) {
       if (currentClientRef.current !== client) return;
-      console.warn('stop generation cleanup error:', error);
-      setSubmissionError('已停止生成，但会话状态清理失败，请刷新后重试');
+      console.warn('stop generation failed:', { stage, error });
+      setSubmissionError(
+        stage === 'stop' ? '停止当前运行失败，请稍后重试'
+          : stage === 'join' ? '已请求停止，但等待运行结束失败，请刷新后重试'
+            : stage === 'hydrate' ? '未完成工具记录已清理，请刷新页面同步显示'
+              : '已停止生成，但未完成工具记录清理失败，请刷新后重试'
+      );
     } finally {
       if (currentClientRef.current === client) {
         await loadSessions();
         setIsStopping(false);
+        isStoppingRef.current = false;
       }
     }
   };
@@ -462,6 +539,7 @@ export const App: React.FC = () => {
           isSubmittingRef.current = false;
           setIsStartingRun(false);
           setIsStopping(false);
+          isStoppingRef.current = false;
           setTitleViews({});
           setNewThreadOrder([]);
           deletingThreadsRef.current.clear();

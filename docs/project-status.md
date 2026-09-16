@@ -5,13 +5,14 @@
 ## 当前实现
 
 - 后端生产入口 `backend/app/agent/graph.py:graph` 为官方图工厂：create_agent 负责 ReAct 与工具并行执行，官方 middleware 负责模型/工具重试；LMA middleware 保留时间、Prompt、用量/思考耗时及推荐契约；历史由官方 SummarizationMiddleware 管理。持久化仍由 Agent Server Thread/Checkpoint 提供。
-- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建与重复草稿状态已删除，标题 skeleton 仅作为展示态；Client、URL 选择及列表归属/增量加载已完成，停止与状态协议仍待 TODO 12–13。
+- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建与重复草稿状态已删除，标题 skeleton 仅作为展示态；Client、URL、列表及 Stop 清理协议已完成，状态分层仍待 TODO 13。
 - 第一阶段 TODO 1–3 已完成：遗留界面与无引用组件清理；敏感示例替换；GNSS 缺测不转成 0；消息只显示服务端时间且按 Asia/Shanghai 展示；站点未知状态不猜测；配置检查精确验证 lma-agent；内部字段默认折叠；正式 Prompt 单一来源。
 - 2026-09-15 TODO 4 已完成生产代码入口迁移，langchain==1.3.18 已纳入运行依赖，删除手写路由、循环边、ToolNode 装配及节点级批量 retry/exhausted。旧候选 factory 与候选测试已在 TODO 5 清除；架构和部署要求见 [ADR 0001](adr/0001-agent-runtime.md)。本轮未对现有服务执行部署。
 
 ## 持续有效的决定
 
 - TODO 11 已完成：官方 metadata.graph_id 过滤与20条offset分页；服务端 updated_at 排序，标题完成后不永久置顶。空闲时无列表轮询，只刷新已知busy IDs；事件刷新已加载范围，分页失败不推进offset并保留已确认列表。辅助图即使有标题也不展示，不增加旧会话迁移。
+- TODO 12 已按用户纠正完成：Stop 仅 interrupt 当前 Run，等待该 Run 收敛后读取最终 checkpoint；全未完成 AI tool-call 消息用 RemoveMessage 删除，并行部分完成时原位保留成功 calls/ToolMessages。删除 cancelled ToolMessage、cancelled UI、asNode="tools"、Run扫描/批量取消和 resume；下一条用户消息普通 submit 新 Run。rollback 会回退整轮，不用于“仅丢弃未完成部分”。
 
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 
@@ -27,11 +28,16 @@
 
 ## 未完成与验证边界
 
-- 2026-09-16 TODO 11：前端47项测试、生产构建通过；后端51项中49项通过，2项Server E2E默认跳过。105条分页由真实SDK/HTTP Stub验证，界面覆盖分页失败、去重、busy结束、空闲无轮询及迟到请求隔离。未部署、未修改真实历史、未执行真实浏览器E2E。PRD与TODO已同步；下一项TODO 12。
+- 2026-09-16 TODO 12：用户纠正原“补隐藏 cancelled ToolMessage”方案，要求未完成工具从 messages 删除。实现保留成功 ToolMessage；全未完成删除 AIMessage，部分完成收窄 AIMessage，保证下一轮消息协议有效。锁定版 React SDK 没有公开的外部 updateState 刷新入口，当前使用导出的内部 STREAM_CONTROLLER.hydrate 作最窄适配；仅在清理成功后触发，不伪造状态，TODO 15 或 SDK 提供公开入口时删除。真实 Agent Server 已验证 RemoveMessage；完整浏览器 E2E 尚未执行。
+- TODO 12 验证：前端55项测试与生产构建通过；后端常规51项中49项通过、2项Server E2E默认跳过。覆盖思考阶段、单批/多批未完成、失败重试追加 HumanMessage、并行部分完成、严格相邻配对、全部完成、重复Stop、清理失败、权威重载和下一条普通submit。为恢复本次受影响会话，已删除确认无 ToolMessage 的 AI 工具调用消息并读回验证。
+- 2026-09-16 Stop 线上纠正：首次真实操作证明 Agent Server 0.14.1 不接受远程 updateState 中的简写 `{type:"remove", id}`，返回 MESSAGE_COERCION_FAILURE；必须发送 LangChain RemoveMessage/AIMessage 实例，由 SDK 序列化为 lc constructor。已恢复官方实例并增加真实 SDK wire-format 回归。失败会话中确认的1条全未完成 AIMessage 已重新清理并读回验证，其他消息未删除；临时协议测试 Thread 已删除。错误日志现记录 stop/join/cleanup/hydrate 阶段，UI按实际阶段说明。此前“未修改真实会话”的记录被本条取代。
+- 2026-09-16 Stop 重试纠正：清理范围曾被错误限制为最后一个 HumanMessage 之后。清理首次失败后，普通重试先写入新的 HumanMessage，导致之前残留的 AI tool-call 消息被遮蔽，模型接口以“tool_calls 后缺少 tool messages”拒绝新 Run。现改为检查最终 checkpoint 中全部 AI tool-call 消息，并只把紧随 AIMessage 的连续 ToolMessage 视为有效配对；未来不得重新按最后用户回合截断。已从受影响会话删除1条含3个未回答 calls 的 AIMessage，消息数由20变为19，读回确认未配对 AI tool-call 消息为0，已有成功 ToolMessage 保留。前端55项测试与生产构建通过。
+- 2026-09-16 Stop 后继续纠正：真实时序为工具已完成、总结前 interrupt，随后普通 submit“继续”。服务端新 Run 最终 success 并写入完整总结，但前端旧提交迟到错误或流异常会显示通用失败，且流态可能暂时缺少新 HumanMessage 边界，使新输出看似接在取消前工具后。现给提交记录 stop/runId/threadId 归属：主动 Stop 的迟到错误静默丢弃；流异常只等待已确认的同一 Run，success 后 hydrate，error 才展示失败，不重试或另建 Run。投影回归固定旧工具结果、继续消息和新 AI 回复的独立顺序。实现后前端58项测试与生产构建通过。
+- 2026-09-16 TODO 11：前端47项测试、生产构建通过；后端51项中49项通过，2项Server E2E默认跳过。105条分页由真实SDK/HTTP Stub验证，界面覆盖分页失败、去重、busy结束、空闲无轮询及迟到请求隔离。未部署、未修改真实历史、未执行真实浏览器E2E；其后已完成TODO 12。
 
 - TODO 5 的生产测试覆盖长会话摘要、近期token budget保留、重复压缩、停止后工具配对、摘要失败保全和内部模型流隔离。Server E2E 使用真实生产工厂与 HTTP Stub 验证官方摘要、瞬时重试、Thread 恢复及主 usage 保留。
 - 本轮后端49项常规测试、2项隔离Server E2E、前端39项测试和生产构建通过（常规发现51项，服务E2E默认跳过并另行执行）。真实官方 React SDK 测试覆盖首次 run.start 拒绝，隔离服务覆盖新版协议首次创建与 checkpoint；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
-- TODO 9–11 已完成唯一 Client / Transport、URL 生命周期及列表归属与增量加载；下一项为 TODO 12 停止协议；推荐退出主 Run 属于 TODO 23。
+- TODO 9–12 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载及 Stop 清理协议；下一项为 TODO 13 状态分层；推荐退出主 Run 属于 TODO 23。
 
 ## 2026-09-15 TODO 9：统一 Client 与连接切换边界
 
