@@ -177,3 +177,9 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(model.ainvoke.await_count, 1)
                 recheck.assert_not_called()
                 self.assertEqual(len(message.artifact["chart_points"]), 5)
+
+    async def test_get_current_time_success_in_agent_run(self):
+        message, _ = await self.run_tool(tools.get_current_time, {})
+        self.assertEqual(message.status, "success")
+        self.assertIn("current_time", message.artifact["data"])
+        self.assertEqual(message.artifact["data"]["timezone"], "Asia/Shanghai")

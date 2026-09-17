@@ -78,3 +78,12 @@
 
 - 直接链接与重新挂载不被列表首项或空列表覆盖；真实 history.back/forward 测试验证选择与 SDK ID 同步，重复选择不增加导航记录，其他 query/hash 保留。现有删除成功与新建测试验证 URL 清理。PRD 与 TODO 已同步。
 - 前端43项测试、生产构建通过；后端常规51项测试，49项通过、2项隔离Server E2E默认跳过。本项未改后端、未部署或操作真实历史。浏览器及线上全面 E2E仍待后续验收。下一项 TODO 11，本轮按清单只处理一个复杂事项。
+
+## 2026-09-17 时间与 Prompt Cache 重构
+
+- `system.md` 彻底静态化，移除 `{{CURRENT_TIME}}` 与业务时区硬编码；时间范围与气象日期格式等客观规则写入静态提示词。
+- 新增 `get_current_time` 工具，唯一返回服务器当前业务时间与时区（Asia/Shanghai），支持 content 与 artifact 契约。智能体在需要确认当前时间或推导相对日期时主动调用该工具。
+- `create_agent` 直接使用官方 `system_prompt=SYSTEM_PROMPT` 参数；移除 `awrap_model_call` 中动态 `SystemMessage` override，使主模型提示词与第一条系统消息在所有请求中彻底固定，最大化供应商 Prompt Cache 命中率。
+- `recommendation` 移除 `build_time_context` 动态注入；`AgentState` 彻底删除无其他用途的 `business_time` 字段，前端 `LmaState` 同步删除该属性。
+- 彻底移除 `_resolve_time`、`build_time_context`、`build_system_prompt` 及旧动态模板测试；更新回归测试并补齐 `get_current_time` 同步/异步/Agent 运行断言。
+- 验证：后端 52 项测试全部通过（2 项隔离 E2E 跳过），前端 75 项测试全部通过，前端生产构建通过，`git diff --check` 无违规。

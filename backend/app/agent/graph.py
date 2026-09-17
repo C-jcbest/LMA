@@ -1,7 +1,7 @@
 """LMA 主 Agent：官方 create_agent 接管 ReAct 循环与工具执行。
 
 由 Agent Server 调用图工厂并注入 Thread/Checkpoint 持久化。
-LMA middleware 维护业务时间、Prompt、展示元数据及推荐契约。
+LMA middleware 维护展示元数据及推荐契约。
 官方 SummarizationMiddleware 管理历史；推荐退出主 Run 在 TODO 23 实施。
 """
 
@@ -22,23 +22,27 @@ from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
 from app.agent.context import build_context_budget
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
-from app.agent.prompting import build_system_prompt, build_time_context
+from app.agent.prompting import SYSTEM_PROMPT
 from app.agent.retry import is_transient_error
 from app.agent.reasoning import ReasoningChatOpenAI, thinking_options
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
-from app.agent.tools import get_daily_gnss_data, list_station_groups, list_stations
+from app.agent.tools import (
+    get_current_time,
+    get_daily_gnss_data,
+    list_station_groups,
+    list_stations,
+)
 from app.agent.vision import analyze_gnss_chart
 from app.agent.weather import query_weather
 from app.config import get_settings
 
-tools = [list_station_groups, list_stations, get_daily_gnss_data,
+tools = [get_current_time, list_station_groups, list_stations, get_daily_gnss_data,
          query_weather, analyze_gnss_chart, inspect_site_environment]
 logger = logging.getLogger(__name__)
 
 
 class AgentState(BaseAgentState):
-    business_time: str
     recommendations: list[str]
     recommendations_error: str
     context_usage: dict
@@ -69,14 +73,11 @@ class LmaMiddleware(AgentMiddleware):
                 **message.additional_kwargs, "created_at": anchor,
             }}))
         return {**({"messages": messages} if messages else {}),
-                "business_time": anchor, "recommendations": [], "recommendations_error": ""}
+                "recommendations": [], "recommendations_error": ""}
 
     async def awrap_model_call(self, request, handler):
-        prompt = build_system_prompt(request.state["business_time"])
         started = perf_counter()
-        response = await handler(request.override(
-            system_message=SystemMessage(content=prompt),
-        ))
+        response = await handler(request)
         elapsed_ms = max(0, round((perf_counter() - started) * 1000))
         stamped = []
         for message in response.result:
@@ -102,7 +103,7 @@ class LmaMiddleware(AgentMiddleware):
         if isinstance(input_tokens, int) and not isinstance(input_tokens, bool) and input_tokens >= 0:
             budget = build_context_budget(
                 state["messages"][:index],
-                system_prompt=build_system_prompt(state["business_time"]), bound_tools=self.bound_tools,
+                system_prompt=SYSTEM_PROMPT, bound_tools=self.bound_tools,
             )
             return {"context_usage": budget.usage_snapshot(usage)}
         logger.warning("model response did not include input token usage; preserve previous context_usage")
@@ -198,7 +199,6 @@ def _message_text(message: BaseMessage) -> str:
 async def _generate_recommendations(
     user_text: str,
     answer_text: str,
-    business_time: str | None,
 ) -> dict:
     """根据完整的最终回答生成下一步建议。"""
     if not answer_text.strip():
@@ -209,9 +209,7 @@ async def _generate_recommendations(
     try:
         response = await _get_recommend_llm().ainvoke(
             [
-                SystemMessage(
-                    content=RECOMMEND_PROMPT + "\n\n" + build_time_context(business_time)
-                ),
+                SystemMessage(content=RECOMMEND_PROMPT),
                 HumanMessage(
                     content=(
                         f"用户问题：{user_text}\n\n"
@@ -248,9 +246,7 @@ async def generate_recommendations(state: AgentState) -> dict:
             user_text = text
         if user_text and answer_text:
             break
-    return await _generate_recommendations(
-        user_text, answer_text, state.get("business_time")
-    )
+    return await _generate_recommendations(user_text, answer_text)
 
 
 def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None):
@@ -261,6 +257,7 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         agent_tool.handle_validation_error = VALIDATION_MESSAGE
     return create_agent(
         model, tools=bound_tools,
+        system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
             LmaMiddleware(bound_tools),

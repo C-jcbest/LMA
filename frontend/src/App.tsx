@@ -29,7 +29,6 @@ import {
 interface LmaState {
   messages: unknown[];
   recommendations?: string[];
-  business_time?: string;
   context_usage?: ContextUsage;
 }
 

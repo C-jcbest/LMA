@@ -15,7 +15,7 @@ from app.agent.tool_inputs import StationListInput, GnssInput, _parse_frequency_
 from app.beidou.client import BeidouClient
 from app.beidou.schemas import Station
 from app.config import get_settings
-from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT
+from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT, business_now
 
 # 返回给 LLM 的 GNSS 数据点上限：超出时优先在请求前调整采样间隔（或按天抽稀），
 # 仍超出再等间隔降采样，保证返回数据量不超过该值
@@ -161,6 +161,21 @@ async def _resolve_station(
         names = [item.station_name for item in stations[:20]]
         raise ToolFailure(f"匹配到 {len(stations)} 个监测点，请确认具体站点：" + "、".join(names))
     return stations[0]
+
+
+@tool(response_format="content_and_artifact")
+def get_current_time() -> tuple[str, dict]:
+    """获取服务器当前的业务时间与时区（Asia/Shanghai 时区）。
+
+    唯一返回服务器当前时间。当需要确定当前时间以组织后续数据查询、计算相对日期（如“今天”、“昨天”、“最近几天”）时调用。
+    """
+    now = business_now()
+    return tool_result(
+        {
+            "current_time": now.strftime(TIME_FORMAT),
+            "timezone": BUSINESS_TIMEZONE,
+        }
+    )
 
 
 @tool(response_format="content_and_artifact")

@@ -59,7 +59,8 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(graph, "business_now", return_value=second):
             result = await agent.ainvoke({"messages": [HumanMessage(content="昨天呢？")]}, config)
         self.assertEqual(len(result["messages"]), 6)
-        self.assertEqual(result["business_time"], second.isoformat())
+        self.assertEqual(result["messages"][4].additional_kwargs["created_at"], second.isoformat())
+        self.assertNotIn("business_time", result)
         self.assertEqual(result["context_usage"]["input_tokens"], 321)
 
     async def test_recommendations_generated_from_final_answer_and_cleared_each_run(self):

@@ -13,7 +13,7 @@ from app.agent.tool_protocol import ToolFailure
 from app.agent.tool_inputs import GnssInput
 from pydantic import ValidationError
 from app.agent import context, graph, reasoning, retry, site, summarization, title, tools, vision, weather
-from app.agent.prompting import SYSTEM_PROMPT_TEMPLATE, VISION_PROMPT, build_system_prompt, build_time_context
+from app.agent.prompting import SYSTEM_PROMPT, VISION_PROMPT
 from app.business_time import BUSINESS_TZ, business_now
 from app.config import Settings
 
@@ -116,27 +116,26 @@ class PromptTimeTests(unittest.TestCase):
     def test_formal_prompt_files_are_the_only_sources(self):
         repo_root = Path(__file__).resolve().parents[2]
         prompt_dir = repo_root / "backend" / "app" / "agent" / "prompts"
-        self.assertEqual(SYSTEM_PROMPT_TEMPLATE, (prompt_dir / "system.md").read_text(encoding="utf-8"))
+        self.assertEqual(SYSTEM_PROMPT, (prompt_dir / "system.md").read_text(encoding="utf-8"))
         self.assertEqual(VISION_PROMPT, (prompt_dir / "vision.md").read_text(encoding="utf-8"))
         self.assertFalse((repo_root / "prompt.md").exists())
+        self.assertNotIn("{{CURRENT_TIME}}", SYSTEM_PROMPT)
 
-    def test_utc_rollover_and_explicit_windows(self):
-        prompt = build_system_prompt("2026-09-13T16:05:00+00:00")
-        self.assertIn("当前业务时间：2026-09-14 00:05:00", prompt)
-        self.assertNotIn("近期默认参考窗口", build_time_context("2026-09-13T16:05:00+00:00"))
-        self.assertNotIn("长期默认参考窗口", build_time_context("2026-09-13T16:05:00+00:00"))
-        self.assertNotIn("{{CURRENT_TIME}}", prompt)
-        self.assertIn("不主动扩展范围", prompt)
-        self.assertIn("默认起点，不是固定分析窗口", prompt)
-
-    def test_leap_day_and_year_boundary(self):
-        self.assertIn("“昨天”：2024-02-29", build_system_prompt("2024-03-01T00:00:00+08:00"))
-        self.assertIn("“昨天”：2025-12-31", build_system_prompt("2026-01-01T00:00:00+08:00"))
-
-    def test_clock_is_aware_and_naive_anchor_rejected(self):
+    def test_clock_is_aware(self):
         self.assertEqual(business_now().utcoffset(), timedelta(hours=8))
-        with self.assertRaises(ValueError):
-            build_system_prompt("2026-09-14T00:00:00")
+
+    def test_get_current_time_returns_server_time_and_timezone(self):
+        now = datetime(2026, 9, 14, 15, 30, 0, tzinfo=BUSINESS_TZ)
+        with patch.object(tools, "business_now", return_value=now):
+            content, artifact = tools.get_current_time.func()
+            message = tools.get_current_time.invoke(
+                {"name": "get_current_time", "args": {}, "id": "call-1", "type": "tool_call"}
+            )
+        data = json.loads(content)
+        self.assertEqual(data["current_time"], "2026-09-14 15:30:00")
+        self.assertEqual(data["timezone"], "Asia/Shanghai")
+        self.assertEqual(artifact["data"], data)
+        self.assertEqual(message.artifact["data"], data)
 
     def test_recent_rain_excludes_future_and_handles_missing(self):
         now = datetime(2026, 9, 14, 0, 5, tzinfo=BUSINESS_TZ)
@@ -259,10 +258,17 @@ class PromptTimeTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_get_current_time_async_tool_call(self):
+        now = datetime(2026, 9, 14, 15, 30, 0, tzinfo=BUSINESS_TZ)
+        with patch.object(tools, "business_now", return_value=now):
+            content = await tools.get_current_time.ainvoke({})
+        data = json.loads(content)
+        self.assertEqual(data["current_time"], "2026-09-14 15:30:00")
+        self.assertEqual(data["timezone"], "Asia/Shanghai")
+
     async def test_disabled_recommendations_skip_model_call(self):
         state = {
             "messages": [HumanMessage(content="查询站点"), AIMessage(content="查询完成")],
-            "business_time": "2026-09-14T10:00:00+08:00",
         }
         settings = SimpleNamespace(recommend_enabled=False)
         with patch.object(graph, "get_settings", return_value=settings), patch.object(
