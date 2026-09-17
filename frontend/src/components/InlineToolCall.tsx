@@ -10,16 +10,46 @@ import {
   ChevronRight,
   Loader2,
 } from 'lucide-react';
-import { ToolCallInfo } from '../services/api';
+import type { ContentBlock, ToolMessage } from '@langchain/core/messages';
+import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
 import { ErrorBoundary } from './ErrorBoundary';
+import type {
+  ChartPoint,
+  SiteEnvironmentArtifact,
+  SiteStation,
+  ToolCallImage,
+} from './toolArtifacts';
 
 const SiteEnvironmentCard = React.lazy(() =>
   import('./SiteEnvironmentCard').then((module) => ({ default: module.SiteEnvironmentCard }))
 );
 
+type ToolCallBlock = Extract<ContentBlock.Standard, { type: 'tool_call' }>;
+type LiveToolCall = AssembledToolCall;
+
 interface InlineToolCallProps {
-  toolCall: ToolCallInfo;
+  toolCall: ToolCallBlock;
+  liveToolCall?: LiveToolCall;
+  toolMessage?: ToolMessage;
 }
+
+const isRecord = (value: unknown): value is Record<string, any> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const isSiteStation = (value: unknown): value is SiteStation =>
+  isRecord(value) &&
+  typeof value.station_uuid === 'string' &&
+  typeof value.station_name === 'string' &&
+  value.coordinate_system === 'WGS84';
+
+const isSiteEnvironmentArtifact = (value: unknown): value is SiteEnvironmentArtifact =>
+  isRecord(value) &&
+  value.coordinate_system === 'WGS84' &&
+  isSiteStation(value.center_station) &&
+  Array.isArray(value.group_stations) &&
+  value.group_stations.every(isSiteStation) &&
+  (value.sources === undefined || Array.isArray(value.sources)) &&
+  (value.limitations === undefined || Array.isArray(value.limitations));
 
 export const toFiniteGnssNumber = (value: unknown): number | null => {
   if (value === null || value === undefined) return null;
@@ -34,20 +64,43 @@ export const formatGnssValue = (value: unknown): string => {
   return parsed === null ? '—' : parsed.toFixed(3);
 };
 
-export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
+export const InlineToolCall: React.FC<InlineToolCallProps> = ({
+  toolCall,
+  liveToolCall,
+  toolMessage,
+}) => {
   const [expanded, setExpanded] = useState(false);
+  const isRunning = !toolMessage && liveToolCall?.status === 'running';
+  const isError = toolMessage
+    ? toolMessage.status === 'error'
+    : liveToolCall?.status === 'error';
+  const artifact = isRecord(toolMessage?.artifact) ? toolMessage.artifact : undefined;
+  const artifactData = isRecord(artifact?.data) ? artifact.data : undefined;
+  const artifactImages = Array.isArray(artifact?.images)
+    ? artifact.images.filter(
+        (image): image is ToolCallImage =>
+          isRecord(image) && typeof image.name === 'string' && typeof image.png_base64 === 'string'
+      )
+    : [];
+  const chartPoints = Array.isArray(artifact?.chart_points)
+    ? artifact.chart_points.filter(
+        (point): point is ChartPoint => isRecord(point) && typeof point.t === 'string'
+      )
+    : [];
+  const siteEnvironment = isSiteEnvironmentArtifact(artifact?.site_environment)
+    ? artifact.site_environment
+    : undefined;
 
-  // 仅消费服务端明确用于展示的 artifact.data，不解析模型 content 或历史包装。
-  const data: any = toolCall.data ? { ...toolCall.data } : null;
-  // chart_points 随当前工具 artifact 转发（全量数据，不进入 LLM 上下文），
-  // 合并到展示数据中供图表组件使用。
-  if (data && toolCall.chartPoints?.length && !data.chart_points) {
-    data.chart_points = toolCall.chartPoints;
+  // 业务展示严格只读取 ToolMessage.artifact，不解析模型可见 content。
+  const data: any = artifactData ? { ...artifactData } : null;
+  if (data) {
+    if (chartPoints.length) data.chart_points = chartPoints;
+    else delete data.chart_points;
   }
 
   // 图标
   const renderIcon = () => {
-    if (toolCall.status === 'loading') {
+    if (isRunning) {
       return <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />;
     }
     if (toolCall.name?.includes('group')) {
@@ -73,7 +126,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
 
   // 生成简约的中文动作文案（类似“运行了命令”）
   const getActionText = () => {
-    const suffix = toolCall.status === 'error' ? '（未完成）' : '';
+    const suffix = isError ? '（未完成）' : '';
     if (toolCall.name === 'list_station_groups') {
       return `查询监测点分组${suffix}`;
     }
@@ -130,8 +183,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
 
   // 渲染简约全量数据表格（带吸顶表头与独立顺畅滚动）
   const renderTableContent = () => {
-    // 0a. 工具执行中：不展示任何结果形态，更不能显示“执行成功”
-    if (toolCall.status === 'loading') {
+    if (isRunning) {
       return (
         <div className="flex items-center gap-2 p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
           <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />
@@ -139,13 +191,13 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
         </div>
       );
     }
-    if (toolCall.status === 'error' && !data?.chart_points) return null;
+    if (isError && !data?.chart_points) return null;
     // 0b. 视觉复核卡片：优先展示后端渲染的 PNG 图表（artifact），无图时兑底 SVG
     if (data?.chart_points && Array.isArray(data.chart_points)) {
       const obs = data.observations || {};
       const candidates: any[] = obs.candidates || [];
-      const artifactImages = (toolCall.images || []).filter(
-        (img) => img?.png_base64 && CHART_TITLES[img.name]
+      const visibleImages = artifactImages.filter(
+        (image) => CHART_TITLES[image.name]
       );
       return (
         <div className="space-y-1.5">
@@ -156,16 +208,16 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
             </span>
             <span>
               {data.total_points ?? data.chart_points.length} 条数据 ·
-              {artifactImages.length > 0
-                ? ` ${artifactImages.length} 张分析图`
+              {visibleImages.length > 0
+                ? ` ${visibleImages.length} 张分析图`
                 : ` 展示 ${data.chart_points.length} 点`}
             </span>
           </div>
 
           {/* 后端渲染的分析图 PNG（原始时序 / 累计位移 / 合成位移） */}
-          {artifactImages.length > 0 && (
+          {visibleImages.length > 0 && (
             <div className="space-y-1.5">
-              {artifactImages.map((img, i) => {
+              {visibleImages.map((img, i) => {
                 const title = img.title || CHART_TITLES[img.name] || img.name;
                 return (
                   <figure key={img.name} className="border border-neutral-200/90 rounded-lg bg-white shadow-sm overflow-hidden max-w-3xl">
@@ -185,7 +237,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
           )}
 
           {/* 兑底：无 artifact 图片时用 chart_points 渲染 SVG 迷你时序图 */}
-          {artifactImages.length === 0 && (
+          {visibleImages.length === 0 && (
             <div className="border border-neutral-200/90 rounded-lg bg-white p-3 shadow-sm space-y-2 max-w-3xl">
               {(['n', 'e', 'u'] as const).map((key) => {
                 const label =
@@ -592,7 +644,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
         />
       </div>
 
-      {toolCall.status === 'error' && (
+      {isError && (
         <div role="alert" className="mt-1 max-w-3xl rounded-lg border border-amber-200/80 bg-amber-50/60 p-2.5 text-xs text-amber-900">
           {typeof data?.message === 'string' && data.message ? data.message : '未获得结果'}
         </div>
@@ -603,17 +655,17 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({ toolCall }) => {
       {expanded && (
         <div
           className={`mt-1.5 max-w-3xl ${
-            toolCall.siteEnvironment
+            siteEnvironment
               ? ''
               : 'max-h-[28rem] overflow-y-auto overscroll-contain animate-in fade-in duration-150'
           }`}
         >
-          {toolCall.siteEnvironment ? (
+          {siteEnvironment ? (
             <ErrorBoundary fallbackTitle="现场环境地图渲染异常">
               <React.Suspense
                 fallback={<div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-500">正在加载地图组件…</div>}
               >
-                <SiteEnvironmentCard environment={toolCall.siteEnvironment} />
+                <SiteEnvironmentCard environment={siteEnvironment} />
               </React.Suspense>
             </ErrorBoundary>
           ) : (

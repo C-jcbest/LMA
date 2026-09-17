@@ -11,19 +11,25 @@ import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ToastContainer, useToast } from '../src/components/Toast';
 import { RunFailureCard } from '../src/components/RunFailureCard';
 import { STREAM_CONTROLLER } from '@langchain/react';
-import { getIncompleteToolCallMessageUpdates, projectLangGraphMessages, projectThreadSessions } from '../src/services/api';
+import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import { getIncompleteToolCallMessageUpdates, projectThreadSessions } from '../src/services/api';
+import { groupMessagesForDisplay } from '../src/components/messageDisplay';
 
 describe('会话关键路径集成回归', () => {
-  it('官方内部摘要不成为用户气泡，普通同文消息仍展示', () => {
-    const raw = [
-      { type: 'human', id: 'summary', content: '历史摘要', additional_kwargs: { lc_source: 'summarization' } },
-      { type: 'human', id: 'user', content: '历史摘要' },
-      { type: 'ai', id: 'answer', content: '回答' },
-    ];
-    expect(projectLangGraphMessages(raw)).toEqual([
-      { id: 'user', role: 'user', content: '历史摘要', created_at: undefined },
-      { id: 'answer', role: 'assistant', content: '回答', created_at: undefined },
-    ]);
+  it('官方内部摘要不成为用户气泡，分组保留原始 BaseMessage 引用', () => {
+    const summary = new HumanMessage({
+      id: 'summary',
+      content: '历史摘要',
+      additional_kwargs: { lc_source: 'summarization' },
+    });
+    const user = new HumanMessage({ id: 'user', content: '历史摘要' });
+    const answer = new AIMessage({ id: 'answer', content: '回答' });
+
+    const turns = groupMessagesForDisplay([summary, user, answer]);
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toEqual({ kind: 'human', message: user });
+    expect(turns[1]).toMatchObject({ kind: 'assistant', messages: [answer] });
+    expect(turns[1].kind === 'assistant' && turns[1].messages[0]).toBe(answer);
   });
   it('停止后整批未完成的 AI tool-call 消息生成 RemoveMessage，UI 不保留工具', () => {
     const raw = [
@@ -38,64 +44,68 @@ describe('会话关键路径集成回归', () => {
 
     expect(getIncompleteToolCallMessageUpdates(raw).map((message) => ({ type: message.type, id: message.id })))
       .toEqual([{ type: 'remove', id: 'a1' }]);
-    expect(projectLangGraphMessages([raw[0]])).toEqual([{ id: 'u1', role: 'user', content: '查询站点', created_at: undefined }]);
+    expect(groupMessagesForDisplay([new HumanMessage(raw[0] as any)]))
+      .toMatchObject([{ kind: 'human', message: { id: 'u1', content: '查询站点' } }]);
   });
 
-  it('已完成的 ToolMessage 不会被误判为待补齐', () => {
-    const raw = [
-      { type: 'ai', tool_calls: [{ id: 'call-1', name: 'list_stations', args: {} }] },
-      { type: 'tool', tool_call_id: 'call-1', name: 'list_stations', content: '{"ok":true}' },
-      { type: 'ai', content: '查询完成。' },
-    ];
+  it('已完成的 ToolMessage 与 AI tool call 在同一助手回合保留官方对象', () => {
+    const aiCall = new AIMessage({
+      content: '',
+      tool_calls: [{ id: 'call-1', name: 'list_stations', args: {} }],
+    });
+    const toolResult = new ToolMessage({
+      tool_call_id: 'call-1',
+      name: 'list_stations',
+      content: '{"ok":true}',
+    });
+    const answer = new AIMessage('查询完成。');
 
-    expect(getIncompleteToolCallMessageUpdates(raw)).toEqual([]);
-    const projected = projectLangGraphMessages(raw);
-    expect(projected[0].parts?.[0]).toMatchObject({ type: 'tool', toolCall: { status: 'success' } });
-    expect(projected[0].parts?.[1]).toMatchObject({ type: 'text', content: '查询完成。' });
-  });
-
-  it('模型思考按调用顺序投影，并可折叠展示思考用时与差异化正文', async () => {
-    const raw = [
-      {
-        type: 'ai',
-        id: 'a1',
-        content: '',
-        additional_kwargs: {
-          reasoning_content: '先确认目标站点，再查询监测数据。',
-          lma_thinking_duration_ms: 1250,
-        },
-        tool_calls: [{ id: 'call-1', name: 'list_stations', args: {} }],
-      },
-      { type: 'tool', tool_call_id: 'call-1', name: 'list_stations', content: '{"ok":true}' },
-      {
-        type: 'ai',
-        id: 'a2',
-        content: '查询完成。',
-        additional_kwargs: {
-          reasoning_content: '根据返回结果组织结论。',
-          lma_thinking_duration_ms: 2100,
-        },
-      },
-    ];
-
-    const projected = projectLangGraphMessages(raw);
-    expect(projected[0].parts?.map((part) => part.type)).toEqual([
-      'thinking',
-      'tool',
-      'thinking',
-      'text',
+    expect(getIncompleteToolCallMessageUpdates([aiCall, toolResult, answer])).toEqual([]);
+    const turns = groupMessagesForDisplay([aiCall, toolResult, answer]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].kind === 'assistant' && turns[0].messages).toEqual([
+      aiCall,
+      toolResult,
+      answer,
     ]);
+  });
+
+  it('优先展示标准 contentBlocks reasoning，不读取耗时字段', async () => {
+    const firstAI = new AIMessage({
+      id: 'a1',
+      contentBlocks: [
+        { type: 'reasoning', reasoning: '先确认目标站点，再查询监测数据。' },
+        { type: 'tool_call', id: 'call-1', name: 'list_stations', args: {} },
+      ],
+      additional_kwargs: {
+        reasoning_content: '不应重复展示的兼容内容',
+      },
+    });
+    const toolResult = new ToolMessage({
+      tool_call_id: 'call-1',
+      name: 'list_stations',
+      content: '{"ok":true}',
+      artifact: { data: { total: 0, stations: [] } },
+    });
+    const finalAI = new AIMessage({
+      id: 'a2',
+      contentBlocks: [
+        { type: 'reasoning', reasoning: '根据返回结果组织结论。' },
+        { type: 'text', text: '查询完成。' },
+      ],
+    });
 
     render(
       <ChatWindow
-        messages={projected}
+        messages={[firstAI, toolResult, finalAI]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+        threadLoading={false} runActive={false} stopReconciling={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
     );
-    expect(screen.getByText('1.3 秒')).toBeInTheDocument();
+    expect(screen.queryByText('1.3 秒')).not.toBeInTheDocument();
+    expect(screen.queryByText('不应重复展示的兼容内容')).not.toBeInTheDocument();
     expect(screen.queryByText('先确认目标站点，再查询监测数据。')).not.toBeInTheDocument();
     await userEvent.click(screen.getAllByRole('button', { name: /已思考/ })[0]);
     expect(screen.getByText('先确认目标站点，再查询监测数据。')).toBeInTheDocument();
@@ -105,9 +115,9 @@ describe('会话关键路径集成回归', () => {
     const onSend = vi.fn();
     render(
       <ChatWindow
-        messages={[{ id: 'a1', role: 'assistant', content: '分析完成。' }]}
+        messages={[new AIMessage({ id: 'a1', content: '分析完成。' })]}
         onSendMessage={onSend}
-        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+        threadLoading={false} runActive={false} stopReconciling={false}
         recommendations={['查看同组其他监测点']}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -166,40 +176,52 @@ describe('会话关键路径集成回归', () => {
       .toEqual([{ type: 'remove', id: 'a1' }]);
   });
 
-  it('总结前停止后发送继续，旧工具结果、继续消息和新 AI 回复保持独立顺序', () => {
-    const projected = projectLangGraphMessages([
-      { type: 'human', id: 'u1', content: '查询监测数据' },
-      { type: 'ai', id: 'a1', content: '', tool_calls: [{ id: 'c1', name: 'get_daily_gnss_data', args: {} }] },
-      { type: 'tool', id: 't1', tool_call_id: 'c1', name: 'get_daily_gnss_data', content: '完成' },
-      { type: 'human', id: 'u2', content: '继续' },
-      { type: 'ai', id: 'a2', content: '这是新 Run 的总结。' },
+  it('停止后继续提问时，旧助手回合与新回合保持独立且引用不变', () => {
+    const firstUser = new HumanMessage({ id: 'u1', content: '查询监测数据' });
+    const toolAI = new AIMessage({
+      id: 'a1',
+      content: '',
+      tool_calls: [{ id: 'c1', name: 'get_daily_gnss_data', args: {} }],
+    });
+    const toolResult = new ToolMessage({
+      id: 't1',
+      tool_call_id: 'c1',
+      name: 'get_daily_gnss_data',
+      content: '完成',
+    });
+    const secondUser = new HumanMessage({ id: 'u2', content: '继续' });
+    const secondAnswer = new AIMessage({ id: 'a2', content: '这是新 Run 的总结。' });
+
+    const turns = groupMessagesForDisplay([
+      firstUser,
+      toolAI,
+      toolResult,
+      secondUser,
+      secondAnswer,
     ]);
-    expect(projected.map((message) => ({ role: message.role, content: message.content }))).toEqual([
-      { role: 'user', content: '查询监测数据' },
-      { role: 'assistant', content: '' },
-      { role: 'user', content: '继续' },
-      { role: 'assistant', content: '这是新 Run 的总结。' },
-    ]);
-    expect(projected[1].parts?.[0]).toMatchObject({ type: 'tool', toolCall: { id: 'c1', status: 'success' } });
+    expect(turns.map((turn) => turn.kind)).toEqual(['human', 'assistant', 'human', 'assistant']);
+    expect(turns[1].kind === 'assistant' && turns[1].messages).toEqual([toolAI, toolResult]);
+    expect(turns[3].kind === 'assistant' && turns[3].messages[0]).toBe(secondAnswer);
   });
 
   it('GNSS 空值与非有限值显示为缺测，不会转换为零', async () => {
     render(
       <InlineToolCall
-        toolCall={{
-          id: 'call-gnss',
+        toolCall={{ type: 'tool_call', id: 'call-gnss', name: 'get_daily_gnss_data', args: {} }}
+        toolMessage={new ToolMessage({
+          tool_call_id: 'call-gnss',
           name: 'get_daily_gnss_data',
-          display_name: 'GNSS 数据',
+          content: '模型内容',
           status: 'success',
-          data: {
+          artifact: { data: {
             station_name: '测试站',
             points: [
               { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
               { time: '2026-09-15 09:00:00', n: Number.NaN, e: Number.POSITIVE_INFINITY, u: '12.5' },
               { time: '2026-09-15 10:00:00', n: 0, e: '0', u: 0 },
             ],
-          },
-        }}
+          } },
+        })}
       />
     );
     await userEvent.click(screen.getByText('获取北斗GNSS日监测数据'));
@@ -211,20 +233,23 @@ describe('会话关键路径集成回归', () => {
   it('GNSS 折线在缺测点处分段，不把缺测绘制为零或跨段连线', async () => {
     const { container } = render(
       <InlineToolCall
-        toolCall={{
-          id: 'call-chart',
+        toolCall={{ type: 'tool_call', id: 'call-chart', name: 'analyze_gnss_chart', args: {} }}
+        toolMessage={new ToolMessage({
+          tool_call_id: 'call-chart',
           name: 'analyze_gnss_chart',
-          display_name: '视觉复核',
+          content: '模型内容',
           status: 'success',
-          data: { station_name: '测试站', observations: {}, total_points: 5 },
-          chartPoints: [
-            { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
-            { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
-            { t: '2026-09-15 10:00:00', n: null, e: '', u: Number.NaN },
-            { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
-            { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
-          ],
-        }}
+          artifact: {
+            data: { station_name: '测试站', observations: {}, total_points: 5 },
+            chart_points: [
+              { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
+              { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
+              { t: '2026-09-15 10:00:00', n: null, e: '', u: Number.NaN },
+              { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
+              { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
+            ],
+          },
+        })}
       />
     );
     await userEvent.click(screen.getByText('视觉复核'));
@@ -236,21 +261,20 @@ describe('会话关键路径集成回归', () => {
   it('站点状态分别展示，旧数字状态和缺失类型均显示未知', async () => {
     render(
       <InlineToolCall
-        toolCall={{
-          id: 'call-stations',
+        toolCall={{ type: 'tool_call', id: 'call-stations', name: 'list_stations', args: {} }}
+        toolMessage={new ToolMessage({
+          tool_call_id: 'call-stations',
           name: 'list_stations',
-          display_name: '监测点列表',
+          content: '模型内容',
           status: 'success',
-          data: {
-            stations: [
-              { station_name: 'A', station_status: '正常', station_type: '基准站' },
-              { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
-              { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
-              { station_name: 'D', station_status: '故障', station_type: '中继站' },
-              { station_name: 'E', station_status: 10 },
-            ],
-          },
-        }}
+          artifact: { data: { stations: [
+            { station_name: 'A', station_status: '正常', station_type: '基准站' },
+            { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
+            { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
+            { station_name: 'D', station_status: '故障', station_type: '中继站' },
+            { station_name: 'E', station_status: 10 },
+          ] } },
+        })}
       />
     );
     await userEvent.click(screen.getByText('查询监测点列表'));
@@ -264,13 +288,14 @@ describe('会话关键路径集成回归', () => {
   it('未知工具结果不提供原始字段查看入口', async () => {
     const { container } = render(
       <InlineToolCall
-        toolCall={{
-          id: 'call-internal',
+        toolCall={{ type: 'tool_call', id: 'call-internal', name: 'internal_step', args: {} }}
+        toolMessage={new ToolMessage({
+          tool_call_id: 'call-internal',
           name: 'internal_step',
-          display_name: '',
+          content: 'MODEL_ONLY',
           status: 'success',
-          data: { internal_field: 'value' },
-        }}
+          artifact: { data: { internal_field: 'value' } },
+        })}
       />
     );
     expect(screen.queryByText('internal_step')).not.toBeInTheDocument();
@@ -280,58 +305,107 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
   });
 
-  it('业务失败按官方 status 展示，原因无需展开，模型文本和内部字段不可见', async () => {
-    const projected = projectLangGraphMessages([
-      { type: 'ai', tool_calls: [{ id: 'c1', name: 'get_daily_gnss_data', args: {} }] },
-      { type: 'tool', name: 'get_daily_gnss_data', tool_call_id: 'c1', status: 'error',
-        content: 'MODEL_ONLY net_change_mm secret://internal',
-        artifact: { data: { message: '未找到指定监测点，请确认站点。' }, error: { category: 'business' }, internal: 'PRIVATE' } },
-      { type: 'ai', content: '请确认监测点名称。' },
-    ]);
-    const part = projected[0].parts?.[0];
-    expect(part).toMatchObject({ type: 'tool', toolCall: { status: 'error' } });
-    if (part?.type !== 'tool') throw new Error('缺少工具结果');
-    const { container } = render(<InlineToolCall toolCall={part.toolCall} />);
+  it('业务失败由 ToolMessage.status 决定，原因只读取 artifact.data.message', async () => {
+    const { container } = render(
+      <InlineToolCall
+        toolCall={{ type: 'tool_call', id: 'c1', name: 'get_daily_gnss_data', args: {} }}
+        toolMessage={new ToolMessage({
+          name: 'get_daily_gnss_data',
+          tool_call_id: 'c1',
+          status: 'error',
+          content: 'MODEL_ONLY net_change_mm secret://internal',
+          artifact: {
+            data: { message: '未找到指定监测点，请确认站点。' },
+            error: { category: 'business' },
+            internal: 'PRIVATE',
+          },
+        })}
+      />
+    );
     expect(screen.getByRole('alert')).toHaveTextContent('未找到指定监测点');
     await userEvent.click(screen.getByText(/获取北斗GNSS日监测数据/));
     expect(container.textContent).not.toMatch(/MODEL_ONLY|net_change_mm|secret:|PRIVATE|business/);
   });
 
-  it('成功工具仅从 artifact.data 取业务展示，content 不作为界面数据源', () => {
-    const projected = projectLangGraphMessages([
-      { type: 'ai', tool_calls: [{ id: 'c1', name: 'list_stations', args: {} }] },
-      { type: 'tool', name: 'list_stations', tool_call_id: 'c1', status: 'success',
-        content: '{"internal_field":"MODEL_ONLY"}', artifact: { data: { total: 0, stations: [] } } },
-      { type: 'ai', content: '已查询。' },
-    ]);
-    expect(projected[0].parts?.[0]).toMatchObject({ type: 'tool', toolCall: { data: { total: 0, stations: [] } } });
-    expect(JSON.stringify(projected)).not.toContain('MODEL_ONLY');
+  it('成功工具只从 artifact.data 取业务展示，content 不作为界面数据源', async () => {
+    const { container } = render(
+      <InlineToolCall
+        toolCall={{ type: 'tool_call', id: 'c1', name: 'list_stations', args: {} }}
+        toolMessage={new ToolMessage({
+          name: 'list_stations',
+          tool_call_id: 'c1',
+          status: 'success',
+          content: '{"internal_field":"MODEL_ONLY"}',
+          artifact: { data: { total: 0, stations: [] } },
+        })}
+      />
+    );
+    await userEvent.click(screen.getByText('查询监测点列表'));
+    expect(container.textContent).toContain('共查询到 0 个监测点详情');
+    expect(container.textContent).not.toContain('MODEL_ONLY');
   });
 
   it('视觉复核失败的原因可见，已获得的图表仍可展开查看', async () => {
-    render(<InlineToolCall toolCall={{ id: 'c1', name: 'analyze_gnss_chart', display_name: '', status: 'error',
-      data: { station_name: '测试站', message: '视觉模型未配置，图表可供人工查看。' },
-      chartPoints: [{ t: '08:00', n: 1, e: 2, u: 3 }, { t: '09:00', n: 2, e: 3, u: 4 }],
-      images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
-    }} />);
+    render(
+      <InlineToolCall
+        toolCall={{ type: 'tool_call', id: 'c1', name: 'analyze_gnss_chart', args: {} }}
+        toolMessage={new ToolMessage({
+          name: 'analyze_gnss_chart',
+          tool_call_id: 'c1',
+          status: 'error',
+          content: '模型内容',
+          artifact: {
+            data: { station_name: '测试站', message: '视觉模型未配置，图表可供人工查看。' },
+            chart_points: [{ t: '08:00', n: 1, e: 2, u: 3 }, { t: '09:00', n: 2, e: 3, u: 4 }],
+            images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+          },
+        })}
+      />
+    );
     expect(screen.getByRole('alert')).toHaveTextContent('视觉模型未配置');
     expect(screen.queryByRole('img')).not.toBeInTheDocument();
     await userEvent.click(screen.getByText('视觉复核（未完成）'));
     expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
   });
 
-  it('官方预算错误只展示中文限制说明，内部异常不直接展示', () => {
-    const messages = projectLangGraphMessages([
-      { type: 'ai', tool_calls: [{ id: 'c', name: 'list_stations', args: {} }] },
-      { type: 'tool', tool_call_id: 'c', name: 'list_stations', status: 'error',
-        content: 'Tool call limit exceeded. Do not make additional tool calls.' },
-      { type: 'ai', content: '说明限制。' },
-    ]);
-    const part = messages[0].parts?.[0];
-    if (part?.type !== 'tool') throw new Error('缺少工具');
-    render(<InlineToolCall toolCall={part.toolCall} />);
+  it('调用预算错误只消费 artifact.data.message，不匹配英文 content', () => {
+    render(
+      <InlineToolCall
+        toolCall={{ type: 'tool_call', id: 'c', name: 'list_stations', args: {} }}
+        toolMessage={new ToolMessage({
+          tool_call_id: 'c',
+          name: 'list_stations',
+          status: 'error',
+          content: 'UNTRUSTED_PROVIDER_ERROR',
+          artifact: { data: { message: '本轮查询次数已达到上限，未执行此查询；请依据已有证据继续分析。' } },
+        })}
+      />
+    );
     expect(screen.getByRole('alert')).toHaveTextContent('查询次数已达到上限');
-    expect(screen.queryByText(/Tool call limit/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/UNTRUSTED_PROVIDER_ERROR/)).not.toBeInTheDocument();
+  });
+
+  it('畸形 artifact 字段 fail-closed，不扩散为聊天窗口异常', async () => {
+    render(
+      <InlineToolCall
+        toolCall={{ type: 'tool_call', id: 'bad', name: 'internal_step', args: {} }}
+        toolMessage={new ToolMessage({
+          tool_call_id: 'bad',
+          name: 'internal_step',
+          status: 'success',
+          content: 'UNTRUSTED',
+          artifact: {
+            data: 'not-an-object',
+            images: { filter: 'not-a-function' },
+            chart_points: [null, { t: 1 }],
+            site_environment: { coordinate_system: 'WGS84' },
+          },
+        })}
+      />
+    );
+    await userEvent.click(screen.getByText('执行工具查询'));
+    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
+    expect(screen.queryByText('UNTRUSTED')).not.toBeInTheDocument();
   });
 
   it('消息时间只显示服务端时间并按 Asia/Shanghai 格式化', () => {
@@ -347,7 +421,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+        threadLoading={false} runActive={false} stopReconciling={false}
         contextUsage={{
           input_tokens: 250,
           context_limit_tokens: 1000,
@@ -378,7 +452,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+        threadLoading={false} runActive={false} stopReconciling={false}
         contextUsage={{ context_limit_tokens: 1_048_576 }}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -390,9 +464,9 @@ describe('会话关键路径集成回归', () => {
   it('推荐生成失败时静默降级不向用户展示错误，也不生成固定推荐', () => {
     render(
       <ChatWindow
-        messages={[{ role: 'assistant', content: '分析完成。' }]}
+        messages={[new AIMessage('分析完成。')]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
+        threadLoading={false} runActive={false} stopReconciling={false}
         recommendationError="下一步建议返回格式无效。"
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -412,56 +486,30 @@ describe('会话关键路径集成回归', () => {
     ]);
   });
 
-  it('流式输出中支持从 content 块和 think 标签提取思考内容，并默认展开实时查看', () => {
-    // 场景 1：LangGraph protocol v2 content 块流
-    const rawBlocks = [
-      {
-        type: 'ai',
-        id: 'a1',
-        content: [
-          { type: 'reasoning', reasoning: '正在实时分析斜坡变形特征…' },
-          { type: 'text', text: '结论如下：' },
-        ],
+  it('标准 reasoning 缺失时只读取 additional_kwargs.reasoning_content 临时兼容入口', () => {
+    const message = new AIMessage({
+      id: 'a2',
+      content: '',
+      additional_kwargs: {
+        reasoning_content: '正在对比历史雨量与位移数据',
+        reasoning: '禁止读取的旧字段',
+        thinking: '禁止读取的旧字段',
       },
-    ];
-    const projected1 = projectLangGraphMessages(rawBlocks);
-    expect(projected1[0].parts?.[0]).toMatchObject({
-      type: 'thinking',
-      thinking: { content: '正在实时分析斜坡变形特征…' },
-    });
-    expect(projected1[0].parts?.[1]).toMatchObject({
-      type: 'text',
-      content: '结论如下：',
+      response_metadata: { reasoning_content: '禁止读取的旧字段' },
     });
 
-    // 场景 2：流式输出中未闭合的 <think> 标签（正在流式思考中）
-    const rawStreamingThink = [
-      {
-        type: 'ai',
-        id: 'a2',
-        content: '<think>正在对比历史雨量与位移数据',
-      },
-    ];
-    const projected2 = projectLangGraphMessages(rawStreamingThink);
-    expect(projected2[0].parts?.[0]).toMatchObject({
-      type: 'thinking',
-      thinking: { content: '正在对比历史雨量与位移数据' },
-    });
-    // 思考尚未结束时，正文为空
-    expect(projected2[0].content).toBe('');
-
-    // 场景 3：正在思考状态下（isActive=true）思考过程默认展开可直接查看
     render(
       <ChatWindow
-        messages={projected2}
+        messages={[message]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive stopReconciling={false} hasRunningTool={false}
+        threadLoading={false} runActive stopReconciling={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
     );
     expect(screen.getByText('正在思考')).toBeInTheDocument();
     expect(screen.getByText('正在对比历史雨量与位移数据')).toBeInTheDocument();
+    expect(screen.queryByText('禁止读取的旧字段')).not.toBeInTheDocument();
   });
 
   it('删除会话时具备确认步骤：点击删除弹出确认弹窗，取消不删除，确认后才调用删除', async () => {
@@ -518,7 +566,7 @@ describe('会话关键路径集成回归', () => {
 
 it('新建会话的中央消息区域为空白，保留输入入口', () => {
   render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading={false} runActive={false}
-    stopReconciling={false} hasRunningTool={false}
+    stopReconciling={false}
     isSidebarCollapsed={false} onToggleSidebar={vi.fn()} isNewSessionDraft />);
   expect(screen.getByLabelText('对话消息').textContent).toBe('');
   expect(screen.getByLabelText('对话消息').querySelectorAll('p,h3,svg')).toHaveLength(0);
@@ -527,7 +575,7 @@ it('新建会话的中央消息区域为空白，保留输入入口', () => {
 
 it('Thread hydration 只显示历史加载态，不显示 Stop 或 AI 思考', () => {
   render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading runActive={false}
-    stopReconciling={false} hasRunningTool={false}
+    stopReconciling={false}
     isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
   expect(screen.getByText('正在加载会话…')).toBeInTheDocument();
   expect(screen.queryByTitle('停止生成')).not.toBeInTheDocument();
@@ -537,9 +585,9 @@ it('Thread hydration 只显示历史加载态，不显示 Stop 或 AI 思考', (
 
 it('Run active 才显示 Stop 和思考；Stop reconciliation 允许输入但禁止发送', async () => {
   const props = {
-    messages: [{ id: 'u1', role: 'user' as const, content: '查询' }],
+    messages: [new HumanMessage({ id: 'u1', content: '查询' })],
     onSendMessage: vi.fn(), threadLoading: false, runActive: true,
-    stopReconciling: false, hasRunningTool: false,
+    stopReconciling: false,
     isSidebarCollapsed: false, onToggleSidebar: vi.fn(),
   };
   const mounted = render(<ChatWindow {...props} />);
@@ -557,21 +605,48 @@ it('Run active 才显示 Stop 和思考；Stop reconciliation 允许输入但禁
   expect(screen.getByTitle('正在结束本轮')).toBeDisabled();
 });
 
-it('工具是否仍在执行来自官方 Tool projection，不把 Run active 等同于工具状态', () => {
-  const message = {
-    id: 'a1', role: 'assistant' as const, content: '',
-    parts: [{ type: 'tool' as const, toolCall: {
-      id: 'c1', name: 'query_weather', display_name: '天气查询', status: 'success' as const,
-    } }],
-  };
-  const mounted = render(<ChatWindow messages={[message]} onSendMessage={vi.fn()} threadLoading={false} runActive
-    stopReconciling={false} hasRunningTool
-    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
-  expect(screen.queryByText('正在根据查询结果整理回答...')).not.toBeInTheDocument();
-  mounted.rerender(<ChatWindow messages={[message]} onSendMessage={vi.fn()} threadLoading={false} runActive
-    stopReconciling={false} hasRunningTool={false}
-    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
-  expect(screen.getByText('正在根据查询结果整理回答...')).toBeInTheDocument();
+it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', async () => {
+  const aiMessage = new AIMessage({
+    id: 'a1',
+    content: '',
+    tool_calls: [
+      { id: 'weather', name: 'query_weather', args: {} },
+      { id: 'stations', name: 'list_stations', args: {} },
+    ],
+  });
+  const stationsResult = new ToolMessage({
+    tool_call_id: 'stations',
+    name: 'list_stations',
+    content: '完成',
+    status: 'success',
+    artifact: { data: { stations: [] } },
+  });
+  const liveCalls = [
+    { name: 'query_weather', callId: 'weather', id: 'weather', namespace: [], input: {}, args: {}, output: null, status: 'running', error: undefined },
+    { name: 'list_stations', callId: 'stations', id: 'stations', namespace: [], input: {}, args: {}, output: {}, status: 'finished', error: undefined },
+  ] as const;
+  const mounted = render(
+    <ChatWindow messages={[aiMessage, stationsResult]} toolCalls={[...liveCalls]}
+      onSendMessage={vi.fn()} threadLoading={false} runActive stopReconciling={false}
+      isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
+  );
+  await userEvent.click(screen.getByText('查询天气数据'));
+  expect(screen.getByText('正在查询，请稍候…')).toBeInTheDocument();
+
+  const weatherResult = new ToolMessage({
+    tool_call_id: 'weather',
+    name: 'query_weather',
+    content: 'UNTRUSTED',
+    status: 'error',
+    artifact: { data: { message: '天气服务暂不可用' } },
+  });
+  mounted.rerender(
+    <ChatWindow messages={[aiMessage, weatherResult, stationsResult]} toolCalls={[liveCalls[0]]}
+      onSendMessage={vi.fn()} threadLoading={false} runActive={false} stopReconciling={false}
+      isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
+  );
+  expect(screen.getByRole('alert')).toHaveTextContent('天气服务暂不可用');
+  expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
 });
 
 it('用户消息直接读取官方 optimistic pending/failed 状态', () => {
@@ -634,10 +709,11 @@ it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成�
   const snapshotMap = new Map([
     ['u1', { parentCheckpointId: 'chk-checkpoint-before-u1', optimisticStatus: 'sent' }],
   ]);
+  const failedHuman = new HumanMessage({ id: 'u1', content: '查询边坡稳定情况' });
   const fakeStream = {
     messages: [
-      { id: 'u1', type: 'human', content: '查询边坡稳定情况' },
-      { id: 'a1', type: 'ai', content: '' },
+      failedHuman,
+      new AIMessage({ id: 'a1', content: '' }),
     ],
     isLoading: false,
     [STREAM_CONTROLLER]: {
@@ -650,12 +726,11 @@ it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成�
   render(
     <ChatWindow
       stream={fakeStream}
-      messages={[{ id: 'u1', role: 'user', content: '查询边坡稳定情况' }]}
+      messages={[failedHuman]}
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
       stopReconciling={false}
-      hasRunningTool={false}
       runError={true}
       onRegenerate={onRegenerate}
       onDismissRunError={onDismiss}
@@ -682,7 +757,6 @@ it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”
       threadLoading={false}
       runActive={false}
       stopReconciling={false}
-      hasRunningTool={false}
       hydrationError={true}
       onReloadThread={onReload}
       onDismissHydrationError={onDismiss}
@@ -701,12 +775,11 @@ it('Stop 收尾异常显示“停止处理未完成 · 重试”并阻止发送�
   const onRetryStop = vi.fn();
   render(
     <ChatWindow
-      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
+      messages={[new HumanMessage({ id: 'u1', content: '测试问题' })]}
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
       stopReconciling={false}
-      hasRunningTool={false}
       stopError={true}
       onRetryStop={onRetryStop}
       isSidebarCollapsed={false}
@@ -742,12 +815,11 @@ it('Sidebar 不展示内部 reachability 状态探针，对话消息区不被不
   // 对话消息区不被不可达状态污染
   render(
     <ChatWindow
-      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
+      messages={[new HumanMessage({ id: 'u1', content: '测试问题' })]}
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
       stopReconciling={false}
-      hasRunningTool={false}
       isSidebarCollapsed={false}
       onToggleSidebar={vi.fn()}
     />
@@ -845,7 +917,7 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
 });
 
 it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，并在 submit 中重传原 HumanMessage，新分支规范历史保持单一 U1', async () => {
-  const lastHumanMsg = { id: 'u1', type: 'human' as const, content: '查询边坡稳定情况' };
+  const lastHumanMsg = new HumanMessage({ id: 'u1', content: '查询边坡稳定情况' });
   const mockSubmit = vi.fn().mockResolvedValue(undefined);
 
   const snapshotMap = new Map([
@@ -855,7 +927,7 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
   const fakeStream = {
     messages: [
       lastHumanMsg,
-      { id: 'a1', type: 'ai', content: '' }, // 失败的 AI turn
+      new AIMessage({ id: 'a1', content: '' }), // 失败的 AI turn
     ],
     isLoading: false,
     submit: mockSubmit,
@@ -878,12 +950,11 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
   render(
     <ChatWindow
       stream={fakeStream}
-      messages={[{ id: 'u1', role: 'user', content: '查询边坡稳定情况' }]}
+      messages={[lastHumanMsg]}
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
       stopReconciling={false}
-      hasRunningTool={false}
       runError={true}
       onRegenerate={onRegenerate}
       isSidebarCollapsed={false}
@@ -913,14 +984,12 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
 
   // 3. 规范历史延续性断言：
   // 新 continuation supersede 旧分支后，新规范历史中仍只有一个 U1，旧失败轮次被替代
-  const newCanonicalHistory = [
-    { type: 'human', id: 'u1-new', content: '查询边坡稳定情况' },
-    { type: 'ai', id: 'a2', content: '边坡整体处于稳定状态。' },
-  ];
-  const projected = projectLangGraphMessages(newCanonicalHistory);
-  expect(projected.filter((m) => m.role === 'user')).toHaveLength(1);
-  expect(projected[0].content).toBe('查询边坡稳定情况');
-  expect(projected[1].content).toBe('边坡整体处于稳定状态。');
+  const canonicalUser = new HumanMessage({ id: 'u1-new', content: '查询边坡稳定情况' });
+  const canonicalAnswer = new AIMessage({ id: 'a2', content: '边坡整体处于稳定状态。' });
+  const turns = groupMessagesForDisplay([canonicalUser, canonicalAnswer]);
+  expect(turns).toHaveLength(2);
+  expect(turns[0]).toEqual({ kind: 'human', message: canonicalUser });
+  expect(turns[1].kind === 'assistant' && turns[1].messages[0]).toBe(canonicalAnswer);
 });
 
 

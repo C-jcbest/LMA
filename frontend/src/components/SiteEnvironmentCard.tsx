@@ -9,7 +9,7 @@ import {
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Compass, Expand, Layers3, MapPin, Mountain, X } from 'lucide-react';
-import { SiteEnvironmentArtifact, SiteStation } from '../services/api';
+import { SiteEnvironmentArtifact, SiteStation } from './toolArtifacts';
 
 interface SiteEnvironmentCardProps {
   environment: SiteEnvironmentArtifact;

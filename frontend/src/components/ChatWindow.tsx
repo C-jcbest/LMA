@@ -12,28 +12,35 @@ import {
   AlertTriangle,
   RotateCcw,
 } from 'lucide-react';
-import { Message, MessagePart } from '../services/api';
 import type { AnyStream } from '@langchain/react';
-import type { BaseMessage } from '@langchain/core/messages';
+import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
+import {
+  AIMessage,
+  BaseMessage,
+  HumanMessage,
+  ToolMessage,
+} from '@langchain/core/messages';
 import { MarkdownMessage } from './MarkdownMessage';
 import { InlineToolCall } from './InlineToolCall';
 import { ThinkingIndicator } from './ThinkingIndicator';
 import { ThinkingBlock } from './ThinkingBlock';
+import { groupMessagesForDisplay } from './messageDisplay';
 import { SummaryCard } from './SummaryCard';
 import { MessageActions } from './MessageActions';
 import { ContextUsage, ContextUsageIndicator } from './ContextUsageIndicator';
 import { RunFailureCard } from './RunFailureCard';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface ChatWindowProps {
   stream?: AnyStream;
-  messages: Message[];
+  messages: BaseMessage[];
+  toolCalls?: AssembledToolCall[];
   contextSummary?: string;
   contextUsage?: ContextUsage;
   onSendMessage: (text: string) => void;
   threadLoading: boolean;
   runActive: boolean;
   stopReconciling: boolean;
-  hasRunningTool: boolean;
   renderOptimisticStatus?: (messageId?: string) => React.ReactNode;
   recommendations?: string[];
   isSidebarCollapsed: boolean;
@@ -54,27 +61,29 @@ interface ChatWindowProps {
 
 const MAX_LENGTH = 3000;
 
-// 消息复制内容：有 parts 时只拼接文本片段（不含工具卡片），否则取正文
-const getMessageText = (msg: Message): string => {
-  if (msg.parts && msg.parts.length > 0) {
-    return msg.parts
-      .filter((p): p is { type: 'text'; content: string } => p.type === 'text')
-      .map((p) => p.content)
-      .join('\n');
-  }
-  return msg.content || '';
+const getCreatedAt = (message: BaseMessage): string | undefined => {
+  const value = message.additional_kwargs.created_at;
+  return typeof value === 'string' ? value : undefined;
 };
+
+const getAssistantText = (messages: Array<AIMessage | ToolMessage>): string =>
+  messages
+    .filter((message): message is AIMessage => AIMessage.isInstance(message))
+    .flatMap((message) => message.contentBlocks)
+    .filter((block): block is Extract<typeof block, { type: 'text' }> => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n');
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({
   stream,
   messages,
+  toolCalls = [],
   contextSummary,
   contextUsage,
   onSendMessage,
   threadLoading,
   runActive,
   stopReconciling,
-  hasRunningTool,
   renderOptimisticStatus,
   recommendations = [],
   isSidebarCollapsed,
@@ -153,8 +162,10 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     '平台当前有权访问的分组和监测点数量是多少？',
   ];
 
-  const lastMessage = messages[messages.length - 1];
-  const waitingForAssistant = runActive && (!lastMessage || lastMessage.role === 'user');
+  const displayTurns = groupMessagesForDisplay(messages);
+  const lastTurn = displayTurns[displayTurns.length - 1];
+  const waitingForAssistant = runActive && (!lastTurn || lastTurn.kind === 'human');
+  const liveToolCalls = new Map(toolCalls.map((toolCall) => [toolCall.callId, toolCall]));
 
   return (
     <div className="flex-1 h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden">
@@ -226,20 +237,26 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         )}
 
-        {messages.map((msg, index) => {
-          const isUser = msg.role === 'user';
-          const isStreamingAssistant =
-            runActive && index === messages.length - 1 && msg.role === 'assistant';
-          const lastPart = msg.parts?.[msg.parts.length - 1];
-          const settlingAfterTool =
-            isStreamingAssistant &&
-            !hasRunningTool &&
-            lastPart?.type === 'tool' &&
-            lastPart.toolCall.status === 'success';
+        {displayTurns.map((turn, index) => {
+          const isUser = turn.kind === 'human';
+          const turnMessages = turn.kind === 'assistant' ? turn.messages : [];
+          const toolMessages = new Map(
+            turnMessages
+              .filter((message): message is ToolMessage => ToolMessage.isInstance(message))
+              .map((message) => [message.tool_call_id, message])
+          );
+          const aiMessages = turnMessages.filter(
+            (message): message is AIMessage => AIMessage.isInstance(message)
+          );
+          const lastAIMessage = aiMessages[aiMessages.length - 1];
+          const isStreamingAssistant = runActive && index === displayTurns.length - 1 && !isUser;
+          const message = isUser ? turn.message : lastAIMessage;
+          const turnKey = isUser ? turn.message.id : turnMessages[0]?.id;
+          const messageText = isUser ? turn.message.text : getAssistantText(turnMessages);
+
           return (
-            <div key={msg.id || index} className="group max-w-4xl mx-auto w-full">
+            <div key={turnKey || index} className="group max-w-4xl mx-auto w-full">
               <div className={`flex items-start gap-3.5 ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
-                {/* 头像 */}
                 {isUser ? (
                   <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-200/80 flex items-center justify-center shrink-0 text-xs font-semibold text-neutral-700 select-none">
                     ME
@@ -250,7 +267,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                   </div>
                 )}
 
-                {/* 消息气泡主体 */}
                 <div
                   className={`min-w-0 flex flex-col ${
                     isUser ? 'max-w-[75%] items-end' : 'flex-1 max-w-full items-start'
@@ -264,42 +280,74 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                     }
                   >
                     {isUser ? (
-                      <MarkdownMessage content={msg.content || ''} />
-                    ) : msg.parts && msg.parts.length > 0 ? (
-                      // 嵌在消息流中按顺序展示各个文本块与行内工具调用
-                      msg.parts.map((part, pIdx) => (
-                        <React.Fragment key={pIdx}>
-                          {part.type === 'tool' ? (
-                            <InlineToolCall toolCall={part.toolCall} />
-                          ) : part.type === 'thinking' ? (
-                            <ThinkingBlock
-                              thinking={part.thinking}
-                              isActive={
-                                isStreamingAssistant &&
-                                part.thinking.duration_ms === undefined &&
-                                pIdx === msg.parts!.length - 1
-                              }
-                            />
-                          ) : (
-                            <MarkdownMessage content={part.content} />
-                          )}
-                        </React.Fragment>
-                      ))
+                      <MarkdownMessage content={turn.message.text} />
                     ) : (
-                      <MarkdownMessage content={msg.content || ''} />
-                    )}
-                    {settlingAfterTool && (
-                      <ThinkingIndicator statusText="正在根据查询结果整理回答..." />
+                      aiMessages.map((aiMessage) => {
+                        const blocks = aiMessage.contentBlocks;
+                        const hasStandardReasoning = blocks.some((block) => block.type === 'reasoning');
+                        const compatibilityReasoning = aiMessage.additional_kwargs.reasoning_content;
+                        const hasFollowupContent = blocks.some(
+                          (block) =>
+                            (block.type === 'text' && Boolean(block.text.trim())) || block.type === 'tool_call'
+                        );
+                        return (
+                          <React.Fragment key={aiMessage.id || turnMessages.indexOf(aiMessage)}>
+                            {!hasStandardReasoning &&
+                              typeof compatibilityReasoning === 'string' &&
+                              compatibilityReasoning.trim() && (
+                                <ThinkingBlock
+                                  content={compatibilityReasoning}
+                                  isActive={
+                                    isStreamingAssistant &&
+                                    aiMessage === lastAIMessage &&
+                                    !hasFollowupContent
+                                  }
+                                />
+                              )}
+                            {blocks.map((block, blockIndex) => {
+                              if (block.type === 'text') {
+                                return block.text ? (
+                                  <MarkdownMessage key={blockIndex} content={block.text} />
+                                ) : null;
+                              }
+                              if (block.type === 'reasoning') {
+                                return block.reasoning ? (
+                                  <ThinkingBlock
+                                    key={blockIndex}
+                                    content={block.reasoning}
+                                    isActive={
+                                      isStreamingAssistant &&
+                                      aiMessage === lastAIMessage &&
+                                      blockIndex === blocks.length - 1
+                                    }
+                                  />
+                                ) : null;
+                              }
+                              if (block.type === 'tool_call') {
+                                return (
+                                  <ErrorBoundary key={block.id || blockIndex} fallbackTitle="工具结果渲染异常">
+                                    <InlineToolCall
+                                      toolCall={block}
+                                      liveToolCall={block.id ? liveToolCalls.get(block.id) : undefined}
+                                      toolMessage={block.id ? toolMessages.get(block.id) : undefined}
+                                    />
+                                  </ErrorBoundary>
+                                );
+                              }
+                              return null;
+                            })}
+                          </React.Fragment>
+                        );
+                      })
                     )}
                   </div>
 
-                  {/* 消息底部工具栏：悬浮显示，当前仅复制 */}
                   <MessageActions
                     align={isUser ? 'right' : 'left'}
-                    getText={() => getMessageText(msg)}
-                    timestamp={msg.created_at}
+                    getText={() => messageText}
+                    timestamp={message ? getCreatedAt(message) : undefined}
                   />
-                  {isUser && renderOptimisticStatus?.(msg.id)}
+                  {isUser && renderOptimisticStatus?.(turn.message.id)}
                 </div>
               </div>
             </div>
@@ -331,7 +379,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             lastHumanMessage={
               [...(stream.messages || [])]
                 .reverse()
-                .find((m: any) => m.type === 'human' || m._getType?.() === 'human') as BaseMessage | undefined
+                .find((message) => HumanMessage.isInstance(message))
             }
             onRegenerate={(checkpointId, message) => onRegenerate?.(checkpointId, message)}
             onDismiss={() => onDismissRunError?.()}

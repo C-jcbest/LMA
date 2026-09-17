@@ -175,8 +175,13 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mounted.rerender(<App />);
     fireEvent.click(screen.getByText('发送测试消息'));
     expect(mock.submit).toHaveBeenCalledTimes(2);
-    expect(mock.submit).toHaveBeenCalledWith(
-      { messages: [{ type: 'human', content: '首条消息' }] },
+    const submittedMessage = mock.submit.mock.calls.at(-1)?.[0].messages[0];
+    expect(submittedMessage?.constructor.name).toBe('HumanMessage');
+    expect(submittedMessage).toMatchObject({
+      type: 'human',
+      content: '首条消息',
+    });
+    expect(mock.submit.mock.calls.at(-1)?.[1]).toEqual(
       expect.objectContaining({ multitaskStrategy: 'reject' })
     );
     expect(mock.submit.mock.calls.at(-1)?.[0]).not.toHaveProperty('command');

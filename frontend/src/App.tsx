@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStream, useToolCalls } from '@langchain/react';
 import type { Client } from '@langchain/langgraph-sdk';
-import type { BaseMessage } from '@langchain/core/messages';
+import { HumanMessage, type BaseMessage } from '@langchain/core/messages';
 import { Sidebar, SidebarSession } from './components/Sidebar';
 import { ChatWindow } from './components/ChatWindow';
 import { ConfigModal } from './components/ConfigModal';
@@ -14,20 +14,18 @@ import {
   LMA_ASSISTANT_ID,
   createLangGraphClient,
   ThreadSession,
-  Message,
   removeIncompleteToolCallMessages,
   generateSessionTitle,
   getSessions,
   getBusySessions,
   mergeSessions,
   getStoredApiUrl,
-  projectLangGraphMessages,
   projectThreadSessions,
   renameSession,
 } from './services/api';
 
 interface LmaState {
-  messages: unknown[];
+  messages: BaseMessage[];
   recommendations?: string[];
   context_usage?: ContextUsage;
 }
@@ -196,7 +194,6 @@ export const App: React.FC = () => {
     onCreated,
   });
   const toolCalls = useToolCalls(stream);
-  const hasRunningTool = toolCalls.some((toolCall) => toolCall.status === 'running');
 
   // 监听 Thread hydration 状态
   useEffect(() => {
@@ -303,11 +300,7 @@ export const App: React.FC = () => {
     return () => { disposed = true; window.clearInterval(timer); };
   }, [client, busyIds]);
 
-  const messages = useMemo<Message[]>(() => {
-    if (isNewSessionDraft) return [];
-    const projected = projectLangGraphMessages((stream.messages || []) as unknown[]);
-    return projected;
-  }, [stream.messages, isNewSessionDraft]);
+  const messages = isNewSessionDraft ? [] : stream.messages;
 
   const recommendations = useMemo(
     () =>
@@ -421,7 +414,7 @@ export const App: React.FC = () => {
     try {
       // 乐观消息由官方 SDK 注入并与 checkpoint 协调，不在应用中复制消息。
       await stream.submit(
-        { messages: [{ type: 'human', content: text }] },
+        { messages: [new HumanMessage({ content: text })] },
         {
           multitaskStrategy: 'reject',
           onError: () => {
@@ -461,7 +454,7 @@ export const App: React.FC = () => {
     const lastHuman =
       ([...(stream.messages || [])]
         .reverse()
-        .find((m: any) => m.type === 'human' || m._getType?.() === 'human') as BaseMessage | undefined) ||
+        .find((message) => HumanMessage.isInstance(message)) as BaseMessage | undefined) ||
       lastHumanMsg;
     if (!lastHuman) return;
 
@@ -597,13 +590,13 @@ export const App: React.FC = () => {
         <ChatWindow
           stream={stream}
           messages={messages}
+          toolCalls={toolCalls}
           contextSummary={contextSummary}
           contextUsage={isNewSessionDraft ? undefined : stream.values?.context_usage}
           onSendMessage={handleSendMessage}
           threadLoading={stream.isThreadLoading}
           runActive={stream.isLoading}
           stopReconciling={stopReconciling}
-          hasRunningTool={hasRunningTool}
           renderOptimisticStatus={(messageId) => (
             <OptimisticMessageStatus
               stream={stream}

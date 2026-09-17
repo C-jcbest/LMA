@@ -1,11 +1,11 @@
 # 项目状态与有效决策
 
-更新：2026-09-16。只保留当前实现、持续有效的决策及未完成事项。产品行为以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，待办以 [现行 TODO](TODO_2026-09-15.md) 为准。
+更新：2026-09-17。只保留当前实现、持续有效的决策及未完成事项。产品行为以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，待办以 [现行 TODO](TODO_2026-09-15.md) 为准。
 
 ## 当前实现
 
 - 后端生产入口 `backend/app/agent/graph.py:graph` 为官方图工厂：create_agent 负责 ReAct 与工具并行执行，官方 middleware 负责模型/工具重试；LMA middleware 保留时间、Prompt、用量/思考耗时及推荐契约；历史由官方 SummarizationMiddleware 管理。持久化仍由 Agent Server Thread/Checkpoint 提供。
-- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。手工预创建、重复草稿状态和聚合 `isGenerating` 已删除；Thread hydration、Run、Tool 与 optimistic message 分别读取官方投影，仅 Stop 后 checkpoint 清理保留本地过渡态。
+- 前端使用官方 `@langchain/react useStream` / StreamController；新会话直接 submit 官方 `HumanMessage`，SDK 分配 ID，Server run.start 创建 Thread 与 Run。URL 仅保存选择态，消息/checkpoint 由 SDK 恢复。`ChatWindow` 直接消费 `BaseMessage[]` 与 `useToolCalls`，只用无状态回合分组；text/reasoning/tool call 读取 `AIMessage.contentBlocks`，工具终态与业务展示读取 `ToolMessage.status/artifact`。Thread hydration、Run、Tool 与 optimistic message 分别读取官方投影，仅 Stop 后 checkpoint 清理保留本地过渡态。
 - 第一阶段 TODO 1–3 已完成：遗留界面与无引用组件清理；敏感示例替换；GNSS 缺测不转成 0；消息只显示服务端时间且按 Asia/Shanghai 展示；站点未知状态不猜测；配置检查精确验证 lma-agent；内部字段默认折叠；正式 Prompt 单一来源。
 - 2026-09-15 TODO 4 已完成生产代码入口迁移，langchain==1.3.18 已纳入运行依赖，删除手写路由、循环边、ToolNode 装配及节点级批量 retry/exhausted。旧候选 factory 与候选测试已在 TODO 5 清除；架构和部署要求见 [ADR 0001](adr/0001-agent-runtime.md)。本轮未对现有服务执行部署。
 
@@ -24,6 +24,7 @@
   - 连接状态与辅助能力：删除全局冗余探活，列表错误严格局限在 Sidebar；标题生成与下一步建议失败静默降级；
   - 状态扁平化：`runError`、`hydrationError`、`stopError` 统一收敛为当前会话单布尔瞬态，切换会话自动重置；
   - ErrorBoundary 隐藏内部堆栈并提供真实刷新/重新加载/隐藏动作。绝不展示内部异常、堆栈、HTTP 或 checkpoint 诊断。
+- TODO 15 已完成：彻底删除 `projectLangGraphMessages` 与自定义 `Message/MessagePart/ToolCallInfo`；移除多字段消息猜测、`settlingAfterTool`、整理回答推断、思考耗时计时器及英文工具错误匹配。实时工具状态、持久终态和 artifact 按 `callId/tool_call_id` 只读关联；Reasoning 仅保留 `additional_kwargs.reasoning_content` 一条临时兼容入口，待 TODO 16 Provider 官方化后复核。
 
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 
@@ -46,7 +47,8 @@
   - 移除 `activeSubmissionRef.stopped` 与过时测试，信任官方 abort 机制；
   - 状态扁平化：`runError`、`hydrationError`、`stopError` 为单会话布尔瞬态，`stopReconciling` 为单布尔态结合同步 ref 锁；
   - 验证：前端 75 项测试全数通过，生产构建通过，后端常规 51 项（49 项通过、2 项 Server E2E 默认跳过）全数通过，`git diff --check` 无违规。
-- TODO 9–14 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载、Stop 清理协议、官方生命周期投影及分层错误交互模型；下一项为 TODO 15 移除自定义 Message/Tool 状态机（优先清理自定义 runtime 与推断，后按需评估组件拆分）；推荐退出主 Run 属于 TODO 23。
+- TODO 9–15 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载、Stop 清理协议、官方生命周期投影、分层错误交互及自定义 Message/Tool 状态机移除；下一项为 TODO 16 模型 Provider 显式化并使用官方 integration；推荐退出主 Run 属于 TODO 23。
+- 2026-09-17 TODO 15 验证：前端 76 项测试、TypeScript 编译与生产打包通过；后端 52 项中 50 项通过、2 项 Server E2E 默认跳过；`git diff --check` 通过。未部署、未操作真实会话。
 
 ## 2026-09-15 TODO 9：统一 Client 与连接切换边界
 
