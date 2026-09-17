@@ -697,9 +697,8 @@ it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”
   expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
-it('Stop 收尾异常显示“停止未完全完成，请重试”并提供真实操作“重试”与“关闭”，不暴露技术细节', () => {
+it('Stop 收尾异常显示“停止处理未完成 · 重试”并阻止发送，仅提供“重试”，不提供关闭按钮', () => {
   const onRetryStop = vi.fn();
-  const onDismiss = vi.fn();
   render(
     <ChatWindow
       messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
@@ -710,17 +709,15 @@ it('Stop 收尾异常显示“停止未完全完成，请重试”并提供真�
       hasRunningTool={false}
       stopError={true}
       onRetryStop={onRetryStop}
-      onDismissStopError={onDismiss}
       isSidebarCollapsed={false}
       onToggleSidebar={vi.fn()}
     />
   );
-  expect(screen.getByText('停止未完全完成，请重试')).toBeInTheDocument();
+  expect(screen.getByText('停止处理未完成 · 重试')).toBeInTheDocument();
   expect(screen.queryByText(/cleanup|hydrate|checkpoint|join|ToolMessage/i)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: '重试' }));
   expect(onRetryStop).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-  expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
 it('Sidebar 不展示内部 reachability 状态探针，对话消息区不被不可达状态污染', () => {

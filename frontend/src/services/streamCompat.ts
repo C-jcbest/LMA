@@ -4,7 +4,7 @@ import { STREAM_CONTROLLER, type AnyStream } from '@langchain/react';
  * @langchain/react 1.1.0 compatibility adapter
  *
  * 背景：锁定版 @langchain/react 尚无公开的“外部修改 checkpoint 后重新覆盖当前 projection”的 API。
- * 触发条件：仅在 Stop 清理成功、重载 Thread 或流异常恢复成功后调用。
+ * 触发条件：仅在 Stop 清理成功后或主动重载 Thread 时调用。
  * 删除条件：SDK 提供公开的 authoritative refresh API 时彻底移除。
  */
 export async function rehydrateThread(stream: AnyStream | undefined, threadId: string): Promise<void> {

@@ -34,7 +34,7 @@ interface ChatWindowProps {
   runActive: boolean;
   stopReconciling: boolean;
   hasRunningTool: boolean;
-  renderOptimisticStatus?: (messageId?: string, content?: string) => React.ReactNode;
+  renderOptimisticStatus?: (messageId?: string) => React.ReactNode;
   recommendations?: string[];
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -50,7 +50,6 @@ interface ChatWindowProps {
   onDismissHydrationError?: () => void;
   stopError?: boolean;
   onRetryStop?: () => void;
-  onDismissStopError?: () => void;
 }
 
 const MAX_LENGTH = 3000;
@@ -59,9 +58,9 @@ const MAX_LENGTH = 3000;
 const getMessageText = (msg: Message): string => {
   if (msg.parts && msg.parts.length > 0) {
     return msg.parts
-      .filter((p): p is Extract<MessagePart, { type: 'text' }> => p.type === 'text')
+      .filter((p): p is { type: 'text'; content: string } => p.type === 'text')
       .map((p) => p.content)
-      .join('\n\n');
+      .join('\n');
   }
   return msg.content || '';
 };
@@ -90,7 +89,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   onDismissHydrationError,
   stopError = false,
   onRetryStop,
-  onDismissStopError,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showPromptsMenu, setShowPromptsMenu] = useState(false);
@@ -121,9 +119,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
     if (isPinnedRef.current) scrollToBottom();
-  }, [messages, threadLoading, runActive, stopReconciling, recommendations, runError, hydrationError]);
+  }, [messages, threadLoading, runActive, stopReconciling, recommendations, runError, hydrationError, stopError]);
 
-  const canSubmit = !threadLoading && !runActive && !stopReconciling;
+  const canSubmit = !threadLoading && !runActive && !stopReconciling && !stopError;
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -301,7 +299,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                     getText={() => getMessageText(msg)}
                     timestamp={msg.created_at}
                   />
-                  {isUser && renderOptimisticStatus?.(msg.id, msg.content)}
+                  {isUser && renderOptimisticStatus?.(msg.id)}
                 </div>
               </div>
             </div>
@@ -372,12 +370,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       {/* 底部悬浮卡片输入区 */}
       <div className="p-4 bg-white shrink-0 z-20">
         <div className="max-w-4xl mx-auto relative">
-          {/* Stop 收尾同步异常轻量提示 */}
+          {/* Stop 收尾同步异常轻量提示：阻止继续发送，仅提供重试 */}
           {stopError && (
             <div className="mb-2 max-w-4xl mx-auto flex items-center justify-between p-2.5 rounded-xl border border-amber-200 bg-amber-50/80 text-xs text-amber-900 shadow-xs">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span>停止未完全完成，请重试</span>
+                <span>停止处理未完成 · 重试</span>
               </div>
               <div className="flex items-center gap-2">
                 {onRetryStop && (
@@ -387,15 +385,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                     className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
                   >
                     重试
-                  </button>
-                )}
-                {onDismissStopError && (
-                  <button
-                    type="button"
-                    onClick={onDismissStopError}
-                    className="px-2 py-1 rounded-lg text-xs text-amber-700 hover:text-amber-900 transition-colors"
-                  >
-                    关闭
                   </button>
                 )}
               </div>
@@ -490,7 +479,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 type="submit"
                 disabled={!inputText.trim() || !canSubmit}
                 className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#8793ea] to-[#99a4f4] hover:brightness-105 active:scale-95 text-white flex items-center justify-center shrink-0 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm"
-                title={stopReconciling ? '正在结束本轮' : threadLoading ? '正在加载会话' : '发送 (Enter)'}
+                title={stopReconciling ? '正在结束本轮' : stopError ? '停止未完成，请重试' : threadLoading ? '正在加载会话' : '发送 (Enter)'}
               >
                 <Send className="w-3.5 h-3.5 fill-current" />
               </button>

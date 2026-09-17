@@ -31,8 +31,9 @@ vi.mock('../src/services/api', async (original) => ({ ...await original<any>(),
 vi.mock('../src/components/ChatWindow', () => ({ ChatWindow: (props: any) =>
   <><button onClick={() => void props.onSendMessage('首条消息')}>发送测试消息</button>
     <button onClick={() => void props.onStopGeneration()}>停止测试生成</button>
+    {props.renderOptimisticStatus?.('failed-msg-id')}
     {props.runError && <span>本次回答未能完成</span>}
-    {props.stopError && <span>停止未完全完成，请重试</span>}
+    {props.stopError && <span>停止处理未完成 · 重试</span>}
     {props.hydrationError && <span>会话加载失败</span>}
     {props.messages.map((message: any, index: number) => <p key={index}>{message.content}</p>)}</> }));
 import { App } from '../src/App';
@@ -212,23 +213,24 @@ describe('标题与 Agent Run 独立生命周期', () => {
     });
     await waitFor(() => expect(screen.getByText('本次回答未能完成')).toBeInTheDocument());
   });
-  it('用户 Stop 导致的旧提交错误不会在清理完成后回写失败弹窗', async () => {
+  it('optimistic 发送失败重试时，直接复用 stream.messages 中原 BaseMessage 对象提交', async () => {
     window.history.replaceState(null, '', '/?threadId=sdk-thread');
     mock.current = 'sdk-thread';
+    const originalMessage = { id: 'failed-msg-id', type: 'human', content: '测试重试内容' };
+    mock.messages = [originalMessage];
+    mock.messageMetadata['failed-msg-id'] = { optimisticStatus: 'failed' };
     render(<App />);
-    fireEvent.click(screen.getByText('发送测试消息'));
-    await acceptRun();
-    const submitOptions = mock.submit.mock.calls[0][1];
-    fireEvent.click(screen.getByText('停止测试生成'));
-    await act(async () => {
-      submitOptions.onError(new Error('abort after stop'));
-      mock.loading = false;
-      mock.finishRun?.();
-    });
-    await waitFor(() => expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread'));
-    expect(screen.queryByText('本次回答未能完成')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+
+    expect(mock.submit).toHaveBeenCalledWith(
+      { messages: [originalMessage] },
+      expect.objectContaining({ threadId: 'sdk-thread', multitaskStrategy: 'reject' })
+    );
+    expect(mock.submit.mock.calls[0][0].messages[0]).toBe(originalMessage);
+    await finishRun();
   });
-  it('Stop 清理未完成工具，且在用户切走时禁止 hydrate 污染当前会话', async () => {
+  it('Stop 收尾为原子交互，期间禁止切换会话，并在完成后正常同步当前会话', async () => {
     window.history.replaceState(null, '', '/?threadId=thread-a');
     mock.current = 'thread-a';
     mock.sessions.mockResolvedValue({
@@ -252,13 +254,20 @@ describe('标题与 Agent Run 独立生命周期', () => {
     fireEvent.click(screen.getByText('停止测试生成'));
     await waitFor(() => expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread'));
 
+    // Stop 期间尝试切换到会话乙
     fireEvent.click(screen.getByText('会话乙'));
+    // URL 仍保持为当前会话，禁止切换
+    expect(new URL(window.location.href).searchParams.get('threadId')).toBe('sdk-thread');
 
     await act(async () => { finishCleanup(); });
 
     expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread');
-    expect(mock.hydrate).not.toHaveBeenCalledWith('sdk-thread');
+    expect(mock.hydrate).toHaveBeenCalledWith('sdk-thread');
     await finishRun();
+
+    // Stop 完成后允许正常切换会话
+    fireEvent.click(screen.getByText('会话乙'));
+    expect(new URL(window.location.href).searchParams.get('threadId')).toBe('thread-b');
   });
 
   it('停止后清理失败不伪造成功，且不 hydrate 未确认状态', async () => {
@@ -266,7 +275,7 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mock.cleanup.mockRejectedValue(new Error('private cleanup failure'));
     render(<App />);
     fireEvent.click(screen.getByText('停止测试生成'));
-    await waitFor(() => expect(screen.getByText('停止未完全完成，请重试')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('停止处理未完成 · 重试')).toBeInTheDocument());
     expect(mock.hydrate).not.toHaveBeenCalled();
     expect(screen.queryByText(/private cleanup failure/)).not.toBeInTheDocument();
   });

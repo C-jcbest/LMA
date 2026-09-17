@@ -12,18 +12,17 @@
 ## 持续有效的决定
 
 - TODO 11 已完成：官方 metadata.graph_id 过滤与20条offset分页；服务端 updated_at 排序，标题完成后不永久置顶。空闲时无列表轮询，只刷新已知busy IDs；事件刷新已加载范围，分页失败不推进offset并保留已确认列表。辅助图即使有标题也不展示，不增加旧会话迁移。
-- TODO 12 已按用户纠正完成：Stop 仅 interrupt 当前 Run，等待该 Run 收敛后读取最终 checkpoint；全未完成 AI tool-call 消息用 RemoveMessage 删除，并行部分完成时原位保留成功 calls/ToolMessages。删除 cancelled ToolMessage、cancelled UI、asNode="tools"、Run扫描/批量取消和 resume；下一条用户消息普通 submit 新 Run。rollback 会回退整轮，不用于“仅丢弃未完成部分”。
-- TODO 13 已完成：删除聚合 `isGenerating` 和 `isStartingRun`；hydration/Run 分别使用 `stream.isThreadLoading`/`stream.isLoading`，工具运行使用 `useToolCalls`，用户消息 pending/sent/failed 使用 `useMessageMetadata`。仅 `stopReconciling` 为 LMA 本地过渡态，清理时可输入但不可发送。Run ID 从产生 Run 的 submission 关联，不从当前 UI 选择推断；Sidebar busy 与中央 Run 状态分离。
-- TODO 14 已完成（并在 2026-09-17 完成减法重构）：彻底移除全局 `submissionError`；错误按其发生的交互归属显示在正确位置：
-  - 主 Run 失败卡显示在 assistant 回答位置并支持官方分叉重生成：通过公开 `useMessageMetadata` 提取 `parentCheckpointId`，分叉时重新输入原 Human 消息，新规范分支保留单一提问；彻底解耦私有 store 访问与死状态引用；若末尾用户消息为 optimistic failed 则不重复展示卡片；
-  - 依赖官方 `submit.onError` 判定当前回答失败，删除冗余的 `reconcileRunError()` 状态机二次推断；
-  - 用户消息失败就地通过 `OptimisticMessageStatus` 重试（删除多余的“丢弃”与手动 `disconnect` 逻辑）；
+- TODO 12 已完成：Stop 直接调用官方 `stream.stop({ cancel: true })` 中断当前 Run；服务端未完成工具调用清理检查最终 checkpoint 中全部 AI tool-call 消息，用官方 RemoveMessage 实例清理，并行部分完成时原位保留成功 calls/ToolMessages。删除 cancelled ToolMessage、cancelled UI、asNode="tools"、Run 扫描/批量取消与 resume；下一条用户消息普通 submit 新 Run。
+- TODO 13 已完成：状态完全对齐官方生命周期：hydration/Run 分别使用 `stream.isThreadLoading`/`stream.isLoading`，工具运行使用 `useToolCalls`，用户消息 pending/sent/failed 使用 `useMessageMetadata`。`stopReconciling` 为 LMA 唯一本地过渡态（结合 ref 同步锁），收尾期间禁止切会话。
+- TODO 14 已完全收口（2026-09-17 减法重构完成）：彻底移除全局 `submissionError`，错误严格按产生它的交互层级归属：
+  - 用户消息发送失败就地通过 `OptimisticMessageStatus` 提供“重试”，重试时直接复用 `stream.messages` 中原 `BaseMessage` 实例，复用原 ID 避免并发重复，不设“丢弃”按钮；若末尾用户消息为 optimistic failed 则 `RunFailureCard` 不重复展示；
+  - 主 Run 失败卡显示在 assistant 回答位置，由单次提交的 `submit.onError` 判定，删除多余的 `reconcileRunError()` 状态机二次推断；支持官方分叉重生成：通过公开 `useMessageMetadata` 提取 `parentCheckpointId`，分叉时重新输入原 Human 消息；
   - 工具错误限制在单工具卡内；
   - Thread 重命名/删除使用独立 Toast 浮层；
-  - Stop 收尾回归官方精简流程：信任 `stream.stop({ cancel: true })` $\to$ `removeIncompleteToolCallMessages` $\to$ `rehydrateThread`，删除四阶段状态机（`terminal_confirm`）、`runs.list/get/cancel/join`、二次 cancel 轮询、`handleCleanupAfterStop` 与 `handleRefreshStop`；异常统一提示“停止未完全完成，请重试”并提供重试/关闭；
-  - 辅助能力静默降级：标题生成失败彻底移除伪造的 `created_at`，由权威列表同步；下一步建议（推荐）失败不向用户渲染任何错误卡片或提示；
-  - 连接状态简化：移除全局探活与 `serverReachability`，列表错误严格局限在 Sidebar；
-  - 状态瘦身：`runError`、`hydrationError`、`stopError` 统一收敛为当前会话单布尔瞬态，`stopReconciling` 使用单布尔态结合同步 ref 锁。
+  - Stop 收尾为短时原子交互，期间禁止切换会话；清理失败阻塞后续发送，提示条收拢为“停止处理未完成 · 重试”（无关闭按钮，仅可重试），成功前当前 Thread 不允许继续提问；
+  - 彻底删除 `activeSubmissionRef.stopped` 与手工拦截，信任官方 abort 行为不入 `onError`；`activeSubmissionRef` 仅用于新会话首条消息回写 SDK 铸造的 `threadId`；
+  - 连接状态与辅助能力：删除全局冗余探活，列表错误严格局限在 Sidebar；标题生成与下一步建议失败静默降级；
+  - 状态扁平化：`runError`、`hydrationError`、`stopError` 统一收敛为当前会话单布尔瞬态，切换会话自动重置；
   - ErrorBoundary 隐藏内部堆栈并提供真实刷新/重新加载/隐藏动作。绝不展示内部异常、堆栈、HTTP 或 checkpoint 诊断。
 
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
@@ -40,22 +39,14 @@
 
 ## 未完成与验证边界
 
-- 2026-09-17 TODO 14 减法重构（剔除防御性膨胀，完全回归官方设计）：
-  - 移除二次解释 runtime：彻底删除过度防御的四阶段状态机（`terminal_confirm`）、`runs.list/get/cancel/join`、二次 cancel 轮询、`handleCleanupAfterStop`、`handleRefreshStop`、`reconcileRunError()`。Stop 直接信任 `stream.stop({ cancel: true })` $\to$ `removeIncompleteToolCallMessages` $\to$ `rehydrateThread`；Run 失败严格由单次提交的 `submit.onError` 与 `activeSubmissionRef.stopped` 判定；
-  - 状态扁平化瘦身：移除 `stopReconcilingThreadIds: Set<string>`、`runErrors`、`hydrationErrors`、`stopErrors` 字典映射与 `activeRunRef`，统一使用当前会话的单值布尔态，并在切换会话时重置；`stopReconciling` 同步结合 `stopReconcilingRef` 避免重入；
-  - 交互简化与误区纠偏：删除用户消息“丢弃”按钮及 `handleDiscardOptimisticMessage`；当首部用户消息为 optimistic failed 时，`RunFailureCard` 不重复展示失败；删除全局连通性探活（`serverReachability` 与 `assistants.get`），列表加载失败局限在 Sidebar；Stop 异常统一提示“停止未完全完成，请重试”；
-  - 验证：前端 75 项测试（覆盖分层错误专项、生命周期集成测试、forkFrom 对象同一性、fail-closed 等）全数通过，生产构建通过，后端常规 51 项（49 项通过、2 项 Server E2E 默认跳过）全数通过，`git diff --check` 无违规。
-- 2026-09-16 TODO 12：用户纠正原“补隐藏 cancelled ToolMessage”方案，要求未完成工具从 messages 删除。实现保留成功 ToolMessage；全未完成删除 AIMessage，部分完成收窄 AIMessage，保证下一轮消息协议有效。锁定版 React SDK 没有公开的外部 updateState 刷新入口，当前使用导出的内部 STREAM_CONTROLLER.hydrate 作最窄适配；仅在清理成功后触发，不伪造状态，TODO 15 或 SDK 提供公开入口时删除。真实 Agent Server 已验证 RemoveMessage；完整浏览器 E2E 尚未执行。
-- TODO 12 验证：前端55项测试与生产构建通过；后端常规51项中49项通过、2项Server E2E默认跳过。覆盖思考阶段、单批/多批未完成、失败重试追加 HumanMessage、并行部分完成、严格相邻配对、全部完成、重复Stop、清理失败、权威重载和下一条普通submit。为恢复本次受影响会话，已删除确认无 ToolMessage 的 AI 工具调用消息并读回验证。
-- 2026-09-16 Stop 线上纠正：首次真实操作证明 Agent Server 0.14.1 不接受远程 updateState 中的简写 `{type:"remove", id}`，返回 MESSAGE_COERCION_FAILURE；必须发送 LangChain RemoveMessage/AIMessage 实例，由 SDK 序列化为 lc constructor。已恢复官方实例并增加真实 SDK wire-format 回归。失败会话中确认的1条全未完成 AIMessage 已重新清理并读回验证，其他消息未删除；临时协议测试 Thread 已删除。错误日志现记录 stop/join/cleanup/hydrate 阶段，UI按实际阶段说明。此前“未修改真实会话”的记录被本条取代。
-- 2026-09-16 Stop 重试纠正：清理范围曾被错误限制为最后一个 HumanMessage 之后。清理首次失败后，普通重试先写入新的 HumanMessage，导致之前残留的 AI tool-call 消息被遮蔽，模型接口以“tool_calls 后缺少 tool messages”拒绝新 Run。现改为检查最终 checkpoint 中全部 AI tool-call 消息，并只把紧随 AIMessage 的连续 ToolMessage 视为有效配对；未来不得重新按最后用户回合截断。已从受影响会话删除1条含3个未回答 calls 的 AIMessage，消息数由20变为19，读回确认未配对 AI tool-call 消息为0，已有成功 ToolMessage 保留。前端55项测试与生产构建通过。
-- 2026-09-16 Stop 后继续纠正：真实时序为工具已完成、总结前 interrupt，随后普通 submit“继续”。服务端新 Run 最终 success 并写入完整总结，但前端旧提交迟到错误或流异常会显示通用失败，且流态可能暂时缺少新 HumanMessage 边界，使新输出看似接在取消前工具后。现给提交记录 stop/runId/threadId 归属：主动 Stop 的迟到错误静默丢弃；流异常只等待已确认的同一 Run，success 后 hydrate，error 才展示失败，不重试或另建 Run。投影回归固定旧工具结果、继续消息和新 AI 回复的独立顺序。实现后前端58项测试与生产构建通过。
-- 2026-09-16 TODO 13 状态纠正：此前 `isGenerating` 聚合 hydration、Run、Stop reconciliation 与本地 starting，导致加载历史也显示 Stop/思考，Stop 清理期间无法提前输入。现直接消费官方 Stream/Tool/Message 生命周期，只保留 `stopReconciling`；optimistic failed 已接通但 Retry/错误位置按范围留给 TODO 14，完整工具/消息 renderer 留给 TODO 15。前端63项测试与生产构建通过。
-- 2026-09-16 TODO 11：前端47项测试、生产构建通过；后端51项中49项通过，2项Server E2E默认跳过。105条分页由真实SDK/HTTP Stub验证，界面覆盖分页失败、去重、busy结束、空闲无轮询及迟到请求隔离。未部署、未修改真实历史、未执行真实浏览器E2E；其后已完成TODO 12。
-
-- TODO 5 的生产测试覆盖长会话摘要、近期token budget保留、重复压缩、停止后工具配对、摘要失败保全和内部模型流隔离。Server E2E 使用真实生产工厂与 HTTP Stub 验证官方摘要、瞬时重试、Thread 恢复及主 usage 保留。
-- 本轮后端49项常规测试、2项隔离Server E2E、前端39项测试和生产构建通过（常规发现51项，服务E2E默认跳过并另行执行）。真实官方 React SDK 测试覆盖首次 run.start 拒绝，隔离服务覆盖新版协议首次创建与 checkpoint；详细命令见 ADR。浏览器全面 E2E、真实模型/线上北斗仍属后续验收。当前服务未部署，历史会话未改写。
-- TODO 9–14 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载、Stop 清理协议、官方生命周期投影及分层错误交互模型；下一项为 TODO 15 移除自定义 Message/Tool 状态机；推荐退出主 Run 属于 TODO 23。
+- 2026-09-17 TODO 14 减法重构与完全收口：
+  - 移除二次解释 runtime：彻底删除过度防御的四阶段状态机（`terminal_confirm`）、`runs.list/get/cancel/join`、二次 cancel 轮询、`handleCleanupAfterStop`、`handleRefreshStop`、`reconcileRunError()`。Stop 直接信任 `stream.stop({ cancel: true })` $\to$ `removeIncompleteToolCallMessages` $\to$ `rehydrateThread`；
+  - 消息重试回归官方原语：optimistic 失败重试直接从 `stream.messages` 中提取原 `BaseMessage` 提交，复用原 ID 避免重复消息气泡；
+  - Stop 收尾原子化：`stopReconciling` 期间 Sidebar 禁用且阻止切换会话；清理失败阻塞提问，统一文案“停止处理未完成 · 重试”（无关闭按钮，仅可重试）；
+  - 移除 `activeSubmissionRef.stopped` 与过时测试，信任官方 abort 机制；
+  - 状态扁平化：`runError`、`hydrationError`、`stopError` 为单会话布尔瞬态，`stopReconciling` 为单布尔态结合同步 ref 锁；
+  - 验证：前端 75 项测试全数通过，生产构建通过，后端常规 51 项（49 项通过、2 项 Server E2E 默认跳过）全数通过，`git diff --check` 无违规。
+- TODO 9–14 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载、Stop 清理协议、官方生命周期投影及分层错误交互模型；下一项为 TODO 15 移除自定义 Message/Tool 状态机（优先清理自定义 runtime 与推断，后按需评估组件拆分）；推荐退出主 Run 属于 TODO 23。
 
 ## 2026-09-15 TODO 9：统一 Client 与连接切换边界
 

@@ -83,7 +83,6 @@ export const App: React.FC = () => {
   const activeSubmissionRef = useRef<{
     client: Client;
     threadId: string | null;
-    stopped: boolean;
   } | null>(null);
   const firstInputRef = useRef<{ text: string; client: Client } | null>(null);
   const sessionRequestRef = useRef(0);
@@ -334,16 +333,19 @@ export const App: React.FC = () => {
   }, [sessions, stream.isLoading, activeThreadId]);
 
   const handleSelectSession = (session: Pick<ThreadSession, 'thread_id'>) => {
+    if (stopReconcilingRef.current) return;
     stream.disconnect();
     selectThread(session.thread_id);
   };
 
   const handleCreateSession = () => {
+    if (stopReconcilingRef.current) return;
     stream.disconnect();
     selectThread(null);
   };
 
   const handleRenameSession = async (sessionId: string, newName: string) => {
+    if (stopReconcilingRef.current) return;
     try {
       await renameSession(client, sessionId, newName);
       if (currentClientRef.current !== client) return;
@@ -361,6 +363,7 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
+    if (stopReconcilingRef.current) return;
     // 同步防重，并作废删除之前的列表请求；DELETE 未确认时暂停轮询写回。
     if (deletingThreadsRef.current.has(sessionId)) return;
     deletingThreadsRef.current.add(sessionId);
@@ -406,14 +409,14 @@ export const App: React.FC = () => {
 
   const handleSendMessage = async (userText: string) => {
     const text = userText.trim();
-    if (!text || stream.isThreadLoading || stream.isLoading || stopReconciling || isSubmittingRef.current) return;
+    if (!text || stream.isThreadLoading || stream.isLoading || stopReconciling || stopError || isSubmittingRef.current) return;
     // 在第一个 await 前同步上锁，防止快速回车/双击同时创建两个 Thread。
     isSubmittingRef.current = true;
     setRunError(false);
     setStopError(false);
 
     const isFirstMessage = activeThreadId === null;
-    const submission = { client, threadId: activeThreadId, stopped: false };
+    const submission = { client, threadId: activeThreadId };
     activeSubmissionRef.current = submission;
     if (isFirstMessage) firstInputRef.current = { text, client: stream.client };
     try {
@@ -423,10 +426,8 @@ export const App: React.FC = () => {
         {
           multitaskStrategy: 'reject',
           onError: () => {
-            if (!submission.stopped && currentClientRef.current === submission.client) {
-              if (selectedThreadRef.current === submission.threadId) {
-                setRunError(true);
-              }
+            if (currentClientRef.current === submission.client && selectedThreadRef.current === submission.threadId) {
+              setRunError(true);
             }
             for (const [id, job] of titleJobsRef.current) {
               if (!job.creationNotified) {
@@ -438,10 +439,8 @@ export const App: React.FC = () => {
         }
       );
     } catch (error) {
-      if (!submission.stopped && currentClientRef.current === submission.client) {
-        if (selectedThreadRef.current === submission.threadId) {
-          setRunError(true);
-        }
+      if (currentClientRef.current === submission.client && selectedThreadRef.current === submission.threadId) {
+        setRunError(true);
       }
     } finally {
       if (currentClientRef.current === client) {
@@ -455,7 +454,7 @@ export const App: React.FC = () => {
 
   // 重新生成：遵循官方 Retry an AI turn 规范，通过 parentCheckpointId 分叉，并重新提交官方 BaseMessage 对象
   const handleRegenerate = async (checkpointId: string, lastHumanMsg?: BaseMessage) => {
-    if (stream.isLoading || isSubmittingRef.current || stopReconciling) return;
+    if (stream.isLoading || isSubmittingRef.current || stopReconciling || stopError) return;
     const currentThreadId = activeThreadId;
     if (!currentThreadId || !checkpointId) return;
 
@@ -469,7 +468,7 @@ export const App: React.FC = () => {
 
     isSubmittingRef.current = true;
     setRunError(false);
-    const submission = { client, threadId: currentThreadId, stopped: false };
+    const submission = { client, threadId: currentThreadId };
     activeSubmissionRef.current = submission;
 
     try {
@@ -479,22 +478,66 @@ export const App: React.FC = () => {
           forkFrom: checkpointId,
           multitaskStrategy: 'reject',
           onError: () => {
-            if (!submission.stopped && currentClientRef.current === submission.client) {
-              if (selectedThreadRef.current === currentThreadId) {
-                setRunError(true);
+            if (currentClientRef.current === submission.client && selectedThreadRef.current === currentThreadId) {
+              setRunError(true);
+            }
+          },
+        }
+      );
+    } catch (error) {
+      if (currentClientRef.current === submission.client && selectedThreadRef.current === currentThreadId) {
+        setRunError(true);
+      }
+    } finally {
+      if (currentClientRef.current === client) {
+        if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
+        isSubmittingRef.current = false;
+        void loadSessions();
+      }
+    }
+  };
+
+  // 消息重试：遵循官方 ID reconciliation 规范，在 stream.messages 中检索原 BaseMessage 重新 submit，避免创建新 ID 产生重复消息
+  const handleRetryMessage = async (messageId: string) => {
+    if (stream.isThreadLoading || stream.isLoading || stopReconciling || stopError || isSubmittingRef.current) return;
+    const message = (stream.messages || []).find((m: any) => m.id === messageId);
+    if (!message) return;
+
+    isSubmittingRef.current = true;
+    setRunError(false);
+
+    const isFirstMessage = activeThreadId === null;
+    const submission = { client, threadId: activeThreadId };
+    activeSubmissionRef.current = submission;
+    const text = typeof message.content === 'string' ? message.content : '';
+    if (isFirstMessage && text) firstInputRef.current = { text, client: stream.client };
+
+    try {
+      await stream.submit(
+        { messages: [message] },
+        {
+          ...(activeThreadId ? { threadId: activeThreadId } : {}),
+          multitaskStrategy: 'reject',
+          onError: () => {
+            if (currentClientRef.current === submission.client && selectedThreadRef.current === submission.threadId) {
+              setRunError(true);
+            }
+            for (const [id, job] of titleJobsRef.current) {
+              if (!job.creationNotified) {
+                clearTitleView(id);
+                titleJobsRef.current.delete(id);
               }
             }
           },
         }
       );
     } catch (error) {
-      if (!submission.stopped && currentClientRef.current === submission.client) {
-        if (selectedThreadRef.current === currentThreadId) {
-          setRunError(true);
-        }
+      if (currentClientRef.current === submission.client && selectedThreadRef.current === submission.threadId) {
+        setRunError(true);
       }
     } finally {
       if (currentClientRef.current === client) {
+        firstInputRef.current = null;
         if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
         isSubmittingRef.current = false;
         void loadSessions();
@@ -509,21 +552,14 @@ export const App: React.FC = () => {
     stopReconcilingRef.current = true;
     setStopReconciling(true);
     setStopError(false);
-    if (activeSubmissionRef.current?.threadId === targetThreadId) {
-      activeSubmissionRef.current.stopped = true;
-    }
 
     try {
       await stream.stop({ cancel: true });
       await removeIncompleteToolCallMessages(client, targetThreadId);
-      if (selectedThreadRef.current === targetThreadId) {
-        await rehydrateThread(stream, targetThreadId);
-      }
+      await rehydrateThread(stream, targetThreadId);
     } catch (error) {
       console.warn('stop generation failed:', error);
-      if (selectedThreadRef.current === targetThreadId) {
-        setStopError(true);
-      }
+      setStopError(true);
     } finally {
       stopReconcilingRef.current = false;
       setStopReconciling(false);
@@ -542,6 +578,7 @@ export const App: React.FC = () => {
           isNewSessionDraft={isNewSessionDraft}
           busyThreadIds={busyThreadIds}
           deletingThreadIds={deletingThreadIds}
+          disabled={stopReconciling}
           onSelectSession={handleSelectSession}
           onCreateSession={handleCreateSession}
           onRenameSession={handleRenameSession}
@@ -568,11 +605,11 @@ export const App: React.FC = () => {
           runActive={stream.isLoading}
           stopReconciling={stopReconciling}
           hasRunningTool={hasRunningTool}
-          renderOptimisticStatus={(messageId, content) => (
+          renderOptimisticStatus={(messageId) => (
             <OptimisticMessageStatus
               stream={stream}
               messageId={messageId}
-              onRetry={() => content && handleSendMessage(content)}
+              onRetry={() => messageId && void handleRetryMessage(messageId)}
             />
           )}
           recommendations={recommendations}
@@ -588,7 +625,6 @@ export const App: React.FC = () => {
           onDismissHydrationError={() => setHydrationError(false)}
           stopError={stopError}
           onRetryStop={() => void handleStopGeneration()}
-          onDismissStopError={() => setStopError(false)}
         />
       </ErrorBoundary>
 

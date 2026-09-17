@@ -35,6 +35,7 @@ interface SidebarProps {
   hasMoreSessions?: boolean;
   isListLoading?: boolean;
   listError?: string;
+  disabled?: boolean;
   onLoadMore?: () => void;
   onRefreshSessions?: () => void;
   onDismissListError?: () => void;
@@ -46,6 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isNewSessionDraft,
   busyThreadIds,
   deletingThreadIds = [],
+  disabled = false,
   onSelectSession,
   onCreateSession,
   onRenameSession,
@@ -147,7 +149,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-3 pt-1 pb-3">
         <button
           onClick={onCreateSession}
-          className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 hover:border-neutral-300 text-neutral-800 text-xs font-medium flex items-center justify-center gap-2 transition-all shadow-[0_1px_2px_rgba(0,0,0,0.03)] active:scale-[0.98]"
+          disabled={disabled}
+          className="w-full h-10 px-3 rounded-xl border border-neutral-200 bg-white hover:bg-neutral-50 hover:border-neutral-300 text-neutral-800 text-xs font-medium flex items-center justify-center gap-2 transition-all shadow-[0_1px_2px_rgba(0,0,0,0.03)] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none"
         >
           <Plus className="w-4 h-4 text-neutral-500" />
           <span>新建监测会话</span>
@@ -156,7 +159,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* 历史会话列表 */}
       <div className="flex-1 overflow-y-auto px-2 space-y-1">
-        {onRefreshSessions && <button onClick={onRefreshSessions} disabled={isListLoading} className="w-full py-2 text-xs text-neutral-500 disabled:opacity-50">刷新会话列表</button>}
+        {onRefreshSessions && <button onClick={onRefreshSessions} disabled={disabled || isListLoading} className="w-full py-2 text-xs text-neutral-500 disabled:opacity-50">刷新会话列表</button>}
         {sessions.length === 0 && !isNewSessionDraft ? (
           <div className="h-36 flex flex-col items-center justify-center text-neutral-400 text-xs px-4 text-center select-none">
             <MessageSquare className="w-7 h-7 mb-2 opacity-30 text-neutral-500" />
@@ -173,11 +176,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div
               key={session.thread_id}
               data-thread-id={session.thread_id}
-              onClick={() => !isEditing && onSelectSession(session)}
-              className={`group relative flex items-center justify-between h-9 px-3 rounded-xl text-xs cursor-pointer transition-colors ${
+              onClick={() => !disabled && !isEditing && onSelectSession(session)}
+              className={`group relative flex items-center justify-between h-9 px-3 rounded-xl text-xs transition-colors ${
+                disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+              } ${
                 isActive
                   ? 'bg-neutral-200/75 text-neutral-900 font-medium'
-                  : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                  : disabled ? 'text-neutral-400' : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
               }`}
             >
               <div className="flex items-center gap-2.5 min-w-0 flex-1 mr-2">
