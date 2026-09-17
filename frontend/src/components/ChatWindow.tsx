@@ -48,13 +48,8 @@ interface ChatWindowProps {
   hydrationError?: boolean;
   onReloadThread?: () => void;
   onDismissHydrationError?: () => void;
-  stopError?: {
-    message: string;
-    action: 'retry_stop' | 'resync_cleanup' | 'refresh';
-  } | null;
+  stopError?: boolean;
   onRetryStop?: () => void;
-  onResyncCleanup?: () => void;
-  onRefreshStop?: () => void;
   onDismissStopError?: () => void;
 }
 
@@ -93,10 +88,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   hydrationError = false,
   onReloadThread,
   onDismissHydrationError,
-  stopError = null,
+  stopError = false,
   onRetryStop,
-  onResyncCleanup,
-  onRefreshStop,
   onDismissStopError,
 }) => {
   const [inputText, setInputText] = useState('');
@@ -384,34 +377,16 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             <div className="mb-2 max-w-4xl mx-auto flex items-center justify-between p-2.5 rounded-xl border border-amber-200 bg-amber-50/80 text-xs text-amber-900 shadow-xs">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span>{stopError.message}</span>
+                <span>停止未完全完成，请重试</span>
               </div>
               <div className="flex items-center gap-2">
-                {stopError.action === 'retry_stop' && onRetryStop && (
+                {onRetryStop && (
                   <button
                     type="button"
                     onClick={onRetryStop}
                     className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
                   >
-                    重试停止
-                  </button>
-                )}
-                {stopError.action === 'resync_cleanup' && onResyncCleanup && (
-                  <button
-                    type="button"
-                    onClick={onResyncCleanup}
-                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
-                  >
-                    重新整理
-                  </button>
-                )}
-                {stopError.action === 'refresh' && onRefreshStop && (
-                  <button
-                    type="button"
-                    onClick={onRefreshStop}
-                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
-                  >
-                    刷新
+                    重试
                   </button>
                 )}
                 {onDismissStopError && (

@@ -587,25 +587,45 @@ it('用户消息直接读取官方 optimistic pending/failed 状态', () => {
   expect(screen.getByText('发送失败')).toBeInTheDocument();
 });
 
-it('用户消息发送失败显示“发送失败 · 重试 · 丢弃”，分别点击重试与丢弃触发对应回调', () => {
+it('用户消息发送失败显示“发送失败 · 重试”，点击重试触发对应回调，不提供丢弃按钮', () => {
   const onRetry = vi.fn();
-  const onDiscard = vi.fn();
   const metadata = new Map([
     ['failed-id', { parentCheckpointId: undefined, optimisticStatus: 'failed' }],
   ]);
   const store = { subscribe: () => () => undefined, getSnapshot: () => metadata };
   const stream = { [STREAM_CONTROLLER]: { messageMetadataStore: store } } as any;
-  render(<OptimisticMessageStatus stream={stream} messageId="failed-id" onRetry={onRetry} onDiscard={onDiscard} />);
+  render(<OptimisticMessageStatus stream={stream} messageId="failed-id" onRetry={onRetry} />);
   expect(screen.getByText('发送失败')).toBeInTheDocument();
   const retryBtn = screen.getByRole('button', { name: '重试' });
   expect(retryBtn).toBeInTheDocument();
   fireEvent.click(retryBtn);
   expect(onRetry).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('button', { name: '丢弃' })).not.toBeInTheDocument();
+});
 
-  const discardBtn = screen.getByRole('button', { name: '丢弃' });
-  expect(discardBtn).toBeInTheDocument();
-  fireEvent.click(discardBtn);
-  expect(onDiscard).toHaveBeenCalledTimes(1);
+it('若提问尚未被服务端持久化 (optimisticStatus === failed)，RunFailureCard 渲染 null 由消息气泡显示重试', () => {
+  const lastHumanMsg = { id: 'u1', type: 'human' as const, content: '查询边坡稳定情况' };
+  const snapshotMap = new Map([
+    ['u1', { parentCheckpointId: 'chk-1', optimisticStatus: 'failed' }],
+  ]);
+  const fakeStream = {
+    messages: [lastHumanMsg],
+    isLoading: false,
+    [STREAM_CONTROLLER]: {
+      messageMetadataStore: {
+        getSnapshot: () => snapshotMap,
+        subscribe: () => () => undefined,
+      },
+    },
+  } as any;
+  const { container } = render(
+    <RunFailureCard
+      stream={fakeStream}
+      lastHumanMessage={lastHumanMsg}
+      onRegenerate={vi.fn()}
+    />
+  );
+  expect(container.firstChild).toBeNull();
 });
 
 it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成”与“关闭”，且关闭不修改权威状态', () => {
@@ -677,12 +697,10 @@ it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”
   expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
-it('Stop 收尾异常显示“会话记录尚未同步”并提供真实操作“重新整理”与“关闭”，不暴露技术细节', () => {
-  const onResyncCleanup = vi.fn();
+it('Stop 收尾异常显示“停止未完全完成，请重试”并提供真实操作“重试”与“关闭”，不暴露技术细节', () => {
   const onRetryStop = vi.fn();
-  const onRefreshStop = vi.fn();
   const onDismiss = vi.fn();
-  const { rerender } = render(
+  render(
     <ChatWindow
       messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
       onSendMessage={vi.fn()}
@@ -690,63 +708,23 @@ it('Stop 收尾异常显示“会话记录尚未同步”并提供真实操作�
       runActive={false}
       stopReconciling={false}
       hasRunningTool={false}
-      stopError={{ message: '会话记录尚未同步', action: 'resync_cleanup' }}
-      onResyncCleanup={onResyncCleanup}
-      onDismissStopError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('会话记录尚未同步')).toBeInTheDocument();
-  expect(screen.queryByText(/cleanup|hydrate|checkpoint|join|ToolMessage/i)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重新整理' }));
-  expect(onResyncCleanup).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-  expect(onDismiss).toHaveBeenCalledTimes(1);
-
-  // retry_stop 动作测试
-  rerender(
-    <ChatWindow
-      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      stopReconciling={false}
-      hasRunningTool={false}
-      stopError={{ message: '停止请求未确认，请重试', action: 'retry_stop' }}
+      stopError={true}
       onRetryStop={onRetryStop}
       onDismissStopError={onDismiss}
       isSidebarCollapsed={false}
       onToggleSidebar={vi.fn()}
     />
   );
-  expect(screen.getByText('停止请求未确认，请重试')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重试停止' }));
+  expect(screen.getByText('停止未完全完成，请重试')).toBeInTheDocument();
+  expect(screen.queryByText(/cleanup|hydrate|checkpoint|join|ToolMessage/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '重试' }));
   expect(onRetryStop).toHaveBeenCalledTimes(1);
-
-  // refresh 动作测试
-  rerender(
-    <ChatWindow
-      messages={[{ id: 'u1', role: 'user', content: '测试问题' }]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      stopReconciling={false}
-      hasRunningTool={false}
-      stopError={{ message: '当前显示可能未更新', action: 'refresh' }}
-      onRefreshStop={onRefreshStop}
-      onDismissStopError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('当前显示可能未更新')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
-  expect(onRefreshStop).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
+  expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
-it('Server 不可达时在侧边栏以状态指示灯中性展示，不写入聊天历史；初始 unknown 状态显示正在连接', () => {
-  const { rerender } = render(
+it('Sidebar 不展示内部 reachability 状态探针，对话消息区不被不可达状态污染', () => {
+  render(
     <Sidebar
       sessions={[]}
       activeSessionId={null}
@@ -758,46 +736,11 @@ it('Server 不可达时在侧边栏以状态指示灯中性展示，不写入聊
       onDeleteSession={vi.fn()}
       onToggleCollapse={vi.fn()}
       onOpenConfig={vi.fn()}
-      serverReachability="unreachable"
     />
   );
-  expect(screen.getByTitle('未连接后端服务')).toBeInTheDocument();
-
-  // unknown 初始状态展示正在连接
-  rerender(
-    <Sidebar
-      sessions={[]}
-      activeSessionId={null}
-      isNewSessionDraft={true}
-      busyThreadIds={[]}
-      onSelectSession={vi.fn()}
-      onCreateSession={vi.fn()}
-      onRenameSession={vi.fn()}
-      onDeleteSession={vi.fn()}
-      onToggleCollapse={vi.fn()}
-      onOpenConfig={vi.fn()}
-      serverReachability="unknown"
-    />
-  );
-  expect(screen.getByTitle('正在连接监测服务…')).toBeInTheDocument();
-
-  // reachable 状态展示已连接
-  rerender(
-    <Sidebar
-      sessions={[]}
-      activeSessionId={null}
-      isNewSessionDraft={true}
-      busyThreadIds={[]}
-      onSelectSession={vi.fn()}
-      onCreateSession={vi.fn()}
-      onRenameSession={vi.fn()}
-      onDeleteSession={vi.fn()}
-      onToggleCollapse={vi.fn()}
-      onOpenConfig={vi.fn()}
-      serverReachability="reachable"
-    />
-  );
-  expect(screen.getByTitle('LangGraph 服务已连接')).toBeInTheDocument();
+  expect(screen.queryByTitle('未连接后端服务')).not.toBeInTheDocument();
+  expect(screen.queryByTitle('正在连接监测服务…')).not.toBeInTheDocument();
+  expect(screen.queryByTitle('LangGraph 服务已连接')).not.toBeInTheDocument();
 
   // 对话消息区不被不可达状态污染
   render(
@@ -983,63 +926,6 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
   expect(projected[1].content).toBe('边坡整体处于稳定状态。');
 });
 
-it('Stop 收尾异常细分为重试停止、重新整理与刷新，各阶段动作与回调严格对应', () => {
-  const onRetryStop = vi.fn();
-  const onResyncCleanup = vi.fn();
-  const onRefreshStop = vi.fn();
-  const onDismiss = vi.fn();
-
-  // 阶段 1：stop 失败（停止请求未确认）
-  const { rerender } = render(
-    <ChatWindow
-      messages={[]}
-      onSendMessage={vi.fn()}
-      threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
-      stopError={{ message: '停止请求未确认，请重试', action: 'retry_stop' }}
-      onRetryStop={onRetryStop}
-      onDismissStopError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('停止请求未确认，请重试')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重试停止' }));
-  expect(onRetryStop).toHaveBeenCalledTimes(1);
-
-  // 阶段 2：cleanup 失败（记录尚未同步）
-  rerender(
-    <ChatWindow
-      messages={[]}
-      onSendMessage={vi.fn()}
-      threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
-      stopError={{ message: '会话记录尚未同步', action: 'resync_cleanup' }}
-      onResyncCleanup={onResyncCleanup}
-      onDismissStopError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('会话记录尚未同步')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重新整理' }));
-  expect(onResyncCleanup).toHaveBeenCalledTimes(1);
-
-  // 阶段 3：hydrate 失败（当前显示可能未更新）
-  rerender(
-    <ChatWindow
-      messages={[]}
-      onSendMessage={vi.fn()}
-      threadLoading={false} runActive={false} stopReconciling={false} hasRunningTool={false}
-      stopError={{ message: '当前显示可能未更新', action: 'refresh' }}
-      onRefreshStop={onRefreshStop}
-      onDismissStopError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('当前显示可能未更新')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '刷新' }));
-  expect(onRefreshStop).toHaveBeenCalledTimes(1);
-});
 
 it('Sidebar 列表加载失败时以 amber 样式呈现，支持重试与关闭', () => {
   const onRefresh = vi.fn();

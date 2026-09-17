@@ -24,6 +24,9 @@ export const RunFailureCard: React.FC<RunFailureCardProps> = ({
   onDismiss,
 }) => {
   const metadata = useMessageMetadata(stream, lastHumanMessage?.id);
+  if (metadata?.optimisticStatus === 'failed') {
+    return null;
+  }
   const parentCheckpointId = metadata?.parentCheckpointId;
   const canRegenerate = Boolean(parentCheckpointId && lastHumanMessage);
 

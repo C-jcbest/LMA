@@ -5,15 +5,13 @@ interface OptimisticMessageStatusProps {
   stream: AnyStream;
   messageId?: string;
   onRetry?: () => void;
-  onDiscard?: () => void;
 }
 
-/** 只消费官方 optimisticStatus；发送失败直接在该消息旁提供重试与丢弃交互。 */
+/** 只消费官方 optimisticStatus；发送失败直接在该消息旁提供重试交互。 */
 export const OptimisticMessageStatus: React.FC<OptimisticMessageStatusProps> = ({
   stream,
   messageId,
   onRetry,
-  onDiscard,
 }) => {
   const status = useMessageMetadata(stream, messageId)?.optimisticStatus;
   if (status === 'pending') {
@@ -32,18 +30,6 @@ export const OptimisticMessageStatus: React.FC<OptimisticMessageStatusProps> = (
               className="underline hover:text-amber-900 transition-colors cursor-pointer"
             >
               重试
-            </button>
-          </>
-        )}
-        {onDiscard && (
-          <>
-            <span className="text-neutral-300 select-none">·</span>
-            <button
-              type="button"
-              onClick={onDiscard}
-              className="underline hover:text-amber-900 transition-colors cursor-pointer"
-            >
-              丢弃
             </button>
           </>
         )}
