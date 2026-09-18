@@ -303,7 +303,13 @@ const liveData = isRecord(liveToolCall?.output)
 
 ---
 
-# P0-6 删除前端 Stop 后的 checkpoint 修复责任
+# [x] P0-6 删除前端 Stop 后的 checkpoint 修复责任
+
+**实施状态：已完成（2026-09-18）**
+- 前端 Stop 完全收口为官方 Run 取消：`await stream.stop({ cancel: true })`；
+- 彻底删除前端 `RemoveMessage`、`AIMessage` 重建、`threads.updateState()`、`removeIncompleteToolCallMessages()`、`getIncompleteToolCallMessageUpdates()`；
+- 彻底删除 `stopReconciling` 与 `stopError` 本地状态机，Stop 后继续提问直接提交创建正常新 Run；
+- 服务端自愈：在 `graph.py` 的 `abefore_agent` 中执行 `_sanitize_unanswered_tool_calls`，利用 `RemoveMessage` 清除全未完成的悬空 tool-call 消息，原位收窄部分完成批次，确保模型节点绝不接收未配对的 tool-calls。
 
 目前：
 
@@ -350,7 +356,12 @@ threads.updateState(...)
 
 ---
 
-## P0-7 删除 STREAM_CONTROLLER 私有 API
+## [x] P0-7 删除 STREAM_CONTROLLER 私有 API
+
+**实施状态：已完成（2026-09-18）**
+- 彻底删除 `frontend/src/services/streamCompat.ts` 文件；
+- 彻底移除对 `STREAM_CONTROLLER` 私有符号和 `controller.hydrate()` 的任何调用；
+- 会话重新加载与刷新依托官方 `stream.disconnect()` 与线程重选自然触发 hydration。
 
 当前：
 
@@ -611,7 +622,13 @@ SummarizationMiddleware 的外层 summary manager
 
 ---
 
-# P1-3 ToolErrorMiddleware 能覆盖的逻辑直接采用官方
+# [x] P1-3 ToolErrorMiddleware 能覆盖的逻辑直接采用官方
+
+**实施状态：已完成（2026-09-18）**
+- 在 `graph.py` 中装配官方 `ToolErrorMiddleware(on_error=_on_tool_error)`；
+- 精简 `LmaMiddleware.awrap_tool_call()`，彻底删除通用 `except Exception` 兜底；
+- `_on_tool_error` 放行领域异常（`ToolFailure`, `BeidouApiError`），通用非受控异常转换为安全脱敏文案；
+- `LmaMiddleware` 仅统一补充安全展示 envelope（`category`）并处理领域异常 `ToolFailure`。
 
 检查当前 LangChain `ToolErrorMiddleware`。
 

@@ -13,7 +13,7 @@ import { RunFailureCard } from '../src/components/RunFailureCard';
 import { STREAM_CONTROLLER } from '@langchain/react';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
-import { getIncompleteToolCallMessageUpdates, projectThreadSessions } from '../src/services/api';
+import { projectThreadSessions } from '../src/services/api';
 import { groupMessagesForDisplay } from '../src/components/messageDisplay';
 
 describe('会话关键路径集成回归', () => {
@@ -32,19 +32,11 @@ describe('会话关键路径集成回归', () => {
     expect(turns[1]).toMatchObject({ kind: 'assistant', messages: [answer] });
     expect(turns[1].kind === 'assistant' && turns[1].messages[0]).toBe(answer);
   });
-  it('停止后整批未完成的 AI tool-call 消息生成 RemoveMessage，UI 不保留工具', () => {
+  it('用户消息正常分组展示', () => {
     const raw = [
       { type: 'human', id: 'u1', content: '查询站点' },
-      {
-        type: 'ai',
-        id: 'a1',
-        content: '',
-        tool_calls: [{ id: 'call-1', name: 'list_stations', args: {} }],
-      },
     ];
 
-    expect(getIncompleteToolCallMessageUpdates(raw).map((message) => ({ type: message.type, id: message.id })))
-      .toEqual([{ type: 'remove', id: 'a1' }]);
     expect(groupMessagesForDisplay([new HumanMessage(raw[0] as any)]))
       .toMatchObject([{ kind: 'human', message: { id: 'u1', content: '查询站点' } }]);
   });
@@ -61,7 +53,6 @@ describe('会话关键路径集成回归', () => {
     });
     const answer = new AIMessage('查询完成。');
 
-    expect(getIncompleteToolCallMessageUpdates([aiCall, toolResult, answer])).toEqual([]);
     const turns = groupMessagesForDisplay([aiCall, toolResult, answer]);
     expect(turns).toHaveLength(1);
     expect(turns[0].kind === 'assistant' && turns[0].messages).toEqual([
@@ -100,7 +91,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[firstAI, toolResult, finalAI]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false}
+        threadLoading={false} runActive={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
@@ -118,7 +109,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[new AIMessage({ id: 'a1', content: '分析完成。' })]}
         onSendMessage={onSend}
-        threadLoading={false} runActive={false} stopReconciling={false}
+        threadLoading={false} runActive={false}
         recommendations={['查看同组其他监测点']}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -139,43 +130,6 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByRole('button', { name: '回到底部' })).toBeInTheDocument();
   });
 
-  it('并行工具部分完成时只从 AIMessage 移除未回答 call，保留成功配对', () => {
-    const updates = getIncompleteToolCallMessageUpdates([
-      { type: 'human', id: 'u1', content: '并行查询' },
-      { type: 'ai', id: 'a1', content: '', tool_calls: [
-        { id: 'done', name: 'list_stations', args: {} },
-        { id: 'pending', name: 'query_weather', args: {} },
-      ] },
-      { type: 'tool', id: 't1', tool_call_id: 'done', name: 'list_stations', content: '成功' },
-    ]);
-    expect(updates).toHaveLength(1);
-    expect((updates[0] as any).type).toBe('ai');
-    expect((updates[0] as any).tool_calls).toEqual([{ id: 'done', name: 'list_stations', args: {} }]);
-  });
-
-  it('失败重试追加 HumanMessage 后仍清理更早残留的多个未完成 AIMessage', () => {
-    const updates = getIncompleteToolCallMessageUpdates([
-      { type: 'human', id: 'old-user', content: '旧问题' },
-      { type: 'ai', id: 'old-ai', tool_calls: [{ id: 'old-call', name: 'query_weather', args: {} }] },
-      { type: 'human', id: 'new-user', content: '新问题' },
-      { type: 'ai', id: 'new-ai-1', tool_calls: [{ id: 'new-call-1', name: 'query_weather', args: {} }] },
-      { type: 'ai', id: 'new-ai-2', tool_calls: [{ id: 'new-call-2', name: 'list_stations', args: {} }] },
-      { type: 'human', id: 'retry-user', content: '重试问题' },
-    ]);
-    expect(updates.map((message) => message.id)).toEqual(['old-ai', 'new-ai-1', 'new-ai-2']);
-    expect(updates.every((message: any) => message.type === 'remove')).toBe(true);
-  });
-
-  it('只接受紧随 AIMessage 的 ToolMessage，不能用其他位置的同 ID 伪造配对', () => {
-    const updates = getIncompleteToolCallMessageUpdates([
-      { type: 'tool', id: 'orphan-before', tool_call_id: 'same-call', content: '错误位置' },
-      { type: 'ai', id: 'a1', tool_calls: [{ id: 'same-call', name: 'query_weather', args: {} }] },
-      { type: 'human', id: 'u1', content: '下一条消息' },
-      { type: 'tool', id: 'orphan-after', tool_call_id: 'same-call', content: '非连续结果' },
-    ]);
-    expect(updates.map((message) => ({ type: message.type, id: message.id })))
-      .toEqual([{ type: 'remove', id: 'a1' }]);
-  });
 
   it('停止后继续提问时，旧助手回合与新回合保持独立且引用不变', () => {
     const firstUser = new HumanMessage({ id: 'u1', content: '查询监测数据' });
@@ -422,7 +376,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false}
+        threadLoading={false} runActive={false}
         contextUsage={{
           input_tokens: 250,
           context_limit_tokens: 1000,
@@ -453,7 +407,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false}
+        threadLoading={false} runActive={false}
         contextUsage={{ context_limit_tokens: 1_048_576 }}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -467,7 +421,7 @@ describe('会话关键路径集成回归', () => {
       <ChatWindow
         messages={[new AIMessage('分析完成。')]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive={false} stopReconciling={false}
+        threadLoading={false} runActive={false}
         recommendationError="下一步建议返回格式无效。"
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
@@ -516,7 +470,6 @@ describe('会话关键路径集成回归', () => {
         onSendMessage={() => undefined}
         threadLoading={false}
         runActive={false}
-        stopReconciling={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
@@ -550,7 +503,6 @@ describe('会话关键路径集成回归', () => {
         onSendMessage={() => undefined}
         threadLoading={false}
         runActive={false}
-        stopReconciling={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
@@ -590,7 +542,6 @@ describe('会话关键路径集成回归', () => {
         onSendMessage={() => undefined}
         threadLoading={false}
         runActive={false}
-        stopReconciling={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
@@ -628,7 +579,6 @@ describe('会话关键路径集成回归', () => {
         onSendMessage={() => undefined}
         threadLoading={false}
         runActive={false}
-        stopReconciling={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
@@ -693,7 +643,6 @@ describe('会话关键路径集成回归', () => {
 
 it('新建会话的中央消息区域为空白，保留输入入口', () => {
   render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading={false} runActive={false}
-    stopReconciling={false}
     isSidebarCollapsed={false} onToggleSidebar={vi.fn()} isNewSessionDraft />);
   expect(screen.getByLabelText('对话消息').textContent).toBe('');
   expect(screen.getByLabelText('对话消息').querySelectorAll('p,h3,svg')).toHaveLength(0);
@@ -702,7 +651,6 @@ it('新建会话的中央消息区域为空白，保留输入入口', () => {
 
 it('Thread hydration 只显示历史加载态，不显示 Stop 或 AI 思考', () => {
   render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading runActive={false}
-    stopReconciling={false}
     isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
   expect(screen.getByText('正在加载会话…')).toBeInTheDocument();
   expect(screen.queryByTitle('停止生成')).not.toBeInTheDocument();
@@ -710,11 +658,10 @@ it('Thread hydration 只显示历史加载态，不显示 Stop 或 AI 思考', (
   expect(screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...')).toBeDisabled();
 });
 
-it('Run active 才显示 Stop 和思考；Stop reconciliation 允许输入但禁止发送', async () => {
+it('Run active 才显示 Stop 和思考；非 active 时显示发送按钮且允许提交', async () => {
   const props = {
     messages: [new HumanMessage({ id: 'u1', content: '查询' })],
     onSendMessage: vi.fn(), threadLoading: false, runActive: true,
-    stopReconciling: false,
     isSidebarCollapsed: false, onToggleSidebar: vi.fn(),
   };
   const mounted = render(<ChatWindow {...props} />);
@@ -722,14 +669,13 @@ it('Run active 才显示 Stop 和思考；Stop reconciliation 允许输入但禁
   expect(screen.getByText('智能体正在检索北斗平台与分析监测数据...')).toBeInTheDocument();
   expect(screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...')).toBeDisabled();
 
-  mounted.rerender(<ChatWindow {...props} runActive={false} stopReconciling />);
+  mounted.rerender(<ChatWindow {...props} runActive={false} />);
   const textarea = screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...');
   expect(screen.queryByTitle('停止生成')).not.toBeInTheDocument();
   expect(screen.queryByText('智能体正在检索北斗平台与分析监测数据...')).not.toBeInTheDocument();
-  expect(screen.getByText('正在结束本轮并同步记录…')).toBeInTheDocument();
   expect(textarea).toBeEnabled();
   await userEvent.type(textarea, '下一条问题');
-  expect(screen.getByTitle('正在结束本轮')).toBeDisabled();
+  expect(screen.getByTitle('发送 (Enter)')).toBeEnabled();
 });
 
 it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', async () => {
@@ -754,7 +700,7 @@ it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', a
   ] as const;
   const mounted = render(
     <ChatWindow messages={[aiMessage, stationsResult]} toolCalls={[...liveCalls]}
-      onSendMessage={vi.fn()} threadLoading={false} runActive stopReconciling={false}
+      onSendMessage={vi.fn()} threadLoading={false} runActive
       isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
   );
   await userEvent.click(screen.getByText('查询天气数据'));
@@ -769,7 +715,7 @@ it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', a
   });
   mounted.rerender(
     <ChatWindow messages={[aiMessage, weatherResult, stationsResult]} toolCalls={[liveCalls[0]]}
-      onSendMessage={vi.fn()} threadLoading={false} runActive={false} stopReconciling={false}
+      onSendMessage={vi.fn()} threadLoading={false} runActive={false}
       isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
   );
   expect(screen.getByRole('alert')).toHaveTextContent('天气服务暂不可用');
@@ -973,7 +919,6 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
           onSendMessage={vi.fn()}
           threadLoading={false}
           runActive={true}
-          stopReconciling={false}
           isSidebarCollapsed={false}
           onToggleSidebar={vi.fn()}
         />
@@ -1105,7 +1050,6 @@ it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成�
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
-      stopReconciling={false}
       runError={true}
       onRegenerate={onRegenerate}
       onDismissRunError={onDismiss}
@@ -1131,7 +1075,6 @@ it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
-      stopReconciling={false}
       hydrationError={true}
       onReloadThread={onReload}
       onDismissHydrationError={onDismiss}
@@ -1144,28 +1087,6 @@ it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”
   expect(onReload).toHaveBeenCalledTimes(1);
   fireEvent.click(screen.getByRole('button', { name: '关闭' }));
   expect(onDismiss).toHaveBeenCalledTimes(1);
-});
-
-it('Stop 收尾异常显示“停止处理未完成 · 重试”并阻止发送，仅提供“重试”，不提供关闭按钮', () => {
-  const onRetryStop = vi.fn();
-  render(
-    <ChatWindow
-      messages={[new HumanMessage({ id: 'u1', content: '测试问题' })]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      stopReconciling={false}
-      stopError={true}
-      onRetryStop={onRetryStop}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('停止处理未完成 · 重试')).toBeInTheDocument();
-  expect(screen.queryByText(/cleanup|hydrate|checkpoint|join|ToolMessage/i)).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: '关闭' })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重试' }));
-  expect(onRetryStop).toHaveBeenCalledTimes(1);
 });
 
 it('Sidebar 不展示内部 reachability 状态探针，对话消息区不被不可达状态污染', () => {
@@ -1194,7 +1115,6 @@ it('Sidebar 不展示内部 reachability 状态探针，对话消息区不被不
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
-      stopReconciling={false}
       isSidebarCollapsed={false}
       onToggleSidebar={vi.fn()}
     />
@@ -1329,7 +1249,6 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
       onSendMessage={vi.fn()}
       threadLoading={false}
       runActive={false}
-      stopReconciling={false}
       runError={true}
       onRegenerate={onRegenerate}
       isSidebarCollapsed={false}
@@ -1394,12 +1313,4 @@ it('Sidebar 列表加载失败时以 amber 样式呈现，支持重试与关闭'
 
   fireEvent.click(screen.getByTitle('关闭'));
   expect(onDismiss).toHaveBeenCalledTimes(1);
-});
-
-it('rehydrateThread 在 stream 缺少 controller.hydrate 时必须抛出异常 (fail-closed)', async () => {
-  const { rehydrateThread } = await import('../src/services/streamCompat');
-  const invalidStream = {} as any;
-  await expect(rehydrateThread(invalidStream, 'thread-1')).rejects.toThrow(
-    'StreamController.hydrate is not available on stream handle'
-  );
 });

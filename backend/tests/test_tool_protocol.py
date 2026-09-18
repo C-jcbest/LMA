@@ -71,16 +71,18 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             source.assert_not_called()
             fetch.assert_not_called()
 
-    async def test_empty_data_is_business_error_without_retry(self):
+    async def test_empty_data_returns_success_status_and_zero_points(self):
         client = AsyncMock()
         client.__aenter__.return_value = client
         client.get_daily_data.return_value = []
         with patch.object(tools, "_build_client", return_value=client), patch.object(tools, "_resolve_station",
-            AsyncMock(return_value=SimpleNamespace(station_type=3, station_uuid="test"))):
+            AsyncMock(return_value=SimpleNamespace(station_name="测试站", station_type=3, station_uuid="test"))):
             message, _ = await self.run_tool(tools.get_daily_gnss_data, {
                 "station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
-        self.assertEqual(message.status, "error")
-        self.assertIn("没有 GNSS 数据", message.content)
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["data"]["total_points"], 0)
+        self.assertEqual(message.artifact["data"]["points"], [])
+        self.assertIn("没有 GNSS 数据", message.artifact["data"]["message"])
         self.assertEqual(client.get_daily_data.await_count, 1)
 
     async def test_internal_error_is_logged_but_never_exposed(self):

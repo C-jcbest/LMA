@@ -187,7 +187,13 @@ async def list_station_groups() -> tuple[str, dict]:
     async with _build_client() as client:
         groups = await client.get_station_groups()
     if not groups:
-        raise ToolFailure("当前账号没有可访问的监测点分组。")
+        return tool_result(
+            {
+                "total": 0,
+                "groups": [],
+                "message": "当前账号没有可访问的监测点分组。",
+            }
+        )
     return tool_result(
         {
             "total": len(groups),
@@ -236,7 +242,13 @@ async def list_stations(
             station_status=station_status,
         )
     if not stations:
-        raise ToolFailure("未找到符合筛选条件的监测点。")
+        return tool_result(
+            {
+                "total": 0,
+                "stations": [],
+                "message": "未找到符合筛选条件的监测点。",
+            }
+        )
     return tool_result(
         {
             "total": len(stations),
@@ -316,7 +328,25 @@ async def get_daily_gnss_data(
         )
 
     if not points:
-        raise ToolFailure("查询时间范围内没有 GNSS 数据，不能据此判断形变。")
+        return tool_result(
+            {
+                "station_name": getattr(station, "station_name", station_name_or_uuid),
+                "begin_time": begin_time,
+                "end_time": end_time,
+                "timezone": BUSINESS_TIMEZONE,
+                "total_points": 0,
+                "returned_points": 0,
+                "downsampled": False,
+                "points": [],
+                "summary": {
+                    "n": {"count": 0},
+                    "e": {"count": 0},
+                    "u": {"count": 0},
+                    "gaps": [],
+                },
+                "message": "查询时间范围内没有 GNSS 数据，不能据此判断形变。",
+            }
+        )
     total_points = len(points)
 
     # 固定时刻模式：按天抽稀（保留全部指定时刻，仅减少参与对比的天数）

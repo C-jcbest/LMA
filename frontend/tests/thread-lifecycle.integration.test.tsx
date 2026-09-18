@@ -8,7 +8,7 @@ const mock = vi.hoisted(() => ({
   remove: vi.fn(), submit: vi.fn(), get: vi.fn(), update: vi.fn(), run: vi.fn(), join: vi.fn(), listRuns: vi.fn(),
   cancel: vi.fn(),
   getAssistant: vi.fn(),
-  sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(), stop: vi.fn(), hydrate: vi.fn(), cleanup: vi.fn(),
+  sessions: vi.fn(), busy: vi.fn(), title: vi.fn(), disconnect: vi.fn(), stop: vi.fn(), hydrate: vi.fn(),
   factory: vi.fn(),
 }));
 vi.mock('@langchain/react', () => ({ STREAM_CONTROLLER: mock.controller,
@@ -25,7 +25,6 @@ vi.mock('@langchain/react', () => ({ STREAM_CONTROLLER: mock.controller,
 vi.mock('../src/services/api', async (original) => ({ ...await original<any>(),
   getSessions: mock.sessions, generateSessionTitle: mock.title,
   getBusySessions: mock.busy,
-  removeIncompleteToolCallMessages: mock.cleanup,
   createLangGraphClient: mock.factory,
 }));
 vi.mock('../src/components/ChatWindow', () => ({ ChatWindow: (props: any) =>
@@ -33,7 +32,6 @@ vi.mock('../src/components/ChatWindow', () => ({ ChatWindow: (props: any) =>
     <button onClick={() => void props.onStopGeneration()}>停止测试生成</button>
     {props.renderOptimisticStatus?.('failed-msg-id')}
     {props.runError && <span>本次回答未能完成</span>}
-    {props.stopError && <span>停止处理未完成 · 重试</span>}
     {props.hydrationError && <span>会话加载失败</span>}
     {props.messages.map((message: any, index: number) => <p key={index}>{message.content}</p>)}</> }));
 import { App } from '../src/App';
@@ -159,18 +157,14 @@ describe('标题与 Agent Run 独立生命周期', () => {
     fireEvent.click(screen.getByText('新建监测会话'));
     expect(mock.options.threadId).toBeNull(); expect(new URL(window.location.href).searchParams.has('threadId')).toBe(false);
   });
-  it('Stop 只停止当前 Run，清理最终 checkpoint 后重新 hydrate；下一条消息仍是普通新 Run', async () => {
+  it('Stop 只停止当前 Run；下一条消息仍是普通新 Run', async () => {
     window.history.replaceState(null, '', '/?threadId=sdk-thread');
     mock.current = 'sdk-thread';
     const mounted = render(<App />);
     fireEvent.click(screen.getByText('发送测试消息'));
     await acceptRun();
     fireEvent.click(screen.getByText('停止测试生成'));
-    await waitFor(() => expect(mock.hydrate).toHaveBeenCalledWith('sdk-thread'));
     expect(mock.stop).toHaveBeenCalledWith({ cancel: true });
-    expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread');
-    expect(mock.stop.mock.invocationCallOrder[0]).toBeLessThan(mock.cleanup.mock.invocationCallOrder[0]);
-    expect(mock.cleanup.mock.invocationCallOrder[0]).toBeLessThan(mock.hydrate.mock.invocationCallOrder[0]);
     await finishRun();
     mounted.rerender(<App />);
     fireEvent.click(screen.getByText('发送测试消息'));
@@ -200,7 +194,7 @@ describe('标题与 Agent Run 独立生命周期', () => {
     fireEvent.click(screen.getByText('会话乙'));
     await acceptRun();
     fireEvent.click(screen.getByText('停止测试生成'));
-    await waitFor(() => expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'thread-b'));
+    await waitFor(() => expect(mock.stop).toHaveBeenCalledWith({ cancel: true }));
     expect(mock.join).not.toHaveBeenCalled();
     await finishRun();
   });
@@ -235,68 +229,12 @@ describe('标题与 Agent Run 独立生命周期', () => {
     expect(mock.submit.mock.calls[0][0].messages[0]).toBe(originalMessage);
     await finishRun();
   });
-  it('Stop 收尾为原子交互，期间禁止切换会话，并在完成后正常同步当前会话', async () => {
-    window.history.replaceState(null, '', '/?threadId=thread-a');
-    mock.current = 'thread-a';
-    mock.sessions.mockResolvedValue({
-      sessions: [
-        { thread_id: 'thread-a', name: '会话甲', status: 'busy' },
-        { thread_id: 'thread-b', name: '会话乙', status: 'idle' },
-      ],
-      isLive: true,
-      nextOffset: 2,
-      hasMore: false,
-    });
-
-    let finishCleanup!: () => void;
-    mock.cleanup.mockImplementation(() => new Promise<void>((resolve) => { finishCleanup = resolve; }));
-
-    render(<App />);
-    await waitFor(() => expect(screen.getByText('会话乙')).toBeInTheDocument());
-    fireEvent.click(screen.getByText('发送测试消息'));
-    await acceptRun();
-
-    fireEvent.click(screen.getByText('停止测试生成'));
-    await waitFor(() => expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread'));
-
-    // Stop 期间尝试切换到会话乙
-    fireEvent.click(screen.getByText('会话乙'));
-    // URL 仍保持为当前会话，禁止切换
-    expect(new URL(window.location.href).searchParams.get('threadId')).toBe('sdk-thread');
-
-    await act(async () => { finishCleanup(); });
-
-    expect(mock.cleanup).toHaveBeenCalledWith(mock.options.client, 'sdk-thread');
-    expect(mock.hydrate).toHaveBeenCalledWith('sdk-thread');
-    await finishRun();
-
-    // Stop 完成后允许正常切换会话
-    fireEvent.click(screen.getByText('会话乙'));
-    expect(new URL(window.location.href).searchParams.get('threadId')).toBe('thread-b');
-  });
-
-  it('停止后清理失败不伪造成功，且不 hydrate 未确认状态', async () => {
+  it('Stop 仅调用官方 stream.stop({ cancel: true }) 控制 Run', async () => {
     window.history.replaceState(null, '', '/?threadId=sdk-thread');
-    mock.cleanup.mockRejectedValue(new Error('private cleanup failure'));
+    mock.current = 'sdk-thread';
     render(<App />);
     fireEvent.click(screen.getByText('停止测试生成'));
-    await waitFor(() => expect(screen.getByText('停止处理未完成 · 重试')).toBeInTheDocument());
-    expect(mock.hydrate).not.toHaveBeenCalled();
-    expect(screen.queryByText(/private cleanup failure/)).not.toBeInTheDocument();
-  });
-  it('重复 Stop 在首个流程完成前只处理一次当前 Run', async () => {
-    window.history.replaceState(null, '', '/?threadId=sdk-thread');
-    let finishStop!: () => void;
-    mock.stop.mockReturnValue(new Promise<void>((resolve) => { finishStop = resolve; }));
-    render(<App />);
-    act(() => {
-      fireEvent.click(screen.getByText('停止测试生成'));
-      fireEvent.click(screen.getByText('停止测试生成'));
-    });
-    expect(mock.stop).toHaveBeenCalledTimes(1);
-    expect(mock.cleanup).not.toHaveBeenCalled();
-    await act(async () => { finishStop(); });
-    await waitFor(() => expect(mock.cleanup).toHaveBeenCalledTimes(1));
+    expect(mock.stop).toHaveBeenCalledWith({ cancel: true });
   });
   it('分页失败保留列表，重试不跳页，分页重叠去重并按服务端更新时间排序', async () => {
     const row = (id: string, updated_at: string) => ({ thread_id: id, name: id, created_at: updated_at, updated_at, status: 'idle' });
@@ -354,7 +292,7 @@ describe('标题与 Agent Run 独立生命周期', () => {
     mounted.unmount();
     mock.sessions.mockResolvedValue({ sessions: [], isLive: true });
     mock.busy.mockResolvedValue([]);
-    mock.stop.mockResolvedValue(undefined); mock.cleanup.mockResolvedValue(undefined); mock.hydrate.mockResolvedValue(undefined);
+    mock.stop.mockResolvedValue(undefined); mock.hydrate.mockResolvedValue(undefined);
     render(<App />);
     expect(mock.options.threadId).toBe('linked');
     expect(window.location.search).toBe('?view=monitor&threadId=linked');

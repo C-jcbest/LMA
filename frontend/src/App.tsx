@@ -9,12 +9,10 @@ import { ContextUsage } from './components/ContextUsageIndicator';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { OptimisticMessageStatus } from './components/OptimisticMessageStatus';
 import { ToastContainer, useToast } from './components/Toast';
-import { rehydrateThread } from './services/streamCompat';
 import {
   LMA_ASSISTANT_ID,
   createLangGraphClient,
   ThreadSession,
-  removeIncompleteToolCallMessages,
   generateSessionTitle,
   getSessions,
   getBusySessions,
@@ -62,16 +60,12 @@ export const App: React.FC = () => {
   const currentClientRef = useRef(client);
   currentClientRef.current = client;
 
-  // 官方 stream.isLoading 已覆盖 Run 启动与执行；本地仅保留 Stop 后的 checkpoint 清理过渡态。
-  const [stopReconciling, setStopReconciling] = useState(false);
-  const stopReconcilingRef = useRef(false);
   const isSubmittingRef = useRef(false);
 
   // 分层错误交互模型：当前会话的瞬时错误，切换会话时自动重置
   const { toasts, showToast, dismissToast } = useToast();
   const [runError, setRunError] = useState(false);
   const [hydrationError, setHydrationError] = useState(false);
-  const [stopError, setStopError] = useState(false);
 
   // 仅保存标题展示任务；不预创建 Thread，不复制权威消息历史。
   const [titleViews, setTitleViews] = useState<Record<string, 'pending'>>({});
@@ -226,7 +220,13 @@ export const App: React.FC = () => {
     setHydrationError(false);
     try {
       if (selectedThreadRef.current === targetThreadId) {
-        await rehydrateThread(stream, targetThreadId);
+        await stream.disconnect();
+        selectThread(null, 'replace');
+        setTimeout(() => {
+          if (selectedThreadRef.current === null) {
+            selectThread(targetThreadId, 'replace');
+          }
+        }, 0);
       }
     } catch (error) {
       console.warn('reload thread failed:', error);
@@ -239,7 +239,6 @@ export const App: React.FC = () => {
   useEffect(() => {
     setRunError(false);
     setHydrationError(false);
-    setStopError(false);
   }, [activeThreadId]);
 
   useEffect(() => {
@@ -327,19 +326,16 @@ export const App: React.FC = () => {
   }, [sessions, stream.isLoading, activeThreadId]);
 
   const handleSelectSession = (session: Pick<ThreadSession, 'thread_id'>) => {
-    if (stopReconcilingRef.current) return;
     stream.disconnect();
     selectThread(session.thread_id);
   };
 
   const handleCreateSession = () => {
-    if (stopReconcilingRef.current) return;
     stream.disconnect();
     selectThread(null);
   };
 
   const handleRenameSession = async (sessionId: string, newName: string) => {
-    if (stopReconcilingRef.current) return;
     try {
       await renameSession(client, sessionId, newName);
       if (currentClientRef.current !== client) return;
@@ -357,7 +353,6 @@ export const App: React.FC = () => {
   };
 
   const handleDeleteSession = async (sessionId: string) => {
-    if (stopReconcilingRef.current) return;
     // 同步防重，并作废删除之前的列表请求；DELETE 未确认时暂停轮询写回。
     if (deletingThreadsRef.current.has(sessionId)) return;
     deletingThreadsRef.current.add(sessionId);
@@ -403,11 +398,10 @@ export const App: React.FC = () => {
 
   const handleSendMessage = async (userText: string) => {
     const text = userText.trim();
-    if (!text || stream.isThreadLoading || stream.isLoading || stopReconciling || stopError || isSubmittingRef.current) return;
+    if (!text || stream.isThreadLoading || stream.isLoading || isSubmittingRef.current) return;
     // 在第一个 await 前同步上锁，防止快速回车/双击同时创建两个 Thread。
     isSubmittingRef.current = true;
     setRunError(false);
-    setStopError(false);
 
     const isFirstMessage = activeThreadId === null;
     const submission = { client, threadId: activeThreadId };
@@ -448,7 +442,7 @@ export const App: React.FC = () => {
 
   // 重新生成：遵循官方 Retry an AI turn 规范，通过 parentCheckpointId 分叉，并重新提交官方 BaseMessage 对象
   const handleRegenerate = async (checkpointId: string, lastHumanMsg?: BaseMessage) => {
-    if (stream.isLoading || isSubmittingRef.current || stopReconciling || stopError) return;
+    if (stream.isLoading || isSubmittingRef.current) return;
     const currentThreadId = activeThreadId;
     if (!currentThreadId || !checkpointId) return;
 
@@ -493,7 +487,7 @@ export const App: React.FC = () => {
 
   // 消息重试：遵循官方 ID reconciliation 规范，在 stream.messages 中检索原 BaseMessage 重新 submit，避免创建新 ID 产生重复消息
   const handleRetryMessage = async (messageId: string) => {
-    if (stream.isThreadLoading || stream.isLoading || stopReconciling || stopError || isSubmittingRef.current) return;
+    if (stream.isThreadLoading || stream.isLoading || isSubmittingRef.current) return;
     const message = (stream.messages || []).find((m: any) => m.id === messageId);
     if (!message) return;
 
@@ -540,23 +534,11 @@ export const App: React.FC = () => {
   };
 
   const handleStopGeneration = async () => {
-    const targetThreadId = activeThreadId;
-    if (!targetThreadId || stopReconcilingRef.current) return;
-
-    stopReconcilingRef.current = true;
-    setStopReconciling(true);
-    setStopError(false);
-
     try {
       await stream.stop({ cancel: true });
-      await removeIncompleteToolCallMessages(client, targetThreadId);
-      await rehydrateThread(stream, targetThreadId);
     } catch (error) {
       console.warn('stop generation failed:', error);
-      setStopError(true);
     } finally {
-      stopReconcilingRef.current = false;
-      setStopReconciling(false);
       if (currentClientRef.current === client) {
         await loadSessions();
       }
@@ -572,7 +554,6 @@ export const App: React.FC = () => {
           isNewSessionDraft={isNewSessionDraft}
           busyThreadIds={busyThreadIds}
           deletingThreadIds={deletingThreadIds}
-          disabled={stopReconciling}
           onSelectSession={handleSelectSession}
           onCreateSession={handleCreateSession}
           onRenameSession={handleRenameSession}
@@ -598,7 +579,6 @@ export const App: React.FC = () => {
           onSendMessage={handleSendMessage}
           threadLoading={stream.isThreadLoading}
           runActive={stream.isLoading}
-          stopReconciling={stopReconciling}
           renderOptimisticStatus={(messageId) => (
             <OptimisticMessageStatus
               stream={stream}
@@ -617,8 +597,6 @@ export const App: React.FC = () => {
           hydrationError={hydrationError}
           onReloadThread={() => void handleReloadThread()}
           onDismissHydrationError={() => setHydrationError(false)}
-          stopError={stopError}
-          onRetryStop={() => void handleStopGeneration()}
         />
       </ErrorBoundary>
 
@@ -633,8 +611,6 @@ export const App: React.FC = () => {
           titleJobsRef.current.clear();
           firstInputRef.current = null;
           isSubmittingRef.current = false;
-          stopReconcilingRef.current = false;
-          setStopReconciling(false);
           setTitleViews({});
           setNewThreadOrder([]);
           deletingThreadsRef.current.clear();
@@ -646,7 +622,6 @@ export const App: React.FC = () => {
           setIsListLoading(false);
           setListError('');
           setRunError(false);
-          setStopError(false);
           setHydrationError(false);
           selectThread(null, 'replace');
           setApiUrl(nextUrl);

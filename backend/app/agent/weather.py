@@ -246,7 +246,24 @@ async def query_weather(
         raise
 
     if not forecast.get("current") and not _series(forecast, "daily", "time") and not _series(history, "daily", "time"):
-        raise ToolFailure("天气数据源未返回该位置和时间范围的可用数据。")
+        return tool_result(
+            {
+                "ok": True,
+                "location": {
+                    "station_name": station_name,
+                    "latitude": round(lat, 4),
+                    "longitude": round(lon, 4),
+                    "timezone": forecast.get("timezone", BUSINESS_TIMEZONE),
+                },
+                "query": {
+                    "timezone": BUSINESS_TIMEZONE,
+                    "history_start_date": history_start.isoformat(),
+                    "history_end_date": history_end.isoformat(),
+                    "forecast_days": forecast_days,
+                },
+                "message": "天气数据源未返回该位置和时间范围的可用数据。",
+            }
+        )
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
     recent_24h = _recent_precipitation(forecast, now)

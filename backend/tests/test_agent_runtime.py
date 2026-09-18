@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -238,3 +238,47 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     await agent.ainvoke({"messages": [HumanMessage(content="查询")]})
                 delays = [c.args[0] for c in sleep.await_args_list if c.args[0] > 0]
                 self.assertEqual(delays, [0.5, 1.0])
+
+    async def test_sanitize_unanswered_tool_calls_cleans_interrupted_run(self):
+        """测试服务端自愈：前轮被中断遗留的未配对 tool_calls 在新一轮开始前被清洗。"""
+        @tool
+        def station():
+            """读取站点。"""
+            return "真实证据"
+
+        interrupted_ai = AIMessage(content="", tool_calls=[{"id": "c1", "name": "station", "args": {}}])
+        model = ScriptedModel(script=[AIMessage(content="正常回答")])
+        checkpointer = InMemorySaver()
+        agent = graph.create_lma_agent(model, agent_tools=[station], checkpointer=checkpointer)
+        config = {"configurable": {"thread_id": "interrupted-thread"}}
+
+        # 向 thread 写入包含未完成 tool_calls 的历史消息（模拟客户端 stop/cancel）
+        await agent.aupdate_state(
+            config,
+            {"messages": [HumanMessage(content="查询"), interrupted_ai]},
+        )
+
+        result = await agent.ainvoke({"messages": [HumanMessage(content="下一轮提问")]}, config)
+        self.assertEqual(result["messages"][-1].content, "正常回答")
+        first_input_messages = model.inputs[0]
+        self.assertNotIn(interrupted_ai, first_input_messages)
+
+    async def test_tool_error_middleware_catches_generic_tool_exception(self):
+        """测试通用异常被 ToolErrorMiddleware 捕获并由 LmaMiddleware 补充受控安全 envelope。"""
+        @tool
+        def faulty_tool():
+            """故障工具。"""
+            raise RuntimeError("unexpected database disk failure")
+
+        model = ScriptedModel(script=[
+            AIMessage(content="", tool_calls=[{"id": "faulty_call", "name": "faulty_tool", "args": {}}]),
+            AIMessage(content="解释限制"),
+        ])
+        agent = graph.create_lma_agent(model, agent_tools=[faulty_tool])
+        result = await agent.ainvoke({"messages": [HumanMessage(content="触发故障")]})
+        tool_messages = [m for m in result["messages"] if m.type == "tool"]
+        self.assertEqual(len(tool_messages), 1)
+        self.assertEqual(tool_messages[0].status, "error")
+        self.assertEqual(tool_messages[0].content, "工具执行失败，未取得可用数据，请说明这一限制。")
+        self.assertEqual(tool_messages[0].artifact["error"]["category"], "internal")
+        self.assertEqual(tool_messages[0].artifact["data"]["message"], "工具执行失败，未取得可用数据，请说明这一限制。")

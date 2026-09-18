@@ -11,8 +11,15 @@ from dataclasses import replace
 from functools import lru_cache
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
-from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware, ToolRetryMiddleware, ModelCallLimitMiddleware, ToolCallLimitMiddleware
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    ModelRetryMiddleware,
+    ToolRetryMiddleware,
+    ToolErrorMiddleware,
+    ModelCallLimitMiddleware,
+    ToolCallLimitMiddleware,
+)
+from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphBubbleUp
 
@@ -39,6 +46,42 @@ from app.config import get_settings
 tools = [get_current_time, list_station_groups, list_stations, get_daily_gnss_data,
          query_weather, analyze_gnss_chart, inspect_site_environment]
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_unanswered_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """服务端自愈：清除或收窄历史 checkpoint 中因客户端主动中断等遗留的未配对 AI tool-call。"""
+    updates: list[BaseMessage] = []
+    for idx, msg in enumerate(messages):
+        if msg.type != "ai" or not getattr(msg, "tool_calls", None):
+            continue
+        # 统计紧随其后的连续 ToolMessage id
+        answered_ids = set()
+        for next_msg in messages[idx + 1:]:
+            if next_msg.type == "tool":
+                answered_ids.add(getattr(next_msg, "tool_call_id", None))
+            elif next_msg.type in ("human", "ai"):
+                break
+        calls = msg.tool_calls
+        if all(c.get("id") in answered_ids for c in calls):
+            continue
+        completed_calls = [c for c in calls if c.get("id") in answered_ids]
+        if completed_calls:
+            updates.append(msg.model_copy(update={"tool_calls": completed_calls}))
+        elif msg.content and (not isinstance(msg.content, str) or msg.content.strip()):
+            updates.append(msg.model_copy(update={"tool_calls": []}))
+        elif getattr(msg, "id", None):
+            updates.append(RemoveMessage(id=msg.id))
+    return updates
+
+
+def _on_tool_error(exc: Exception, request) -> str | None:
+    """官方 ToolErrorMiddleware 回调：捕获通用工具异常并返回受控安全文案。"""
+    if isinstance(exc, (ToolFailure, BeidouApiError)):
+        return None
+    logger.warning("tool execution failed: %s", exc, exc_info=True)
+    if is_transient_error(exc):
+        return "数据服务暂不可用，本次查询未取得可用数据，请稍后重试。"
+    return "工具执行失败，未取得可用数据，请说明这一限制。"
 
 
 class AgentState(BaseAgentState):
@@ -72,14 +115,18 @@ class LmaMiddleware(AgentMiddleware):
 
     async def abefore_agent(self, state, runtime):
         anchor = business_now().isoformat(timespec="seconds")
-        messages = []
-        if state["messages"] and state["messages"][-1].type == "human":
-            message = state["messages"][-1]
-            messages.append(message.model_copy(update={"additional_kwargs": {
-                **message.additional_kwargs, "created_at": anchor,
+        raw_messages = state.get("messages", [])
+        updates = _sanitize_unanswered_tool_calls(raw_messages)
+        if raw_messages and raw_messages[-1].type == "human":
+            last_human = raw_messages[-1]
+            updates.append(last_human.model_copy(update={"additional_kwargs": {
+                **last_human.additional_kwargs, "created_at": anchor,
             }}))
-        return {**({"messages": messages} if messages else {}),
-                "recommendations": [], "recommendations_error": ""}
+        return {
+            **({"messages": updates} if updates else {}),
+            "recommendations": [],
+            "recommendations_error": "",
+        }
 
     async def awrap_model_call(self, request, handler):
         response = await handler(request)
@@ -115,27 +162,38 @@ class LmaMiddleware(AgentMiddleware):
         try:
             result = await handler(request)
             if isinstance(result, ToolMessage) and result.status == "error" and not result.artifact:
-                # 官方 schema 错误不含展示 artifact；只投影受控提示，不传输入或堆栈。
-                message = VALIDATION_MESSAGE if result.content == VALIDATION_MESSAGE else "工具调用未完成，未取得可用数据。"
-                return result.model_copy(update={"content": message, "artifact": {"data": {"message": message}, "error": {"category": "parameter" if result.content == VALIDATION_MESSAGE else "internal"}}})
+                # 官方 schema 校验错误与 ToolErrorMiddleware 产出的错误不含前端 artifact；为其统一补齐安全 envelope。
+                is_param = (result.content == VALIDATION_MESSAGE)
+                is_infra = ("暂不可用" in result.content)
+                category = "parameter" if is_param else ("infrastructure" if is_infra else "internal")
+                return result.model_copy(
+                    update={
+                        "artifact": {
+                            "data": {"message": result.content},
+                            "error": {"category": category},
+                        }
+                    }
+                )
             return result
         except ToolFailure as exc:
-            return ToolMessage(content=exc.content, artifact=exc.artifact,
-                tool_call_id=request.tool_call["id"], name=request.tool_call["name"], status="error")
+            return ToolMessage(
+                content=exc.content,
+                artifact=exc.artifact,
+                tool_call_id=request.tool_call["id"],
+                name=request.tool_call["name"],
+                status="error",
+            )
         except GraphBubbleUp:
             raise
         except BeidouApiError:
             logger.warning("monitoring platform rejected tool request", exc_info=True)
             message = "监测平台拒绝本次查询，未取得可用数据，请检查账号访问权限或查询条件。"
-            return ToolMessage(content=message, artifact={"data": {"message": message}, "error": {"category": "business"}},
-                tool_call_id=request.tool_call["id"], name=request.tool_call["name"], status="error")
-        except Exception as exc:
-            logger.warning("tool execution failed without retry", exc_info=True)
-            message = ("数据服务暂不可用，本次查询未取得可用数据，请稍后重试。"
-                       if is_transient_error(exc) else "工具执行失败，未取得可用数据，请说明这一限制。")
             return ToolMessage(
-                content=message, artifact={"data": {"message": message}, "error": {"category": "infrastructure" if is_transient_error(exc) else "internal"}},
-                tool_call_id=request.tool_call["id"], name=request.tool_call["name"], status="error",
+                content=message,
+                artifact={"data": {"message": message}, "error": {"category": "business"}},
+                tool_call_id=request.tool_call["id"],
+                name=request.tool_call["name"],
+                status="error",
             )
 
 
@@ -274,6 +332,7 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
             ModelRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
                 on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
                 max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),
+            ToolErrorMiddleware(on_error=_on_tool_error),
             ToolRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
                 on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
                 max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),

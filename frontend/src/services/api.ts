@@ -1,5 +1,4 @@
 import { Client } from '@langchain/langgraph-sdk';
-import { AIMessage, RemoveMessage } from '@langchain/core/messages';
 
 
 export interface ThreadSession {
@@ -129,64 +128,5 @@ export async function generateSessionTitle(client: Client, userMessage: string):
 export async function renameSession(client: Client, threadId: string, newName: string): Promise<void> {
   await client.threads.update(threadId, {
     metadata: { name: newName },
-  });
-}
-
-
-/**
- * 检查最终 checkpoint 中的全部 AI tool-call 消息，返回需要清除或收窄的消息。
- * ToolMessage 只有紧随其 AIMessage 的连续工具结果才构成有效配对；整批均未完成时
- * 删除 AIMessage，并行批次部分完成时原位保留已有 ToolMessage 对应的 calls。
- *
- * 不能只检查最后一个 HumanMessage 之后：一次失败重试会先把新的 HumanMessage 写入
- * checkpoint，使上一次停止遗留的未配对 AIMessage 落到“当前回合”之前。
- */
-export function getIncompleteToolCallMessageUpdates(rawMessages: unknown[]): Array<RemoveMessage | AIMessage> {
-  const messages = rawMessages as any[];
-  const updates: Array<RemoveMessage | AIMessage> = [];
-  const messageType = (message: any) => message?.type;
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    const type = messageType(message);
-    if (type !== 'ai') continue;
-    const calls = Array.isArray(message?.tool_calls) ? message.tool_calls : [];
-    if (!calls.length) continue;
-
-    const answered = new Set<string>();
-    for (let next = index + 1; next < messages.length && messageType(messages[next]) === 'tool'; next += 1) {
-      const id = messages[next]?.tool_call_id;
-      if (id) answered.add(id);
-    }
-    if (calls.every((call: any) => call?.id && answered.has(call.id))) continue;
-    if (!message.id) throw new Error('未完成工具调用缺少消息 ID，无法安全清理');
-    const completedCalls = calls.filter((call: any) => call?.id && answered.has(call.id));
-    if (completedCalls.length === 0) updates.push(new RemoveMessage({ id: message.id }));
-    else updates.push(new AIMessage({
-      id: message.id,
-      content: message.content ?? '',
-      additional_kwargs: message.additional_kwargs ?? {},
-      response_metadata: message.response_metadata ?? {},
-      tool_calls: completedCalls,
-      usage_metadata: message.usage_metadata,
-    }));
-  }
-  return updates;
-}
-
-export async function removeIncompleteToolCallMessages(
-  client: Client,
-  threadId: string
-): Promise<void> {
-  // stop() 已对当前 Run 发出 interrupt cancel；此处只读取最终 checkpoint，不再扫描、
-  // cancel 其它 Run，也不构造 resume/HITL 或 ToolMessage。
-  const state = await client.threads.getState(threadId);
-  const messages = Array.isArray((state.values as any)?.messages) ? (state.values as any).messages : [];
-  const updates = getIncompleteToolCallMessageUpdates(messages);
-  if (!updates.length) return;
-
-  // 必须传 LangChain Message 实例，让 SDK 序列化为 lc constructor。生产 Agent
-  // Server 不接受 JS 文档中的简写 {type:'remove', id} 作为远程 updateState 输入。
-  await client.threads.updateState(threadId, {
-    values: { messages: updates } as any,
   });
 }

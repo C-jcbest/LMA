@@ -40,7 +40,6 @@ interface ChatWindowProps {
   onSendMessage: (text: string) => void;
   threadLoading: boolean;
   runActive: boolean;
-  stopReconciling: boolean;
   renderOptimisticStatus?: (messageId?: string) => React.ReactNode;
   recommendations?: string[];
   isSidebarCollapsed: boolean;
@@ -55,8 +54,6 @@ interface ChatWindowProps {
   hydrationError?: boolean;
   onReloadThread?: () => void;
   onDismissHydrationError?: () => void;
-  stopError?: boolean;
-  onRetryStop?: () => void;
 }
 
 const MAX_LENGTH = 3000;
@@ -83,7 +80,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   onSendMessage,
   threadLoading,
   runActive,
-  stopReconciling,
   renderOptimisticStatus,
   recommendations = [],
   isSidebarCollapsed,
@@ -96,8 +92,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   hydrationError = false,
   onReloadThread,
   onDismissHydrationError,
-  stopError = false,
-  onRetryStop,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showPromptsMenu, setShowPromptsMenu] = useState(false);
@@ -128,9 +122,9 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
   useEffect(() => {
     // 仅当用户停留在底部附近时自动跟随滚动，流式输出不打断上翻回看
     if (isPinnedRef.current) scrollToBottom();
-  }, [messages, threadLoading, runActive, stopReconciling, recommendations, runError, hydrationError, stopError]);
+  }, [messages, threadLoading, runActive, recommendations, runError, hydrationError]);
 
-  const canSubmit = !threadLoading && !runActive && !stopReconciling && !stopError;
+  const canSubmit = !threadLoading && !runActive;
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -400,30 +394,6 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
       {/* 底部悬浮卡片输入区 */}
       <div className="p-4 bg-white shrink-0 z-20">
         <div className="max-w-4xl mx-auto relative">
-          {/* Stop 收尾同步异常轻量提示：阻止继续发送，仅提供重试 */}
-          {stopError && (
-            <div className="mb-2 max-w-4xl mx-auto flex items-center justify-between p-2.5 rounded-xl border border-amber-200 bg-amber-50/80 text-xs text-amber-900 shadow-xs">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span>停止处理未完成 · 重试</span>
-              </div>
-              <div className="flex items-center gap-2">
-                {onRetryStop && (
-                  <button
-                    type="button"
-                    onClick={onRetryStop}
-                    className="px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-amber-800 hover:bg-amber-100/50 transition-colors shadow-xs"
-                  >
-                    重试
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {stopReconciling && (
-            <div className="mb-2 text-center text-xs text-neutral-500" role="status">正在结束本轮并同步记录…</div>
-          )}
           {/* 位于输入框正上方，只有离开底部时出现。 */}
           {showJumpToBottom && (
             <button
@@ -494,7 +464,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
             {/* 上下文窗口用量：点击环形项目标识查看明细 */}
             <ContextUsageIndicator usage={contextUsage} />
 
-            {/* Stop 只由当前官方 Run 状态控制；checkpoint 清理期间显示不可发送。 */}
+            {/* Stop 只由当前官方 Run 状态控制 */}
             {runActive ? (
               <button
                 type="button"
@@ -509,7 +479,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                 type="submit"
                 disabled={!inputText.trim() || !canSubmit}
                 className="w-8 h-8 rounded-xl bg-gradient-to-tr from-[#8793ea] to-[#99a4f4] hover:brightness-105 active:scale-95 text-white flex items-center justify-center shrink-0 transition-all disabled:opacity-40 disabled:pointer-events-none shadow-sm"
-                title={stopReconciling ? '正在结束本轮' : stopError ? '停止未完成，请重试' : threadLoading ? '正在加载会话' : '发送 (Enter)'}
+                title={threadLoading ? '正在加载会话' : '发送 (Enter)'}
               >
                 <Send className="w-3.5 h-3.5 fill-current" />
               </button>
