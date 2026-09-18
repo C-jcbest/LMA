@@ -29,3 +29,11 @@
 5. **静态 Prompt Cache 与业务时间**：
    - 业务时间统一使用 `Asia/Shanghai`；
    - `system.md` 彻底静态化，当前业务时间由 `get_current_time` 工具动态获取，最大化供应商 Prompt Cache 命中率。
+6. **Stream Source of Truth 严格收敛（TODO 14）**：
+   - 消息统一唯一只读 `useStream().messages`，包括历史压缩摘要严格从该数组提取，消除对 `stream.values.messages` 的双重依赖；运行状态唯一直读 `isLoading`，工具唯一直读 `useToolCalls`。
+7. **App.tsx 领域 Hook 拆分（TODO 17）**：
+   - 提取 `useThreadNavigation`、`useThreadDirectory`、`useAuxiliaryRuns` 与 `useThreadActions` 四大职责聚焦 Hook；
+   - 零新增外部状态库依赖，`App.tsx` 从 635 行大幅精简至约 350 行。
+8. **通用聊天 Shell 与领域工具渲染解耦（TODO 18）**：
+   - `InlineToolCall.tsx` 收拢为轻量通用 Shell（~190 行）；
+   - 独立解耦 `StationResultView`、`GnssResultView`、`WeatherResultView`、`VisionResultView`、`SiteEnvironmentResultView` 与 `EmptyOrGenericResultView`，保持 100% 格式与向后兼容测试通过。
