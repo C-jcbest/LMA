@@ -53,6 +53,19 @@ const isSiteEnvironmentArtifact = (value: unknown): value is SiteEnvironmentArti
   (value.sources === undefined || Array.isArray(value.sources)) &&
   (value.limitations === undefined || Array.isArray(value.limitations));
 
+export const parseOutputRecord = (output: unknown): Record<string, any> | undefined => {
+  if (isRecord(output)) return output;
+  if (typeof output === 'string') {
+    try {
+      const parsed = JSON.parse(output);
+      return isRecord(parsed) ? parsed : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
 export const toFiniteGnssNumber = (value: unknown): number | null => {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string' && value.trim() === '') return null;
@@ -72,16 +85,28 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   toolMessage,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  // 运行时状态以官方 liveToolCall.status 为准，收到 finished/error 即时更新卡片；
-  // 权威持久化与 artifact 业务展示等待 ToolMessage。
+
+  // P0-1: 错误仅判断官方明确错误
   const isError =
     toolMessage?.status === 'error' ||
     liveToolCall?.status === 'error';
-  const isFinished =
-    toolMessage?.status === 'success' ||
-    liveToolCall?.status === 'finished';
-  const isPending = !isFinished && !isError;
+
+  // P0-1 & P0-3: 成功判断“工具结果是否已经返回”（优先 ToolMessage，实时阶段 liveToolCall.output 已产生）
+  // output 为 {} / [] / "" / null / 0 / false 均是合法结果，空结果同样视为成功
+  const hasToolMessageResult = toolMessage !== undefined && toolMessage.status !== 'error';
+  const isLiveRunning =
+    (liveToolCall?.status as string | undefined) === 'running';
+  const hasLiveOutput =
+    !isLiveRunning &&
+    liveToolCall !== undefined &&
+    liveToolCall.status !== 'error' &&
+    liveToolCall.output !== undefined;
+  const hasResult = !isError && (hasToolMessageResult || hasLiveOutput);
+
+  // 尚未收到任何结果且无错误时一律为 pending（正在查询…）
+  const isPending = !isError && !hasResult;
   const pendingText = '正在查询，请稍候…';
+
   const artifact = isRecord(toolMessage?.artifact) ? toolMessage.artifact : undefined;
   const artifactData = isRecord(artifact?.data) ? artifact.data : undefined;
   const artifactImages = Array.isArray(artifact?.images)
@@ -95,28 +120,18 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
         (point): point is ChartPoint => isRecord(point) && typeof point.t === 'string'
       )
     : [];
-  const liveOutput = liveToolCall?.output;
-  const parsedLiveOutput = isRecord(liveOutput)
-    ? liveOutput
-    : typeof liveOutput === 'string' && liveOutput.trim().startsWith('{')
-    ? (() => {
-        try {
-          const parsed = JSON.parse(liveOutput);
-          return isRecord(parsed) ? parsed : undefined;
-        } catch {
-          return undefined;
-        }
-      })()
-    : undefined;
+
+  // P0-4: 顶层集中解析 live output，禁止在各个 tool renderer 中猜测或反序列化 JSON
+  const liveOutputRecord = parseOutputRecord(liveToolCall?.output);
 
   const siteEnvironment = isSiteEnvironmentArtifact(artifact?.site_environment)
     ? artifact.site_environment
-    : isSiteEnvironmentArtifact(parsedLiveOutput?.site_environment)
-    ? parsedLiveOutput.site_environment
+    : isSiteEnvironmentArtifact(liveOutputRecord?.site_environment)
+    ? liveOutputRecord.site_environment
     : undefined;
 
-  // 业务展示两阶段数据源：优先消费持久化的 ToolMessage.artifact.data，未到达前使用 liveToolCall.output 即时展示
-  const rawData = artifactData ?? parsedLiveOutput;
+  // P0-2: 业务展示两阶段数据源：优先消费持久化的 ToolMessage.artifact.data，未到达前使用 liveToolCall.output 即时展示
+  const rawData = artifactData ?? liveOutputRecord;
   const data: any = rawData ? { ...rawData } : null;
   if (data) {
     if (chartPoints.length) data.chart_points = chartPoints;

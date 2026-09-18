@@ -28,6 +28,13 @@
 - TODO 16 & 17 已完成（2026-09-18 减法重构与标准化收口）：
   - 模型构造：官方 `init_chat_model` 为统一入口，DeepSeek 与 OpenAI 思考配置显式映射（OpenAI 采用 Responses API + reasoning 配置）；`profile.reasoning_output` 与 `profile.tool_calling` 支持显式明确否决（fail-fast）；`DeepSeekThinkingChatModel` 仅限定在主 Agent 多轮 tool_loop 场景；
   - Reasoning 消费：前端彻底只消费官方 `AIMessage.contentBlocks`，删除 `additional_kwargs.reasoning_content` 等全部前端兼容回退；后端保留原始 `reasoning_content` 以供多轮协议及官方 translator 转换；后端删除 `lma_thinking_duration_ms` 与 `perf_counter`，不再伪造思考耗时。
+- TODO_simplify P0-1 ~ P0-4 已完成（2026-09-18 工具生命周期与结果呈现极简化）：
+  - 彻底移除对 `liveToolCall.status === 'finished'` 作为完成条件的硬依赖；
+  - 工具完成判断直接基于“结果是否已经返回”：`hasResult = hasToolMessageResult || hasLiveOutput`；
+  - 成功与空结果统一规范：`{}`、`[]`、`""`、`null`、`0`、`false` 均视为成功产出结果，未产生可展示业务数据时展开显示“该步骤没有可展示的业务数据”，绝不退回 loading 或转为 error；
+  - 两阶段数据源自然衔接：优先消费持久化的 `ToolMessage.artifact.data`，未到达前消费 `liveToolCall.output`，ToolMessage 到达后自然覆盖；
+  - 集中解析消除 JSON 猜测：顶层提取 `parseOutputRecord`，禁止在各个具体 Tool renderer 中猜测 JSON 字符串。
+
 
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 

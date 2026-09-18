@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatWindow } from '../src/components/ChatWindow';
-import { InlineToolCall } from '../src/components/InlineToolCall';
+import { InlineToolCall, parseOutputRecord } from '../src/components/InlineToolCall';
 import { MessageActions } from '../src/components/MessageActions';
 import { Sidebar } from '../src/components/Sidebar';
 import { OptimisticMessageStatus } from '../src/components/OptimisticMessageStatus';
@@ -825,6 +825,81 @@ it('live finished 但返回空内容或无业务数据时显示完成与无数�
   await userEvent.click(screen.getByText('查询监测点列表'));
   expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
   expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
+});
+
+it('P0-1 & P0-3: liveToolCall 返回任意合法结果（空数组/字符串/0/false/null）均视为完成，不回退为 loading', async () => {
+  const legalOutputs = [[], '', 0, false, null];
+  for (const out of legalOutputs) {
+    const { unmount } = render(
+      <InlineToolCall
+        toolCall={{ type: 'tool_call', id: 'test-legal', name: 'list_stations', args: {} }}
+        liveToolCall={{
+          name: 'list_stations',
+          callId: 'test-legal',
+          id: 'test-legal',
+          namespace: [],
+          input: {},
+          args: {},
+          output: out,
+          status: 'finished',
+          error: undefined,
+        } as unknown as AssembledToolCall}
+      />
+    );
+    const row = screen.getByText('查询监测点列表').closest('[data-status]');
+    expect(row).toHaveAttribute('data-status', 'finished');
+    await userEvent.click(screen.getByText('查询监测点列表'));
+    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
+    expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
+    unmount();
+  }
+});
+
+it('P0-2: ToolMessage.artifact 到达后自然覆盖 liveToolCall.output，两阶段数据平滑衔接', async () => {
+  const toolCall = { type: 'tool_call' as const, id: 'twostage', name: 'list_stations', args: {} };
+  const liveCall = {
+    name: 'list_stations',
+    callId: 'twostage',
+    id: 'twostage',
+    namespace: [],
+    input: {},
+    args: {},
+    output: { stations: [{ station_name: '实时预览点', station_status: '正常' }] },
+    status: 'finished',
+    error: undefined,
+  } as unknown as AssembledToolCall;
+
+  // 阶段 1：未收到 ToolMessage 时展示实时预览点
+  const { rerender } = render(
+    <InlineToolCall toolCall={toolCall} liveToolCall={liveCall} />
+  );
+  await userEvent.click(screen.getByText('查询监测点列表'));
+  expect(screen.getByText('实时预览点')).toBeInTheDocument();
+
+  // 阶段 2：权威 ToolMessage 到达，自然覆盖为最终持久化点
+  const toolMsg = new ToolMessage({
+    tool_call_id: 'twostage',
+    name: 'list_stations',
+    content: 'ok',
+    status: 'success',
+    artifact: {
+      data: { stations: [{ station_name: '持久化确定点', station_status: '正常' }] },
+    },
+  });
+  rerender(
+    <InlineToolCall toolCall={toolCall} liveToolCall={liveCall} toolMessage={toolMsg} />
+  );
+  expect(screen.getByText('持久化确定点')).toBeInTheDocument();
+  expect(screen.queryByText('实时预览点')).not.toBeInTheDocument();
+});
+
+it('P0-4: parseOutputRecord 集中解析对象与合法 JSON 字符串，非法输出安全降级为 undefined', () => {
+  expect(parseOutputRecord({ a: 1 })).toEqual({ a: 1 });
+  expect(parseOutputRecord('{"hello": "world"}')).toEqual({ hello: 'world' });
+  expect(parseOutputRecord('not a json')).toBeUndefined();
+  expect(parseOutputRecord(null)).toBeUndefined();
+  expect(parseOutputRecord(123)).toBeUndefined();
+  expect(parseOutputRecord(undefined)).toBeUndefined();
 });
 
 it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {
