@@ -3,7 +3,8 @@
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import tool
@@ -66,19 +67,21 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.settings.recommend_enabled = True
         model = ScriptedModel(script=[AIMessage(content="完整最终回答"), AIMessage(content="第二轮回答")])
         agent = graph.create_lma_agent(model, agent_tools=[], checkpointer=InMemorySaver())
-        recommend = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(
-            content='["查看近期趋势", "对比同组测点"]',
+        bound_structured = SimpleNamespace(ainvoke=AsyncMock(return_value=graph.RecommendationResult(
+            recommendations=["查看近期趋势", "对比同组测点"],
         )))
+        recommend = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
         config = {"configurable": {"thread_id": "recommend-test"}}
         with patch.object(graph, "_get_recommend_llm", return_value=recommend):
             first = await agent.ainvoke({"messages": [HumanMessage(content="查询")],
                                          "recommendations": ["旧建议"]}, config)
             self.assertEqual(first["recommendations"], ["查看近期趋势", "对比同组测点"])
-            self.assertIn("完整最终回答", recommend.ainvoke.call_args.args[0][-1].content)
+            self.assertIn("完整最终回答", bound_structured.ainvoke.call_args.args[0][-1].content)
             self.settings.recommend_enabled = False
             second = await agent.ainvoke({"messages": [HumanMessage(content="继续")]}, config)
         self.assertEqual(second["recommendations"], [])
-        self.assertEqual(recommend.ainvoke.call_count, 1)
+        self.assertEqual(bound_structured.ainvoke.call_count, 1)
+
 
     async def test_parallel_tool_retry_exhaustion_preserves_success_and_reports_error(self):
         attempts = {"station": 0, "weather": 0}

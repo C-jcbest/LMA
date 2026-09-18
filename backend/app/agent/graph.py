@@ -16,6 +16,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, To
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphBubbleUp
 
+from pydantic import BaseModel, Field
 from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
 from app.agent.context import build_context_budget
@@ -49,15 +50,18 @@ class AgentState(BaseAgentState):
 @lru_cache
 def _get_llm():
     settings = get_settings()
+    protocol = "responses" if settings.llm_provider == "openai" else "chat_completions"
     return create_chat_model(
         provider=settings.llm_provider,
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         thinking=settings.llm_thinking,
+        protocol=protocol,
         tool_loop=True,
         temperature=0,
     )
+
 
 
 class LmaMiddleware(AgentMiddleware):
@@ -148,6 +152,13 @@ RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生�
 只输出一个 JSON 数组，例如：["查询该站点异常时段的降雨情况", "查看 9 月至今的累计位移趋势"]"""
 
 
+class RecommendationResult(BaseModel):
+    recommendations: list[str] = Field(
+        default_factory=list,
+        description="下一步建议问题列表，2到3条；对话与监测业务无关时返回空列表",
+    )
+
+
 @lru_cache
 def _get_recommend_llm():
     """推荐动作生成用轻量 LLM：主模型 + 小输出预算。"""
@@ -158,17 +169,15 @@ def _get_recommend_llm():
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         thinking=settings.recommend_thinking,
+        protocol="chat_completions",
         temperature=0.3,
         max_tokens=200,
     )
 
 
-def _parse_recommendations(text: str) -> list[str]:
-    """严格校验模型约定的 JSON 数组，不尝试修补或猜测结果。"""
-    data = json.loads(text)
-    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
-        raise ValueError("recommendations must be a JSON string array")
-    recommendations = [item.strip() for item in data if item.strip()]
+def _validate_recommendations(items: list[str]) -> list[str]:
+    """严格业务级校验：非空时2-3条，每条不超过60字。"""
+    recommendations = [item.strip() for item in items if isinstance(item, str) and item.strip()]
     if recommendations and not 2 <= len(recommendations) <= 3:
         raise ValueError("recommendations must contain 2 or 3 items")
     if any(len(item) > 60 for item in recommendations):
@@ -177,19 +186,14 @@ def _parse_recommendations(text: str) -> list[str]:
 
 
 def _message_text(message: BaseMessage) -> str:
-    """按 LangChain 标准消息内容形式提取文本块。"""
+    """按 LangChain 官方 BaseMessage.text 属性提取纯文本。"""
+    text = getattr(message, "text", None)
+    if isinstance(text, str):
+        return text
     content = getattr(message, "content", "")
     if isinstance(content, str):
         return content
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for block in content:
-        if isinstance(block, str):
-            parts.append(block)
-        elif isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str):
-            parts.append(block["text"])
-    return "".join(parts)
+    return ""
 
 
 async def _generate_recommendations(
@@ -203,7 +207,10 @@ async def _generate_recommendations(
             "recommendations_error": "未找到可用的助手回答，无法生成下一步建议。",
         }
     try:
-        response = await _get_recommend_llm().ainvoke(
+        structured_llm = _get_recommend_llm().with_structured_output(
+            RecommendationResult, method="json_schema", strict=True
+        )
+        result = await structured_llm.ainvoke(
             [
                 SystemMessage(content=RECOMMEND_PROMPT),
                 HumanMessage(
@@ -216,11 +223,13 @@ async def _generate_recommendations(
             # 阻断辅助调用 token 被主消息流捕获，避免混入最终回答。
             config={"callbacks": []},
         )
-        recommendations = _parse_recommendations(_message_text(response))
+        raw_items = result.recommendations if isinstance(result, RecommendationResult) else []
+        recommendations = _validate_recommendations(raw_items)
         return {"recommendations": recommendations, "recommendations_error": ""}
     except Exception:
         logger.warning("recommendation generation or validation failed", exc_info=True)
         return {"recommendations": [], "recommendations_error": "下一步建议生成失败。"}
+
 
 
 async def generate_recommendations(state: AgentState) -> dict:

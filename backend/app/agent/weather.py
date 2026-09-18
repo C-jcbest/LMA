@@ -1,24 +1,8 @@
-"""Open-Meteo 天气查询工具，供智能体调用。
+"""Open-Meteo 天气查询工具，供智能体按需调用。
 
-仿照 landslide-monitoring-agent 的 query_open_meteo_weather 裁剪为本项目的
-极简实现（无缓存/重试基础设施），并增强灵活性：入参支持“监测点名称/UUID”
-（自动解析站点经纬度）或直接给经纬度，两种方式二选一。
-
+支持通过监测点名称/UUID 自动解析经纬度，或直接传入经纬度坐标。
 字段选择聚焦降雨与风况（滑坡监测关心的气象因子），历史数据走 Archive API，
-预报走 Forecast API，两者并行请求。
-
-天气接口平台限制说明（Open-Meteo）：
-1. 访问频次与调用配额限制（免费层/非商用）：
-   - 每日调用上限：10,000 次/天
-   - 每小时调用上限：5,000 次/小时
-   - 每分钟调用上限：600 次/分钟
-   - 超额将触发 HTTP 429 Too Many Requests 拒绝访问。
-2. 预报天数限制（Forecast API）：
-   - forecast_days 取值范围为 1 到 16 天（受气象预报模型最大有效天数限制，超出将被平台拦截），默认 7 天。
-3. 历史天数与时间跨度限制（Archive API）：
-   - 起始日期（start_date）：受再分析资料覆盖范围限制，最早支持 1940-01-01。
-   - 结束日期（end_date）：受历史归档库及业务定义限制，最多只能查询到昨天（当天尚未结束且未归档，不归入历史实测统计）。
-   - 单次查询跨度：受平台推荐粒度与系统吞吐设计约束，单次历史天气查询跨度不能超过 31 天（MAX_HISTORY_DAYS = 31）。如需更长时间背景，需分段或按关键时段查询。
+预报走 Forecast API。
 """
 
 import asyncio
@@ -184,27 +168,24 @@ async def query_weather(
     end_date: str | None = None,
     forecast_days: int = 7,
 ) -> tuple[str, dict]:
-    """查询 Open-Meteo 当前天气、历史降雨/风况和未来预报。
+    """查询指定监测点或坐标位置的气象背景。
 
-    天气接口平台限制：
-    - 数据源：Open-Meteo 气象服务（Forecast API 与 Archive API）。
-    - 频次限制（免费层）：每日调用上限 10,000 次、每小时 5,000 次、每分钟 600 次；超限将触发 429。
-    - 预报天数限制：forecast_days 允许范围为 1 到 16 天（受数值预报模型有效天数限制），默认 7 天。
-    - 历史天数限制：start_date 最早可查至 1940-01-01；end_date 最多只能查询到昨天（当天未结束且未归档，不能冒充历史实测，请参考当前/预报数据）；单次历史查询跨度不能超过 31 天。
+    可用于用户明确询问天气、降雨、风况、历史气象，
+    或 Agent 认为气象信息有助于调查已有监测现象时。
+    并非每次监测数据分析都需要调用。
+
+    返回当前天气、指定历史窗口的气象信息以及可用的近期预报。
+    气象信息属于辅助证据，不代表其与形变存在因果关系。
 
     Args:
-        station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID，
-            提供后自动使用该监测点的经纬度查询其所在位置天气。与经纬度二选一。
-        latitude: 纬度（-90 到 90）。与 longitude 同时提供，与 station_name_or_uuid 二选一。
-        longitude: 经度（-180 到 180）。与 latitude 同时提供，与 station_name_or_uuid 二选一。
-        start_date: 历史天气开始日期，业务时区 Asia/Shanghai，格式 YYYY-MM-DD。
-            最早支持 1940-01-01。与 end_date 同时提供或同时不传（不传默认查最近 7 天，最多到昨天）。
-            单次历史查询跨度不能超过 31 天。
+        station_name_or_uuid: 监测点名称（需能唯一确定）或 36 位 UUID，
+            提供后自动解析站点经纬度。与经纬度二选一。
+        latitude: 纬度（-90 到 90）。与 longitude 成对提供，与 station_name_or_uuid 二选一。
+        longitude: 经度（-180 到 180）。与 latitude 成对提供，与 station_name_or_uuid 二选一。
+        start_date: 历史天气开始日期，Asia/Shanghai 业务时区，格式 YYYY-MM-DD，最早支持 1940-01-01。
+            与 end_date 成对提供（不传默认查询最近 7 天，最多到昨天）。单次历史查询跨度不超过 31 天。
         end_date: 历史天气结束日期，格式 YYYY-MM-DD，最多只能查询到昨天。与 start_date 跨度不超过 31 天。
-        forecast_days: 预报天数，受 Open-Meteo 平台限制范围为 1 到 16，默认 7。
-
-    返回内容包含：当前天气（气温、天气现象、风）、降雨汇总（近 24 小时、历史合计、
-    预报合计及最大日降雨）、风况汇总、按日的历史与预报明细。
+        forecast_days: 未来预报天数，取值范围 0 到 16 天（0 表示不查询预报），默认 7 天。
     """
     resolved = await _resolve_coordinates(station_name_or_uuid, latitude, longitude)
     lat, lon, station_name = resolved

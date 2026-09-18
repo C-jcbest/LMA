@@ -135,27 +135,18 @@ class WeatherInput(ToolInput):
     )
     start_date: str | None = Field(
         default=None,
-        description=(
-            "历史天气开始日期，Asia/Shanghai，格式 YYYY-MM-DD。"
-            "平台限制：受 Open-Meteo 历史数据源限制最早支持 1940-01-01。"
-            "天数限制：与 end_date 同时提供或同时不传（不传默认查询最近 7 天，最多到昨天）；"
-            "单次历史查询跨度不能超过 31 天。"
-        ),
+        description="历史天气开始日期，Asia/Shanghai，格式 YYYY-MM-DD，最早支持 1940-01-01。与 end_date 成对提供（不传默认查询最近 7 天，最多到昨天），单次历史跨度不超过 31 天。",
     )
     end_date: str | None = Field(
         default=None,
-        description=(
-            "历史天气结束日期，格式 YYYY-MM-DD。"
-            "平台与业务限制：最多只能查询到昨天（当天尚未结束不属于完整历史日统计）；"
-            "单次历史查询跨度与 start_date 之间不能超过 31 天。"
-        ),
+        description="历史天气结束日期，格式 YYYY-MM-DD，最多只能查询到昨天。与 start_date 成对提供，单次跨度不超过 31 天。",
     )
     forecast_days: int = Field(
         default=7,
-        ge=1,
+        ge=0,
         le=16,
         strict=True,
-        description="未来预报天数。平台限制：受 Open-Meteo 预报模型限制，取值范围必须在 1 到 16 天之间，默认 7 天。",
+        description="未来预报天数，取值范围 0 到 16 天（0 表示不查询预报），默认 7 天。",
     )
 
     @field_validator("start_date", "end_date")

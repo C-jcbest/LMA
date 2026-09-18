@@ -776,7 +776,7 @@ it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', a
   expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
 });
 
-it('live finished 但权威 ToolMessage 尚未到达时显示正在同步，不误判为已完成', async () => {
+it('live finished 但权威 ToolMessage 尚未到达时卡片显示已完成，展开显示详细结果同步中', async () => {
   render(
     <InlineToolCall
       toolCall={{ type: 'tool_call', id: 'sync', name: 'list_stations', args: {} }}
@@ -793,9 +793,69 @@ it('live finished 但权威 ToolMessage 尚未到达时显示正在同步，不�
       } as unknown as AssembledToolCall}
     />,
   );
+  const row = screen.getByText('查询监测点列表').closest('[data-status]');
+  expect(row).toHaveAttribute('data-status', 'finished');
+
   await userEvent.click(screen.getByText('查询监测点列表'));
-  expect(screen.getByText('正在同步结果…')).toBeInTheDocument();
+  expect(screen.getByText('详细结果同步中…')).toBeInTheDocument();
   expect(screen.queryByText('该步骤没有可展示的业务数据')).not.toBeInTheDocument();
+});
+
+it('并行工具调用各工具独立更新状态：已完成工具立即显示完成，运行中工具保持查询，不等待全部工具或ToolMessage', () => {
+  const aiMessage = new AIMessage({
+    id: 'ai-batch',
+    contentBlocks: [
+      { type: 'tool_call', id: 'call-a', name: 'get_daily_gnss_data', args: {} },
+      { type: 'tool_call', id: 'call-b', name: 'query_weather', args: {} },
+      { type: 'tool_call', id: 'call-c', name: 'inspect_site_environment', args: {} },
+    ],
+  });
+  const initialLiveCalls: AssembledToolCall[] = [
+    { callId: 'call-a', name: 'get_daily_gnss_data', status: 'finished' } as any,
+    { callId: 'call-b', name: 'query_weather', status: 'running' } as any,
+    { callId: 'call-c', name: 'inspect_site_environment', status: 'running' } as any,
+  ];
+  const { rerender } = render(
+    <ChatWindow
+      messages={[aiMessage]}
+      toolCalls={initialLiveCalls}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={true}
+      stopReconciling={false}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  const rowA = screen.getByText('获取北斗GNSS日监测数据').closest('[data-status]');
+  const rowB = screen.getByText('查询天气数据').closest('[data-status]');
+  const rowC = screen.getByText('调查站点地形与地质环境').closest('[data-status]');
+
+  expect(rowA).toHaveAttribute('data-status', 'finished');
+  expect(rowB).toHaveAttribute('data-status', 'pending');
+  expect(rowC).toHaveAttribute('data-status', 'pending');
+
+  // B 完成，C 仍在运行
+  const updatedLiveCalls: AssembledToolCall[] = [
+    { callId: 'call-a', name: 'get_daily_gnss_data', status: 'finished' } as any,
+    { callId: 'call-b', name: 'query_weather', status: 'finished' } as any,
+    { callId: 'call-c', name: 'inspect_site_environment', status: 'running' } as any,
+  ];
+  rerender(
+    <ChatWindow
+      messages={[aiMessage]}
+      toolCalls={updatedLiveCalls}
+      onSendMessage={vi.fn()}
+      threadLoading={false}
+      runActive={true}
+      stopReconciling={false}
+      isSidebarCollapsed={false}
+      onToggleSidebar={vi.fn()}
+    />
+  );
+  expect(rowA).toHaveAttribute('data-status', 'finished');
+  expect(rowB).toHaveAttribute('data-status', 'finished');
+  expect(rowC).toHaveAttribute('data-status', 'pending');
 });
 
 it('用户消息直接读取官方 optimistic pending/failed 状态', () => {

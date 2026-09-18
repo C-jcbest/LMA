@@ -21,10 +21,12 @@ def _get_summary_model():
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         thinking=settings.compress_thinking,
+        protocol="chat_completions",
         temperature=0,
         max_tokens=settings.context_summary_max_tokens,
         disable_streaming=True, tags=[TAG_NOSTREAM],
     )
+
 
 
 def create_summarization_middleware(model):

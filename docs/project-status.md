@@ -1,6 +1,6 @@
 # 项目状态与有效决策
 
-更新：2026-09-17。只保留当前实现、持续有效的决策及未完成事项。产品行为以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，待办以 [现行 TODO](TODO_2026-09-15.md) 为准。
+更新：2026-09-18。只保留当前实现、持续有效的决策及未完成事项。产品行为以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，待办以 [现行 TODO](TODO_2026-09-15.md) 为准。
 
 ## 当前实现
 
@@ -24,7 +24,7 @@
   - 连接状态与辅助能力：删除全局冗余探活，列表错误严格局限在 Sidebar；标题生成与下一步建议失败静默降级；
   - 状态扁平化：`runError`、`hydrationError`、`stopError` 统一收敛为当前会话单布尔瞬态，切换会话自动重置；
   - ErrorBoundary 隐藏内部堆栈并提供真实刷新/重新加载/隐藏动作。绝不展示内部异常、堆栈、HTTP 或 checkpoint 诊断。
-- TODO 15 已完成：彻底删除 `projectLangGraphMessages` 与自定义 `Message/MessagePart/ToolCallInfo`；移除多字段消息猜测、`settlingAfterTool`、整理回答推断、思考耗时计时器及英文工具错误匹配。实时工具状态、持久终态和 artifact 按 `callId/tool_call_id` 只读关联；没有 ToolMessage 且无 live error 时一律显示 pending（“正在查询，请稍候…”/“正在同步结果…”），权威终态到达前不展示业务数据。
+- TODO 15 已完成：彻底删除 `projectLangGraphMessages` 与自定义 `Message/MessagePart/ToolCallInfo`；移除多字段消息猜测、`settlingAfterTool`、整理回答推断、思考耗时计时器及英文工具错误匹配。实时工具状态由 `useToolCalls(stream)` 驱动，收到 `finished/error` 立即更新工具 UI；`ToolMessage` 仅负责持久终态与 artifact（图表、地图、详细数据）展示，未收到 `ToolMessage` 时卡片显示已完成，展开显示“详细结果同步中…”，权威终态到达前不展示空业务数据。
 - TODO 16 & 17 已完成（2026-09-18 减法重构与标准化收口）：
   - 模型构造：官方 `init_chat_model` 为统一入口，DeepSeek 与 OpenAI 思考配置显式映射（OpenAI 采用 Responses API + reasoning 配置）；`profile.reasoning_output` 与 `profile.tool_calling` 支持显式明确否决（fail-fast）；`DeepSeekThinkingChatModel` 仅限定在主 Agent 多轮 tool_loop 场景；
   - Reasoning 消费：前端彻底只消费官方 `AIMessage.contentBlocks`，删除 `additional_kwargs.reasoning_content` 等全部前端兼容回退；后端保留原始 `reasoning_content` 以供多轮协议及官方 translator 转换；后端删除 `lma_thinking_duration_ms` 与 `perf_counter`，不再伪造思考耗时。
@@ -103,3 +103,54 @@
 - 验证：后端定向 26/26 通过；后端全量 56 项中 54 通过、2 项 Agent Server E2E 默认跳过；前端 77/77 通过；前端生产构建通过；`git diff --check` 通过。未出现 Python/弃用或 `max_completion_tokens` 警告。
 - 风险：未使用真实 DeepSeek 凭据执行 `model → tool → model → final` 服务验收，也未执行启用 `LMA_RUN_SERVER_E2E=1` 的隔离 Agent Server E2E；因此 TODO 16 保持“实现完成，待真实集成验收”，不提前关闭或进入 TODO 17。
 - 关联：`backend/app/agent/models.py`、`backend/app/config.py`、`frontend/src/components/InlineToolCall.tsx`、`docs/TODO_2026-09-15.md`、`prd.md`。
+
+## 2026-09-18 TODO 20：工具能力与外部 API 边界明确化
+
+- 类型：Status / Decision / Doc Sync
+- 范围：backend / agent / tests / docs
+- 状态：已完成。
+- 决策：
+  - **不增 scope 枚举，不设固定工具链**：主 Agent 根据用户意图、已有事实与工具 Docstring 自主判断调用，不在 Prompt 中预设“发现异常必须查天气”等机械流程。
+  - **Weather 工具参数自然化与协议脱敏**：`query_weather` 保持单一工具，通过 `start_date`、`end_date`、`forecast_days` 自然覆盖当前、历史与预报。`forecast_days` 依官方规范支持 `0..16` 天（`0` 表示不查预报）。工具 Docstring 与 Pydantic 校验模型彻底删除 10,000次/天、429 等底层调用配额描述，由官方/底层重试中间件（`is_transient_error`）自动退避重试。
+  - **Site Environment 外部故障强隔离**：`inspect_site_environment` 保持单一空间背景调查工具；Open-Meteo DEM 地形与 Macrostrat 地质单元的 HTTP/网络异常在局部完全捕获并记录至 `limitations`，任一外部服务故障绝不崩溃主流程，中心站点与同组点及另一方成功取得的真实数据完整保留在 artifact 中。
+  - **系统提示词治理**：同步精简更新 `system.md`，明确气象与场地环境为辅助证据，按需调用。
+- 验证：
+  - 后端单元测试 61 项（59 项通过、2 项 Server E2E 默认跳过），新增 `test_weather_forecast_days_zero_is_valid` 与 `test_site_evidence_isolates_external_network_failures`；
+  - 前端 80 项单元/组件测试全绿，生产构建打包通过，`git diff --check` 无违规。
+- 关联：`backend/app/agent/weather.py`、`backend/app/agent/site.py`、`backend/app/agent/tool_inputs.py`、`backend/app/agent/prompts/system.md`、`backend/tests/test_tool_protocol.py`。
+
+## 2026-09-18 模型调用协议边界解耦与视觉结构化输出重构
+
+- 类型：Status / Decision / Architecture / Bugfix
+- 范围：backend / agent / models / vision / graph / title / summarization / tests / docs
+- 状态：已完成。
+- 背景与根因：
+  - 会话日志排查发现：图表视觉复核（`analyze_gnss_chart`）偶发报错失败。根因为 Responses API 模式下大模型返回的 `AIMessage.content` 结构为 Content Blocks 列表（包含 reasoning block 与 text block），旧代码使用 `str(response.content)` 得到 Python repr 字符串（包含单引号与非标准格式），导致 `json.loads` 抛出 `JSONDecodeError: Expecting property name enclosed in double quotes`。
+- 核心决策与实现：
+  1. **模型调用协议边界解耦 (`models.py`)**：
+     - 解耦 Model Integration (`provider`)、实际供应商 (`vendor`) 与 API Protocol (`protocol`)，定义常量 `SUPPORTED_PROTOCOLS = ("responses", "chat_completions")` 与 `SUPPORTED_VENDORS = ("openai", "dashscope", "deepseek")`。
+     - 引入 `resolve_vendor(...)`，依据 base_url 与 model_name 自动识别 DashScope、DeepSeek 或 OpenAI。
+     - 细化思考参数映射：Chat Completions 模式下 DashScope 传递 `extra_body={"enable_thinking": bool}`；Responses API 模式下 DashScope 传递 `reasoning.effort="none"` 关闭思考。
+     - 明确协议边界：主 Agent 根据 Provider 配置保留 `protocol="responses"`（以支持多轮 tool loop 与 reasoning 原生回传）；Title、Summary、Recommendation、Vision 等单次或轻量调用全面明确为 `protocol="chat_completions"`。
+  2. **视觉复核全面改用官方 Structured Output (`vision.py`)**：
+     - `_get_vision_llm()` 配置 `protocol="chat_completions"`，自动携带 `extra_body={"enable_thinking": False}` 关闭 Qwen3.7-plus 思考模式，大幅缩减延迟与 token 消耗。
+     - 视觉结构化调用改用 `_get_vision_llm().with_structured_output(VisionObservations, method="json_mode", include_raw=True)`。
+     - 彻底删除 `_validate_observations` 内的手工正则、Markdown fence 剥离与 `json.loads` 修补逻辑，由 Pydantic 原生进行结构化校验，函数仅保留领域业务校验（方向白名单、时间窗过滤、候选预算）。
+  3. **规范所有 `AIMessage` 内容读取方式**：
+     - 普通文本提取统一使用 `BaseMessage.text`，彻底杜绝 `str(response.content)`。
+     - Title 模块统一改用 `response.text` 提取标题。
+     - Recommendation 模块定义 `RecommendationResult` Schema，采用 `with_structured_output(..., method="json_schema", strict=True)` 结构化获取推荐列表，并保留 2-3 条及 `<=60` 字符的业务校验。
+- 验证：
+  - 实机真实调用 DashScope Qwen3.7-plus 完成 SCWM-04 视觉复核，返回 `ok: true` 且输出标准结构；
+  - 后端单元测试 66 项全绿（64 项通过、2 项 Server E2E 默认跳过）；
+  - 前端生产构建通过 (`npm run build`)；
+  - `git diff --check` 无任何违规或空白问题。
+- 关联：`backend/app/agent/models.py`、`backend/app/agent/vision.py`、`backend/app/agent/graph.py`、`backend/app/agent/title.py`、`backend/app/agent/summarization.py`、`backend/.env.example`。
+
+## 2026-09-18 工具调用状态实时化收口
+
+- 类型：Status / Decision / Doc Sync
+- 范围：frontend / tests / docs
+- 决策：保持现有 LangGraph 与 `useToolCalls(stream)` 官方实现不变，仅修改 `InlineToolCall` 状态判断。`liveToolCall.status` 作为运行时状态来源，收到 `finished/error` 后立即更新对应工具 UI；`ToolMessage` 不再作为工具完成的必要条件，仅负责最终持久化结果与 artifact（图表、地图、详细数据）展示。在对应 `ToolMessage` 尚未到达流时，卡片显示已完成，展开区域显示“详细结果同步中…”。保持并行 Tool Calling，不增加自定义流协议或额外 Store。
+- 验证：前端全量 81 项测试通过、生产构建打包成功；后端全量 66 项测试通过；`git diff --check` 通过。
+- 关联：`frontend/src/components/InlineToolCall.tsx`、`frontend/tests/conversation.integration.test.tsx`、`AGENTS.md`、`docs/TODO.md`。

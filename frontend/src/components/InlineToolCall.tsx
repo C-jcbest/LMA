@@ -9,6 +9,8 @@ import {
   Eye,
   ChevronRight,
   Loader2,
+  Check,
+  AlertCircle,
 } from 'lucide-react';
 import type { ContentBlock, ToolMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
@@ -70,14 +72,16 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   toolMessage,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  // 持久终态以 ToolMessage 为准：只要没有 ToolMessage 且没有 live error，一律视为 pending，
-  // 覆盖 tool-finished 事件已到、权威 ToolMessage/artifact 尚未进入 stream.messages 的过渡窗口。
-  const isError = toolMessage
-    ? toolMessage.status === 'error'
-    : liveToolCall?.status === 'error';
-  const isPending = !toolMessage && !isError;
-  const pendingText =
-    liveToolCall?.status === 'finished' ? '正在同步结果…' : '正在查询，请稍候…';
+  // 运行时状态以官方 liveToolCall.status 为准，收到 finished/error 即时更新卡片；
+  // 权威持久化与 artifact 业务展示等待 ToolMessage。
+  const isError =
+    toolMessage?.status === 'error' ||
+    liveToolCall?.status === 'error';
+  const isFinished =
+    toolMessage?.status === 'success' ||
+    liveToolCall?.status === 'finished';
+  const isPending = !isFinished && !isError;
+  const pendingText = '正在查询，请稍候…';
   const artifact = isRecord(toolMessage?.artifact) ? toolMessage.artifact : undefined;
   const artifactData = isRecord(artifact?.data) ? artifact.data : undefined;
   const artifactImages = Array.isArray(artifact?.images)
@@ -105,27 +109,12 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   // 图标
   const renderIcon = () => {
     if (isPending) {
-      return <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />;
+      return <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" data-status="pending" />;
     }
-    if (toolCall.name?.includes('group')) {
-      return <Layers className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
+    if (isError) {
+      return <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" data-status="error" />;
     }
-    if (toolCall.name?.includes('site_environment')) {
-      return <Compass className="w-3.5 h-3.5 text-amber-600 shrink-0" />;
-    }
-    if (toolCall.name?.includes('station') && !toolCall.name?.includes('group')) {
-      return <MapPin className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
-    }
-    if (toolCall.name?.includes('gnss') || toolCall.name?.includes('data')) {
-      return <Activity className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
-    }
-    if (toolCall.name?.includes('weather')) {
-      return <CloudRain className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
-    }
-    if (toolCall.name?.includes('chart') || toolCall.name?.includes('vision')) {
-      return <Eye className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
-    }
-    return <Terminal className="w-3.5 h-3.5 text-neutral-400 shrink-0" />;
+    return <Check className="w-3.5 h-3.5 text-neutral-400 shrink-0" data-status="finished" />;
   };
 
   // 生成简约的中文动作文案（类似“运行了命令”）
@@ -192,6 +181,14 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
         <div className="flex items-center gap-2 p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
           <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />
           {pendingText}
+        </div>
+      );
+    }
+    if (!toolMessage) {
+      return (
+        <div className="flex items-center gap-2 p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
+          <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />
+          详细结果同步中…
         </div>
       );
     }
@@ -637,6 +634,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
       {/* 极简单行触发条：图标 + 文案 + 右侧小箭头（类似“运行了命令”） */}
       <div
         onClick={() => setExpanded(!expanded)}
+        data-status={isPending ? 'pending' : isError ? 'error' : 'finished'}
         className="inline-flex items-center gap-1.5 py-1 px-2 -ml-1 rounded-md text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100/80 cursor-pointer transition-colors select-none"
       >
         {renderIcon()}

@@ -14,7 +14,6 @@ from langchain_core.tools import tool
 from app.agent.tool_inputs import StationInput
 from app.agent.tool_protocol import ToolFailure, tool_result
 
-from app.agent.retry import is_transient_error
 from app.agent.tools import _build_client, _resolve_station, _station_to_dict
 from app.business_time import business_now
 
@@ -97,8 +96,6 @@ async def _fetch_terrain(latitude: float, longitude: float) -> tuple[dict[str, A
         return metrics, None if metrics else "地形服务返回的数据不完整"
     except (httpx.HTTPError, ValueError, TypeError) as exc:
         logging.getLogger(__name__).warning("site evidence request failed", exc_info=True)
-        if is_transient_error(exc):
-            raise
         return None, "地形服务暂不可用，缺少地形证据"
 
 
@@ -123,17 +120,16 @@ async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, A
         }, None
     except (httpx.HTTPError, ValueError, TypeError) as exc:
         logging.getLogger(__name__).warning("site evidence request failed", exc_info=True)
-        if is_transient_error(exc):
-            raise
         return None, "地质服务暂不可用，缺少地质证据"
 
 
 @tool(response_format="content_and_artifact", args_schema=StationInput)
 async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict[str, Any]]:
-    """调查一个监测点的空间环境，并生成可交互地图所需的结构化数据。
+    """查询监测点周边的场地环境背景。
 
-    结果包含站点位置、同组点分布、海拔、坡度、坡向、局部高差，以及可用的
-    地质单元、岩性或断层背景；地形与地质字段来自外部公开数据源。
+    可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差）、
+    地质单元及构造线等可用公开资料，适用于需要从场地环境角度补充调查背景的任务。
+    场地环境属于辅助证据，并非每次监测数据分析都需要调用。
 
     Args:
         station_name_or_uuid: 监测点名称（需能唯一确定）或 36 位 UUID。

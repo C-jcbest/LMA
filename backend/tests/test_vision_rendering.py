@@ -47,16 +47,13 @@ class VisionRenderingTests(unittest.TestCase):
             ],
         }
         result = _validate_observations(
-            f"```json\n{json.dumps(payload, ensure_ascii=False)}\n```",
+            payload,
             datetime(2026, 9, 1, 0, 0),
             datetime(2026, 9, 2, 0, 0),
         )
         self.assertIsInstance(result, VisionObservations)
         self.assertEqual([candidate.description for candidate in result.candidates], ["窗口内候选"])
-        self.assertEqual(
-            _validate_observations("not-json", datetime(2026, 9, 1), datetime(2026, 9, 2)),
-            "视觉模型返回的不是有效 JSON",
-        )
+
 
 
 if __name__ == "__main__":

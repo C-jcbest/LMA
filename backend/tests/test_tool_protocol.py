@@ -1,7 +1,10 @@
 """生产工具协议：错误状态、请求前校验、部分证据与不可公开诊断。"""
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+
+
 import httpx
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.messages.utils import convert_to_openai_messages
@@ -55,7 +58,7 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         cases += [(tools.list_stations, {"station_status": 999}),
                   (weather.query_weather, {"latitude": 30}),
                   (weather.query_weather, {"latitude": 30, "longitude": 120, "forecast_days": 17}),
-                  (weather.query_weather, {"latitude": 30, "longitude": 120, "forecast_days": 0}),
+                  (weather.query_weather, {"latitude": 30, "longitude": 120, "forecast_days": -1}),
                   (weather.query_weather, {"latitude": 30, "longitude": 120, "start_date": "1939-12-31", "end_date": "1940-01-05"}),
                   (weather.query_weather, {"latitude": 30, "longitude": 120, "start_date": "2026-08-01", "end_date": "2026-09-05"})]
         with patch.object(tools, "_build_client") as source, patch.object(weather, "_fetch_json") as fetch:
@@ -121,6 +124,39 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("资料不完整", message.artifact["data"]["message"])
         self.assertIn("slope_degrees", message.content)
 
+    async def test_weather_forecast_days_zero_is_valid(self):
+        fetch = AsyncMock(side_effect=[
+            {"current": {"temperature_2m": 22, "wind_speed_10m": 5}, "daily": {}},
+            {"daily": {}},
+        ])
+        with patch.object(weather, "_fetch_json", fetch):
+            message, _ = await self.run_tool(weather.query_weather, {
+                "latitude": 30, "longitude": 120, "forecast_days": 0
+            })
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["data"]["query"]["forecast_days"], 0)
+
+    async def test_site_evidence_isolates_external_network_failures(self):
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.get_stations.return_value = []
+        request = httpx.Request("GET", "https://example.invalid")
+        response = httpx.Response(503, request=request)
+        mock_fetch = AsyncMock(side_effect=[
+            httpx.HTTPStatusError("Service Unavailable", request=request, response=response),
+            {"success": {"data": [{"name": "泥盆系灰岩", "lith": "石灰岩"}], "refs": {}}},
+        ])
+        with patch.object(site, "_build_client", return_value=client), \
+             patch.object(site, "_resolve_station", AsyncMock(return_value=SimpleNamespace(group_uuid="group"))), \
+             patch.object(site, "_station_to_dict", return_value={"station_name": "测试站", "latitude": 30, "longitude": 120}), \
+             patch.object(site, "_fetch_json", mock_fetch):
+            message, _ = await self.run_tool(site.inspect_site_environment, {"station_name_or_uuid": "测试站"})
+        self.assertEqual(message.status, "error")
+        # 即使地形网络发生 503 异常，地质有效证据绝不被抹掉
+        self.assertEqual(message.artifact["site_environment"]["geology"]["name"], "泥盆系灰岩")
+        self.assertIsNone(message.artifact["site_environment"]["terrain"])
+        self.assertIn("缺少地形证据", message.artifact["data"]["message"])
+
     async def test_unconfigured_vision_preserves_charts_with_error_status(self):
         client = AsyncMock()
         client.__aenter__.return_value = client
@@ -159,24 +195,29 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 client.__aenter__.return_value = client
                 client.get_daily_data.return_value = [SimpleNamespace(data_time=f"2026-09-01 0{i}:00:00", n="1", e="2", u="3") for i in range(5)]
                 station = SimpleNamespace(station_type=3, station_uuid="test", station_name="测试站")
-                model = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="not-json")))
-                settings = SimpleNamespace(vision_base_url="https://test.invalid", vision_api_key="INVALID", vision_model="test", vision_max_candidates=1)
                 observations = vision.VisionObservations(candidates=[vision.VisualCandidate(metric="N",
                     start_at="2026-09-01 01:00:00", end_at="2026-09-01 02:00:00") for _ in range(2)])
+                if output == "not-json":
+                    structured_result = {"raw": AIMessage(content="not-json"), "parsed": None, "parsing_error": ValueError("not json")}
+                else:
+                    structured_result = {"raw": AIMessage(content="{}"), "parsed": observations, "parsing_error": None}
+                bound_structured = SimpleNamespace(ainvoke=AsyncMock(return_value=structured_result))
+                model = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
+                settings = SimpleNamespace(vision_base_url="https://test.invalid", vision_api_key="INVALID", vision_model="test", vision_max_candidates=1)
                 with patch.object(vision, "_build_client", return_value=client), \
                      patch.object(vision, "_resolve_station", AsyncMock(return_value=station)), \
                      patch.object(vision, "_resolve_baseline", return_value=None), \
                      patch.object(vision, "_render_all_charts", return_value=[{"name": "cumulative_displacement", "png_base64": "TEST"}]), \
                      patch.object(vision, "get_settings", return_value=settings), \
                      patch.object(vision, "_get_vision_llm", return_value=model), \
-                     patch.object(vision, "_validate_observations", return_value=observations if output == "many" else "视觉模型返回的不是有效 JSON"), \
                      patch.object(vision, "_recheck_candidates", new_callable=AsyncMock) as recheck:
                     message, _ = await self.run_tool(vision.analyze_gnss_chart, {"station_name_or_uuid": "测试站",
                         "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
                 self.assertEqual(message.status, "error")
-                self.assertEqual(model.ainvoke.await_count, 1)
+                self.assertEqual(bound_structured.ainvoke.await_count, 1)
                 recheck.assert_not_called()
                 self.assertEqual(len(message.artifact["chart_points"]), 5)
+
 
     async def test_get_current_time_success_in_agent_run(self):
         message, _ = await self.run_tool(tools.get_current_time, {})

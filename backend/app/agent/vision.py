@@ -102,6 +102,7 @@ def _get_vision_llm():
         api_key=settings.vision_api_key,
         base_url=settings.vision_base_url,
         thinking=settings.vision_thinking,
+        protocol="chat_completions",
         temperature=0,
         # 预算必须宽裕：思考开启时视觉模型每次输出中约 2000 token 是
         # 内部思考（reasoning），正文 JSON 另需 ~1000+；预算不足时正文被
@@ -109,6 +110,7 @@ def _get_vision_llm():
         max_completion_tokens=8000,
         timeout=120,
     )
+
 
 
 def _downsample(points: list, limit: int) -> list:
@@ -333,30 +335,12 @@ def _parse_time(value: str) -> datetime | None:
 
 
 def _validate_observations(
-    raw: str, time_start: datetime, time_end: datetime
-) -> VisionObservations | str:
-    """解析并校验视觉模型输出，越界（时间窗外/非法方向）的条目直接剔除。"""
-    text = raw.strip()
-    # 剥离可能存在的 Markdown 代码块包裹
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    if fence:
-        text = fence.group(1)
-    # 应对前后带有说明文字/思考文本的情况：提取首个 { 到最后一个 } 的子串
-    brace_start = text.find("{")
-    brace_end = text.rfind("}")
-    if brace_start != -1 and brace_end > brace_start:
-        text = text[brace_start : brace_end + 1]
-
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return "视觉模型返回的不是有效 JSON"
-
-    try:
-        observations = VisionObservations.model_validate(payload)
-    except ValidationError:
-        return "视觉模型返回格式不符合要求"
-
+    data: VisionObservations | dict, time_start: datetime, time_end: datetime
+) -> VisionObservations:
+    """校验视觉模型结构化输出，越界（时间窗外/非法方向）的条目直接剔除。"""
+    observations = (
+        data if isinstance(data, VisionObservations) else VisionObservations.model_validate(data)
+    )
     valid: VisionObservations = VisionObservations(
         trends=observations.trends[:4],
         turning_points=observations.turning_points[:4],
@@ -384,6 +368,7 @@ def _validate_observations(
             continue
         valid.candidates.append(candidate)
     return valid
+
 
 
 def _is_empty_observation(obs: VisionObservations) -> bool:
@@ -708,7 +693,10 @@ async def analyze_gnss_chart(
 
         # 每次工具尝试只调用一次视觉模型；只有瞬时失败交给官方工具重试。
         try:
-            response = await _get_vision_llm().ainvoke(
+            structured_llm = _get_vision_llm().with_structured_output(
+                VisionObservations, method="json_mode", include_raw=True
+            )
+            response = await structured_llm.ainvoke(
                 [SystemMessage(content=VISION_PROMPT), HumanMessage(content=content)],
                 config={"callbacks": []},
             )
@@ -717,15 +705,19 @@ async def analyze_gnss_chart(
             if is_transient_error(e):
                 raise
             raise ToolFailure("视觉模型调用失败，未获得形态复核结果；图表可供人工查看。", artifact=artifact) from e
-        validated = _validate_observations(
-            response.content if isinstance(response.content, str) else str(response.content), time_start, time_end)
-        if isinstance(validated, str):
-            raise ToolFailure("视觉复核失败：" + validated + "；图表可供人工查看。", artifact=artifact)
+
+        parsed = response.get("parsed") if isinstance(response, dict) else None
+        parsing_error = response.get("parsing_error") if isinstance(response, dict) else None
+        if parsing_error is not None or not isinstance(parsed, VisionObservations):
+            raise ToolFailure("视觉复核失败：视觉模型返回的不是有效 JSON；图表可供人工查看。", artifact=artifact)
+
+        validated = _validate_observations(parsed, time_start, time_end)
         if _is_empty_observation(validated):
             raise ToolFailure("视觉模型未返回有效观察，图表可供人工查看。", artifact=artifact)
         if len(validated.candidates) > settings.vision_max_candidates:
             raise ToolFailure("视觉候选数量超过本次复核预算，尚未进行数值确认；请缩小查询时间范围。",
                 category="budget", artifact=artifact)
+
 
         # 数值证据（纯数据接口回查，无额外视觉调用）：
         # 全部异常候选经网络回查（首次全量拉取可能被降采样，回查保证窗口内

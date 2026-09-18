@@ -19,43 +19,86 @@ from langchain_core.messages import AIMessage
 from langchain_deepseek import ChatDeepSeek
 
 SUPPORTED_PROVIDERS = ("deepseek", "openai")
+SUPPORTED_PROTOCOLS = ("responses", "chat_completions")
+SUPPORTED_VENDORS = ("openai", "dashscope", "deepseek")
 
 
-def _deepseek_thinking_options(enabled: bool) -> dict[str, Any]:
-    return {"extra_body": {"thinking": {"type": "enabled" if enabled else "disabled"}}}
+def resolve_vendor(
+    provider: str,
+    model: str,
+    base_url: str | None = None,
+    explicit_vendor: str | None = None,
+) -> str:
+    """识别实际底层供应商，区分模型集成 (provider)、实际供应商 (vendor) 与 API 协议 (protocol)。"""
+    if explicit_vendor:
+        return explicit_vendor.lower()
+    url = (base_url or "").lower()
+    model_name = (model or "").lower()
+    if "aliyuncs.com" in url or "dashscope" in url or "qwen" in model_name:
+        return "dashscope"
+    if "deepseek" in url or "deepseek" in model_name or provider == "deepseek":
+        return "deepseek"
+    if "openai" in url or provider == "openai":
+        return "openai"
+    return provider.lower()
 
 
-def _openai_thinking_options(enabled: bool) -> dict[str, Any]:
-    if enabled:
+def thinking_options(
+    provider: str,
+    enabled: bool,
+    *,
+    protocol: str = "chat_completions",
+    vendor: str | None = None,
+) -> dict[str, Any]:
+    """把布尔思考开关显式映射为供应商官方请求参数。
+
+    区分 API 协议 (protocol) 与实际 Vendor：
+    - Responses API (仅 OpenAI integration 支持)：
+      - DashScope (百炼)：按百炼文档使用 reasoning.effort，开启为 "medium"，关闭为 "none"；
+      - OpenAI：官方 Responses API 开启为 "medium"，关闭为 None；
+    - Chat Completions API：
+      - DashScope (Qwen hybrid thinking)：通过 extra_body 显式传 enable_thinking: bool；
+      - DeepSeek：通过 extra_body 传 thinking.type = "enabled" / "disabled"；
+      - OpenAI：普通 Chat Completions 不传额外思考参数。
+    """
+    if protocol not in SUPPORTED_PROTOCOLS:
+        raise ValueError(
+            f"unsupported protocol: {protocol!r}，当前仅支持 {SUPPORTED_PROTOCOLS}。"
+        )
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(
+            f"unsupported model provider: {provider!r}，当前仅支持 {SUPPORTED_PROVIDERS}。"
+        )
+
+    v = (vendor or provider).lower()
+
+    if protocol == "responses":
+        if provider != "openai":
+            raise ValueError(f"Responses API 仅适用于 openai integration，当前 provider 为 {provider!r}")
+        if v == "dashscope":
+            return {
+                "use_responses_api": True,
+                "output_version": "responses/v1",
+                "reasoning": {
+                    "effort": "medium" if enabled else "none",
+                    "summary": "auto",
+                } if enabled else {"effort": "none"},
+            }
         return {
             "use_responses_api": True,
             "output_version": "responses/v1",
             "reasoning": {
                 "effort": "medium",
                 "summary": "auto",
-            },
+            } if enabled else None,
         }
-    return {
-        "use_responses_api": True,
-        "output_version": "responses/v1",
-        "reasoning": None,
-    }
 
-
-def thinking_options(provider: str, enabled: bool) -> dict[str, Any]:
-    """把布尔思考开关显式映射为供应商官方请求参数。
-
-    false 不通过“不传参数”实现：DeepSeek 思考模式默认 enabled，必须显式 disabled。
-    OpenAI 官方 integration 开启思考时配置 Responses API 与 reasoning 参数，关闭时禁用 reasoning。
-    第三方仅兼容 OpenAI 请求格式的接口不保证支持 Responses API，因此暂不纳入 openai_compatible thinking。
-    """
-    if provider == "deepseek":
-        return _deepseek_thinking_options(enabled)
-    if provider == "openai":
-        return _openai_thinking_options(enabled)
-    raise ValueError(
-        f"unsupported model provider: {provider!r}，当前仅支持 {SUPPORTED_PROVIDERS}。"
-    )
+    # protocol == "chat_completions"
+    if v == "dashscope":
+        return {"extra_body": {"enable_thinking": enabled}}
+    if v == "deepseek":
+        return {"extra_body": {"thinking": {"type": "enabled" if enabled else "disabled"}}}
+    return {}
 
 
 def _tool_calling_capability(model: BaseChatModel) -> bool | None:
@@ -131,6 +174,8 @@ def create_chat_model(
     api_key: str,
     base_url: str | None,
     thinking: bool,
+    protocol: str | None = None,
+    vendor: str | None = None,
     tool_loop: bool = False,
     temperature: float | None = None,
     max_retries: int = 0,
@@ -138,19 +183,37 @@ def create_chat_model(
 ) -> BaseChatModel:
     """按 Provider 构造官方 integration 模型，五个业务角色共用此唯一入口。
 
-    tool_loop=True 表示该模型参与 model→tool→model 多轮调用：此时按官方 profile 做
-    工具能力的“明确否决”，不支持则配置阶段失败，避免运行到 tool call 才报错。
-    仅在 provider == "deepseek" 且 thinking 为 True 且 tool_loop 为 True 时，
-    使用 DeepSeekThinkingChatModel 极窄 adapter 回传上一轮 reasoning_content；
-    辅助角色或 thinking=False 统一走官方 init_chat_model。
+    区分：
+    - Provider (Integration): "openai", "deepseek"
+    - API Protocol: "responses", "chat_completions" (默认: tool_loop 且 provider == "openai" 为 responses，其余为 chat_completions)
+    - Vendor: "dashscope", "deepseek", "openai" (未显式指定时自动从 base_url 与 model 解析)
     """
-    options = thinking_options(provider, thinking)
+    if protocol is None:
+        protocol = "responses" if (tool_loop and provider == "openai") else "chat_completions"
+
+    resolved_vendor = resolve_vendor(provider, model, base_url, vendor)
+    options = thinking_options(
+        provider,
+        thinking,
+        protocol=protocol,
+        vendor=resolved_vendor,
+    )
+
     # 视觉角色沿用 OpenAI 的 max_completion_tokens 名称；DeepSeek integration 使用
     # max_tokens。仅在统一入口做这一处确定映射，避免供应商参数散落到业务调用层。
     if provider == "deepseek" and "max_completion_tokens" in kwargs:
         if "max_tokens" in kwargs:
             raise ValueError("不能同时配置 max_completion_tokens 与 max_tokens")
         kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
+
+    # 规范合并 extra_body
+    if "extra_body" in options:
+        extra_body_options = options.pop("extra_body")
+        if "extra_body" in kwargs:
+            kwargs["extra_body"] = {**extra_body_options, **kwargs["extra_body"]}
+        else:
+            kwargs["extra_body"] = extra_body_options
+
     if provider == "deepseek" and thinking and tool_loop:
         # DeepSeek 思考模式多轮 tool calling 需要 reasoning_content 回传，使用极窄请求 adapter。
         chat_model: BaseChatModel = DeepSeekThinkingChatModel(

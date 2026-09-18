@@ -62,6 +62,7 @@ def _get_title_llm():
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
         thinking=settings.title_thinking,
+        protocol="chat_completions",
         temperature=0.3,
         max_tokens=48,
     )
@@ -79,10 +80,11 @@ async def generate_title_node(state: TitleState) -> dict:
             HumanMessage(content=input_text),
         ]
     )
-    clean_title = clean_generated_title(response.content)
+    clean_title = clean_generated_title(response.text)
     if not clean_title:
         raise ValueError("模型未返回有效会话标题")
     return {"title": clean_title}
+
 
 
 builder = StateGraph(TitleState)
