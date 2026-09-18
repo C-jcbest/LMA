@@ -21,33 +21,21 @@
   - 注册 `abefore_agent` 钩子 `_sanitize_unanswered_tool_calls`；
   - 在当前 Run 启动前扫描 checkpoint 中的消息，利用官方 `RemoveMessage` 清除全未完成的悬空 AI tool-call 消息，原位收窄部分完成批次，确保模型节点绝不接收未配对的 tool-calls。
 
-### 2. 前端架构与交互
-- **官方生命周期完全投影与单一 Stream 数据源（TODO 14）**：
-  - 基于 `@langchain/react` 的 `useStream`、`useToolCalls` 与 `@langchain/langgraph-sdk` 的 `Client`；
-  - 消息统一唯一只读 `stream.messages`（包含长对话压缩摘要），`ChatWindow` 直接消费官方 `BaseMessage[]`，仅做无状态回合分组；
-  - Text、Reasoning 与 Tool Calls 统一读取 `AIMessage.contentBlocks`；
-  - Thread 加载状态读 `stream.isThreadLoading`，Run 执行状态读 `stream.isLoading`，乐观消息读 `useMessageMetadata(...).optimisticStatus`；
-  - 彻底删除私有 `STREAM_CONTROLLER` API 与 `streamCompat.ts`，重新加载与刷新依托官方 `stream.disconnect()` 与会话重选。
-- **App.tsx 领域 Hook 架构解耦（TODO 17）**：
-  - 将编排逻辑拆分收拢至四个高内聚领域 Hook（`useThreadNavigation`、`useThreadDirectory`、`useAuxiliaryRuns`、`useThreadActions`）；
-  - `App.tsx` 仅负责客户端初始化、提交处理器组装与顶层界面布局，未引入任何外部全局状态库。
-- **通用 Tool Shell 与领域结果渲染器解耦（TODO 18）**：
-  - `InlineToolCall.tsx` 收拢为轻量通用工具 Shell（~190 行），仅负责状态图标、中文动作文案、展开折叠交互与容器外框；
-  - 领域业务渲染器独立拆分至 `frontend/src/components/tools/`（`StationResultView`、`GnssResultView`、`WeatherResultView`、`VisionResultView`、`SiteEnvironmentResultView` 与 `EmptyOrGenericResultView`），由 `InlineToolCall` 统一分发；
-  - 工具完成条件基于“结果是否已经返回”（`hasToolMessageResult || hasLiveOutput`），优先消费实时 `liveToolCall.output`，权威 `ToolMessage.artifact` 到达后平滑覆盖；
-  - 集中解析 `parseOutputRecord` 消除零散 JSON 猜测，空结果正常显示“该步骤没有可展示的业务数据”，绝不回退为 loading。
-- **Stop 与生命周期回归官方**：
-  - 前端 Stop 仅调用 `await stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机（彻底移除 `stopReconciling` 与 `stopError`）；
-  - 下一条 Human 消息直接提交创建正常新 Run。
-- **URL 驱动会话导航与服务端标题生命周期**：
-  - URL 状态驱动 Sidebar 与 Stream 选择；新会话直接提交首条消息，由 SDK 分配 ID 并由 Server 创建 Thread 与 Run；
-  - `onThreadId` 写入 URL 并展示 skeleton，会话标题统一由服务端 `LmaMiddleware.aafter_agent` 异步生成并更新至 `thread.metadata.name`，前端通过 `loadSessions()` 自动呈现，彻底取消前端多余的独立 Title Run。
-- **ChatWindow 组件分层解耦**：
-  - 拆分为 `ChatHeader`、`ThreadViewport`、`UserMessage`、`AssistantTurn`、`MessageList`、`NextActions`、`RunStatusBar`、`Composer` 8 个内聚子组件，主窗口精简至 ~200 行，提升可测试性与维护性。
-- **Headless UI（Radix UI）标准化**：
-  - 配置模态框采用 Radix `Dialog`，删除确认采用 Radix `AlertDialog`，环境/上下文统计采用 Radix `Popover`，会话菜单采用 Radix `DropdownMenu`，保证无障碍焦点捕获、ESC 与点击外部自动关闭等行为标准。
-- **Tool Protocol v1 与 Tool Registry 强类型映射**：
-  - 后端所有工具输出版本化 `ToolArtifactEnvelope`（`schemaVersion=1`，`kind` 分类枚举，携带数据与观测事实元数据）；前端通过 `toolRegistry` 与 `decodeToolArtifact` 集中解码并确定性渲染，杜绝散落的 JSON 解析与任意 GenUI 自由生成风险。
+### 2. 前端架构与交互 (Frontend V2，2026-09-19)
+- **assistant-ui 与 LangGraph Runtime 深度集成**：
+  - 核心采用 `@assistant-ui/react` 与 `@assistant-ui/react-langchain` 的 `useStreamRuntime`；
+  - 彻底移除前端私有状态机与第二套权威历史，LangGraph Checkpoint/Thread 仍为唯一事实来源；
+  - URL 为会话唯一标识入口（`/chat`、`/chat/:threadId` 由 `react-router-dom` v7 驱动）。
+- **专业领域监测 Tool 体系**：
+  - 统一通用外壳 `ToolFallback`：中文动作摘要、默认折叠、展开切换、运行态 Spinner、受控错误提示；
+  - 集中解码 `toolResultAdapter.ts` 与分发 `toolkit.tsx`，连接 GNSS 位移图表、天气预报、测点在网状态、现场视觉核查（点击全屏 Dialog 放大）与站点地质地形空间图层；
+  - 保持“工具返回即完成”，空结果正常展示“该步骤没有可展示的业务数据”，绝不回退为 loading。
+- **现代会话资源管理 (TanStack Query 5)**：
+  - 历史会话列表由 `useInfiniteQuery` 进行分页与搜索管理，独立于当前流式消息；
+  - 重命名与删除使用 `useMutation` 并通过 `sonner` 全局通知，结合 Radix `Dialog` 与 `AlertDialog`。
+- **极简专业设计规范 (Tailwind CSS 4)**：
+  - 升级至 Tailwind 4（`@theme` semantic tokens），浅灰极简监测视觉风格；
+  - 思考过程（Reasoning）默认折叠并支持点击展开批注；长表格横向滚动；支持 HITL 人机交互中断确认。
 
 ---
 
@@ -87,12 +75,12 @@
   ```powershell
   cd backend; .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test*.py" -v
   ```
-  常规包含 68 项单元与集成测试（66 项通过，2 项隔离 Server E2E 需环境变量 `LMA_RUN_SERVER_E2E=1` 触发）。
+  包含 68 项单元与集成测试（66 项通过，2 项隔离 Server E2E 需环境变量 `LMA_RUN_SERVER_E2E=1` 触发）。
 - **前端自动化测试与构建**：
   ```powershell
   cd frontend; pnpm run test; pnpm run build
   ```
-  包含 76 项单元与组件测试，生产构建无类型与打包错误。
+  包含 88 项单元与组件测试（全数通过），生产构建无类型与打包错误（`tsc && vite build` ~689ms）。
 - **提交规范**：
   - 执行 `git diff --check` 确认无格式或空白问题；
   - 严禁提交 `.env`、密钥、真实账号或敏感数据。

@@ -260,14 +260,24 @@ describe('标题与 Agent Run 独立生命周期', () => {
   });
   it('空闲无列表轮询；busy 仅刷新指定 ID，恢复 idle 后停止定时刷新', async () => {
     let poll!: () => void;
-    const interval = vi.spyOn(window, 'setInterval').mockImplementation((callback: any) => { poll = callback; return 123; });
+    const realSetInterval = window.setInterval.bind(window);
+    const interval = vi.spyOn(window, 'setInterval').mockImplementation(((callback: any, ms?: number, ...args: any[]) => {
+      if (ms === 3000) {
+        poll = callback;
+        return 123 as any;
+      }
+      return realSetInterval(callback, ms, ...args);
+    }) as any);
     const clear = vi.spyOn(window, 'clearInterval');
     mock.sessions.mockResolvedValue({ sessions: [{ thread_id: '忙碌', name: '忙碌', status: 'busy' }, { thread_id: '空闲', name: '空闲', status: 'idle' }], isLive: true, nextOffset: 2, hasMore: false });
     mock.busy.mockResolvedValue([{ thread_id: '忙碌', name: '忙碌', status: 'idle' }]);
     render(<App />);
-    await waitFor(() => expect(interval).toHaveBeenCalledTimes(1));
-    await act(async () => { poll(); });
-    expect(mock.busy).toHaveBeenCalledWith(mock.options.client, ['忙碌']);
+    await waitFor(() => expect(screen.getByText('忙碌')).toBeInTheDocument());
+    await waitFor(() => expect(interval).toHaveBeenCalled());
+    await act(async () => {
+      poll();
+    });
+    await waitFor(() => expect(mock.busy).toHaveBeenCalledWith(mock.options.client, ['忙碌']));
     expect(mock.sessions).toHaveBeenCalledTimes(1);
     expect(clear).toHaveBeenCalledWith(123);
     expect(screen.queryByTitle('生成中，暂不可重命名或删除')).not.toBeInTheDocument();

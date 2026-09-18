@@ -44,3 +44,12 @@
    - 会话标题生成生命周期彻底收敛至服务端 `LmaMiddleware.aafter_agent` 异步更新 thread metadata，消除前端独立 title run；
    - 思考卡片默认折叠，文案规范为“已思考” / “正在思考…”，消除伪造计时器；
    - 全套后端测试（68/68）与前端测试（76/76）及生产构建（`pnpm run build`）全绿通过。
+10. **前端架构全面升级至 Frontend V2 (@assistant-ui/react + React 19 + Tailwind 4)（2026-09-19）**：
+    - 完整落地 `docs/LMA_FRONTEND_V2_ASSISTANT_UI_PLAN.md`（Phase 0 ~ Phase 7）；
+    - 升级至 React 19.3、Tailwind 4、Vite 8、@assistant-ui/react 0.15、@assistant-ui/react-langchain 0.0.32、TanStack Query 5、React Router 7；
+    - 采用 `useStreamRuntime` 作为对话核心，唯一通过 URL 获取 `threadId`，彻底消除前端私有状态机；
+    - 实现统一 ToolFallback 外壳与 5 大领域监测渲染器（GNSS、天气、测点列表、现场视觉大图弹窗、站点地形地貌与 MapLibre 地图）；
+    - 会话列表采用 TanStack Query 无限分页与 Mutation，支持搜索、重命名模态框与删除确认；
+    - 支持 LangGraph Human-in-the-loop (HITL) 中断交互确认；
+    - 新增 Dockerfile 生产多阶段构建与 Nginx 反向代理配置；
+    - 全套前后端测试 156 项（前端 88 项、后端 68 项）与 Vite 生产构建全绿通过。
