@@ -24,13 +24,16 @@
   - 连接状态与辅助能力：删除全局冗余探活，列表错误严格局限在 Sidebar；标题生成与下一步建议失败静默降级；
   - 状态扁平化：`runError`、`hydrationError`、`stopError` 统一收敛为当前会话单布尔瞬态，切换会话自动重置；
   - ErrorBoundary 隐藏内部堆栈并提供真实刷新/重新加载/隐藏动作。绝不展示内部异常、堆栈、HTTP 或 checkpoint 诊断。
-- TODO 15 已完成：彻底删除 `projectLangGraphMessages` 与自定义 `Message/MessagePart/ToolCallInfo`；移除多字段消息猜测、`settlingAfterTool`、整理回答推断、思考耗时计时器及英文工具错误匹配。实时工具状态、持久终态和 artifact 按 `callId/tool_call_id` 只读关联；没有 ToolMessage 且无 live error 时一律显示 pending（“正在查询，请稍候…”/“正在同步结果…”），权威终态到达前不展示业务数据。Reasoning 仅保留 `additional_kwargs.reasoning_content` 一条临时兼容入口，TODO 16 切换官方 `ChatDeepSeek` 后由 `langchain-core` 自动标准化，入口待 TODO 17 删除。
+- TODO 15 已完成：彻底删除 `projectLangGraphMessages` 与自定义 `Message/MessagePart/ToolCallInfo`；移除多字段消息猜测、`settlingAfterTool`、整理回答推断、思考耗时计时器及英文工具错误匹配。实时工具状态、持久终态和 artifact 按 `callId/tool_call_id` 只读关联；没有 ToolMessage 且无 live error 时一律显示 pending（“正在查询，请稍候…”/“正在同步结果…”），权威终态到达前不展示业务数据。
+- TODO 16 & 17 已完成（2026-09-18 减法重构与标准化收口）：
+  - 模型构造：官方 `init_chat_model` 为统一入口，DeepSeek 与 OpenAI 思考配置显式映射（OpenAI 采用 Responses API + reasoning 配置）；`profile.reasoning_output` 与 `profile.tool_calling` 支持显式明确否决（fail-fast）；`DeepSeekThinkingChatModel` 仅限定在主 Agent 多轮 tool_loop 场景；
+  - Reasoning 消费：前端彻底只消费官方 `AIMessage.contentBlocks`，删除 `additional_kwargs.reasoning_content` 等全部前端兼容回退；后端保留原始 `reasoning_content` 以供多轮协议及官方 translator 转换；后端删除 `lma_thinking_duration_ms` 与 `perf_counter`，不再伪造思考耗时。
 
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 
 - 主 Agent 根据目标与证据自主编排；禁止固定调查顺序、章节和模板化建议。业务/视觉策略分别只编辑 `system.md` / `vision.md`。
 - 推荐仅基于完整最终回答；保留 RECOMMEND_ENABLED 与 RECOMMEND_THINKING，不恢复固定字数触发的流式预取。不合适时可为空，失败静默降级不干扰主流程。
-- LLM_THINKING 仅控制主模型；标题、推荐、压缩和视觉有独立开关，默认关闭。Provider 层把布尔开关显式映射为供应商官方参数（DeepSeek：`thinking.type=enabled/disabled`；OpenAI 不支持显式开启，开启即配置失败）；模型统一由官方 `init_chat_model(model_provider=...)` 构造。DeepSeek 思考模式多轮 tool calling 的 `reasoning_content` 回传缺口由极窄请求 adapter 承担（官方修复后删除）；前后端 reasoning 标准化收口属于 TODO 17；不得拼造思考内容。
+- LLM_THINKING 仅控制主模型；标题、推荐、压缩和视觉有独立开关，默认关闭。Provider 层把布尔开关显式映射为供应商官方参数（DeepSeek：`thinking.type=enabled/disabled`；OpenAI 使用 Responses API 与 reasoning 参数控制）；模型统一由官方 `init_chat_model(model_provider=...)` 构造。DeepSeek 思考模式多轮 tool calling 的 `reasoning_content` 回传缺口由极窄请求 adapter 承担（官方修复后删除）；前端只消费标准 `contentBlocks`；不得拼造思考内容。
 - TODO 5 已替换旧压缩算法：官方摘要消息为 checkpoint 中唯一摘要来源；按官方token阈值触发和token budget保留，按lc_source标记投影。摘要使用当前 LLM 配置与独立思考开关，失败显式终止本次请求，历史不被删除。
 - TODO 6 已统一六个工具的官方 content/artifact/status 协议和请求前 Pydantic 校验。参数、业务、基础设施及内部错误区分；失败原因常驻，部分证据可查看。模型只读事实，前端只消费展示 artifact，不解析 content、不暴露通用 JSON；原始诊断只写后端日志，artifact 不能放秘密。
 - TODO 7 已统一官方调用级重试与Run级模型/工具限额：默认重试2次、模型20次、工具40次、视觉有效候选12个；只有瞬时异常可重试，混合失败组不盲重试。全部底层SDK关闭重试，删除视觉格式/空结果与降载重试；超额明确报错并保留已有证据。摘要仍沿用官方独立逻辑；调用限额不是全HTTP或耗时配额。

@@ -284,26 +284,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
                     ) : (
                       aiMessages.map((aiMessage) => {
                         const blocks = aiMessage.contentBlocks;
-                        const hasStandardReasoning = blocks.some((block) => block.type === 'reasoning');
-                        const compatibilityReasoning = aiMessage.additional_kwargs.reasoning_content;
-                        const hasFollowupContent = blocks.some(
-                          (block) =>
-                            (block.type === 'text' && Boolean(block.text.trim())) || block.type === 'tool_call'
-                        );
                         return (
                           <React.Fragment key={aiMessage.id || turnMessages.indexOf(aiMessage)}>
-                            {!hasStandardReasoning &&
-                              typeof compatibilityReasoning === 'string' &&
-                              compatibilityReasoning.trim() && (
-                                <ThinkingBlock
-                                  content={compatibilityReasoning}
-                                  isActive={
-                                    isStreamingAssistant &&
-                                    aiMessage === lastAIMessage &&
-                                    !hasFollowupContent
-                                  }
-                                />
-                              )}
                             {blocks.map((block, blockIndex) => {
                               if (block.type === 'text') {
                                 return block.text ? (

@@ -487,30 +487,156 @@ describe('会话关键路径集成回归', () => {
     ]);
   });
 
-  it('标准 reasoning 缺失时只读取 additional_kwargs.reasoning_content 临时兼容入口', () => {
+  it('官方 DeepSeek AIMessage 通过 translator 标准化 contentBlocks，ChatWindow 只消费 contentBlocks', async () => {
     const message = new AIMessage({
-      id: 'a2',
-      content: '',
+      id: 'msg-1',
+      content: '最终回答',
       additional_kwargs: {
-        reasoning_content: '正在对比历史雨量与位移数据',
-        reasoning: '禁止读取的旧字段',
-        thinking: '禁止读取的旧字段',
+        reasoning_content: '先检查监测数据',
       },
-      response_metadata: { reasoning_content: '禁止读取的旧字段' },
+      response_metadata: {
+        model_provider: 'deepseek',
+      },
     });
+
+    expect(message.contentBlocks).toEqual([
+      {
+        type: 'reasoning',
+        reasoning: '先检查监测数据',
+      },
+      {
+        type: 'text',
+        text: '最终回答',
+      },
+    ]);
 
     render(
       <ChatWindow
         messages={[message]}
         onSendMessage={() => undefined}
-        threadLoading={false} runActive stopReconciling={false}
+        threadLoading={false}
+        runActive={false}
+        stopReconciling={false}
         isSidebarCollapsed={false}
         onToggleSidebar={() => undefined}
       />
     );
-    expect(screen.getByText('正在思考')).toBeInTheDocument();
-    expect(screen.getByText('正在对比历史雨量与位移数据')).toBeInTheDocument();
-    expect(screen.queryByText('禁止读取的旧字段')).not.toBeInTheDocument();
+
+    expect(screen.getByText('已思考')).toBeInTheDocument();
+    expect(screen.getByText('最终回答')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /已思考/ }));
+    expect(screen.getByText('先检查监测数据')).toBeInTheDocument();
+  });
+
+  it('thinking=false 时不生成 reasoning block，页面不出现空 ThinkingBlock', () => {
+    const message = new AIMessage({
+      id: 'msg-plain',
+      content: '纯文本回答，未开启思考模式。',
+      response_metadata: {
+        model_provider: 'deepseek',
+      },
+    });
+
+    expect(message.contentBlocks).toEqual([
+      {
+        type: 'text',
+        text: '纯文本回答，未开启思考模式。',
+      },
+    ]);
+
+    render(
+      <ChatWindow
+        messages={[message]}
+        onSendMessage={() => undefined}
+        threadLoading={false}
+        runActive={false}
+        stopReconciling={false}
+        isSidebarCollapsed={false}
+        onToggleSidebar={() => undefined}
+      />
+    );
+
+    expect(screen.queryByRole('button', { name: /思考/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('已思考')).not.toBeInTheDocument();
+    expect(screen.queryByText('正在思考')).not.toBeInTheDocument();
+    expect(screen.getByText('纯文本回答，未开启思考模式。')).toBeInTheDocument();
+  });
+
+  it('reasoning -> tool_call -> ToolMessage -> text 顺序稳定展示', async () => {
+    const firstAI = new AIMessage({
+      id: 'a1',
+      contentBlocks: [
+        { type: 'reasoning', reasoning: '先查询监测点列表' },
+        { type: 'tool_call', id: 'call-1', name: 'list_stations', args: {} },
+      ],
+    });
+    const toolResult = new ToolMessage({
+      tool_call_id: 'call-1',
+      name: 'list_stations',
+      content: '{"ok":true}',
+      artifact: { data: { total: 0, stations: [] } },
+    });
+    const finalAI = new AIMessage({
+      id: 'a2',
+      contentBlocks: [
+        { type: 'reasoning', reasoning: '根据查询结果总结' },
+        { type: 'text', text: '已无其他异常。' },
+      ],
+    });
+
+    render(
+      <ChatWindow
+        messages={[firstAI, toolResult, finalAI]}
+        onSendMessage={() => undefined}
+        threadLoading={false}
+        runActive={false}
+        stopReconciling={false}
+        isSidebarCollapsed={false}
+        onToggleSidebar={() => undefined}
+      />
+    );
+
+    const thinkingButtons = screen.getAllByRole('button', { name: /已思考/ });
+    expect(thinkingButtons).toHaveLength(2);
+    expect(screen.getByText('已无其他异常。')).toBeInTheDocument();
+    await userEvent.click(thinkingButtons[0]);
+    expect(screen.getByText('先查询监测点列表')).toBeInTheDocument();
+    await userEvent.click(thinkingButtons[1]);
+    expect(screen.getByText('根据查询结果总结')).toBeInTheDocument();
+  });
+
+  it('rejoin/hydrate 验证：保留 model_provider 与 reasoning_content 时可恢复 contentBlocks reasoning', async () => {
+    const hydratedMessage = new AIMessage({
+      id: 'hydrated-ai-1',
+      content: '恢复的历史回答',
+      additional_kwargs: {
+        reasoning_content: '历史思考过程：已核验位移曲线',
+        created_at: '2026-09-18T10:00:00+08:00',
+      },
+      response_metadata: {
+        model_provider: 'deepseek',
+      },
+    });
+
+    expect(hydratedMessage.contentBlocks.some((b) => b.type === 'reasoning')).toBe(true);
+    const reasoningBlock = hydratedMessage.contentBlocks.find((b) => b.type === 'reasoning');
+    expect((reasoningBlock as any)?.reasoning).toBe('历史思考过程：已核验位移曲线');
+
+    render(
+      <ChatWindow
+        messages={[hydratedMessage]}
+        onSendMessage={() => undefined}
+        threadLoading={false}
+        runActive={false}
+        stopReconciling={false}
+        isSidebarCollapsed={false}
+        onToggleSidebar={() => undefined}
+      />
+    );
+
+    expect(screen.getByText('已思考')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /已思考/ }));
+    expect(screen.getByText('历史思考过程：已核验位移曲线')).toBeInTheDocument();
   });
 
   it('删除会话时具备确认步骤：点击删除弹出确认弹窗，取消不删除，确认后才调用删除', async () => {

@@ -9,7 +9,6 @@ import json
 import logging
 from dataclasses import replace
 from functools import lru_cache
-from time import perf_counter
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware, ToolRetryMiddleware, ModelCallLimitMiddleware, ToolCallLimitMiddleware
@@ -79,19 +78,14 @@ class LmaMiddleware(AgentMiddleware):
                 "recommendations": [], "recommendations_error": ""}
 
     async def awrap_model_call(self, request, handler):
-        started = perf_counter()
         response = await handler(request)
-        elapsed_ms = max(0, round((perf_counter() - started) * 1000))
         stamped = []
         for message in response.result:
             if message.type == "ai":
-                metadata = {**message.additional_kwargs,
-                            "created_at": business_now().isoformat(timespec="seconds")}
-                reasoning = metadata.get("reasoning_content")
-                if isinstance(reasoning, str) and reasoning.strip():
-                    metadata["lma_thinking_duration_ms"] = elapsed_ms
-                elif any(block.get("type") == "reasoning" for block in message.content_blocks):
-                    metadata["lma_thinking_duration_ms"] = elapsed_ms
+                metadata = {
+                    **message.additional_kwargs,
+                    "created_at": business_now().isoformat(timespec="seconds"),
+                }
                 message = message.model_copy(update={"additional_kwargs": metadata})
             stamped.append(message)
         return replace(response, result=stamped)

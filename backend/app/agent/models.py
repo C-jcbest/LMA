@@ -21,21 +21,38 @@ from langchain_deepseek import ChatDeepSeek
 SUPPORTED_PROVIDERS = ("deepseek", "openai")
 
 
+def _deepseek_thinking_options(enabled: bool) -> dict[str, Any]:
+    return {"extra_body": {"thinking": {"type": "enabled" if enabled else "disabled"}}}
+
+
+def _openai_thinking_options(enabled: bool) -> dict[str, Any]:
+    if enabled:
+        return {
+            "use_responses_api": True,
+            "output_version": "responses/v1",
+            "reasoning": {
+                "effort": "medium",
+                "summary": "auto",
+            },
+        }
+    return {
+        "use_responses_api": True,
+        "output_version": "responses/v1",
+        "reasoning": None,
+    }
+
+
 def thinking_options(provider: str, enabled: bool) -> dict[str, Any]:
     """把布尔思考开关显式映射为供应商官方请求参数。
 
     false 不通过“不传参数”实现：DeepSeek 思考模式默认 enabled，必须显式 disabled。
-    OpenAI 标准协议没有统一的显式思考开关，开启时直接配置失败，不静默降级为普通模型。
+    OpenAI 官方 integration 开启思考时配置 Responses API 与 reasoning 参数，关闭时禁用 reasoning。
+    第三方仅兼容 OpenAI 请求格式的接口不保证支持 Responses API，因此暂不纳入 openai_compatible thinking。
     """
     if provider == "deepseek":
-        return {"extra_body": {"thinking": {"type": "enabled" if enabled else "disabled"}}}
+        return _deepseek_thinking_options(enabled)
     if provider == "openai":
-        if enabled:
-            raise ValueError(
-                "openai provider 不支持显式思考开关：请关闭对应 THINKING 配置，"
-                f"或改用支持显式思考控制的 Provider（{SUPPORTED_PROVIDERS}）。"
-            )
-        return {}
+        return _openai_thinking_options(enabled)
     raise ValueError(
         f"unsupported model provider: {provider!r}，当前仅支持 {SUPPORTED_PROVIDERS}。"
     )
@@ -63,6 +80,24 @@ def assert_tool_calling(model: BaseChatModel) -> None:
         raise ValueError(
             f"模型 {name!r} 的官方 profile 标记为不支持 tool calling；主 Agent 需要工具调用"
             "能力，请更换 LLM_MODEL 或 LLM_PROVIDER。"
+        )
+
+
+def assert_requested_reasoning(model: BaseChatModel, enabled: bool) -> None:
+    """思考开关开启时的能力明确否决：官方 profile 显式标记不支持 reasoning 时失败。
+
+    profile 缺失或未标记时不猜、不发探测请求，由真实 Provider 请求决定。
+    """
+    if not enabled:
+        return
+    profile = getattr(model, "profile", None)
+    if not isinstance(profile, dict):
+        profile = getattr(model, "model_profile", None)
+    if isinstance(profile, dict) and profile.get("reasoning_output") is False:
+        name = getattr(model, "model_name", None) or getattr(model, "model", None)
+        raise ValueError(
+            f"模型 {name!r} 的官方 profile 明确不支持 reasoning；请关闭对应 THINKING 配置，"
+            "或更换支持思考的模型。"
         )
 
 
@@ -105,6 +140,9 @@ def create_chat_model(
 
     tool_loop=True 表示该模型参与 model→tool→model 多轮调用：此时按官方 profile 做
     工具能力的“明确否决”，不支持则配置阶段失败，避免运行到 tool call 才报错。
+    仅在 provider == "deepseek" 且 thinking 为 True 且 tool_loop 为 True 时，
+    使用 DeepSeekThinkingChatModel 极窄 adapter 回传上一轮 reasoning_content；
+    辅助角色或 thinking=False 统一走官方 init_chat_model。
     """
     options = thinking_options(provider, thinking)
     # 视觉角色沿用 OpenAI 的 max_completion_tokens 名称；DeepSeek integration 使用
@@ -113,9 +151,8 @@ def create_chat_model(
         if "max_tokens" in kwargs:
             raise ValueError("不能同时配置 max_completion_tokens 与 max_tokens")
         kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
-    if provider == "deepseek" and thinking:
-        # DeepSeek 思考模式多轮 tool calling 需要 reasoning_content 回传，使用极窄
-        # 请求 adapter；单次调用场景无历史 AIMessage，adapter 不改变其请求内容。
+    if provider == "deepseek" and thinking and tool_loop:
+        # DeepSeek 思考模式多轮 tool calling 需要 reasoning_content 回传，使用极窄请求 adapter。
         chat_model: BaseChatModel = DeepSeekThinkingChatModel(
             model=model,
             api_key=api_key,
@@ -138,4 +175,5 @@ def create_chat_model(
         )
     if tool_loop:
         assert_tool_calling(chat_model)
+    assert_requested_reasoning(chat_model, thinking)
     return chat_model

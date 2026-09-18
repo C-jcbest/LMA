@@ -40,9 +40,25 @@ class PromptTimeTests(unittest.TestCase):
             models.thinking_options("deepseek", False),
             {"extra_body": {"thinking": {"type": "disabled"}}},
         )
-        self.assertEqual(models.thinking_options("openai", False), {})
-        with self.assertRaises(ValueError):
-            models.thinking_options("openai", True)
+        self.assertEqual(
+            models.thinking_options("openai", True),
+            {
+                "use_responses_api": True,
+                "output_version": "responses/v1",
+                "reasoning": {
+                    "effort": "medium",
+                    "summary": "auto",
+                },
+            },
+        )
+        self.assertEqual(
+            models.thinking_options("openai", False),
+            {
+                "use_responses_api": True,
+                "output_version": "responses/v1",
+                "reasoning": None,
+            },
+        )
         with self.assertRaises(ValueError):
             models.thinking_options("qwen", False)
 
@@ -66,20 +82,24 @@ class PromptTimeTests(unittest.TestCase):
             base_url="https://example.invalid/v1",
             temperature=0,
             max_retries=0,
+            use_responses_api=True,
+            output_version="responses/v1",
+            reasoning=None,
         )
 
     def test_deepseek_maps_vision_output_budget_to_max_tokens(self):
-        with patch.object(models, "DeepSeekThinkingChatModel") as deepseek_model:
-            deepseek_model.return_value.profile = {}
+        with patch.object(models, "init_chat_model") as init_model:
+            init_model.return_value.profile = {}
             models.create_chat_model(
                 provider="deepseek",
                 model="vision-model",
                 api_key="test-key",
                 base_url="https://example.invalid/v1",
                 thinking=True,
+                tool_loop=False,
                 max_completion_tokens=8000,
             )
-        kwargs = deepseek_model.call_args.kwargs
+        kwargs = init_model.call_args.kwargs
         self.assertEqual(kwargs["max_tokens"], 8000)
         self.assertNotIn("max_completion_tokens", kwargs)
 
@@ -118,6 +138,41 @@ class PromptTimeTests(unittest.TestCase):
             for _, factory in factories:
                 factory.cache_clear()
 
+    def test_all_five_roles_read_independent_thinking_settings(self):
+        settings = SimpleNamespace(
+            llm_provider="deepseek",
+            llm_model="test-model",
+            llm_api_key="test-key",
+            llm_base_url="https://example.invalid/v1",
+            llm_thinking=False,
+            title_thinking=True,
+            recommend_enabled=True,
+            recommend_thinking=True,
+            context_summary_max_tokens=2000,
+            compress_thinking=True,
+            vision_provider="deepseek",
+            vision_model="vision-model",
+            vision_api_key="test-key",
+            vision_base_url="https://example.invalid/v1",
+            vision_thinking=True,
+        )
+        factories = (
+            (graph, graph._get_llm, {"thinking": {"type": "disabled"}}),
+            (title, title._get_title_llm, {"thinking": {"type": "enabled"}}),
+            (graph, graph._get_recommend_llm, {"thinking": {"type": "enabled"}}),
+            (summarization, summarization._get_summary_model, {"thinking": {"type": "enabled"}}),
+            (vision, vision._get_vision_llm, {"thinking": {"type": "enabled"}}),
+        )
+        try:
+            for module, factory, expected_extra_body in factories:
+                factory.cache_clear()
+                with patch.object(module, "get_settings", return_value=settings):
+                    llm = factory()
+                self.assertEqual(llm.extra_body, expected_extra_body)
+        finally:
+            for module, factory, _ in factories:
+                factory.cache_clear()
+
     def test_deepseek_thinking_adapter_writes_back_reasoning_content(self):
         llm = models.DeepSeekThinkingChatModel(
             model="deepseek-flash",
@@ -146,6 +201,66 @@ class PromptTimeTests(unittest.TestCase):
             models.assert_tool_calling(
                 SimpleNamespace(profile={"tool_calling": False}, model="no-tools")
             )
+
+    def test_deepseek_adapter_only_used_for_main_tool_loop_with_thinking(self):
+        # 1. 主 Agent + DeepSeek + thinking=True + tool_loop=True -> DeepSeekThinkingChatModel
+        with patch.object(models, "DeepSeekThinkingChatModel") as ds_adapter, \
+             patch.object(models, "init_chat_model") as init_model:
+            ds_adapter.return_value.profile = {"tool_calling": True}
+            result = models.create_chat_model(
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="key",
+                base_url="https://api.deepseek.com",
+                thinking=True,
+                tool_loop=True,
+            )
+            self.assertIs(result, ds_adapter.return_value)
+            ds_adapter.assert_called_once()
+            init_model.assert_not_called()
+
+        # 2. 主 Agent + DeepSeek + thinking=False + tool_loop=True -> 官方 init_chat_model
+        with patch.object(models, "init_chat_model") as init_model, \
+             patch.object(models, "DeepSeekThinkingChatModel") as ds_adapter:
+            init_model.return_value.profile = {"tool_calling": True}
+            result = models.create_chat_model(
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="key",
+                base_url="https://api.deepseek.com",
+                thinking=False,
+                tool_loop=True,
+            )
+            self.assertIs(result, init_model.return_value)
+            ds_adapter.assert_not_called()
+
+        # 3. 辅助角色 (tool_loop=False) + DeepSeek + thinking=True -> 官方 init_chat_model
+        with patch.object(models, "init_chat_model") as init_model, \
+             patch.object(models, "DeepSeekThinkingChatModel") as ds_adapter:
+            init_model.return_value.profile = {}
+            result = models.create_chat_model(
+                provider="deepseek",
+                model="deepseek-chat",
+                api_key="key",
+                base_url="https://api.deepseek.com",
+                thinking=True,
+                tool_loop=False,
+            )
+            self.assertIs(result, init_model.return_value)
+            ds_adapter.assert_not_called()
+
+    def test_assert_requested_reasoning_profile_validation(self):
+        with self.assertRaisesRegex(ValueError, "明确不支持 reasoning"):
+            models.assert_requested_reasoning(
+                SimpleNamespace(profile={"reasoning_output": False}, model="plain-model"),
+                enabled=True,
+            )
+        models.assert_requested_reasoning(
+            SimpleNamespace(profile={"reasoning_output": False}, model="plain-model"),
+            enabled=False,
+        )
+        models.assert_requested_reasoning(SimpleNamespace(profile=None), enabled=True)
+        models.assert_requested_reasoning(SimpleNamespace(profile={}), enabled=True)
 
     def test_formal_prompt_files_are_the_only_sources(self):
         repo_root = Path(__file__).resolve().parents[2]

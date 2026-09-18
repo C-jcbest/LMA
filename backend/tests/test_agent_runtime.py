@@ -52,7 +52,6 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([m.type for m in result["messages"]], ["human", "ai", "tool", "ai"])
         self.assertEqual(result["messages"][0].additional_kwargs["created_at"], first.isoformat())
         self.assertEqual(result["messages"][-1].additional_kwargs["reasoning_content"], "核对证据")
-        self.assertGreaterEqual(result["messages"][-1].additional_kwargs["lma_thinking_duration_ms"], 0)
         self.assertEqual(result["context_usage"]["input_tokens"], 321)
         self.assertEqual(result["context_usage"]["remaining_tokens"], 1_048_576 - 321 - 120)
         self.assertEqual(model.inputs[0][0].content, model.inputs[1][0].content)
@@ -156,15 +155,15 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await agent.ainvoke({"messages": [HumanMessage(content="查询")]}, config)
         self.assertEqual((await agent.aget_state(config)).values["messages"][-1].content, "查询")
 
-    async def test_elapsed_time_and_official_updates_nodes(self):
+    async def test_official_updates_nodes(self):
         model = ScriptedModel(script=[AIMessage(content="完成", additional_kwargs={"reasoning_content": "证据"})])
         agent = graph.create_lma_agent(model, agent_tools=[])
-        with patch.object(graph, "perf_counter", side_effect=[10, 11.25]):
-            updates = [update async for update in agent.astream(
-                {"messages": [HumanMessage(content="查询")]}, stream_mode="updates",
-            )]
+        updates = [update async for update in agent.astream(
+            {"messages": [HumanMessage(content="查询")]}, stream_mode="updates",
+        )]
         response = next(update["model"]["messages"][0] for update in updates if "model" in update)
-        self.assertEqual(response.additional_kwargs["lma_thinking_duration_ms"], 1250)
+        self.assertIn("created_at", response.additional_kwargs)
+        self.assertNotIn("lma_thinking_duration_ms", response.additional_kwargs)
         self.assertFalse(any("agent" in update or "recommend" in update or "manage_context" in update
                              for update in updates))
 
@@ -178,7 +177,6 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         result = await agent.ainvoke({"messages": [HumanMessage(content="查询")]})
         response = result["messages"][-1]
         self.assertNotIn("reasoning_content", response.additional_kwargs)
-        self.assertNotIn("lma_thinking_duration_ms", response.additional_kwargs)
 
     async def test_model_budget_stops_loop_and_resets_next_run(self):
         from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError

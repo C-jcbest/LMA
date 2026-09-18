@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     # 主模型标识，必须为配置端点支持的模型；标题、推荐、摘要复用此模型。
     llm_model: str = "deepseek-flash"
-    # 主模型独立思考开关（true/false，默认 true）；Provider 层显式映射为供应商官方参数：DeepSeek 发送 thinking.type=enabled/disabled，OpenAI 不支持显式开启。
+    # 主模型独立思考开关（true/false，默认 true）；Provider 层显式映射为供应商官方参数：DeepSeek 发送 thinking.type=enabled/disabled，OpenAI 官方 integration 使用 Responses API 与 reasoning 参数控制。
     llm_thinking: bool = True
 
     # 会话标题的独立思考开关（默认 false）；开关语义同 LLM_THINKING，不继承主模型开关。
