@@ -147,10 +147,10 @@
   - `git diff --check` 无任何违规或空白问题。
 - 关联：`backend/app/agent/models.py`、`backend/app/agent/vision.py`、`backend/app/agent/graph.py`、`backend/app/agent/title.py`、`backend/app/agent/summarization.py`、`backend/.env.example`。
 
-## 2026-09-18 工具调用状态实时化收口
+## 2026-09-18 工具调用逐工具实时展示收口
 
 - 类型：Status / Decision / Doc Sync
 - 范围：frontend / tests / docs
-- 决策：保持现有 LangGraph 与 `useToolCalls(stream)` 官方实现不变，仅修改 `InlineToolCall` 状态判断。`liveToolCall.status` 作为运行时状态来源，收到 `finished/error` 后立即更新对应工具 UI；`ToolMessage` 不再作为工具完成的必要条件，仅负责最终持久化结果与 artifact（图表、地图、详细数据）展示。在对应 `ToolMessage` 尚未到达流时，卡片显示已完成，展开区域显示“详细结果同步中…”。保持并行 Tool Calling，不增加自定义流协议或额外 Store。
-- 验证：前端全量 81 项测试通过、生产构建打包成功；后端全量 66 项测试通过；`git diff --check` 通过。
+- 决策：保持现有 LangGraph 与 `useToolCalls(stream)` 官方实现不变，不修改后端并行执行与流协议。`liveToolCall.status` 决定 running/finished/error，工具成功返回即显示完成，空结果同样视为成功；工具执行期间优先使用 `liveToolCall.output` 实时展示结果，后续 `ToolMessage.artifact` 到达后作为最终持久化内容补充/覆盖。彻底删除“详细结果同步中”中间态及对 `ToolMessage` 的完成阻塞，成功无数据时展示“该步骤没有可展示的业务数据”，不回退为 loading。
+- 验证：前端全量 82 项测试通过（包含真实 100ms/500ms/1000ms 异步延迟流式流转测试与两阶段数据源断言）、生产构建打包成功；后端全量 66 项测试通过；`git diff --check` 通过。
 - 关联：`frontend/src/components/InlineToolCall.tsx`、`frontend/tests/conversation.integration.test.tsx`、`AGENTS.md`、`docs/TODO.md`。

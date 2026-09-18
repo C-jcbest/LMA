@@ -776,7 +776,7 @@ it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', a
   expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
 });
 
-it('live finished 但权威 ToolMessage 尚未到达时卡片显示已完成，展开显示详细结果同步中', async () => {
+it('live finished 且携带 liveOutput 但权威 ToolMessage 尚未到达时直接展示 liveOutput 业务数据', async () => {
   render(
     <InlineToolCall
       toolCall={{ type: 'tool_call', id: 'sync', name: 'list_stations', args: {} }}
@@ -784,6 +784,32 @@ it('live finished 但权威 ToolMessage 尚未到达时卡片显示已完成，�
         name: 'list_stations',
         callId: 'sync',
         id: 'sync',
+        namespace: [],
+        input: {},
+        args: {},
+        output: { stations: [{ station_name: '实时测点X', station_status: '正常' }] },
+        status: 'finished',
+        error: undefined,
+      } as unknown as AssembledToolCall}
+    />,
+  );
+  const row = screen.getByText('查询监测点列表').closest('[data-status]');
+  expect(row).toHaveAttribute('data-status', 'finished');
+
+  await userEvent.click(screen.getByText('查询监测点列表'));
+  expect(screen.getByText('实时测点X')).toBeInTheDocument();
+  expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
+  expect(screen.queryByText('详细结果同步中…')).not.toBeInTheDocument();
+});
+
+it('live finished 但返回空内容或无业务数据时显示完成与无数据，不处于 loading 态', async () => {
+  render(
+    <InlineToolCall
+      toolCall={{ type: 'tool_call', id: 'empty', name: 'list_stations', args: {} }}
+      liveToolCall={{
+        name: 'list_stations',
+        callId: 'empty',
+        id: 'empty',
         namespace: [],
         input: {},
         args: {},
@@ -797,65 +823,130 @@ it('live finished 但权威 ToolMessage 尚未到达时卡片显示已完成，�
   expect(row).toHaveAttribute('data-status', 'finished');
 
   await userEvent.click(screen.getByText('查询监测点列表'));
-  expect(screen.getByText('详细结果同步中…')).toBeInTheDocument();
-  expect(screen.queryByText('该步骤没有可展示的业务数据')).not.toBeInTheDocument();
+  expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
+  expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
 });
 
-it('并行工具调用各工具独立更新状态：已完成工具立即显示完成，运行中工具保持查询，不等待全部工具或ToolMessage', () => {
-  const aiMessage = new AIMessage({
-    id: 'ai-batch',
-    contentBlocks: [
-      { type: 'tool_call', id: 'call-a', name: 'get_daily_gnss_data', args: {} },
-      { type: 'tool_call', id: 'call-b', name: 'query_weather', args: {} },
-      { type: 'tool_call', id: 'call-c', name: 'inspect_site_environment', args: {} },
-    ],
-  });
-  const initialLiveCalls: AssembledToolCall[] = [
-    { callId: 'call-a', name: 'get_daily_gnss_data', status: 'finished' } as any,
-    { callId: 'call-b', name: 'query_weather', status: 'running' } as any,
-    { callId: 'call-c', name: 'inspect_site_environment', status: 'running' } as any,
-  ];
-  const { rerender } = render(
-    <ChatWindow
-      messages={[aiMessage]}
-      toolCalls={initialLiveCalls}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={true}
-      stopReconciling={false}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  const rowA = screen.getByText('获取北斗GNSS日监测数据').closest('[data-status]');
-  const rowB = screen.getByText('查询天气数据').closest('[data-status]');
-  const rowC = screen.getByText('调查站点地形与地质环境').closest('[data-status]');
+it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {
+  vi.useFakeTimers();
+  try {
+    const aiMessage = new AIMessage({
+      id: 'ai-stream-batch',
+      contentBlocks: [
+        { type: 'tool_call', id: 'call-a', name: 'list_stations', args: {} },
+        { type: 'tool_call', id: 'call-b', name: 'list_station_groups', args: {} },
+        { type: 'tool_call', id: 'call-c', name: 'get_daily_gnss_data', args: {} },
+      ],
+    });
 
-  expect(rowA).toHaveAttribute('data-status', 'finished');
-  expect(rowB).toHaveAttribute('data-status', 'pending');
-  expect(rowC).toHaveAttribute('data-status', 'pending');
+    const StreamingContainer = () => {
+      const [liveCalls, setLiveCalls] = React.useState<AssembledToolCall[]>([
+        { callId: 'call-a', name: 'list_stations', status: 'running' } as any,
+        { callId: 'call-b', name: 'list_station_groups', status: 'running' } as any,
+        { callId: 'call-c', name: 'get_daily_gnss_data', status: 'running' } as any,
+      ]);
 
-  // B 完成，C 仍在运行
-  const updatedLiveCalls: AssembledToolCall[] = [
-    { callId: 'call-a', name: 'get_daily_gnss_data', status: 'finished' } as any,
-    { callId: 'call-b', name: 'query_weather', status: 'finished' } as any,
-    { callId: 'call-c', name: 'inspect_site_environment', status: 'running' } as any,
-  ];
-  rerender(
-    <ChatWindow
-      messages={[aiMessage]}
-      toolCalls={updatedLiveCalls}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={true}
-      stopReconciling={false}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(rowA).toHaveAttribute('data-status', 'finished');
-  expect(rowB).toHaveAttribute('data-status', 'finished');
-  expect(rowC).toHaveAttribute('data-status', 'pending');
+      React.useEffect(() => {
+        // 100ms 后 Tool A 完成，携带测点数据
+        const t1 = setTimeout(() => {
+          setLiveCalls((prev) => [
+            {
+              callId: 'call-a',
+              name: 'list_stations',
+              status: 'finished',
+              output: { stations: [{ station_name: '测点A', station_status: '正常' }] },
+            } as any,
+            prev[1],
+            prev[2],
+          ]);
+        }, 100);
+
+        // 500ms 后 Tool B 完成，返回空数据
+        const t2 = setTimeout(() => {
+          setLiveCalls((prev) => [
+            prev[0],
+            { callId: 'call-b', name: 'list_station_groups', status: 'finished', output: {} } as any,
+            prev[2],
+          ]);
+        }, 500);
+
+        // 1000ms 后 Tool C 完成，携带 GNSS 数据
+        const t3 = setTimeout(() => {
+          setLiveCalls((prev) => [
+            prev[0],
+            prev[1],
+            {
+              callId: 'call-c',
+              name: 'get_daily_gnss_data',
+              status: 'finished',
+              output: { points: [{ time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 }] },
+            } as any,
+          ]);
+        }, 1000);
+
+        return () => {
+          clearTimeout(t1);
+          clearTimeout(t2);
+          clearTimeout(t3);
+        };
+      }, []);
+
+      return (
+        <ChatWindow
+          messages={[aiMessage]}
+          toolCalls={liveCalls}
+          onSendMessage={vi.fn()}
+          threadLoading={false}
+          runActive={true}
+          stopReconciling={false}
+          isSidebarCollapsed={false}
+          onToggleSidebar={vi.fn()}
+        />
+      );
+    };
+
+    render(<StreamingContainer />);
+
+    // 初始状态（0ms）：全部 running / pending
+    const rowA = screen.getByText('查询监测点列表').closest('[data-status]');
+    const rowB = screen.getByText('查询监测点分组').closest('[data-status]');
+    const rowC = screen.getByText('获取北斗GNSS日监测数据').closest('[data-status]');
+    expect(rowA).toHaveAttribute('data-status', 'pending');
+    expect(rowB).toHaveAttribute('data-status', 'pending');
+    expect(rowC).toHaveAttribute('data-status', 'pending');
+
+    // 前进 100ms：A 完成并展示结果，B/C 仍 loading
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(rowA).toHaveAttribute('data-status', 'finished');
+    expect(rowB).toHaveAttribute('data-status', 'pending');
+    expect(rowC).toHaveAttribute('data-status', 'pending');
+    fireEvent.click(screen.getByText('查询监测点列表'));
+    expect(screen.getByText('测点A')).toBeInTheDocument();
+
+    // 前进 400ms（到达 500ms）：B 完成（空结果），C 仍 loading
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(400);
+    });
+    expect(rowA).toHaveAttribute('data-status', 'finished');
+    expect(rowB).toHaveAttribute('data-status', 'finished');
+    expect(rowC).toHaveAttribute('data-status', 'pending');
+    fireEvent.click(screen.getByText('查询监测点分组'));
+    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
+
+    // 前进 500ms（到达 1000ms）：C 完成，三者均完成
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(rowA).toHaveAttribute('data-status', 'finished');
+    expect(rowB).toHaveAttribute('data-status', 'finished');
+    expect(rowC).toHaveAttribute('data-status', 'finished');
+    fireEvent.click(screen.getByText('获取北斗GNSS日监测数据'));
+    expect(screen.getByText('1.234')).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it('用户消息直接读取官方 optimistic pending/failed 状态', () => {

@@ -95,15 +95,32 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
         (point): point is ChartPoint => isRecord(point) && typeof point.t === 'string'
       )
     : [];
-  const siteEnvironment = isSiteEnvironmentArtifact(artifact?.site_environment)
-    ? artifact.site_environment
+  const liveOutput = liveToolCall?.output;
+  const parsedLiveOutput = isRecord(liveOutput)
+    ? liveOutput
+    : typeof liveOutput === 'string' && liveOutput.trim().startsWith('{')
+    ? (() => {
+        try {
+          const parsed = JSON.parse(liveOutput);
+          return isRecord(parsed) ? parsed : undefined;
+        } catch {
+          return undefined;
+        }
+      })()
     : undefined;
 
-  // 业务展示严格只读取 ToolMessage.artifact，不解析模型可见 content。
-  const data: any = artifactData ? { ...artifactData } : null;
+  const siteEnvironment = isSiteEnvironmentArtifact(artifact?.site_environment)
+    ? artifact.site_environment
+    : isSiteEnvironmentArtifact(parsedLiveOutput?.site_environment)
+    ? parsedLiveOutput.site_environment
+    : undefined;
+
+  // 业务展示两阶段数据源：优先消费持久化的 ToolMessage.artifact.data，未到达前使用 liveToolCall.output 即时展示
+  const rawData = artifactData ?? parsedLiveOutput;
+  const data: any = rawData ? { ...rawData } : null;
   if (data) {
     if (chartPoints.length) data.chart_points = chartPoints;
-    else delete data.chart_points;
+    else if (!Array.isArray(data.chart_points)) delete data.chart_points;
   }
 
   // 图标
@@ -181,14 +198,6 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
         <div className="flex items-center gap-2 p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
           <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />
           {pendingText}
-        </div>
-      );
-    }
-    if (!toolMessage) {
-      return (
-        <div className="flex items-center gap-2 p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
-          <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />
-          详细结果同步中…
         </div>
       );
     }
@@ -648,7 +657,11 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
 
       {isError && (
         <div role="alert" className="mt-1 max-w-3xl rounded-lg border border-amber-200/80 bg-amber-50/60 p-2.5 text-xs text-amber-900">
-          {typeof data?.message === 'string' && data.message ? data.message : '未获得结果'}
+          {typeof data?.message === 'string' && data.message
+            ? data.message
+            : typeof liveToolCall?.error === 'string' && liveToolCall.error
+            ? liveToolCall.error
+            : '未获得结果'}
         </div>
       )}
 
