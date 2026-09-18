@@ -12,20 +12,22 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
+    # 主模型 Provider 标识（deepseek/openai）；决定官方 integration 与 thinking 参数映射，不靠模型名猜测。
+    llm_provider: str = "deepseek"
     # 主模型 OpenAI 兼容接口地址；标题、推荐、摘要复用此端点，视觉模型单独配置。
     llm_base_url: str = "https://api.deepseek.com"
     # 主模型接口密钥；标题、推荐、摘要复用。默认空值，实际调用前需配置，不提交版本库。
     llm_api_key: str = ""
     # 主模型标识，必须为配置端点支持的模型；标题、推荐、摘要复用此模型。
     llm_model: str = "deepseek-flash"
-    # 主模型独立思考开关（true/false，默认 true）；开启时发送 enable_thinking，关闭时不发送该扩展参数。
+    # 主模型独立思考开关（true/false，默认 true）；Provider 层显式映射为供应商官方参数：DeepSeek 发送 thinking.type=enabled/disabled，OpenAI 不支持显式开启。
     llm_thinking: bool = True
 
-    # 会话标题的独立思考开关（默认 false）；开启时发送 enable_thinking，不继承主模型开关。
+    # 会话标题的独立思考开关（默认 false）；开关语义同 LLM_THINKING，不继承主模型开关。
     title_thinking: bool = False
     # 是否生成下一步问题建议（默认 true）；false 时跳过推荐模型调用并清空上一轮建议。
     recommend_enabled: bool = True
-    # 下一步问题建议的独立思考开关（默认 false）；开启时发送 enable_thinking，不继承主模型开关。
+    # 下一步问题建议的独立思考开关（默认 false）；开关语义同 LLM_THINKING，不继承主模型开关。
     recommend_thinking: bool = False
 
     # 主模型/单工具瞬时失败的额外重试次数（0–5，默认 2）；含首次最多 3 次尝试，0 表示不重试。
@@ -49,12 +51,14 @@ class Settings(BaseSettings):
     beidou_password: str = ""
 
     # 视觉模型 OpenAI 兼容端点，默认空值；与视觉密钥、模型一起配置，缺任一项则复核返回 error 并保留图表。
+    # 视觉模型 Provider 标识（deepseek/openai）；与主模型独立，决定官方 integration 与 thinking 参数映射。
+    vision_provider: str = "openai"
     vision_base_url: str = ""
     # 视觉模型接口密钥，默认空值；不复用主模型密钥，不提交版本库。
     vision_api_key: str = ""
     # 支持图像输入的视觉模型标识，默认空值；必须为视觉端点提供的可用模型，不复用主模型。
     vision_model: str = ""
-    # 视觉模型独立思考开关（默认 false）；开启时发送 enable_thinking，不继承主模型开关。
+    # 视觉模型独立思考开关（默认 false）；开关语义同 LLM_THINKING，不继承主模型开关。
     vision_thinking: bool = False
     # 候选数值核验向起止两侧各外扩的小时数（默认 2）；限制在原查询窗口内，0 不外扩，负值运行时按 0 处理。
     vision_recheck_pad_hours: int = 2
@@ -78,7 +82,7 @@ class Settings(BaseSettings):
     # 展示近似计数的字符/token 换算值（必须 >0，默认 1.6667）；按模型调整，非正值估算时报错，不参与官方摘要计数。
     context_chars_per_token: float = 1.6667
 
-    # 历史摘要模型独立思考开关（默认 false）；开启时发送 enable_thinking，使用当前主模型配置但不继承主模型开关。
+    # 历史摘要模型独立思考开关（默认 false）；开关语义同 LLM_THINKING，使用当前主模型配置但不继承主模型开关。
     compress_thinking: bool = False
 
 # 配置在进程内缓存；修改环境变量或 .env 后需重启服务才能生效。

@@ -311,9 +311,11 @@ export const App: React.FC = () => {
   );
   const contextSummary = useMemo(() => {
     if (isNewSessionDraft) return '';
-    const summary = (stream.values?.messages || []).find((message: any) =>
-      message?.additional_kwargs?.lc_source === 'summarization'
-    ) as { content?: unknown } | undefined;
+    const summary = (stream.values?.messages || []).find(
+      (message) =>
+        HumanMessage.isInstance(message) &&
+        message.additional_kwargs.lc_source === 'summarization',
+    );
     return typeof summary?.content === 'string' ? summary.content : '';
   }, [stream.values?.messages, isNewSessionDraft]);
   const busyThreadIds = useMemo(() => {

@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, patch
 
 import httpx
 from openai import APIConnectionError, APIStatusError
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.tool_protocol import ToolFailure
 from app.agent.tool_inputs import GnssInput
 from pydantic import ValidationError
-from app.agent import context, graph, reasoning, retry, site, summarization, title, tools, vision, weather
+from app.agent import context, graph, models, retry, site, summarization, title, tools, vision, weather
 from app.agent.prompting import SYSTEM_PROMPT, VISION_PROMPT
 from app.business_time import BUSINESS_TZ, business_now
 from app.config import Settings
@@ -31,15 +31,61 @@ class PromptTimeTests(unittest.TestCase):
     def test_recommendations_are_enabled_by_default(self):
         self.assertIs(Settings.model_fields["recommend_enabled"].default, True)
 
-    def test_thinking_options_only_emits_extension_when_enabled(self):
-        self.assertEqual(reasoning.thinking_options(False), {})
+    def test_thinking_options_map_provider_specific_params(self):
         self.assertEqual(
-            reasoning.thinking_options(True),
-            {"extra_body": {"enable_thinking": True}},
+            models.thinking_options("deepseek", True),
+            {"extra_body": {"thinking": {"type": "enabled"}}},
         )
+        self.assertEqual(
+            models.thinking_options("deepseek", False),
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+        )
+        self.assertEqual(models.thinking_options("openai", False), {})
+        with self.assertRaises(ValueError):
+            models.thinking_options("openai", True)
+        with self.assertRaises(ValueError):
+            models.thinking_options("qwen", False)
+
+    def test_openai_provider_uses_official_init_chat_model(self):
+        constructed = SimpleNamespace(profile={"tool_calling": True})
+        with patch.object(models, "init_chat_model", return_value=constructed) as init_model:
+            result = models.create_chat_model(
+                provider="openai",
+                model="test-model",
+                api_key="test-key",
+                base_url="https://example.invalid/v1",
+                thinking=False,
+                tool_loop=True,
+                temperature=0,
+            )
+        self.assertIs(result, constructed)
+        init_model.assert_called_once_with(
+            model="test-model",
+            model_provider="openai",
+            api_key="test-key",
+            base_url="https://example.invalid/v1",
+            temperature=0,
+            max_retries=0,
+        )
+
+    def test_deepseek_maps_vision_output_budget_to_max_tokens(self):
+        with patch.object(models, "DeepSeekThinkingChatModel") as deepseek_model:
+            deepseek_model.return_value.profile = {}
+            models.create_chat_model(
+                provider="deepseek",
+                model="vision-model",
+                api_key="test-key",
+                base_url="https://example.invalid/v1",
+                thinking=True,
+                max_completion_tokens=8000,
+            )
+        kwargs = deepseek_model.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 8000)
+        self.assertNotIn("max_completion_tokens", kwargs)
 
     def test_auxiliary_models_do_not_inherit_main_thinking(self):
         settings = SimpleNamespace(
+            llm_provider="deepseek",
             llm_model="test-model",
             llm_api_key="test-key",
             llm_base_url="https://example.invalid/v1",
@@ -49,6 +95,7 @@ class PromptTimeTests(unittest.TestCase):
             recommend_thinking=False,
             context_summary_max_tokens=2000,
             compress_thinking=False,
+            vision_provider="deepseek",
             vision_model="vision-model",
             vision_api_key="test-key",
             vision_base_url="https://example.invalid/v1",
@@ -65,53 +112,40 @@ class PromptTimeTests(unittest.TestCase):
                 factory.cache_clear()
                 with patch.object(module, "get_settings", return_value=settings):
                     llm = factory()
-                self.assertIsNone(llm.extra_body)
+                # DeepSeek 关闭思考必须显式 disabled，不能只靠“不传参数”。
+                self.assertEqual(llm.extra_body, {"thinking": {"type": "disabled"}})
         finally:
             for _, factory in factories:
                 factory.cache_clear()
 
-    def test_reasoning_chat_model_preserves_complete_and_streamed_reasoning(self):
-        llm = reasoning.ReasoningChatOpenAI(
-            model="test-model",
+    def test_deepseek_thinking_adapter_writes_back_reasoning_content(self):
+        llm = models.DeepSeekThinkingChatModel(
+            model="deepseek-flash",
             api_key="test-key",
             base_url="https://example.invalid/v1",
         )
-        complete = llm._create_chat_result(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": "结论",
-                            "reasoning_content": "先核对数据。",
-                        },
-                        "finish_reason": "stop",
-                    }
-                ]
-            }
+        message = AIMessage(
+            content="",
+            additional_kwargs={"reasoning_content": "先核对数据。"},
+            tool_calls=[{"id": "call-1", "name": "list_stations", "args": {}}],
         )
-        self.assertEqual(
-            complete.generations[0].message.additional_kwargs["reasoning_content"],
-            "先核对数据。",
+        tool_result = ToolMessage(content="完成", tool_call_id="call-1")
+        payload = llm._get_request_payload(
+            [HumanMessage(content="查询"), message, tool_result]
         )
+        assistant = next(item for item in payload["messages"] if item["role"] == "assistant")
+        self.assertEqual(assistant["reasoning_content"], "先核对数据。")
+        human = next(item for item in payload["messages"] if item["role"] == "user")
+        self.assertNotIn("reasoning_content", human)
 
-        streamed = llm._convert_chunk_to_generation_chunk(
-            {
-                "choices": [
-                    {
-                        "delta": {"role": "assistant", "reasoning_content": "检查趋势"},
-                        "finish_reason": None,
-                    }
-                ]
-            },
-            AIMessageChunk,
-            None,
-        )
-        self.assertIsNotNone(streamed)
-        self.assertEqual(
-            streamed.message.additional_kwargs["reasoning_content"],
-            "检查趋势",
-        )
+    def test_tool_calling_profile_only_explicit_false_is_rejected(self):
+        models.assert_tool_calling(SimpleNamespace(profile={"tool_calling": True}))
+        models.assert_tool_calling(SimpleNamespace(profile={}))
+        models.assert_tool_calling(SimpleNamespace(profile=None))
+        with self.assertRaisesRegex(ValueError, "不支持 tool calling"):
+            models.assert_tool_calling(
+                SimpleNamespace(profile={"tool_calling": False}, model="no-tools")
+            )
 
     def test_formal_prompt_files_are_the_only_sources(self):
         repo_root = Path(__file__).resolve().parents[2]

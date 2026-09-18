@@ -127,9 +127,10 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
         config = {"dependencies": [str(backend)], "graphs": {
             "lma-agent": "app.agent.graph:graph",
         }, "env": {
-            "LLM_BASE_URL": stub_url + "/v1", "LLM_API_KEY": "INVALID_TEST_KEY",
-            "LLM_MODEL": "lma-test-model", "LLM_THINKING": "true",
-            "RECOMMEND_ENABLED": "false", "CONTEXT_MODEL_CONTEXT": "1048576",
+            "LLM_PROVIDER": "openai", "LLM_BASE_URL": stub_url + "/v1",
+            "LLM_API_KEY": "INVALID_TEST_KEY", "LLM_MODEL": "lma-test-model",
+            "LLM_THINKING": "false", "RECOMMEND_ENABLED": "false",
+            "CONTEXT_MODEL_CONTEXT": "1048576",
             "AGENT_MODEL_RUN_LIMIT": "3", "AGENT_TOOL_RUN_LIMIT": "2",
             "CONTEXT_TOKEN_THRESHOLD": "50000", "CONTEXT_KEEP_TOKENS": "1000",
             "BEIDOU_API_BASE_URL": stub_url, "BEIDOU_USERNAME": "INVALID_TEST_USER",
@@ -196,7 +197,8 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["values"]["context_usage"]["input_tokens"], 100)
         self.assertEqual(self.stub.group_calls, 2)
         self.assertEqual(self.stub.model_calls, 3)
-        self.assertTrue(all(body.get("enable_thinking") is True for body in self.stub.model_inputs))
+        self.assertTrue(all("thinking" not in body and "enable_thinking" not in body
+                            for body in self.stub.model_inputs))
         # 新 SDK 客户端从 Thread 恢复，然后发送第二轮。
         restored = get_client(url=self.url)
         second = await restored.runs.wait(thread_id, "lma-agent", input={
@@ -216,8 +218,8 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.stub.summary_calls, 2)
         summary_inputs = [body for body in self.stub.model_inputs
                           if body["messages"][0]["content"].startswith("你负责提取滑坡连续监测会话")]
-        self.assertTrue(all(not body.get("stream") and not body.get("enable_thinking")
-                            for body in summary_inputs))
+        self.assertTrue(all(not body.get("stream") and "thinking" not in body
+                            and "enable_thinking" not in body for body in summary_inputs))
         compressed = (await client.threads.get_state(thread_id))["values"]
         self.assertNotIn("context_summary", compressed)
         self.assertEqual(compressed["messages"][0]["additional_kwargs"]["lc_source"], "summarization")

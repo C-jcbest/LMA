@@ -4,10 +4,9 @@ from functools import lru_cache
 from pathlib import Path
 
 from langchain.agents.middleware import SummarizationMiddleware
-from langchain_openai import ChatOpenAI
 from langgraph.constants import TAG_NOSTREAM
 
-from app.agent.reasoning import thinking_options
+from app.agent.models import create_chat_model
 from app.config import get_settings
 
 SUMMARY_PROMPT = (Path(__file__).with_name("prompts") / "summary.md").read_text(encoding="utf-8")
@@ -16,11 +15,15 @@ SUMMARY_PROMPT = (Path(__file__).with_name("prompts") / "summary.md").read_text(
 @lru_cache
 def _get_summary_model():
     settings = get_settings()
-    return ChatOpenAI(
-        model=settings.llm_model, api_key=settings.llm_api_key, base_url=settings.llm_base_url,
-        temperature=0, max_tokens=settings.context_summary_max_tokens, max_retries=0,
+    return create_chat_model(
+        provider=settings.llm_provider,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        thinking=settings.compress_thinking,
+        temperature=0,
+        max_tokens=settings.context_summary_max_tokens,
         disable_streaming=True, tags=[TAG_NOSTREAM],
-        **thinking_options(settings.compress_thinking),
     )
 
 

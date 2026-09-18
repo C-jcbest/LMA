@@ -168,6 +168,18 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any("agent" in update or "recommend" in update or "manage_context" in update
                              for update in updates))
 
+    async def test_nonstandard_reasoning_fields_are_not_promoted(self):
+        model = ScriptedModel(script=[AIMessage(
+            content="完成",
+            additional_kwargs={"reasoning": "不得提升", "thinking": "不得提升"},
+            response_metadata={"reasoning_content": "不得提升"},
+        )])
+        agent = graph.create_lma_agent(model, agent_tools=[])
+        result = await agent.ainvoke({"messages": [HumanMessage(content="查询")]})
+        response = result["messages"][-1]
+        self.assertNotIn("reasoning_content", response.additional_kwargs)
+        self.assertNotIn("lma_thinking_duration_ms", response.additional_kwargs)
+
     async def test_model_budget_stops_loop_and_resets_next_run(self):
         from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
         self.settings.agent_model_run_limit = 2

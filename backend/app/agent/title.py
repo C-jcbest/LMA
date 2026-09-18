@@ -8,10 +8,9 @@ from functools import lru_cache
 from typing import TypedDict
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
-from app.agent.reasoning import thinking_options
+from app.agent.models import create_chat_model
 from app.config import get_settings
 
 SYSTEM_PROMPT = """Create a concise conversation title from the first user message.
@@ -57,13 +56,14 @@ class TitleState(TypedDict):
 def _get_title_llm():
     """标题模型独立控制思考，避免继承主 Agent 的高成本配置。"""
     settings = get_settings()
-    return ChatOpenAI(
+    return create_chat_model(
+        provider=settings.llm_provider,
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
+        thinking=settings.title_thinking,
         temperature=0.3,
-        max_tokens=48, max_retries=0,
-        **thinking_options(settings.title_thinking),
+        max_tokens=48,
     )
 
 

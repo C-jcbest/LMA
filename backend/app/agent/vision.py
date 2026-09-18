@@ -33,7 +33,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from app.agent.tool_inputs import TimeWindowInput
 from app.agent.tool_protocol import ToolFailure, tool_result
-from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.prompting import VISION_PROMPT
@@ -47,7 +46,7 @@ from app.agent.tools import (
 )
 from app.beidou.client import BeidouClient
 from app.config import get_settings
-from app.agent.reasoning import thinking_options
+from app.agent.models import create_chat_model
 
 # 渲染使用全量数据，不做降采样（降采样会漏掉采样点之间的异常形态）
 _MIN_POINTS = 5  # 少于该点数不值得绘图识别
@@ -96,18 +95,19 @@ class VisionObservations(BaseModel):
 @lru_cache
 def _get_vision_llm():
     settings = get_settings()
-    # 独立思考开关：仅开启时发送 enable_thinking；默认关闭以控制延迟和 token。
-    return ChatOpenAI(
+    # 独立思考开关：Provider 层显式映射为供应商官方参数；默认关闭以控制延迟和 token。
+    return create_chat_model(
+        provider=settings.vision_provider,
         model=settings.vision_model,
         api_key=settings.vision_api_key,
         base_url=settings.vision_base_url,
+        thinking=settings.vision_thinking,
         temperature=0,
-        **thinking_options(settings.vision_thinking),
         # 预算必须宽裕：思考开启时视觉模型每次输出中约 2000 token 是
         # 内部思考（reasoning），正文 JSON 另需 ~1000+；预算不足时正文被
         # 截断导致 JSON 解析间歇性失败
         max_completion_tokens=8000,
-        timeout=120, max_retries=0,
+        timeout=120,
     )
 
 

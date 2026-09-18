@@ -70,10 +70,14 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   toolMessage,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const isRunning = !toolMessage && liveToolCall?.status === 'running';
+  // 持久终态以 ToolMessage 为准：只要没有 ToolMessage 且没有 live error，一律视为 pending，
+  // 覆盖 tool-finished 事件已到、权威 ToolMessage/artifact 尚未进入 stream.messages 的过渡窗口。
   const isError = toolMessage
     ? toolMessage.status === 'error'
     : liveToolCall?.status === 'error';
+  const isPending = !toolMessage && !isError;
+  const pendingText =
+    liveToolCall?.status === 'finished' ? '正在同步结果…' : '正在查询，请稍候…';
   const artifact = isRecord(toolMessage?.artifact) ? toolMessage.artifact : undefined;
   const artifactData = isRecord(artifact?.data) ? artifact.data : undefined;
   const artifactImages = Array.isArray(artifact?.images)
@@ -100,7 +104,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
 
   // 图标
   const renderIcon = () => {
-    if (isRunning) {
+    if (isPending) {
       return <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />;
     }
     if (toolCall.name?.includes('group')) {
@@ -183,11 +187,11 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
 
   // 渲染简约全量数据表格（带吸顶表头与独立顺畅滚动）
   const renderTableContent = () => {
-    if (isRunning) {
+    if (isPending) {
       return (
         <div className="flex items-center gap-2 p-3 bg-neutral-50 border border-neutral-200/80 rounded-lg text-xs text-neutral-500">
           <Loader2 className="w-3.5 h-3.5 text-neutral-400 animate-spin shrink-0" />
-          正在查询，请稍候…
+          {pendingText}
         </div>
       );
     }

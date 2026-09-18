@@ -24,13 +24,13 @@
   - 连接状态与辅助能力：删除全局冗余探活，列表错误严格局限在 Sidebar；标题生成与下一步建议失败静默降级；
   - 状态扁平化：`runError`、`hydrationError`、`stopError` 统一收敛为当前会话单布尔瞬态，切换会话自动重置；
   - ErrorBoundary 隐藏内部堆栈并提供真实刷新/重新加载/隐藏动作。绝不展示内部异常、堆栈、HTTP 或 checkpoint 诊断。
-- TODO 15 已完成：彻底删除 `projectLangGraphMessages` 与自定义 `Message/MessagePart/ToolCallInfo`；移除多字段消息猜测、`settlingAfterTool`、整理回答推断、思考耗时计时器及英文工具错误匹配。实时工具状态、持久终态和 artifact 按 `callId/tool_call_id` 只读关联；Reasoning 仅保留 `additional_kwargs.reasoning_content` 一条临时兼容入口，待 TODO 16 Provider 官方化后复核。
+- TODO 15 已完成：彻底删除 `projectLangGraphMessages` 与自定义 `Message/MessagePart/ToolCallInfo`；移除多字段消息猜测、`settlingAfterTool`、整理回答推断、思考耗时计时器及英文工具错误匹配。实时工具状态、持久终态和 artifact 按 `callId/tool_call_id` 只读关联；没有 ToolMessage 且无 live error 时一律显示 pending（“正在查询，请稍候…”/“正在同步结果…”），权威终态到达前不展示业务数据。Reasoning 仅保留 `additional_kwargs.reasoning_content` 一条临时兼容入口，TODO 16 切换官方 `ChatDeepSeek` 后由 `langchain-core` 自动标准化，入口待 TODO 17 删除。
 
 - TODO 10 已完成：URL 驱动 Sidebar 与 Stream 选择；切换/新建新增导航记录，SDK 分配 ID、删除当前 Thread 与连接切换替换当前记录；popstate 断开旧订阅后由 SDK 恢复目标会话，不停止服务端 Run。不改写旧导航记录，不为不存在的 Thread 自动选择其他会话。
 
 - 主 Agent 根据目标与证据自主编排；禁止固定调查顺序、章节和模板化建议。业务/视觉策略分别只编辑 `system.md` / `vision.md`。
 - 推荐仅基于完整最终回答；保留 RECOMMEND_ENABLED 与 RECOMMEND_THINKING，不恢复固定字数触发的流式预取。不合适时可为空，失败静默降级不干扰主流程。
-- LLM_THINKING 仅控制主模型；标题、推荐、压缩和视觉有独立开关，默认关闭。当前供应商 reasoning 适配仍在，标准化迁移属于 TODO 16–17；不得拼造思考内容。
+- LLM_THINKING 仅控制主模型；标题、推荐、压缩和视觉有独立开关，默认关闭。Provider 层把布尔开关显式映射为供应商官方参数（DeepSeek：`thinking.type=enabled/disabled`；OpenAI 不支持显式开启，开启即配置失败）；模型统一由官方 `init_chat_model(model_provider=...)` 构造。DeepSeek 思考模式多轮 tool calling 的 `reasoning_content` 回传缺口由极窄请求 adapter 承担（官方修复后删除）；前后端 reasoning 标准化收口属于 TODO 17；不得拼造思考内容。
 - TODO 5 已替换旧压缩算法：官方摘要消息为 checkpoint 中唯一摘要来源；按官方token阈值触发和token budget保留，按lc_source标记投影。摘要使用当前 LLM 配置与独立思考开关，失败显式终止本次请求，历史不被删除。
 - TODO 6 已统一六个工具的官方 content/artifact/status 协议和请求前 Pydantic 校验。参数、业务、基础设施及内部错误区分；失败原因常驻，部分证据可查看。模型只读事实，前端只消费展示 artifact，不解析 content、不暴露通用 JSON；原始诊断只写后端日志，artifact 不能放秘密。
 - TODO 7 已统一官方调用级重试与Run级模型/工具限额：默认重试2次、模型20次、工具40次、视觉有效候选12个；只有瞬时异常可重试，混合失败组不盲重试。全部底层SDK关闭重试，删除视觉格式/空结果与降载重试；超额明确报错并保留已有证据。摘要仍沿用官方独立逻辑；调用限额不是全HTTP或耗时配额。
@@ -47,7 +47,7 @@
   - 移除 `activeSubmissionRef.stopped` 与过时测试，信任官方 abort 机制；
   - 状态扁平化：`runError`、`hydrationError`、`stopError` 为单会话布尔瞬态，`stopReconciling` 为单布尔态结合同步 ref 锁；
   - 验证：前端 75 项测试全数通过，生产构建通过，后端常规 51 项（49 项通过、2 项 Server E2E 默认跳过）全数通过，`git diff --check` 无违规。
-- TODO 9–15 已完成唯一 Client / Transport、URL 生命周期、列表归属/增量加载、Stop 清理协议、官方生命周期投影、分层错误交互及自定义 Message/Tool 状态机移除；下一项为 TODO 16 模型 Provider 显式化并使用官方 integration；推荐退出主 Run 属于 TODO 23。
+- TODO 9–15 已完成；TODO 16 Provider 显式化代码、文档与自动化门禁已完成，仅剩真实 DeepSeek `model → tool → model → final` 服务验收，完成前不进入 TODO 17；推荐退出主 Run 属于 TODO 23。
 - 2026-09-17 TODO 15 验证：前端 76 项测试、TypeScript 编译与生产打包通过；后端 52 项中 50 项通过、2 项 Server E2E 默认跳过；`git diff --check` 通过。未部署、未操作真实会话。
 
 ## 2026-09-15 TODO 9：统一 Client 与连接切换边界
@@ -89,3 +89,14 @@
 - `recommendation` 移除 `build_time_context` 动态注入；`AgentState` 彻底删除无其他用途的 `business_time` 字段，前端 `LmaState` 同步删除该属性。
 - 彻底移除 `_resolve_time`、`build_time_context`、`build_system_prompt` 及旧动态模板测试；更新回归测试并补齐 `get_current_time` 同步/异步/Agent 运行断言。
 - 验证：后端 52 项测试全部通过（2 项隔离 E2E 跳过），前端 75 项测试全部通过，前端生产构建通过，`git diff --check` 无违规。
+
+## 2026-09-17 TODO 15 收口与 TODO 16 Provider 显式化
+
+- 类型：Status / Decision / Risk / Doc Sync
+- 范围：frontend / backend / agent / tests / docs
+- 状态：TODO 15 补齐 `live finished → ToolMessage 未到` 过渡显示；没有权威 ToolMessage 且无 live error 时统一 pending，finished 显示“正在同步结果…”，终态前不展示空业务数据。`App` 的摘要读取改用 `HumanMessage.isInstance`，删除 `message:any` 猜测。
+- 决策：主文本模型与视觉模型各一套 Provider/Endpoint 配置，五个业务角色保留独立 thinking 开关；统一模型入口使用官方 `init_chat_model(model_provider=...)`。DeepSeek 显式发送 `thinking.type=enabled/disabled`，OpenAI 请求显式开启思考时配置失败，不静默忽略。
+- 例外：`langchain-deepseek==1.1.0` 尚未回传多轮 tool loop 的 `reasoning_content`，仅保留 `DeepSeekThinkingChatModel._get_request_payload()` 极窄 adapter；不覆写响应转换，官方修复后整体删除。
+- 验证：后端定向 26/26 通过；后端全量 56 项中 54 通过、2 项 Agent Server E2E 默认跳过；前端 77/77 通过；前端生产构建通过；`git diff --check` 通过。未出现 Python/弃用或 `max_completion_tokens` 警告。
+- 风险：未使用真实 DeepSeek 凭据执行 `model → tool → model → final` 服务验收，也未执行启用 `LMA_RUN_SERVER_E2E=1` 的隔离 Agent Server E2E；因此 TODO 16 保持“实现完成，待真实集成验收”，不提前关闭或进入 TODO 17。
+- 关联：`backend/app/agent/models.py`、`backend/app/config.py`、`frontend/src/components/InlineToolCall.tsx`、`docs/TODO_2026-09-15.md`、`prd.md`。

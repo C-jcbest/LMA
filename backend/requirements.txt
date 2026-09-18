@@ -7,6 +7,7 @@ pydantic-settings==2.15.0
 langchain==1.3.18
 langchain-core==1.6.2
 langchain-openai==1.6.2
+langchain-deepseek==1.1.0
 langgraph==1.2.11
 
 # GNSS 时序图表渲染（视觉复核工具用）

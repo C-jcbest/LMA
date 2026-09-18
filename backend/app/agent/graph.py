@@ -15,7 +15,6 @@ from langchain.agents import AgentState as BaseAgentState, create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware, ToolRetryMiddleware, ModelCallLimitMiddleware, ToolCallLimitMiddleware
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langchain_openai import ChatOpenAI
 from langgraph.errors import GraphBubbleUp
 
 from app.beidou.client import BeidouApiError
@@ -24,7 +23,7 @@ from app.agent.context import build_context_budget
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
 from app.agent.retry import is_transient_error
-from app.agent.reasoning import ReasoningChatOpenAI, thinking_options
+from app.agent.models import create_chat_model
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
 from app.agent.tools import (
@@ -51,10 +50,14 @@ class AgentState(BaseAgentState):
 @lru_cache
 def _get_llm():
     settings = get_settings()
-    return ReasoningChatOpenAI(
-        model=settings.llm_model, api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url, temperature=0, max_retries=0,
-        **thinking_options(settings.llm_thinking),
+    return create_chat_model(
+        provider=settings.llm_provider,
+        model=settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url,
+        thinking=settings.llm_thinking,
+        tool_loop=True,
+        temperature=0,
     )
 
 
@@ -84,11 +87,9 @@ class LmaMiddleware(AgentMiddleware):
             if message.type == "ai":
                 metadata = {**message.additional_kwargs,
                             "created_at": business_now().isoformat(timespec="seconds")}
-                reasoning = (metadata.get("reasoning_content") or metadata.get("reasoning")
-                             or metadata.get("thinking")
-                             or message.response_metadata.get("reasoning_content"))
+                reasoning = metadata.get("reasoning_content")
                 if isinstance(reasoning, str) and reasoning.strip():
-                    metadata.update(reasoning_content=reasoning, lma_thinking_duration_ms=elapsed_ms)
+                    metadata["lma_thinking_duration_ms"] = elapsed_ms
                 elif any(block.get("type") == "reasoning" for block in message.content_blocks):
                     metadata["lma_thinking_duration_ms"] = elapsed_ms
                 message = message.model_copy(update={"additional_kwargs": metadata})
@@ -157,13 +158,14 @@ RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生�
 def _get_recommend_llm():
     """推荐动作生成用轻量 LLM：主模型 + 小输出预算。"""
     settings = get_settings()
-    return ChatOpenAI(
+    return create_chat_model(
+        provider=settings.llm_provider,
         model=settings.llm_model,
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url,
+        thinking=settings.recommend_thinking,
         temperature=0.3,
-        max_tokens=200, max_retries=0,
-        **thinking_options(settings.recommend_thinking),
+        max_tokens=200,
     )
 
 

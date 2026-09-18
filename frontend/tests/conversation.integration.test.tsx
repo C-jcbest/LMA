@@ -12,6 +12,7 @@ import { ToastContainer, useToast } from '../src/components/Toast';
 import { RunFailureCard } from '../src/components/RunFailureCard';
 import { STREAM_CONTROLLER } from '@langchain/react';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
 import { getIncompleteToolCallMessageUpdates, projectThreadSessions } from '../src/services/api';
 import { groupMessagesForDisplay } from '../src/components/messageDisplay';
 
@@ -647,6 +648,28 @@ it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', a
   );
   expect(screen.getByRole('alert')).toHaveTextContent('天气服务暂不可用');
   expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
+});
+
+it('live finished 但权威 ToolMessage 尚未到达时显示正在同步，不误判为已完成', async () => {
+  render(
+    <InlineToolCall
+      toolCall={{ type: 'tool_call', id: 'sync', name: 'list_stations', args: {} }}
+      liveToolCall={{
+        name: 'list_stations',
+        callId: 'sync',
+        id: 'sync',
+        namespace: [],
+        input: {},
+        args: {},
+        output: {},
+        status: 'finished',
+        error: undefined,
+      } as unknown as AssembledToolCall}
+    />,
+  );
+  await userEvent.click(screen.getByText('查询监测点列表'));
+  expect(screen.getByText('正在同步结果…')).toBeInTheDocument();
+  expect(screen.queryByText('该步骤没有可展示的业务数据')).not.toBeInTheDocument();
 });
 
 it('用户消息直接读取官方 optimistic pending/failed 状态', () => {
