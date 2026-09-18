@@ -1,19 +1,7 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import type { Client } from '@langchain/langgraph-sdk';
-import {
-  ThreadSession,
-  generateSessionTitle,
-  projectThreadSessions,
-  mergeSessions,
-} from '../services/api';
+import { ThreadSession } from '../services/api';
 import type { SidebarSession } from '../components/Sidebar';
-
-interface TitleJob {
-  text: string;
-  client: Client;
-  creationNotified: boolean;
-  titleStarted?: boolean;
-}
 
 interface UseAuxiliaryRunsOptions {
   client: Client;
@@ -25,28 +13,29 @@ interface UseAuxiliaryRunsOptions {
   selectThread: (id: string | null, mode?: 'push' | 'replace') => void;
 }
 
+/**
+ * 3.3: 标题生命周期移至后端
+ * 前端移除辅助 title runs、ownership check 与多重 ref。
+ * 仅保留轻量级侧边栏新建骨架与导航同步，权威 metadata 由 loadSessions() 从服务端同步。
+ */
 export function useAuxiliaryRuns({
   client,
   currentClientRef,
-  sessionRequestRef,
   sessions,
-  setSessions,
   loadSessions,
   selectThread,
 }: UseAuxiliaryRunsOptions) {
-  // 仅保存标题展示任务；不预创建 Thread，不复制权威消息历史。
   const [titleViews, setTitleViews] = useState<Record<string, 'pending'>>({});
   const [newThreadOrder, setNewThreadOrder] = useState<string[]>([]);
 
-  const titleJobsRef = useRef(new Map<string, TitleJob>());
-  const activeSubmissionRef = useRef<{
-    client: Client;
-    threadId: string | null;
-  } | null>(null);
+  // 兼容性 ref 保留，不再触发前端 title run
+  const titleJobsRef = useRef(new Map<string, any>());
+  const activeSubmissionRef = useRef<{ client: Client; threadId: string | null } | null>(null);
   const firstInputRef = useRef<{ text: string; client: Client } | null>(null);
 
   const clearTitleView = useCallback((id: string) => {
     setTitleViews((current) => {
+      if (!current[id]) return current;
       const next = { ...current };
       delete next[id];
       return next;
@@ -57,76 +46,30 @@ export function useAuxiliaryRuns({
     (id: string) => {
       if (currentClientRef.current !== client) return;
       selectThread(id, 'replace');
-      if (activeSubmissionRef.current?.client === client) activeSubmissionRef.current.threadId = id;
-      const input = firstInputRef.current;
-      if (input) {
-        setNewThreadOrder((ids) => [id, ...ids.filter((item) => item !== id)]);
-        titleJobsRef.current.set(id, { ...input, creationNotified: false });
-        setTitleViews((current) => ({ ...current, [id]: 'pending' }));
-      }
+      setNewThreadOrder((ids) => [id, ...ids.filter((item) => item !== id)]);
+      setTitleViews((current) => ({ ...current, [id]: 'pending' }));
     },
     [selectThread, client, currentClientRef]
   );
 
   const onCreated = useCallback(
-    ({ runId }: { runId: string }) => {
-      // 官方回调只有 runId。用服务端 Run 确认归属，迟到回调和切换会话不会串标题。
-      for (const [id, job] of titleJobsRef.current) {
-        job.creationNotified = true;
-        void (async () => {
-          try {
-            await job.client.runs.get(id, runId);
-          } catch (error) {
-            job.creationNotified = false;
-            console.warn('title run ownership check error:', error);
-            return;
-          }
-          if (titleJobsRef.current.get(id) !== job || job.titleStarted) return;
-          job.titleStarted = true;
-          // 在 Run 已被接受时开始，绝不等待主 Agent 完成。
-          const titlePromise = generateSessionTitle(job.client, job.text).catch((error) => {
-            console.warn('generate session title error:', error);
-            return '新会话';
-          });
-          try {
-            const title = await titlePromise;
-            if (titleJobsRef.current.get(id) !== job) return;
-            const current = await job.client.threads.get(id);
-            if (titleJobsRef.current.get(id) !== job) return;
-            // 只更新尚未命名的会话，保留服务端已确认的手动命名。
-            const thread = current.metadata?.name
-              ? current
-              : await job.client.threads.update(id, { metadata: { name: title } });
-            if (titleJobsRef.current.get(id) !== job) return;
-            const confirmed = projectThreadSessions([thread]);
-            ++sessionRequestRef.current;
-            setSessions((items) => mergeSessions(items, confirmed));
-            clearTitleView(id);
-            void loadSessions();
-          } catch (error) {
-            // 辅助能力静默降级：记录日志，清掉 title skeleton，由 loadSessions() 从权威服务端列表同步，绝不伪造 created_at
-            console.warn('session title metadata save error:', error);
-            if (titleJobsRef.current.get(id) === job) {
-              clearTitleView(id);
-              void loadSessions();
-            }
-          } finally {
-            if (titleJobsRef.current.get(id) === job) titleJobsRef.current.delete(id);
-          }
-        })();
-      }
+    ({ runId: _runId }: { runId: string }) => {
+      // 标题已移交后端在首轮结束时自动生成并更新 metadata
+      // 前端无需创建额外 run，仅在适当时机刷新会话列表
+      void loadSessions();
     },
-    [clearTitleView, loadSessions, sessionRequestRef, setSessions]
+    [loadSessions]
   );
 
   const sidebarSessions = useMemo<SidebarSession[]>(() => {
     const items: SidebarSession[] = sessions.map((session) => ({ ...session }));
     for (const [id, phase] of Object.entries(titleViews)) {
       const index = items.findIndex((session) => session.thread_id === id);
-      const display = {
+      const isPending = phase === 'pending' && (!items[index] || !items[index].name);
+      const display: SidebarSession = {
         ...(index >= 0 ? items[index] : { thread_id: id }),
-        name: phase === 'pending' ? '' : items[index]?.name || '新会话',
-        titlePending: phase === 'pending',
+        name: isPending ? '' : items[index]?.name || '新会话',
+        titlePending: isPending,
       };
       if (index >= 0) items[index] = display;
       else items.unshift(display);

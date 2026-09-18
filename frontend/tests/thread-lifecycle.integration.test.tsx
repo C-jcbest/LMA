@@ -73,17 +73,15 @@ describe('标题与 Agent Run 独立生命周期', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     vi.spyOn(console, 'info').mockImplementation(() => undefined);
   });
-  it('配置切换同步更换 Client，旧列表和迟到标题不回写新服务', async () => {
+  it('配置切换同步更换 Client，旧列表和迟到响应不回写新服务', async () => {
     let finishList!: (value: any) => void;
-    let finishTitle!: (value: string) => void;
     mock.sessions.mockImplementationOnce(() => new Promise((resolve) => { finishList = resolve; }))
       .mockResolvedValue({ sessions: [], isLive: true });
-    mock.title.mockReturnValue(new Promise<string>((resolve) => { finishTitle = resolve; }));
     render(<App />);
     const firstClient = mock.options.client;
     fireEvent.click(screen.getByText('发送测试消息'));
     await acceptRun();
-    expect(mock.title).toHaveBeenCalledWith(firstClient, '首条消息');
+    expect(mock.title).not.toHaveBeenCalled();
     fireEvent.click(screen.getByText('LMA 监测服务'));
     fireEvent.click(screen.getByText('LangGraph 服务配置'));
     fireEvent.change(screen.getByPlaceholderText('请输入 LangGraph API 地址或 /langgraph-api'), { target: { value: 'http://new-server:2024' } });
@@ -94,11 +92,9 @@ describe('标题与 Agent Run 独立生命周期', () => {
     expect(mock.options.threadId).toBeNull();
     await act(async () => {
       finishList({ sessions: [{ thread_id: 'old', name: '旧服务会话', created_at: '2026-09-15T00:00:00Z' }], isLive: true });
-      finishTitle('旧服务标题');
       mock.loading = false; mock.finishRun?.();
     });
     expect(screen.queryByText('旧服务会话')).not.toBeInTheDocument();
-    expect(screen.queryByText('旧服务标题')).not.toBeInTheDocument();
     expect(mock.update).not.toHaveBeenCalled();
     expect(mock.sessions.mock.calls.at(-1)?.[0]).toBe(nextClient);
   });
@@ -115,11 +111,13 @@ describe('标题与 Agent Run 独立生命周期', () => {
     expect(mock.title).not.toHaveBeenCalled();
     await finishRun();
   });
-  it('onCreated 启动标题；标题先完成时原位替换，Agent loading 保留', async () => {
-    // 防止服务端轮询为空快照吞掉刚确认的会话。
-    mock.sessions.mockImplementation(async () => ({ sessions: mock.update.mock.calls.length ?
-      [{ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z', name: '正式标题', status: 'busy' }] : [], isLive: true }));
-    render(<App />); fireEvent.click(screen.getByText('发送测试消息'));
+  it('onCreated 与 run 结束后服务端提供标题时原位替换骨架屏', async () => {
+    mock.sessions.mockImplementation(async () => ({
+      sessions: [{ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z', name: '正式标题', status: 'busy' }],
+      isLive: true
+    }));
+    render(<App />);
+    fireEvent.click(screen.getByText('发送测试消息'));
     const row = document.querySelector('[data-thread-id="sdk-thread"]');
     await acceptRun();
     await waitFor(() => expect(screen.getByText('正式标题')).toBeInTheDocument());
@@ -129,25 +127,33 @@ describe('标题与 Agent Run 独立生命周期', () => {
     await finishRun();
     expect(screen.queryByTitle('生成中，暂不可重命名或删除')).not.toBeInTheDocument();
   });
-  it('Agent 先结束只取消 loading，骨架持续到标题完成', async () => {
-    let resolveTitle!: (value: string) => void;
-    mock.title.mockReturnValue(new Promise<string>((resolve) => { resolveTitle = resolve; }));
-    render(<App />); fireEvent.click(screen.getByText('发送测试消息'));
-    await acceptRun(); expect(mock.title).toHaveBeenCalledWith(expect.anything(), '首条消息');
-    await finishRun();
+  it('Agent 运行中骨架屏持续，run 结束后刷新列表显示权威标题', async () => {
+    let resolveSessions!: (value: any) => void;
+    mock.sessions
+      .mockResolvedValueOnce({ sessions: [], isLive: true })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSessions = resolve; }))
+      .mockResolvedValue({ sessions: [{ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z', name: '正式标题', status: 'idle' }], isLive: true });
+    render(<App />);
+    fireEvent.click(screen.getByText('发送测试消息'));
+    await acceptRun();
+    expect(mock.title).not.toHaveBeenCalled();
     expect(screen.getByLabelText('会话标题生成中')).toBeInTheDocument();
-    expect(screen.queryByTitle('生成中，暂不可重命名或删除')).not.toBeInTheDocument();
-    await act(async () => { resolveTitle('正式标题'); });
-    expect(mock.update).toHaveBeenCalledWith('sdk-thread', { metadata: { name: '正式标题' } });
+    await finishRun();
+    await act(async () => {
+      resolveSessions({ sessions: [{ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z', name: '正式标题', status: 'idle' }], isLive: true });
+    });
+    await waitFor(() => expect(screen.getByText('正式标题')).toBeInTheDocument());
   });
-  it('标题失败保存新会话，不影响 Agent 和聊天', async () => {
-    mock.title.mockRejectedValue(new Error('private title failure'));
-    mock.sessions.mockImplementation(async () => ({ sessions: mock.update.mock.calls.length ?
-      [{ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z', name: '新会话', status: 'busy' }] : [], isLive: true }));
-    render(<App />); fireEvent.click(screen.getByText('发送测试消息')); await acceptRun();
+  it('服务端未返回自定义标题时显示新会话，不影响 Agent 和聊天', async () => {
+    mock.sessions.mockImplementation(async () => ({
+      sessions: [{ thread_id: 'sdk-thread', created_at: '2026-09-15T00:00:00Z', name: '新会话', status: 'busy' }],
+      isLive: true
+    }));
+    render(<App />);
+    fireEvent.click(screen.getByText('发送测试消息'));
+    await acceptRun();
     await waitFor(() => expect(screen.getByText('新会话')).toBeInTheDocument());
     expect(mock.loading).toBe(true);
-    expect(mock.update).toHaveBeenCalledWith('sdk-thread', { metadata: { name: '新会话' } });
     expect(screen.queryByText(/private title failure|标题生成失败/)).not.toBeInTheDocument();
     await finishRun();
   });
@@ -335,11 +341,11 @@ describe('标题与 Agent Run 独立生命周期', () => {
     expect(screen.queryByText(/private metadata failure/)).not.toBeInTheDocument();
     await finishRun();
   });
-  it('迟到 onCreated 在 Run 结束后仍启动标题，不重复启动', async () => {
+  it('迟到 onCreated 不启动前端标题任务，不产生重复请求', async () => {
     render(<App />); fireEvent.click(screen.getByText('发送测试消息'));
     await finishRun(); expect(mock.title).not.toHaveBeenCalled();
     await acceptRun(); await acceptRun();
-    expect(mock.title).toHaveBeenCalledTimes(1);
+    expect(mock.title).not.toHaveBeenCalled();
   });
   it('删除成功后迟到的旧列表刷新不能复活会话', async () => {
     const existing = { thread_id: 'sdk-thread', name: '待删除会话', created_at: '2026-09-15T00:00:00Z', status: 'idle' };

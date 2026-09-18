@@ -752,11 +752,19 @@ async def analyze_gnss_chart(
             "极值出现时刻与候选区间不一致时，应指出实际偏离发生的时间。"
         )
         if any(not item.get("ok") for item in rechecks):
-            raise ToolFailure("部分视觉候选未能完成数值复核，不能将这些候选认定为已确认变化。",
+            raise ToolFailure(
+                "部分视觉候选未能完成数值复核，不能将这些候选认定为已确认变化。",
+                kind="vision",
                 facts={"ok": False, **base_result, "observations": observations_out},
-                artifact={**artifact, "data": {**base_result, "observations": validated.model_dump()}})
-        return tool_result({
-                    "ok": True,
-                    **base_result,
-                    "observations": observations_out,
-                }, artifact=artifact, display={"ok": True, **base_result, "observations": validated.model_dump()})
+                artifact={**artifact, "data": {**base_result, "observations": validated.model_dump()}},
+            )
+        return tool_result(
+            {
+                "ok": True,
+                **base_result,
+                "observations": observations_out,
+            },
+            kind="vision",
+            artifact=artifact,
+            display={"ok": True, **base_result, "observations": validated.model_dump()},
+        )

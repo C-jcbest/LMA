@@ -262,7 +262,8 @@ async def query_weather(
                     "forecast_days": forecast_days,
                 },
                 "message": "天气数据源未返回该位置和时间范围的可用数据。",
-            }
+            },
+            kind="weather",
         )
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
@@ -332,5 +333,6 @@ async def query_weather(
             "history": {"daily": _select_daily(history, HISTORY_DAILY_FIELDS)},
             "forecast": {"daily": _select_daily(forecast, FORECAST_DAILY_FIELDS)},
             "source": {"provider": "Open-Meteo"},
-        }
+        },
+        kind="weather",
     )

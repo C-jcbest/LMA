@@ -174,7 +174,8 @@ def get_current_time() -> tuple[str, dict]:
         {
             "current_time": now.strftime(TIME_FORMAT),
             "timezone": BUSINESS_TIMEZONE,
-        }
+        },
+        kind="generic",
     )
 
 
@@ -192,7 +193,8 @@ async def list_station_groups() -> tuple[str, dict]:
                 "total": 0,
                 "groups": [],
                 "message": "当前账号没有可访问的监测点分组。",
-            }
+            },
+            kind="station_list",
         )
     return tool_result(
         {
@@ -205,7 +207,8 @@ async def list_station_groups() -> tuple[str, dict]:
                 }
                 for g in groups
             ],
-        }
+        },
+        kind="station_list",
     )
 
 
@@ -247,13 +250,15 @@ async def list_stations(
                 "total": 0,
                 "stations": [],
                 "message": "未找到符合筛选条件的监测点。",
-            }
+            },
+            kind="station_list",
         )
     return tool_result(
         {
             "total": len(stations),
             "stations": [_station_to_dict(s) for s in stations],
-        }
+        },
+        kind="station_list",
     )
 
 
@@ -345,7 +350,8 @@ async def get_daily_gnss_data(
                     "gaps": [],
                 },
                 "message": "查询时间范围内没有 GNSS 数据，不能据此判断形变。",
-            }
+            },
+            kind="gnss_series",
         )
     total_points = len(points)
 
@@ -397,5 +403,6 @@ async def get_daily_gnss_data(
                 {"time": p.data_time, "n": p.n, "e": p.e, "u": p.u}
                 for p in points_to_return
             ],
-        }
+        },
+        kind="gnss_series",
     )

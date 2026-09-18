@@ -35,5 +35,5 @@
 ## 最小验证
 
 - 后端（PowerShell）：`cd backend; .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test*.py" -v`
-- 前端（PowerShell）：`cd frontend; npm run build`
+- 前端（PowerShell）：`cd frontend; pnpm run build`
 - 提交前：`git diff --check`，并确认没有误提交生成物或敏感配置。

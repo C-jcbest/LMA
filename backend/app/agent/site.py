@@ -202,6 +202,16 @@ async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict
         "sources": sources,
     }
     if content["limitations"]:
-        raise ToolFailure("场地环境资料不完整：" + "；".join(content["limitations"]),
-            facts=content, artifact={**artifact, "data": content})
-    return tool_result(content, artifact=artifact)
+        raise ToolFailure(
+            "场地环境资料不完整：" + "；".join(content["limitations"]),
+            kind="site_environment",
+            facts=content,
+            artifact={**artifact, "data": content},
+        )
+    return tool_result(
+        content,
+        kind="site_environment",
+        artifact=artifact,
+        sources=sources,
+        limitations=content["limitations"],
+    )

@@ -39,9 +39,15 @@
 - **Stop 与生命周期回归官方**：
   - 前端 Stop 仅调用 `await stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机（彻底移除 `stopReconciling` 与 `stopError`）；
   - 下一条 Human 消息直接提交创建正常新 Run。
-- **URL 驱动会话导航**：
+- **URL 驱动会话导航与服务端标题生命周期**：
   - URL 状态驱动 Sidebar 与 Stream 选择；新会话直接提交首条消息，由 SDK 分配 ID 并由 Server 创建 Thread 与 Run；
-  - `onThreadId` 写入 URL 并展示 skeleton，`onCreated(runId)` 异步触发会话标题生成，不阻塞聊天主流程。
+  - `onThreadId` 写入 URL 并展示 skeleton，会话标题统一由服务端 `LmaMiddleware.aafter_agent` 异步生成并更新至 `thread.metadata.name`，前端通过 `loadSessions()` 自动呈现，彻底取消前端多余的独立 Title Run。
+- **ChatWindow 组件分层解耦**：
+  - 拆分为 `ChatHeader`、`ThreadViewport`、`UserMessage`、`AssistantTurn`、`MessageList`、`NextActions`、`RunStatusBar`、`Composer` 8 个内聚子组件，主窗口精简至 ~200 行，提升可测试性与维护性。
+- **Headless UI（Radix UI）标准化**：
+  - 配置模态框采用 Radix `Dialog`，删除确认采用 Radix `AlertDialog`，环境/上下文统计采用 Radix `Popover`，会话菜单采用 Radix `DropdownMenu`，保证无障碍焦点捕获、ESC 与点击外部自动关闭等行为标准。
+- **Tool Protocol v1 与 Tool Registry 强类型映射**：
+  - 后端所有工具输出版本化 `ToolArtifactEnvelope`（`schemaVersion=1`，`kind` 分类枚举，携带数据与观测事实元数据）；前端通过 `toolRegistry` 与 `decodeToolArtifact` 集中解码并确定性渲染，杜绝散落的 JSON 解析与任意 GenUI 自由生成风险。
 
 ---
 
@@ -84,7 +90,7 @@
   常规包含 68 项单元与集成测试（66 项通过，2 项隔离 Server E2E 需环境变量 `LMA_RUN_SERVER_E2E=1` 触发）。
 - **前端自动化测试与构建**：
   ```powershell
-  cd frontend; npm run test; npm run build
+  cd frontend; pnpm run test; pnpm run build
   ```
   包含 76 项单元与组件测试，生产构建无类型与打包错误。
 - **提交规范**：

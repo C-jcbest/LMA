@@ -14,14 +14,14 @@ import type {
   ToolCallImage,
 } from './toolArtifacts';
 import { toFiniteGnssNumber, formatGnssValue } from './tools/gnssUtils';
-import { StationResultView } from './tools/StationResultView';
-import { GnssResultView } from './tools/GnssResultView';
-import { WeatherResultView } from './tools/WeatherResultView';
-import { VisionResultView } from './tools/VisionResultView';
-import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
-import { EmptyOrGenericResultView } from './tools/EmptyOrGenericResultView';
+import {
+  getToolRegistryItem,
+  decodeToolArtifact,
+  parseOutputRecord,
+  isRecord,
+} from './tools/registry';
 
-export { toFiniteGnssNumber, formatGnssValue };
+export { toFiniteGnssNumber, formatGnssValue, parseOutputRecord };
 
 type ToolCallBlock = Extract<ContentBlock.Standard, { type: 'tool_call' }>;
 type LiveToolCall = AssembledToolCall;
@@ -31,9 +31,6 @@ interface InlineToolCallProps {
   liveToolCall?: LiveToolCall;
   toolMessage?: ToolMessage;
 }
-
-const isRecord = (value: unknown): value is Record<string, any> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const isSiteStation = (value: unknown): value is SiteStation =>
   isRecord(value) &&
@@ -50,25 +47,13 @@ const isSiteEnvironmentArtifact = (value: unknown): value is SiteEnvironmentArti
   (value.sources === undefined || Array.isArray(value.sources)) &&
   (value.limitations === undefined || Array.isArray(value.limitations));
 
-export const parseOutputRecord = (output: unknown): Record<string, any> | undefined => {
-  if (isRecord(output)) return output;
-  if (typeof output === 'string') {
-    try {
-      const parsed = JSON.parse(output);
-      return isRecord(parsed) ? parsed : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-};
-
 export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   toolCall,
   liveToolCall,
   toolMessage,
 }) => {
-  const [expanded, setExpanded] = useState(false);
+  const registryItem = getToolRegistryItem(toolCall.name);
+  const [expanded, setExpanded] = useState(registryItem.defaultExpanded ?? false);
 
   // 错误仅判断官方明确错误
   const isError =
@@ -89,8 +74,14 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   const isPending = !isError && !hasResult;
   const pendingText = '正在查询，请稍候…';
 
+  // 通过统一协议信封解码器解码
+  const envelope = decodeToolArtifact(
+    toolCall.name,
+    toolMessage?.artifact,
+    liveToolCall?.output
+  );
+
   const artifact = isRecord(toolMessage?.artifact) ? toolMessage.artifact : undefined;
-  const artifactData = isRecord(artifact?.data) ? artifact.data : undefined;
   const artifactImages = Array.isArray(artifact?.images)
     ? artifact.images.filter(
         (image): image is ToolCallImage =>
@@ -111,10 +102,9 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
     ? liveOutputRecord.site_environment
     : undefined;
 
-  // 两阶段数据源：优先消费持久化的 ToolMessage.artifact.data，未到达前使用 liveToolCall.output 即时展示
-  const rawData = artifactData ?? liveOutputRecord;
-  const data: any = rawData ? { ...rawData } : null;
-  if (data) {
+  const rawData = envelope.data;
+  const data: any = rawData && isRecord(rawData) ? { ...rawData } : rawData;
+  if (data && isRecord(data)) {
     if (chartPoints.length) data.chart_points = chartPoints;
     else if (!Array.isArray(data.chart_points)) delete data.chart_points;
   }
@@ -130,28 +120,10 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
     return <Check className="w-3.5 h-3.5 text-neutral-400 shrink-0" data-status="finished" />;
   };
 
-  // 生成简约的中文动作文案
+  // 生成简约的中文动作文案（优先从 registry 获取）
   const getActionText = () => {
     const suffix = isError ? '（未完成）' : '';
-    if (toolCall.name === 'list_station_groups') {
-      return `查询监测点分组${suffix}`;
-    }
-    if (toolCall.name === 'list_stations') {
-      return `查询监测点列表${suffix}`;
-    }
-    if (toolCall.name === 'get_daily_gnss_data') {
-      return `获取北斗GNSS日监测数据${suffix}`;
-    }
-    if (toolCall.name === 'query_weather') {
-      return `查询天气数据${suffix}`;
-    }
-    if (toolCall.name === 'analyze_gnss_chart') {
-      return `视觉复核${suffix}`;
-    }
-    if (toolCall.name === 'inspect_site_environment') {
-      return `调查站点地形与地质环境${suffix}`;
-    }
-    return `执行工具查询${suffix}`;
+    return `${registryItem.label}${suffix}`;
   };
 
   const renderContent = () => {
@@ -165,23 +137,15 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
     }
     if (isError && !data?.chart_points) return null;
 
-    if (data?.chart_points && Array.isArray(data.chart_points)) {
-      return <VisionResultView data={data} artifactImages={artifactImages} />;
-    }
-
-    if (data?.current && data?.rain_summary) {
-      return <WeatherResultView data={data} />;
-    }
-
-    if ((data?.groups && Array.isArray(data.groups)) || (data?.stations && Array.isArray(data.stations))) {
-      return <StationResultView data={data} />;
-    }
-
-    if (data?.points && Array.isArray(data.points)) {
-      return <GnssResultView data={data} />;
-    }
-
-    return <EmptyOrGenericResultView />;
+    const Renderer = registryItem.render;
+    return (
+      <Renderer
+        envelope={envelope}
+        data={data}
+        artifactImages={artifactImages}
+        siteEnvironment={siteEnvironment}
+      />
+    );
   };
 
   return (
@@ -218,11 +182,7 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
               : 'max-h-[28rem] overflow-y-auto overscroll-contain animate-in fade-in duration-150'
           }`}
         >
-          {siteEnvironment ? (
-            <SiteEnvironmentResultView environment={siteEnvironment} />
-          ) : (
-            renderContent()
-          )}
+          {renderContent()}
         </div>
       )}
     </div>

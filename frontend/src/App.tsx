@@ -25,6 +25,18 @@ interface LmaState {
   context_usage?: ContextUsage;
 }
 
+export const AppShell: React.FC<{
+  sidebar?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ sidebar, children }) => {
+  return (
+    <div className="flex h-screen w-screen overflow-hidden bg-white">
+      {sidebar}
+      {children}
+    </div>
+  );
+};
+
 export const App: React.FC = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -74,15 +86,12 @@ export const App: React.FC = () => {
     deletingThreadsRef,
   });
 
-  // 3. 辅助 Run：标题生成与侧边栏投影
+  // 3. 辅助侧边栏会话投影与导航
   const {
     titleViews,
     setTitleViews,
-    newThreadOrder,
     setNewThreadOrder,
     titleJobsRef,
-    activeSubmissionRef,
-    firstInputRef,
     clearTitleView,
     onThreadId,
     onCreated,
@@ -179,7 +188,7 @@ export const App: React.FC = () => {
     setHydrationError(false);
   }, [activeThreadId]);
 
-  // TODO 14: 唯一流式数据源收敛：消息严格只从 stream.messages 读取
+  // 唯一流式数据源收敛：消息严格只从 stream.messages 读取
   const messages = isNewSessionDraft ? [] : stream.messages;
 
   const recommendations = useMemo(
@@ -224,10 +233,7 @@ export const App: React.FC = () => {
     isSubmittingRef.current = true;
     setRunError(false);
 
-    const isFirstMessage = activeThreadId === null;
     const submission = { client, threadId: activeThreadId };
-    activeSubmissionRef.current = submission;
-    if (isFirstMessage) firstInputRef.current = { text, client: stream.client };
     try {
       await stream.submit(
         { messages: [new HumanMessage({ content: text })] },
@@ -236,12 +242,6 @@ export const App: React.FC = () => {
           onError: () => {
             if (currentClientRef.current === submission.client && selectedThreadRef.current === submission.threadId) {
               setRunError(true);
-            }
-            for (const [id, job] of titleJobsRef.current) {
-              if (!job.creationNotified) {
-                clearTitleView(id);
-                titleJobsRef.current.delete(id);
-              }
             }
           },
         }
@@ -252,8 +252,6 @@ export const App: React.FC = () => {
       }
     } finally {
       if (currentClientRef.current === client) {
-        firstInputRef.current = null;
-        if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
         isSubmittingRef.current = false;
         void loadSessions();
       }
@@ -275,7 +273,6 @@ export const App: React.FC = () => {
     isSubmittingRef.current = true;
     setRunError(false);
     const submission = { client, threadId: currentThreadId };
-    activeSubmissionRef.current = submission;
 
     try {
       await stream.submit(
@@ -296,7 +293,6 @@ export const App: React.FC = () => {
       }
     } finally {
       if (currentClientRef.current === client) {
-        if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
         isSubmittingRef.current = false;
         void loadSessions();
       }
@@ -310,12 +306,7 @@ export const App: React.FC = () => {
 
     isSubmittingRef.current = true;
     setRunError(false);
-
-    const isFirstMessage = activeThreadId === null;
     const submission = { client, threadId: activeThreadId };
-    activeSubmissionRef.current = submission;
-    const text = typeof message.content === 'string' ? message.content : '';
-    if (isFirstMessage && text) firstInputRef.current = { text, client: stream.client };
 
     try {
       await stream.submit(
@@ -327,12 +318,6 @@ export const App: React.FC = () => {
             if (currentClientRef.current === submission.client && selectedThreadRef.current === submission.threadId) {
               setRunError(true);
             }
-            for (const [id, job] of titleJobsRef.current) {
-              if (!job.creationNotified) {
-                clearTitleView(id);
-                titleJobsRef.current.delete(id);
-              }
-            }
           },
         }
       );
@@ -342,8 +327,6 @@ export const App: React.FC = () => {
       }
     } finally {
       if (currentClientRef.current === client) {
-        firstInputRef.current = null;
-        if (activeSubmissionRef.current === submission) activeSubmissionRef.current = null;
         isSubmittingRef.current = false;
         void loadSessions();
       }
@@ -363,29 +346,31 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white">
-      {!isSidebarCollapsed && (
-        <Sidebar
-          sessions={sidebarSessions}
-          activeSessionId={activeThreadId}
-          isNewSessionDraft={isNewSessionDraft}
-          busyThreadIds={busyThreadIds}
-          deletingThreadIds={deletingThreadIds}
-          onSelectSession={handleSelectSession}
-          onCreateSession={handleCreateSession}
-          onRenameSession={handleRenameSession}
-          onDeleteSession={(id) => void handleDeleteSession(id, stream)}
-          onToggleCollapse={() => setIsSidebarCollapsed(true)}
-          onOpenConfig={() => setIsConfigOpen(true)}
-          hasMoreSessions={hasMoreSessions}
-          isListLoading={isListLoading}
-          listError={listError}
-          onLoadMore={() => void loadSessions(true)}
-          onRefreshSessions={() => void loadSessions()}
-          onDismissListError={() => setListError('')}
-        />
-      )}
-
+    <AppShell
+      sidebar={
+        !isSidebarCollapsed && (
+          <Sidebar
+            sessions={sidebarSessions}
+            activeSessionId={activeThreadId}
+            isNewSessionDraft={isNewSessionDraft}
+            busyThreadIds={busyThreadIds}
+            deletingThreadIds={deletingThreadIds}
+            onSelectSession={handleSelectSession}
+            onCreateSession={handleCreateSession}
+            onRenameSession={handleRenameSession}
+            onDeleteSession={(id) => void handleDeleteSession(id, stream)}
+            onToggleCollapse={() => setIsSidebarCollapsed(true)}
+            onOpenConfig={() => setIsConfigOpen(true)}
+            hasMoreSessions={hasMoreSessions}
+            isListLoading={isListLoading}
+            listError={listError}
+            onLoadMore={() => void loadSessions(true)}
+            onRefreshSessions={() => void loadSessions()}
+            onDismissListError={() => setListError('')}
+          />
+        )
+      }
+    >
       <ErrorBoundary fallbackTitle="会话界面加载异常" level="window">
         <ChatWindow
           stream={stream}
@@ -426,7 +411,6 @@ export const App: React.FC = () => {
           stream.disconnect();
           ++sessionRequestRef.current;
           titleJobsRef.current.clear();
-          firstInputRef.current = null;
           isSubmittingRef.current = false;
           setTitleViews({});
           setNewThreadOrder([]);
@@ -445,6 +429,6 @@ export const App: React.FC = () => {
       />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </div>
+    </AppShell>
   );
 };
