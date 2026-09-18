@@ -1,14 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useMemo } from 'react';
 import { toast } from 'sonner';
-import { getApiUrl } from '../../app/config';
-import { createLangGraphClient, renameSession, deleteSession } from '../../lib/langgraph';
+import { useLangGraphClient, renameSession, deleteSession } from '../../lib/langgraph';
 import { threadKeys } from './threadQueries';
 
 export function useRenameThreadMutation() {
   const queryClient = useQueryClient();
-  const apiUrl = useMemo(() => getApiUrl(), []);
-  const client = useMemo(() => createLangGraphClient(apiUrl), [apiUrl]);
+  const client = useLangGraphClient();
 
   return useMutation({
     mutationFn: async ({ threadId, newName }: { threadId: string; newName: string }) => {
@@ -31,8 +28,7 @@ export function useRenameThreadMutation() {
 
 export function useDeleteThreadMutation() {
   const queryClient = useQueryClient();
-  const apiUrl = useMemo(() => getApiUrl(), []);
-  const client = useMemo(() => createLangGraphClient(apiUrl), [apiUrl]);
+  const client = useLangGraphClient();
 
   return useMutation({
     mutationFn: async ({ threadId }: { threadId: string }) => {

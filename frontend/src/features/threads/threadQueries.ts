@@ -1,7 +1,6 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { getApiUrl } from '../../app/config';
-import { createLangGraphClient, getSessions, ThreadSession } from '../../lib/langgraph';
+import { useLangGraphClient, getSessions, ThreadSession } from '../../lib/langgraph';
 
 export const threadKeys = {
   all: ['threads'] as const,
@@ -9,8 +8,7 @@ export const threadKeys = {
 };
 
 export function useThreadListQuery() {
-  const apiUrl = useMemo(() => getApiUrl(), []);
-  const client = useMemo(() => createLangGraphClient(apiUrl), [apiUrl]);
+  const client = useLangGraphClient();
 
   return useInfiniteQuery({
     queryKey: threadKeys.list(),

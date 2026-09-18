@@ -129,24 +129,31 @@ export const ThreadEmpty: React.FC<ThreadEmptyProps> = ({ onSelectPrompt }) => {
         {STARTER_PROMPTS.map((item, idx) => {
           const Icon = item.icon;
           return (
-            <button
+            <ThreadPrimitive.Suggestion
               key={idx}
-              type="button"
-              onClick={() => onSelectPrompt?.(item.prompt)}
-              className="flex items-start gap-3 p-3.5 rounded-xl border border-neutral-200/80 bg-white hover:bg-neutral-50/80 hover:border-neutral-300 transition-all text-left group cursor-pointer shadow-2xs"
+              prompt={item.prompt}
+              autoSend={true}
+              method="replace"
+              asChild
             >
-              <div className="p-2 rounded-lg bg-neutral-100 text-neutral-600 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors shrink-0">
-                <Icon className="w-4 h-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold text-neutral-800 group-hover:text-indigo-600 transition-colors">
-                  {item.title}
+              <button
+                type="button"
+                onClick={() => onSelectPrompt?.(item.prompt)}
+                className="flex items-start gap-3 p-3.5 rounded-xl border border-neutral-200/80 bg-white hover:bg-neutral-50/80 hover:border-neutral-300 transition-all text-left group cursor-pointer shadow-2xs"
+              >
+                <div className="p-2 rounded-lg bg-neutral-100 text-neutral-600 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors shrink-0">
+                  <Icon className="w-4 h-4" />
                 </div>
-                <div className="text-[11px] text-neutral-500 truncate mt-0.5">
-                  {item.desc}
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-neutral-800 group-hover:text-indigo-600 transition-colors">
+                    {item.title}
+                  </div>
+                  <div className="text-[11px] text-neutral-500 truncate mt-0.5">
+                    {item.desc}
+                  </div>
                 </div>
-              </div>
-            </button>
+              </button>
+            </ThreadPrimitive.Suggestion>
           );
         })}
       </div>

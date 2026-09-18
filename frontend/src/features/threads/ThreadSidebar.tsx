@@ -167,7 +167,7 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
                   className={`group relative flex items-center justify-between rounded-lg px-2.5 py-2 text-xs transition-colors cursor-pointer ${
                     isActive
                       ? 'bg-neutral-200/80 text-neutral-900 font-medium'
-                      : 'text-neutral-600 hover:bg-neutral-150 hover:text-neutral-900'
+                      : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
                   }`}
                   onClick={() => handleSelectThread(session.thread_id)}
                 >
@@ -195,6 +195,7 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
                         <Button
                           variant="ghost"
                           size="icon"
+                          aria-label="会话操作"
                           className="h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60"
                         >
                           <MoreHorizontal className="w-3.5 h-3.5" />

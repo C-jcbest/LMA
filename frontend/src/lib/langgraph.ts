@@ -1,5 +1,6 @@
+import React, { createContext, useContext, useMemo } from 'react';
 import { Client } from '@langchain/langgraph-sdk';
-import { LMA_ASSISTANT_ID } from '../app/config';
+import { LMA_ASSISTANT_ID, getApiUrl } from '../app/config';
 
 export interface ThreadSession {
   thread_id: string;
@@ -19,6 +20,38 @@ export function createLangGraphClient(apiUrl: string, defaultHeaders?: Record<st
     defaultHeaders,
     callerOptions: LANGGRAPH_CALLER_OPTIONS,
   });
+}
+
+const LangGraphClientContext = createContext<Client | null>(null);
+
+export interface LangGraphClientProviderProps {
+  client?: Client;
+  children: React.ReactNode;
+}
+
+export const LangGraphClientProvider: React.FC<LangGraphClientProviderProps> = ({
+  client: customClient,
+  children,
+}) => {
+  const apiUrl = useMemo(() => getApiUrl(), []);
+  const client = useMemo(
+    () => customClient || createLangGraphClient(apiUrl),
+    [customClient, apiUrl]
+  );
+
+  return React.createElement(
+    LangGraphClientContext.Provider,
+    { value: client },
+    children
+  );
+};
+
+export function useLangGraphClient(): Client {
+  const client = useContext(LangGraphClientContext);
+  if (!client) {
+    return createLangGraphClient(getApiUrl());
+  }
+  return client;
 }
 
 export function projectThreadSessions(threads: any[]): ThreadSession[] {

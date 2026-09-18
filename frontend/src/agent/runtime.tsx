@@ -1,8 +1,9 @@
 import React, { useMemo } from 'react';
-import { AssistantRuntimeProvider } from '@assistant-ui/react';
+import { AssistantRuntimeProvider, AuiConfig, Tools } from '@assistant-ui/react';
 import { useStreamRuntime, useLangChainState, useLangChainStream } from '@assistant-ui/react-langchain';
-import { LMA_ASSISTANT_ID, getApiUrl } from '../app/config';
-import { createLangGraphClient } from '../lib/langgraph';
+import { LMA_ASSISTANT_ID } from '../app/config';
+import { useLangGraphClient } from '../lib/langgraph';
+import { lmaToolkit } from './toolkit';
 import type { LmaState } from './state';
 
 export interface LmaRuntimeProviderProps {
@@ -16,8 +17,7 @@ export const LmaRuntimeProvider: React.FC<LmaRuntimeProviderProps> = ({
   onThreadIdChange,
   children,
 }) => {
-  const apiUrl = useMemo(() => getApiUrl(), []);
-  const client = useMemo(() => createLangGraphClient(apiUrl), [apiUrl]);
+  const client = useLangGraphClient();
 
   const runtime = useStreamRuntime({
     assistantId: LMA_ASSISTANT_ID,
@@ -27,8 +27,16 @@ export const LmaRuntimeProvider: React.FC<LmaRuntimeProviderProps> = ({
     onThreadIdChange,
   });
 
+  const config = useMemo(
+    () =>
+      AuiConfig({
+        tools: Tools({ toolkit: lmaToolkit }),
+      }),
+    []
+  );
+
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
+    <AssistantRuntimeProvider runtime={runtime} config={config}>
       {children}
     </AssistantRuntimeProvider>
   );

@@ -143,6 +143,41 @@ vi.mock('@radix-ui/react-dropdown-menu', async () => {
     Item,
     Group: ({ children }: any) => React.createElement(React.Fragment, null, children),
     Separator: () => null,
+    Sub: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    SubTrigger: React.forwardRef(({ children, ...props }: any, ref: any) =>
+      React.createElement('div', { ref, ...props }, children)
+    ),
+    SubContent: React.forwardRef(({ children, ...props }: any, ref: any) =>
+      React.createElement('div', { ref, ...props }, children)
+    ),
+    RadioGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    RadioItem: React.forwardRef(({ children, ...props }: any, ref: any) =>
+      React.createElement('div', { ref, role: 'menuitemradio', ...props }, children)
+    ),
+    CheckboxItem: React.forwardRef(({ children, ...props }: any, ref: any) =>
+      React.createElement('div', { ref, role: 'menuitemcheckbox', ...props }, children)
+    ),
+    Label: React.forwardRef(({ children, ...props }: any, ref: any) =>
+      React.createElement('div', { ref, ...props }, children)
+    ),
+    ItemIndicator: () => null,
+  };
+});
+
+vi.mock('@assistant-ui/react', async (importOriginal) => {
+  const React = await import('react');
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    ThreadPrimitive: {
+      ...actual.ThreadPrimitive,
+      Suggestion: ({ children, asChild, autoSend, prompt, method, ...props }: any) => {
+        if (asChild && React.isValidElement(children)) {
+          return React.cloneElement(children as any, props);
+        }
+        return React.createElement('div', props, children);
+      },
+    },
   };
 });
 

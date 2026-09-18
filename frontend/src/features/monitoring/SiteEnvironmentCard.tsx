@@ -9,7 +9,7 @@ import {
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Compass, Expand, Layers3, Mountain, X } from 'lucide-react';
-import type { SiteEnvironmentArtifact, SiteStation } from '../../components/toolArtifacts';
+import type { SiteEnvironmentArtifact, SiteStation } from './types';
 
 interface SiteEnvironmentCardProps {
   environment: SiteEnvironmentArtifact;
@@ -329,7 +329,7 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
           <details className="border-t border-stone-300 bg-[#ece8dc] px-3 py-2 text-[10px] text-stone-600">
             <summary className="cursor-pointer font-medium text-stone-700">资料限制</summary>
             <ul className="mt-2 list-disc space-y-1 pl-4">
-              {environment.limitations?.map((item, index) => <li key={index}>{item}</li>)}
+              {environment.limitations?.map((item: string, index: number) => <li key={index}>{item}</li>)}
             </ul>
           </details>
         )}

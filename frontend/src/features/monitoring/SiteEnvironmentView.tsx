@@ -1,5 +1,5 @@
 import React from 'react';
-import type { SiteEnvironmentArtifact } from '../../components/toolArtifacts';
+import type { SiteEnvironmentArtifact } from './types';
 
 const SiteEnvironmentCard = React.lazy(() =>
   import('./SiteEnvironmentCard').then((module) => ({ default: module.SiteEnvironmentCard }))

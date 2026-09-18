@@ -43,7 +43,6 @@ export const ChatLayout: React.FC = () => {
       {/* 主对话区 */}
       <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative">
         <LmaRuntimeProvider
-          key={threadId || 'new'}
           threadId={threadId}
           onThreadIdChange={handleThreadIdChange}
         >

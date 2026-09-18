@@ -1,6 +1,6 @@
 export interface ToolCallImage {
   name: string;
-  // 后端下发的图表中文标题（含基线口径）
+  /** 后端下发的图表中文标题（含基线口径） */
   title?: string;
   png_base64: string;
 }
