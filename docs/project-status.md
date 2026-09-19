@@ -1,6 +1,6 @@
 # 项目状态与有效决策
 
-更新：2026-09-18。只保留当前系统权威实现、持续有效决策、临时兼容边界与验证基线。
+更新：2026-09-19。只保留当前系统权威实现、持续有效决策、临时兼容边界与验证基线。
 产品口径以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，活跃演进待办以 [现行待办入口](TODO.md) 与 [重构 TODO.md](重构%20TODO.md) 为准。
 
 ---
@@ -14,38 +14,33 @@
   - `ModelRetryMiddleware` / `ToolRetryMiddleware`：仅针对网络超时/中断及 408/429/5xx 瞬时异常退避重试，底层 SDK 禁用重试；
   - `ModelCallLimitMiddleware`（默认 20 次）/ `ToolCallLimitMiddleware`（默认 40 次）：逻辑调用限额控制；
   - `ToolErrorMiddleware`：统一捕获非受控异常并转换为安全脱敏错误文案，放行领域异常。
-- **LMA 领域扩展极简化**：
+- **LMA 领域扩展极简化与单标题所有权**：
   - `LmaMiddleware` 仅承担业务时间锚点装配、`context_usage` 统计展示、回答完成后单次推荐触发，以及领域异常（`ToolFailure`）的安全展示 envelope；
+  - 彻底删除后端 `_maybe_auto_title`，标题生成统一收敛至前端 assistant-ui Adapter 生命周期，由无状态图 `session-title` 处理并持久化到 `thread.metadata.name`；
   - 彻底删除通用异常兜底与多余的重试/调度逻辑。
 - **服务端 Stop 自愈**：
   - 注册 `abefore_agent` 钩子 `_sanitize_unanswered_tool_calls`；
   - 在当前 Run 启动前扫描 checkpoint 中的消息，利用官方 `RemoveMessage` 清除全未完成的悬空 AI tool-call 消息，原位收窄部分完成批次，确保模型节点绝不接收未配对的 tool-calls。
 
 ### 2. 前端架构与交互
-- **官方生命周期完全投影与单一 Stream 数据源（TODO 14）**：
-  - 基于 `@langchain/react` 的 `useStream`、`useToolCalls` 与 `@langchain/langgraph-sdk` 的 `Client`；
-  - 消息统一唯一只读 `stream.messages`（包含长对话压缩摘要），`ChatWindow` 直接消费官方 `BaseMessage[]`，仅做无状态回合分组；
-  - Text、Reasoning 与 Tool Calls 统一读取 `AIMessage.contentBlocks`；
-  - Thread 加载状态读 `stream.isThreadLoading`，Run 执行状态读 `stream.isLoading`，乐观消息读 `useMessageMetadata(...).optimisticStatus`；
-  - 彻底删除私有 `STREAM_CONTROLLER` API 与 `streamCompat.ts`，重新加载与刷新依托官方 `stream.disconnect()` 与会话重选。
-- **App.tsx 领域 Hook 架构解耦（TODO 17）**：
-  - 将编排逻辑拆分收拢至四个高内聚领域 Hook（`useThreadNavigation`、`useThreadDirectory`、`useAuxiliaryRuns`、`useThreadActions`）；
-  - `App.tsx` 仅负责客户端初始化、提交处理器组装与顶层界面布局，未引入任何外部全局状态库。
-- **通用 Tool Shell 与领域结果渲染器解耦（TODO 18）**：
-  - `InlineToolCall.tsx` 收拢为轻量通用工具 Shell（~190 行），仅负责状态图标、中文动作文案、展开折叠交互与容器外框；
-  - 领域业务渲染器独立拆分至 `frontend/src/components/tools/`（`StationResultView`、`GnssResultView`、`WeatherResultView`、`VisionResultView`、`SiteEnvironmentResultView` 与 `EmptyOrGenericResultView`），由 `InlineToolCall` 统一分发；
-  - 工具完成条件基于“结果是否已经返回”（`hasToolMessageResult || hasLiveOutput`），优先消费实时 `liveToolCall.output`，权威 `ToolMessage.artifact` 到达后平滑覆盖；
-  - 集中解析 `parseOutputRecord` 消除零散 JSON 猜测，空结果正常显示“该步骤没有可展示的业务数据”，绝不回退为 loading。
+- **assistant-ui 唯一运行时体系（P2 落地）**：
+  - 采用标准单向数据流：`assistant-ui runtime` ↓ `@assistant-ui/react-langchain` (`useStreamRuntime`) ↓ `@langchain/react useStream` ↓ `LangGraph Server`；
+  - 前端通用聊天 Thread、Message、Composer、ActionBar、Reasoning、Tool Call 生命周期与 Thread List 完全由 assistant-ui 官方 Primitives 与 Elements 接管；
+  - `App.tsx` 纯声明式装配收敛至 ~40 行，彻底删除了旧 `useStream` 手写流控与消息状态机。
+- **现代 AppLayout 布局与旧 Hooks 彻底清理**：
+  - 采用左侧 260px Sidebar（内嵌 `ThreadList`）+ 右侧聊天主视口（内嵌 `Thread`）；
+  - 彻底删除旧的四个会话 Hook（`useThreadNavigation`、`useThreadDirectory`、`useAuxiliaryRuns`、`useThreadActions`）及 `services/api.ts` 中的旧会话目录函数（`ThreadSession`、`getSessions`、`getBusySessions`、`mergeSessions`）。
+- **会话管理与 Canonical ID 对齐（P3 落地）**：
+  - 唯一适配器 `createLangGraphThreadListAdapter` 严格满足 `remoteId === externalId === thread.thread_id`，保证会话列表选择态与底层 Checkpoint/Stream 完全对齐；
+  - 分页使用官方 `ThreadListPrimitive.LoadMore`，由 assistant-ui 自行管理 `nextCursor` 调度；
+  - 会话标题由 Adapter 的 `generateTitle()` 生命周期托管，异步调用 `session-title` 图生成并回写，杜绝前后端双标题竞态。
+- **URL 驱动与 controlled 模式**：
+  - `AssistantProvider` 通过 `threadId` 与 `onThreadIdChange` 与 `window.location.search` (`?threadId=...`) 原生双向同步，原生支持刷新后会话保留、浏览器前进后退（`popstate`）与 URL 复制，不维护额外状态机。
+- **前端基础技术栈升级（P1 落地）**：
+  - 全面升级至 React 19.3 + Vite 8.3 + TypeScript 7.0 + Tailwind v4.3.3；
+  - 在 `index.css` 的 `@theme inline` 中完整注册 shadcn 所需的 `--color-*` tokens。
 - **Stop 与生命周期回归官方**：
-  - 前端 Stop 仅调用 `await stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机（彻底移除 `stopReconciling` 与 `stopError`）；
-  - 下一条 Human 消息直接提交创建正常新 Run。
-- **URL 驱动会话导航与服务端标题生命周期**：
-  - URL 状态驱动 Sidebar 与 Stream 选择；新会话直接提交首条消息，由 SDK 分配 ID 并由 Server 创建 Thread 与 Run；
-  - `onThreadId` 写入 URL 并展示 skeleton，会话标题统一由服务端 `LmaMiddleware.aafter_agent` 异步生成并更新至 `thread.metadata.name`，前端通过 `loadSessions()` 自动呈现，彻底取消前端多余的独立 Title Run。
-- **ChatWindow 组件分层解耦**：
-  - 拆分为 `ChatHeader`、`ThreadViewport`、`UserMessage`、`AssistantTurn`、`MessageList`、`NextActions`、`RunStatusBar`、`Composer` 8 个内聚子组件，主窗口精简至 ~200 行，提升可测试性与维护性。
-- **Headless UI（Radix UI）标准化**：
-  - 配置模态框采用 Radix `Dialog`，删除确认采用 Radix `AlertDialog`，环境/上下文统计采用 Radix `Popover`，会话菜单采用 Radix `DropdownMenu`，保证无障碍焦点捕获、ESC 与点击外部自动关闭等行为标准。
+  - 前端 Stop 仅调用官方 `stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机；下一条 Human 消息直接提交创建正常新 Run。
 - **Tool Protocol v1 与 Tool Registry 强类型映射**：
   - 后端所有工具输出版本化 `ToolArtifactEnvelope`（`schemaVersion=1`，`kind` 分类枚举，携带数据与观测事实元数据）；前端通过 `toolRegistry` 与 `decodeToolArtifact` 集中解码并确定性渲染，杜绝散落的 JSON 解析与任意 GenUI 自由生成风险。
 

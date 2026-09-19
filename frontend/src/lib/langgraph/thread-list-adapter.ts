@@ -1,11 +1,5 @@
 import type { Client } from '@langchain/langgraph-sdk';
-import type {
-  RemoteThreadListAdapter,
-  RemoteThreadListPageOptions,
-  RemoteThreadListResponse,
-  RemoteThreadMetadata,
-  ThreadMessage,
-} from '@assistant-ui/core';
+import type { RemoteThreadListAdapter } from '@assistant-ui/react';
 import { createAssistantStream, type AssistantStream } from 'assistant-stream';
 import {
   LMA_ASSISTANT_ID,
@@ -26,7 +20,7 @@ export function createLangGraphThreadListAdapter(
   assistantId: string = LMA_ASSISTANT_ID
 ): RemoteThreadListAdapter {
   return {
-    async list(params?: RemoteThreadListPageOptions): Promise<RemoteThreadListResponse> {
+    async list(params) {
       const offset = params?.after ? parseInt(params.after, 10) : 0;
       const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0;
 
@@ -39,8 +33,8 @@ export function createLangGraphThreadListAdapter(
         select: ['thread_id', 'metadata', 'created_at', 'updated_at', 'status'],
       });
 
-      const remoteThreads: RemoteThreadMetadata[] = threads.map((thread) => ({
-        status: thread.metadata?.archived ? 'archived' : 'regular',
+      const remoteThreads = threads.map((thread) => ({
+        status: thread.metadata?.archived ? ('archived' as const) : ('regular' as const),
         remoteId: thread.thread_id,
         externalId: thread.thread_id,
         title:
@@ -63,7 +57,7 @@ export function createLangGraphThreadListAdapter(
       };
     },
 
-    async initialize(): Promise<{ remoteId: string; externalId: string }> {
+    async initialize() {
       const created = await client.threads.create({
         metadata: {
           graph_id: assistantId,
@@ -98,10 +92,10 @@ export function createLangGraphThreadListAdapter(
       });
     },
 
-    async fetch(threadId: string): Promise<RemoteThreadMetadata> {
+    async fetch(threadId: string) {
       const thread = await client.threads.get(threadId);
       return {
-        status: thread.metadata?.archived ? 'archived' : 'regular',
+        status: thread.metadata?.archived ? ('archived' as const) : ('regular' as const),
         remoteId: thread.thread_id,
         externalId: thread.thread_id,
         title:
@@ -117,8 +111,8 @@ export function createLangGraphThreadListAdapter(
     },
 
     async generateTitle(
-      remoteId: string,
-      unstable_messages: readonly ThreadMessage[]
+      remoteId,
+      unstable_messages
     ): Promise<AssistantStream> {
       return createAssistantStream(async (controller) => {
         const userMsg = unstable_messages.find((m) => m.role === 'user');

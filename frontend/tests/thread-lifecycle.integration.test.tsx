@@ -242,4 +242,115 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       expect(localStorage.getItem('lma_langgraph_config')).toBe('http://new-domain:2024');
     });
   });
+
+  it('AssistantProvider 与浏览器 URL 保持双向同步，并支持 popstate 历史导航', () => {
+    window.history.replaceState(null, '', '?threadId=t-history-1');
+
+    let reportedThreadId: string | undefined;
+    const { rerender } = render(
+      <AssistantProvider
+        client={mockClient}
+        onThreadIdChange={(id) => {
+          reportedThreadId = id;
+        }}
+      >
+        <div>业务内容</div>
+      </AssistantProvider>
+    );
+
+    // 初始应读取自 URL
+    expect(new URL(window.location.href).searchParams.get('threadId')).toBe('t-history-1');
+
+    // 受控切换到新线程
+    rerender(
+      <AssistantProvider
+        client={mockClient}
+        threadId="t-controlled-2"
+        onThreadIdChange={(id) => {
+          reportedThreadId = id;
+        }}
+      >
+        <div>业务内容</div>
+      </AssistantProvider>
+    );
+
+    // popstate 恢复
+    act(() => {
+      window.history.replaceState(null, '', '?threadId=t-history-3');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+  });
+
+  it('多会话切换与创建集成：从初始未绑定到 initialize 创建、externalId 与 thread_id 对齐并在切走切回时保持一致', async () => {
+    const createdThread = {
+      thread_id: 'thread-stream-test',
+      created_at: '2026-09-18T10:00:00Z',
+      metadata: { graph_id: 'lma-agent', name: '新会话' },
+    };
+    mockClient.threads.create.mockResolvedValue(createdThread);
+    mockClient.threads.get.mockImplementation(async (id: string) => ({
+      thread_id: id,
+      created_at: '2026-09-18T10:00:00Z',
+      metadata: { graph_id: 'lma-agent', name: `会话 ${id}` },
+    }));
+
+    const adapter = createLangGraphThreadListAdapter(mockClient);
+
+    // 1. 初始化会话
+    const initialized = await adapter.initialize();
+    expect(initialized.remoteId).toBe('thread-stream-test');
+    expect(initialized.externalId).toBe('thread-stream-test');
+    expect(mockClient.threads.create).toHaveBeenCalledWith({
+      metadata: { graph_id: 'lma-agent', name: '新会话' },
+    });
+
+    // 2. 验证 fetch
+    const fetched = await adapter.fetch(initialized.remoteId);
+    expect(fetched.externalId).toBe(initialized.remoteId);
+    expect(fetched.remoteId).toBe(initialized.remoteId);
+
+    // 3. 在 AssistantProvider 中切换并切回
+    let currentThreadId: string | undefined = initialized.remoteId;
+    const { rerender } = render(
+      <AssistantProvider
+        client={mockClient}
+        threadId={currentThreadId}
+        onThreadIdChange={(id) => {
+          currentThreadId = id;
+        }}
+      >
+        <div data-testid="thread-display">{currentThreadId}</div>
+      </AssistantProvider>
+    );
+
+    expect(screen.getByTestId('thread-display')).toHaveTextContent('thread-stream-test');
+
+    // 切走会话
+    rerender(
+      <AssistantProvider
+        client={mockClient}
+        threadId="thread-another"
+        onThreadIdChange={(id) => {
+          currentThreadId = id;
+        }}
+      >
+        <div data-testid="thread-display">thread-another</div>
+      </AssistantProvider>
+    );
+    expect(screen.getByTestId('thread-display')).toHaveTextContent('thread-another');
+
+    // 切回原会话
+    rerender(
+      <AssistantProvider
+        client={mockClient}
+        threadId="thread-stream-test"
+        onThreadIdChange={(id) => {
+          currentThreadId = id;
+        }}
+      >
+        <div data-testid="thread-display">thread-stream-test</div>
+      </AssistantProvider>
+    );
+    expect(screen.getByTestId('thread-display')).toHaveTextContent('thread-stream-test');
+  });
 });

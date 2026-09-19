@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Client } from '@langchain/langgraph-sdk';
 import { useStreamRuntime } from '@assistant-ui/react-langchain';
 import { AssistantRuntimeProvider } from '@assistant-ui/react';
@@ -8,14 +8,66 @@ import { createLangGraphThreadListAdapter } from '@/lib/langgraph/thread-list-ad
 export interface AssistantProviderProps {
   client: Client;
   children: React.ReactNode;
+  /** 可选受控 threadId（外部覆盖或测试注入） */
+  threadId?: string | undefined;
+  /** 可选受控变更回调 */
+  onThreadIdChange?: (threadId: string | undefined) => void;
 }
 
 /**
  * 唯一 Runtime Provider：
  * 负责 LangGraph 客户端装配与 useStreamRuntime 初始化，
- * 不维护本地 messages、running、tool-call、fork 或重试状态。
+ * 通过薄 URL 适配层与 browser searchParams (?threadId=...) 保持原生同步，
+ * 支持页面刷新、历史后退与直接复制 URL，不维护额外的会话切换或消息状态机。
  */
-export const AssistantProvider: React.FC<AssistantProviderProps> = ({ client, children }) => {
+export const AssistantProvider: React.FC<AssistantProviderProps> = ({
+  client,
+  children,
+  threadId: controlledThreadId,
+  onThreadIdChange: controlledOnThreadIdChange,
+}) => {
+  const isControlled = controlledThreadId !== undefined;
+
+  const [urlThreadId, setUrlThreadId] = useState<string | undefined>(() => {
+    if (typeof window === 'undefined') return undefined;
+    return new URL(window.location.href).searchParams.get('threadId') || undefined;
+  });
+
+  const handleThreadIdChange = useCallback(
+    (newId: string | undefined) => {
+      if (controlledOnThreadIdChange) {
+        controlledOnThreadIdChange(newId);
+      }
+      if (!isControlled) {
+        setUrlThreadId(newId);
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location.href);
+          if (newId) {
+            url.searchParams.set('threadId', newId);
+          } else {
+            url.searchParams.delete('threadId');
+          }
+          window.history.replaceState(null, '', url);
+        }
+      }
+    },
+    [controlledOnThreadIdChange, isControlled]
+  );
+
+  useEffect(() => {
+    if (isControlled || typeof window === 'undefined') return;
+
+    const onPopState = () => {
+      const id = new URL(window.location.href).searchParams.get('threadId') || undefined;
+      setUrlThreadId(id);
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [isControlled]);
+
+  const effectiveThreadId = isControlled ? controlledThreadId : urlThreadId;
+
   const threadListAdapter = useMemo(
     () => createLangGraphThreadListAdapter(client, LMA_ASSISTANT_ID),
     [client]
@@ -27,6 +79,8 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({ client, ch
     messagesKey: 'messages',
     unstable_allowCancellation: true,
     unstable_threadListAdapter: threadListAdapter,
+    threadId: effectiveThreadId,
+    onThreadIdChange: handleThreadIdChange,
   });
 
   return (
