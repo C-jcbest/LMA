@@ -42,12 +42,16 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
         setUrlThreadId(newId);
         if (typeof window !== 'undefined') {
           const url = new URL(window.location.href);
-          if (newId) {
-            url.searchParams.set('threadId', newId);
-          } else {
-            url.searchParams.delete('threadId');
+          const currentParam = url.searchParams.get('threadId') || undefined;
+          const targetParam = newId || undefined;
+          if (currentParam !== targetParam) {
+            if (targetParam) {
+              url.searchParams.set('threadId', targetParam);
+            } else {
+              url.searchParams.delete('threadId');
+            }
+            window.history.pushState(null, '', url);
           }
-          window.history.replaceState(null, '', url);
         }
       }
     },
@@ -82,6 +86,20 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
     threadId: effectiveThreadId,
     onThreadIdChange: handleThreadIdChange,
   });
+
+  // 同步外部/URL threadId 到 assistant-ui runtime 会话切换
+  useEffect(() => {
+    if (!runtime.threads) return;
+    const state = runtime.threads.getState();
+    const currentActive = state.mainThreadId;
+    if (effectiveThreadId) {
+      if (currentActive !== effectiveThreadId) {
+        runtime.threads.switchToThread(effectiveThreadId);
+      }
+    } else if (state.newThreadId && currentActive !== state.newThreadId) {
+      runtime.threads.switchToNewThread();
+    }
+  }, [effectiveThreadId, runtime]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>

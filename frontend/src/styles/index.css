@@ -49,6 +49,9 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
+  --animate-collapsible-down: collapsible-down var(--animation-duration, 200ms) cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-collapsible-up: collapsible-up var(--animation-duration, 200ms) cubic-bezier(0.32, 0.72, 0, 1);
+
   @keyframes collapsible-down {
     from {
       height: 0;

@@ -35,9 +35,10 @@
   - 分页使用官方 `ThreadListPrimitive.LoadMore`，由 assistant-ui 自行管理 `nextCursor` 调度；
   - 会话标题由 Adapter 的 `generateTitle()` 生命周期托管，异步调用 `session-title` 图生成并回写，杜绝前后端双标题竞态。
 - **URL 驱动与 controlled 模式**：
-  - `AssistantProvider` 通过 `threadId` 与 `onThreadIdChange` 与 `window.location.search` (`?threadId=...`) 原生双向同步，原生支持刷新后会话保留、浏览器前进后退（`popstate`）与 URL 复制，不维护额外状态机。
+  - `AssistantProvider` 通过 `threadId` 与 `onThreadIdChange` 与 `window.location.search` (`?threadId=...`) 原生双向同步，UI 会话切换主动驱动 `pushState` 保证浏览器前进/后退（`popstate`）真实可用，并与 assistant-ui runtime 会话切换双向互通，支持刷新保留与 URL 分享，不维护额外状态机。
 - **前端基础技术栈升级（P1 落地）**：
   - 全面升级至 React 19.3 + Vite 8.3 + TypeScript 7.0 + Tailwind v4.3.3；
+  - 声明 `packageManager: "pnpm@10.30.3"` 与 `engines: { "node": ">=20.19.0" }`，提供 `.nvmrc`；
   - 在 `index.css` 的 `@theme inline` 中完整注册 shadcn 所需的 `--color-*` tokens。
 - **Stop 与生命周期回归官方**：
   - 前端 Stop 仅调用官方 `stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机；下一条 Human 消息直接提交创建正常新 Run。
@@ -87,7 +88,7 @@
   ```powershell
   cd frontend; pnpm run test; pnpm run build
   ```
-  包含 76 项单元与组件测试，生产构建无类型与打包错误。
+  包含 65 项单元与集成测试，生产构建无类型与打包错误。
 - **提交规范**：
   - 执行 `git diff --check` 确认无格式或空白问题；
   - 严禁提交 `.env`、密钥、真实账号或敏感数据。

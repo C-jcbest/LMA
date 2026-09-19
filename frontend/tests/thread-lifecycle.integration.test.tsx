@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createLangGraphThreadListAdapter } from '@/lib/langgraph/thread-list-adapter';
 import { AssistantProvider } from '@/app/providers/AssistantProvider';
 import { App } from '@/App';
+import { useAui, useAuiState } from '@assistant-ui/react';
 import * as api from '@/services/api';
 
 describe('LangGraph Thread List Adapter (P3)', () => {
@@ -193,9 +194,25 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       threads: {
         search: vi.fn().mockResolvedValue([]),
         create: vi.fn().mockResolvedValue({ thread_id: 'new-thread' }),
-        get: vi.fn().mockResolvedValue({ thread_id: 'new-thread', metadata: {} }),
+        get: vi.fn().mockImplementation(async (id: string) => ({
+          thread_id: id,
+          metadata: { graph_id: 'lma-agent', name: `会话 ${id}` },
+          created_at: '2026-09-18T10:00:00Z',
+          updated_at: '2026-09-18T10:00:00Z',
+        })),
         update: vi.fn().mockResolvedValue({}),
         delete: vi.fn().mockResolvedValue({}),
+        stream: vi.fn().mockImplementation(() => ({
+          onEvent: vi.fn().mockReturnValue(() => {}),
+          onError: vi.fn().mockReturnValue(() => {}),
+          startLifecycleWatcher: vi.fn(),
+          close: vi.fn().mockResolvedValue(undefined),
+          messages: (async function* () {})(),
+          values: (async function* () {})(),
+          toolCalls: (async function* () {})(),
+          subgraphs: (async function* () {})(),
+          subagents: (async function* () {})(),
+        })),
       },
       runs: {
         stream: vi.fn().mockImplementation(() => (async function* () {})()),
@@ -243,41 +260,60 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     });
   });
 
-  it('AssistantProvider 与浏览器 URL 保持双向同步，并支持 popstate 历史导航', () => {
+  it('AssistantProvider 与浏览器 URL 保持双向同步，驱动 pushState 并支持 popstate 历史导航切换会话', async () => {
+    // 1. 初始挂载：URL 带有 ?threadId=t-history-1
     window.history.replaceState(null, '', '?threadId=t-history-1');
+    const pushStateSpy = vi.spyOn(window.history, 'pushState');
 
-    let reportedThreadId: string | undefined;
-    const { rerender } = render(
-      <AssistantProvider
-        client={mockClient}
-        onThreadIdChange={(id) => {
-          reportedThreadId = id;
-        }}
-      >
-        <div>业务内容</div>
+    let capturedAui: any;
+    function Consumer() {
+      capturedAui = useAui();
+      const activeThreadId = useAuiState((s) => s.threads.mainThreadId);
+      const items = useAuiState((s) => s.threads.threadItems);
+      const currentItem = items.find((i) => i.id === activeThreadId);
+      return (
+        <div>
+          <div data-testid="active-thread-id">{activeThreadId}</div>
+          <div data-testid="active-external-id">{currentItem?.externalId ?? 'none'}</div>
+        </div>
+      );
+    }
+
+    render(
+      <AssistantProvider client={mockClient}>
+        <Consumer />
       </AssistantProvider>
     );
 
-    // 初始应读取自 URL
-    expect(new URL(window.location.href).searchParams.get('threadId')).toBe('t-history-1');
+    // 初始应正确从 URL 读取 t-history-1
+    await waitFor(() => {
+      expect(capturedAui.threads.getState().mainThreadId).toBe('t-history-1');
+      expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-1');
+    });
+    // 初始挂载读取 URL，不应重复触发 pushState
+    expect(pushStateSpy).not.toHaveBeenCalled();
 
-    // 受控切换到新线程
-    rerender(
-      <AssistantProvider
-        client={mockClient}
-        threadId="t-controlled-2"
-        onThreadIdChange={(id) => {
-          reportedThreadId = id;
-        }}
-      >
-        <div>业务内容</div>
-      </AssistantProvider>
-    );
+    // 2. 在 assistant-ui 内部切换会话到 t-history-2
+    await act(async () => {
+      capturedAui.threads.switchToThread('t-history-2');
+    });
 
-    // popstate 恢复
+    await waitFor(() => {
+      expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-2');
+      expect(new URL(window.location.href).searchParams.get('threadId')).toBe('t-history-2');
+    });
+    // 校验主动切换触发了 window.history.pushState
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
+
+    // 3. 模拟浏览器后退（Back）触发 popstate
     act(() => {
-      window.history.replaceState(null, '', '?threadId=t-history-3');
+      window.history.replaceState(null, '', '?threadId=t-history-1');
       window.dispatchEvent(new PopStateEvent('popstate'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-1');
+      expect(capturedAui.threads.getState().mainThreadId).toBe('t-history-1');
     });
   });
 
@@ -285,12 +321,14 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     const createdThread = {
       thread_id: 'thread-stream-test',
       created_at: '2026-09-18T10:00:00Z',
+      updated_at: '2026-09-18T10:00:00Z',
       metadata: { graph_id: 'lma-agent', name: '新会话' },
     };
     mockClient.threads.create.mockResolvedValue(createdThread);
     mockClient.threads.get.mockImplementation(async (id: string) => ({
       thread_id: id,
       created_at: '2026-09-18T10:00:00Z',
+      updated_at: '2026-09-18T10:00:00Z',
       metadata: { graph_id: 'lma-agent', name: `会话 ${id}` },
     }));
 
@@ -309,48 +347,59 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     expect(fetched.externalId).toBe(initialized.remoteId);
     expect(fetched.remoteId).toBe(initialized.remoteId);
 
-    // 3. 在 AssistantProvider 中切换并切回
-    let currentThreadId: string | undefined = initialized.remoteId;
-    const { rerender } = render(
-      <AssistantProvider
-        client={mockClient}
-        threadId={currentThreadId}
-        onThreadIdChange={(id) => {
-          currentThreadId = id;
-        }}
-      >
-        <div data-testid="thread-display">{currentThreadId}</div>
+    // 3. 在 AssistantProvider 中通过 assistant-ui 真实状态驱动会话切换
+    let capturedAui: any;
+    function Consumer() {
+      capturedAui = useAui();
+      const activeThreadId = useAuiState((s) => s.threads.mainThreadId);
+      const isRunning = useAuiState((s) => s.thread.isRunning);
+      const items = useAuiState((s) => s.threads.threadItems);
+      const activeItem = items.find((i) => i.id === activeThreadId);
+      return (
+        <div>
+          <div data-testid="aui-active-id">{activeThreadId}</div>
+          <div data-testid="aui-external-id">{activeItem?.externalId ?? 'none'}</div>
+          <div data-testid="aui-is-running">{isRunning ? 'running' : 'idle'}</div>
+        </div>
+      );
+    }
+
+    render(
+      <AssistantProvider client={mockClient}>
+        <Consumer />
       </AssistantProvider>
     );
 
-    expect(screen.getByTestId('thread-display')).toHaveTextContent('thread-stream-test');
+    // 切换到刚刚初始化的会话
+    await act(async () => {
+      capturedAui.threads.switchToThread('thread-stream-test');
+    });
 
-    // 切走会话
-    rerender(
-      <AssistantProvider
-        client={mockClient}
-        threadId="thread-another"
-        onThreadIdChange={(id) => {
-          currentThreadId = id;
-        }}
-      >
-        <div data-testid="thread-display">thread-another</div>
-      </AssistantProvider>
-    );
-    expect(screen.getByTestId('thread-display')).toHaveTextContent('thread-another');
+    await waitFor(() => {
+      expect(screen.getByTestId('aui-active-id')).toHaveTextContent('thread-stream-test');
+      expect(screen.getByTestId('aui-external-id')).toHaveTextContent('thread-stream-test');
+      expect(screen.getByTestId('aui-is-running')).toHaveTextContent('idle');
+    });
 
-    // 切回原会话
-    rerender(
-      <AssistantProvider
-        client={mockClient}
-        threadId="thread-stream-test"
-        onThreadIdChange={(id) => {
-          currentThreadId = id;
-        }}
-      >
-        <div data-testid="thread-display">thread-stream-test</div>
-      </AssistantProvider>
-    );
-    expect(screen.getByTestId('thread-display')).toHaveTextContent('thread-stream-test');
+    // 切走会话到 thread-another
+    await act(async () => {
+      capturedAui.threads.switchToThread('thread-another');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('aui-active-id')).toHaveTextContent('thread-another');
+      expect(screen.getByTestId('aui-external-id')).toHaveTextContent('thread-another');
+    });
+
+    // 切回原会话，验证上下文与 externalId 状态保持一致
+    await act(async () => {
+      capturedAui.threads.switchToThread('thread-stream-test');
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('aui-active-id')).toHaveTextContent('thread-stream-test');
+      expect(screen.getByTestId('aui-external-id')).toHaveTextContent('thread-stream-test');
+      expect(capturedAui.threads.getState().mainThreadId).toBe('thread-stream-test');
+    });
   });
 });
