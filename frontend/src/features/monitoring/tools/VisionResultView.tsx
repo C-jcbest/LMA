@@ -42,24 +42,25 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
   data,
   artifactImages = [],
 }) => {
-  if (!data?.chart_points || !Array.isArray(data.chart_points)) return null;
+  const visibleImages = (artifactImages || []).filter((image) => CHART_TITLES[image.name]);
+  const chartPoints = Array.isArray(data?.chart_points) ? data.chart_points : [];
+  if (chartPoints.length === 0 && visibleImages.length === 0) return null;
 
-  const obs = data.observations || {};
+  const obs = data?.observations || {};
   const candidates: any[] = obs.candidates || [];
-  const visibleImages = artifactImages.filter((image) => CHART_TITLES[image.name]);
 
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between text-[11px] text-neutral-400 px-0.5">
         <span>
-          测点: <strong className="text-neutral-700">{data.station_name}</strong>
-          （{data.begin_time?.slice(0, 10)} ~ {data.end_time?.slice(0, 10)}）
+          测点: <strong className="text-neutral-700">{data?.station_name || 'GNSS'}</strong>
+          {data?.begin_time && data?.end_time && `（${data.begin_time.slice(0, 10)} ~ ${data.end_time.slice(0, 10)}）`}
         </span>
         <span>
-          {data.total_points ?? data.chart_points.length} 条数据 ·
+          {data?.total_points ?? chartPoints.length} 条数据 ·
           {visibleImages.length > 0
             ? ` ${visibleImages.length} 张分析图`
-            : ` 展示 ${data.chart_points.length} 点`}
+            : ` 展示 ${chartPoints.length} 点`}
         </span>
       </div>
 
@@ -190,3 +191,5 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
     </div>
   );
 };
+
+export const VisionResult = VisionResultView;

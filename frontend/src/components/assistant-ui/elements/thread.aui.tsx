@@ -49,10 +49,12 @@ import {
   useAuiState,
 } from "@assistant-ui/react";
 import {
+  ArchiveIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   AudioLinesIcon,
   CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
@@ -251,15 +253,77 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
   );
 };
 
+const ThreadSummaryMessageView: FC<{ text: string }> = ({ text }) => {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!text || !text.trim()) return null;
+
+  return (
+    <div
+      data-slot="aui_summary-message-root"
+      className="my-2 w-full max-w-(--thread-max-width) mx-auto px-2"
+    >
+      <div className="border border-neutral-200/80 rounded-xl bg-neutral-50/70 overflow-hidden text-xs transition-colors">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+          className="w-full flex items-center gap-2 px-3.5 py-2 text-left hover:bg-neutral-100/70 transition-colors cursor-pointer select-none text-neutral-600"
+        >
+          <ArchiveIcon className="size-3.5 text-neutral-400 shrink-0" />
+          <span className="font-medium text-neutral-600 flex-1">更早的对话已压缩为摘要</span>
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 text-neutral-400 shrink-0 transition-transform duration-200",
+              expanded && "rotate-180 text-neutral-600",
+            )}
+          />
+        </button>
+        {expanded && (
+          <div className="px-3.5 pb-3 pt-1 border-t border-neutral-200/60 text-neutral-600 leading-relaxed font-sans">
+            <p>{text}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const AuiSummaryMessageText: FC = () => {
+  const auiText = useAuiState((s) => {
+    const parts = s.message?.content ?? [];
+    return parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("\n");
+  });
+  return <ThreadSummaryMessageView text={auiText} />;
+};
+
+export const ThreadSummaryMessage: FC<{ text?: string }> = ({
+  text: propText,
+}) => {
+  if (propText !== undefined) {
+    return <ThreadSummaryMessageView text={propText} />;
+  }
+  return <AuiSummaryMessageText />;
+};
+
 const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
   const isEditing = useAuiState((s) => s.message.composer.isEditing);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
+  const isSummary = useAuiState(
+    (s) =>
+      s.message.role === "system" ||
+      (s.message.metadata.custom as any)?.lc_source === "summarization",
+  );
 
   if (isEditing) return <EditComposer />;
   if (isSpoken) return <SpokenMessage />;
+  if (isSummary) return <ThreadSummaryMessage />;
   if (role === "user") return <UserMessage />;
   return <AssistantMessageComponent />;
 };

@@ -1,3 +1,39 @@
+diff --git a/dist/convertMessages.js b/dist/convertMessages.js
+index ccee6495e2ea69b2ac53927c4b78f42601ecf623..a8851d8710eddf622e1cd87b82359ebbe16d3a2c 100644
+--- a/dist/convertMessages.js
++++ b/dist/convertMessages.js
+@@ -42,12 +42,25 @@ const convertLangChainBaseMessage = (message, metadata = {}) => {
+ 			}],
+ 			metadata: { custom: getCustomMetadata(message.additional_kwargs) }
+ 		};
+-		case "human": return {
+-			role: "user",
+-			id: message.id,
+-			content: contentToParts(message.content),
+-			metadata: { custom: getCustomMetadata(message.additional_kwargs) }
+-		};
++		case "human": {
++			if (message.additional_kwargs?.lc_source === "summarization") {
++				return {
++					role: "system",
++					id: message.id,
++					content: [{
++						type: "text",
++						text: getStringContent(message.content)
++					}],
++					metadata: { custom: getCustomMetadata(message.additional_kwargs) }
++				};
++			}
++			return {
++				role: "user",
++				id: message.id,
++				content: contentToParts(message.content),
++				metadata: { custom: getCustomMetadata(message.additional_kwargs) }
++			};
++		}
+ 		case "ai": {
+ 			const toolCallParts = message.tool_calls?.map((tc) => ({
+ 				type: "tool-call",
 diff --git a/dist/types.d.ts b/dist/types.d.ts
 index ae175c71078582d902fa0dda25fe9448f13cdcbb..1a3b6075efe26ca4c7b0843785d01cac844dc5e4 100644
 --- a/dist/types.d.ts
@@ -33,6 +69,27 @@ index 18ad20f2504ef48c3f7abbd7cec27299d8379fec..9648594b18bb40d1a2a7e4fa4c7be014
  		onThreadIdChange
  	});
  };
+diff --git a/src/convertMessages.ts b/src/convertMessages.ts
+index 78544c6ef9d156ceca263c847cce6feec4864fff..340c68996d727703f3e91c8e4b0bd88a5e1f1959 100644
+--- a/src/convertMessages.ts
++++ b/src/convertMessages.ts
+@@ -90,6 +90,16 @@ export const convertLangChainBaseMessage = (
+       };
+ 
+     case "human":
++      if (message.additional_kwargs?.lc_source === "summarization") {
++        return {
++          role: "system",
++          id: message.id,
++          content: contentToParts(message.content),
++          metadata: {
++            custom: getCustomMetadata(message.additional_kwargs),
++          },
++        };
++      }
+       return {
+         role: "user",
+         id: message.id,
 diff --git a/src/types.ts b/src/types.ts
 index 2bee2fbd950badbf4d5beef16a29c4c61539b7f6..6fed161f00ca70c91e42d421fa67b6bb858fcd77 100644
 --- a/src/types.ts

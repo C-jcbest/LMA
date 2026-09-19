@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@assistant-ui/react-langchain@0.0.32':
-    hash: 72ca2473cd31d191479c7722da8ca903a74ebaa01fe88b026224cd0ca9409557
+    hash: 220363d0450b395b7494aaa18730b82d9318d127918b3bfae926ba7d99bb2026
     path: patches/@assistant-ui__react-langchain@0.0.32.patch
 
 importers:
@@ -21,10 +21,7 @@ importers:
         version: 0.15.21(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@assistant-ui/react-langchain':
         specifier: 0.0.32
-        version: 0.0.32(patch_hash=72ca2473cd31d191479c7722da8ca903a74ebaa01fe88b026224cd0ca9409557)(@assistant-ui/tap@0.9.18(@types/react@19.3.0)(react@19.3.0))(@langchain/langgraph-sdk@1.11.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@langchain/react@1.1.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@types/react@19.3.0)(react@19.3.0)
-      '@assistant-ui/react-markdown':
-        specifier: 0.14.16
-        version: 0.14.16(@assistant-ui/react@0.15.21(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 0.0.32(patch_hash=220363d0450b395b7494aaa18730b82d9318d127918b3bfae926ba7d99bb2026)(@assistant-ui/tap@0.9.18(@types/react@19.3.0)(react@19.3.0))(@langchain/langgraph-sdk@1.11.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@langchain/react@1.1.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@types/react@19.3.0)(react@19.3.0)
       '@assistant-ui/react-streamdown':
         specifier: 0.3.16
         version: 0.3.16(@assistant-ui/react@0.15.21(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -82,9 +79,6 @@ importers:
       react-dom:
         specifier: ^19.3.0
         version: 19.3.0(react@19.3.0)
-      remark-gfm:
-        specifier: ^4.0.1
-        version: 4.0.1
       sonner:
         specifier: ^2.0.8
         version: 2.0.8(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -2813,7 +2807,7 @@ snapshots:
       - ioredis
       - redis
 
-  '@assistant-ui/react-langchain@0.0.32(patch_hash=72ca2473cd31d191479c7722da8ca903a74ebaa01fe88b026224cd0ca9409557)(@assistant-ui/tap@0.9.18(@types/react@19.3.0)(react@19.3.0))(@langchain/langgraph-sdk@1.11.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@langchain/react@1.1.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@types/react@19.3.0)(react@19.3.0)':
+  '@assistant-ui/react-langchain@0.0.32(patch_hash=220363d0450b395b7494aaa18730b82d9318d127918b3bfae926ba7d99bb2026)(@assistant-ui/tap@0.9.18(@types/react@19.3.0)(react@19.3.0))(@langchain/langgraph-sdk@1.11.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@langchain/react@1.1.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(@types/react@19.3.0)(react@19.3.0)':
     dependencies:
       '@assistant-ui/core': 0.3.20(@assistant-ui/store@0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(react@19.3.0))(@assistant-ui/tap@0.9.18(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(assistant-cloud@0.2.2)(react@19.3.0)
       '@assistant-ui/store': 0.3.14(@assistant-ui/tap@0.9.18(@types/react@19.3.0)(react@19.3.0))(@types/react@19.3.0)(react@19.3.0)

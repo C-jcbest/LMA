@@ -74,7 +74,7 @@ function ReasoningRoot({
   const isControlled = controlledOpen !== undefined;
   const isOpen = isControlled
     ? controlledOpen
-    : (userOpen ?? (streaming || initialOpen));
+    : (userOpen ?? initialOpen);
   const isPreview = streaming === true && isOpen;
 
   const prevStreamingRef = useRef(streaming);
@@ -192,7 +192,7 @@ function ReasoningTrigger({
           active && "shimmer motion-reduce:animate-none",
         )}
       >
-        Reasoning{durationText}
+        {active ? "正在思考…" : "已思考"}
       </span>
       <ChevronDownIcon
         data-slot="reasoning-trigger-chevron"

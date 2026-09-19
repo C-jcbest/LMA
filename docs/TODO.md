@@ -8,6 +8,21 @@
 > - 早期历史清单及临时版本已清理归档。
 > - 已完成的基础设施与业务项已沉淀在代码与测试中；前端 assistant-ui 全面重构任务见 [重构 TODO.md](重构%20TODO.md)。
 
+## 近期重要完成项（2026-09-19）
+
+1. **历史摘要消息标准化与折叠展示**：
+   - Patch `@assistant-ui/react-langchain` 将 `additional_kwargs?.lc_source === "summarization"` 映射为 `role: "system"`，杜绝作为用户气泡；
+   - `ThreadSummaryMessage` 实现抽屉式归档折叠，默认收起并支持点击展开查看纯文本；彻底删除 `SummaryCard.tsx`。
+2. **P6：Reasoning / Thinking 完全替换**：
+   - 删除 `ThinkingBlock.tsx`、`ThinkingIndicator.tsx` 与 `components/reasoning.tsx`；
+   - 接入 assistant-ui 官方 `Reasoning` Element 与 Primitive，状态汉化（“正在思考…” / “已思考”），默认折叠，不伪造思考耗时。
+3. **P7：Tool Call Shell 全部交给 assistant-ui**：
+   - 彻底删除 `InlineToolCall.tsx` 与旧目录 `components/tools/`；
+   - 业务结果展示解耦迁移至 `features/monitoring/tools/`，通用生命周期与外壳由官方 `ToolFallback` 托管，通过 `registry.tsx` 精简分发。
+4. **P8：Markdown 改用 assistant-ui Streamdown**：
+   - 删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
+   - 统一改用 `@assistant-ui/react-streamdown`，保留中文字体样式与代码块复制。
+
 ---
 
 ## 近期重要完成项（2026-09-18）

@@ -1,65 +1,19 @@
 "use client";
 
-import "@assistant-ui/react-markdown/styles/dot.css";
-
+import { memo, type FC } from "react";
 import {
+  StreamdownTextPrimitive,
   type CodeHeaderProps,
-  MarkdownTextPrimitive,
-  unstable_memoizeMarkdownComponents as memoizeMarkdownComponents,
-  useIsMarkdownCodeBlock,
-} from "@assistant-ui/react-markdown";
-import remarkGfm from "remark-gfm";
-import { type FC, memo, useMemo, useRef } from "react";
-import type { TextMessagePartProps } from "@assistant-ui/react";
+  type StreamdownTextComponents,
+  type StreamdownTextPrimitiveProps,
+} from "@assistant-ui/react-streamdown";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { cn } from "@/lib/utils";
 
-type MarkdownTextProps = Partial<TextMessagePartProps> & {
-  components?: Parameters<typeof memoizeMarkdownComponents>[0];
-};
-
-const useShallowStable = <T extends Record<string, unknown> | undefined>(
-  value: T,
-): T => {
-  const ref = useRef(value);
-  if (value !== ref.current) {
-    const prev = ref.current;
-    const stable =
-      value !== undefined &&
-      prev !== undefined &&
-      Object.keys(prev).length === Object.keys(value).length &&
-      Object.keys(value).every((key) => prev[key] === value[key]);
-    if (!stable) ref.current = value;
-  }
-  return ref.current;
-};
-
-const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
-  const stableComponents = useShallowStable(components);
-  const markdownComponents = useMemo(() => {
-    if (!stableComponents) return defaultComponents;
-    return {
-      ...defaultComponents,
-      ...memoizeMarkdownComponents(stableComponents),
-    };
-  }, [stableComponents]);
-
-  return (
-    <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
-      className="aui-md"
-      components={markdownComponents}
-      defer
-    />
-  );
-};
-
-export const MarkdownText = memo(MarkdownTextImpl);
-
-const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
+const CodeHeader: FC<any> = ({ language, code }: CodeHeaderProps) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const onCopy = () => {
     if (!code || isCopied) return;
@@ -71,7 +25,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
       <span className="aui-code-header-language text-muted-foreground font-medium lowercase">
         {language}
       </span>
-      <TooltipIconButton tooltip="Copy" onClick={onCopy}>
+      <TooltipIconButton tooltip="复制" onClick={onCopy}>
         {!isCopied && (
           <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
         )}
@@ -83,7 +37,7 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   );
 };
 
-const defaultComponents = memoizeMarkdownComponents({
+const defaultComponents: StreamdownTextComponents = {
   h1: ({ className, ...props }) => (
     <h1
       className={cn(
@@ -251,18 +205,36 @@ const defaultComponents = memoizeMarkdownComponents({
       {...props}
     />
   ),
-  code: function Code({ className, ...props }) {
-    const isCodeBlock = useIsMarkdownCodeBlock();
-    return (
-      <code
-        className={cn(
-          !isCodeBlock &&
-            "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
-          className,
-        )}
-        {...props}
-      />
-    );
-  },
+  code: ({ className, ...props }) => (
+    <code
+      className={cn(
+        "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
+        className,
+      )}
+      {...props}
+    />
+  ),
   CodeHeader,
-});
+};
+
+export type MarkdownTextProps = StreamdownTextPrimitiveProps;
+
+const MarkdownTextImpl: FC<MarkdownTextProps> = ({
+  className,
+  components,
+  ...props
+}) => {
+  return (
+    <StreamdownTextPrimitive
+      className={cn("aui-md", className)}
+      components={{
+        ...defaultComponents,
+        ...components,
+      }}
+      defer
+      {...props}
+    />
+  );
+};
+
+export const MarkdownText = memo(MarkdownTextImpl);

@@ -301,7 +301,7 @@ LMA 自定义内容仅保留：
 
 ------
 
-# P6：Reasoning / Thinking 完全替换
+# P6：Reasoning / Thinking 完全替换（✅ 已完成）
 
 删除：
 
@@ -312,135 +312,76 @@ thinking-block CSS
 expanded 状态
 active spinner 状态
 reasoning lifecycle 判断
+frontend/src/components/reasoning.tsx
 ```
 
-改用 assistant-ui Reasoning / GroupedParts。
+改用 assistant-ui Reasoning / GroupedParts：
 
--  Reasoning 默认折叠。
--  流式过程中显示官方 running 状态。
+-  Reasoning 默认折叠（`ReasoningRoot` 保持默认折叠状态）。
+-  流式过程中显示官方 running 状态（文案汉化为 `正在思考…`）。
 -  完成后显示“已思考”。
 -  reasoning + tool calls 可使用 `MessagePrimitive.GroupedParts` 组合成连续调查过程。
 -  不展示伪造思考耗时。
 -  不通过字符串推断 reasoning 状态。
 -  不继续采用已经 deprecated 的旧 ChainOfThought/ReasoningGroup API。
 
-当前 assistant-ui 已建议使用 `MessagePrimitive.GroupedParts` 处理 reasoning/tool-call 分组，而旧的部分 Group API 已进入 deprecated 状态。
-
 ------
 
-# P7：Tool Call Shell 全部交给 assistant-ui
+# P7：Tool Call Shell 全部交给 assistant-ui（✅ 已完成）
 
-删除现有 `InlineToolCall.tsx` 中对通用工具生命周期的维护：
-
-```text
-isPending
-isError
-hasToolMessageResult
-hasLiveOutput
-isLiveRunning
-spinner/check/error icon lifecycle
-折叠 Shell
-通用 Tool 错误 Shell
-```
-
-assistant-ui Tool Call 已提供：
+删除现有 `InlineToolCall.tsx` 与旧目录 `components/tools/`：
 
 ```text
-running
-complete
-incomplete
-cancelled
-requires-action
-error
-args
-result
-timing
+InlineToolCall.tsx
+components/tools/
+├── EmptyOrGenericResultView.tsx
+├── GnssResultView.tsx
+├── SiteEnvironmentResultView.tsx
+├── StationResultView.tsx
+├── VisionResultView.tsx
+├── WeatherResultView.tsx
+├── gnssUtils.ts
+├── registry.tsx
+└── types.ts
 ```
 
-这些状态不得再次推断。
+彻底移除对通用工具生命周期的手写维护（isPending, isError, hasToolMessageResult, hasLiveOutput, isLiveRunning, spinner/check/error 图标生命周期、折叠 Shell、通用 Tool 错误 Shell）。
 
 ## 7.1 使用 ToolFallback
-
-安装官方：
-
-```text
-@assistant-ui/tool-fallback
-```
-
-用于所有没有专门业务 Renderer 的工具。
-
-禁止自己再实现：
-
-```text
-GenericToolResult
-GenericToolCard
-UnknownTool
-```
-
-ToolFallback 已经是 Thread 默认未注册工具 Renderer，并自带 collapsible、状态、args、result、error 和 approval 展示。
+- 采用官方 `ToolFallback` 架构，在 `src/components/assistant-ui/elements/tool-fallback.aui.tsx` 中增强：
+  - 汉化工具状态（`正在调用` / `已调用` / `已取消调用` / `待确认操作` / `调用异常`）并展示工具友好中文名；
+  - 汉化 `ToolFallbackResult`、`ToolFallbackError`、`ToolFallbackApproval` 的操作按钮与表头；
+  - `ToolFallbackImpl` 接收到结果/artifact 时，若命中业务工具且数据有效，在内容区直接渲染领域结果组件；若未命中业务工具或结果非业务结构，平滑回退至通用 `ToolFallbackResult`。
 
 ## 7.2 LMA 工具只保留“结果内容”
-
-保留：
-
-```text
-GnssResult
-WeatherResult
-VisionResult
-StationResult
-SiteEnvironmentResult
-```
-
-但这些组件不得继续负责工具生命周期。
+业务展示组件全部迁移至 `src/features/monitoring/tools/`：
+- `GnssResultView.tsx`（及 `GnssResult`）
+- `WeatherResultView.tsx`（及 `WeatherResult`）
+- `VisionResultView.tsx`（及 `VisionResult`）
+- `StationResultView.tsx`（及 `StationResult`）
+- `SiteEnvironmentResultView.tsx`（及 `SiteEnvironmentResult`）
+- `gnssUtils.ts`、`types.ts`
 
 目标结构：
-
 ```text
-assistant-ui Tool Part
+assistant-ui Tool Part (ToolFallback)
         │
-        ├── 通用状态、折叠、error → assistant-ui
+        ├── 通用状态、折叠、error、approval → assistant-ui
         │
         └── result/artifact
                  ↓
-          LMA Tool Renderer
+          LMA Tool Renderer (features/monitoring/tools/*)
 ```
-
-现有 `ToolMessage.artifact` 可以继续保留。assistant-ui 当前 LangChain message converter 已保留 ToolMessage 的 `result`、`artifact` 和 `isError` 信息，因此本轮无需为了 UI 重构修改大数据/图片的消息存储方案。
 
 ## 7.3 精简 Tool Registry
-
-当前 `components/tools/registry.tsx` 重构为：
-
-```text
-features/monitoring/tools/
-├── registry.ts
-├── GnssResult.tsx
-├── WeatherResult.tsx
-├── VisionResult.tsx
-├── StationResult.tsx
-└── SiteEnvironmentResult.tsx
-```
-
-Registry 只负责：
-
-```text
-tool name → business renderer
-```
-
-禁止再承担：
-
-```text
-工具运行状态
-loading
-error lifecycle
-collapse lifecycle
-消息关联
-JSON 猜测
-```
+`src/features/monitoring/tools/registry.tsx` 只保留：
+- `toolName -> business renderer` 字典；
+- `decodeToolArtifact` 安全解码与校验逻辑。
+不再承担任何工具运行状态机、loading 态、折叠、JSON 猜测等职责。
 
 ------
 
-# P8：Markdown 改用 assistant-ui Streamdown
+# P8：Markdown 改用 assistant-ui Streamdown（✅ 已完成）
 
 删除：
 
@@ -448,7 +389,6 @@ JSON 猜测
 MarkdownMessage.tsx
 react-markdown
 remark-gfm
-大量 .message-markdown CSS
 ```
 
 统一改用：
@@ -457,25 +397,9 @@ remark-gfm
 @assistant-ui/react-streamdown
 ```
 
-只配置当前真正需要的：
-
-```text
-普通 Markdown
-GFM
-表格
-代码块
-中文排版
-```
-
-暂时不要因为组件支持就引入：
-
-```text
-Mermaid
-数学公式
-复杂代码运行器
-```
-
-除非后续 LMA 确实需要。
+- 在 `frontend/src/components/markdown-text.tsx` 中基于 `StreamdownTextPrimitive` 封装，保留排版样式与 `CodeHeader`（代码复制能力）；
+- 卸载 `@assistant-ui/react-markdown`、`react-markdown` 与 `remark-gfm`；
+- 配置只保留当前真正需要的普通 Markdown、GFM、表格与代码块高亮，不引入未经审查的 Mermaid/公式重量级依赖。
 
 ------
 

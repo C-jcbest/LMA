@@ -44,3 +44,5 @@ export const GnssResultView: React.FC<ToolResultProps> = ({ data }) => {
     </div>
   );
 };
+
+export const GnssResult = GnssResultView;

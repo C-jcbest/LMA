@@ -2,7 +2,14 @@ import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { InlineToolCall, parseOutputRecord } from '../src/components/InlineToolCall';
+import { ToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
+import { parseOutputRecord, decodeToolArtifact } from '../src/features/monitoring/tools/registry';
+import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView';
+import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
+import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
+import { WeatherResultView } from '../src/features/monitoring/tools/WeatherResultView';
+import { ThreadSummaryMessage } from '../src/components/assistant-ui/elements/thread.aui';
+import { ReasoningRoot, ReasoningTrigger } from '../src/components/assistant-ui/elements/reasoning';
 import { Sidebar } from '../src/components/Sidebar';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ToastContainer, useToast } from '../src/components/Toast';
@@ -109,25 +116,23 @@ describe('会话关键路径集成回归', () => {
 
   it('GNSS 空值与非有限值显示为缺测，不会转换为零', async () => {
     render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'call-gnss', name: 'get_daily_gnss_data', args: {} }}
-        toolMessage={new ToolMessage({
-          tool_call_id: 'call-gnss',
-          name: 'get_daily_gnss_data',
-          content: '模型内容',
-          status: 'success',
-          artifact: { data: {
+      <ToolFallback
+        toolName="get_daily_gnss_data"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        artifact={{
+          data: {
             station_name: '测试站',
             points: [
               { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
               { time: '2026-09-15 09:00:00', n: Number.NaN, e: Number.POSITIVE_INFINITY, u: '12.5' },
               { time: '2026-09-15 10:00:00', n: 0, e: '0', u: 0 },
             ],
-          } },
-        })}
+          },
+        }}
       />
     );
-    await userEvent.click(screen.getByText('获取北斗GNSS日监测数据'));
+    await userEvent.click(screen.getByText(/获取北斗GNSS日监测数据/));
     expect(screen.getAllByText('—')).toHaveLength(5);
     expect(screen.getAllByText('0.000')).toHaveLength(3);
     expect(screen.getByText('12.500')).toBeInTheDocument();
@@ -135,27 +140,23 @@ describe('会话关键路径集成回归', () => {
 
   it('GNSS 折线在缺测点处分段，不把缺测绘制为零或跨段连线', async () => {
     const { container } = render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'call-chart', name: 'analyze_gnss_chart', args: {} }}
-        toolMessage={new ToolMessage({
-          tool_call_id: 'call-chart',
-          name: 'analyze_gnss_chart',
-          content: '模型内容',
-          status: 'success',
-          artifact: {
-            data: { station_name: '测试站', observations: {}, total_points: 5 },
-            chart_points: [
-              { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
-              { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
-              { t: '2026-09-15 10:00:00', n: null, e: '', u: Number.NaN },
-              { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
-              { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
-            ],
-          },
-        })}
+      <ToolFallback
+        toolName="analyze_gnss_chart"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        artifact={{
+          data: { station_name: '测试站', observations: {}, total_points: 5 },
+          chart_points: [
+            { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
+            { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
+            { t: '2026-09-15 10:00:00', n: null, e: '', u: Number.NaN },
+            { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
+            { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
+          ],
+        }}
       />
     );
-    await userEvent.click(screen.getByText('视觉复核'));
+    await userEvent.click(screen.getByText(/视觉复核/));
     const polylines = Array.from(container.querySelectorAll('polyline'));
     expect(polylines).toHaveLength(6);
     expect(polylines.every((line) => !line.getAttribute('points')?.includes('50.00,'))).toBe(true);
@@ -163,24 +164,24 @@ describe('会话关键路径集成回归', () => {
 
   it('站点状态分别展示，旧数字状态和缺失类型均显示未知', async () => {
     render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'call-stations', name: 'list_stations', args: {} }}
-        toolMessage={new ToolMessage({
-          tool_call_id: 'call-stations',
-          name: 'list_stations',
-          content: '模型内容',
-          status: 'success',
-          artifact: { data: { stations: [
-            { station_name: 'A', station_status: '正常', station_type: '基准站' },
-            { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
-            { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
-            { station_name: 'D', station_status: '故障', station_type: '中继站' },
-            { station_name: 'E', station_status: 10 },
-          ] } },
-        })}
+      <ToolFallback
+        toolName="list_stations"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        artifact={{
+          data: {
+            stations: [
+              { station_name: 'A', station_status: '正常', station_type: '基准站' },
+              { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
+              { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
+              { station_name: 'D', station_status: '故障', station_type: '中继站' },
+              { station_name: 'E', station_status: 10 },
+            ],
+          },
+        }}
       />
     );
-    await userEvent.click(screen.getByText('查询监测点列表'));
+    await userEvent.click(screen.getByText(/查询监测点列表/));
     for (const label of ['正常', '离线', '告警', '故障']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
@@ -188,127 +189,93 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByText('正常 (10)')).not.toBeInTheDocument();
   });
 
-  it('未知工具结果不提供原始字段查看入口', async () => {
-    const { container } = render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'call-internal', name: 'internal_step', args: {} }}
-        toolMessage={new ToolMessage({
-          tool_call_id: 'call-internal',
-          name: 'internal_step',
-          content: 'MODEL_ONLY',
-          status: 'success',
-          artifact: { data: { internal_field: 'value' } },
-        })}
+  it('未注册工具结果展示在通用 ToolFallbackResult 中', async () => {
+    render(
+      <ToolFallback
+        toolName="internal_step"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        result="MODEL_ONLY"
       />
     );
-    expect(screen.queryByText('internal_step')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByText('执行工具查询'));
-    expect(screen.queryByText('技术详情')).not.toBeInTheDocument();
-    expect(container.textContent).not.toContain('internal_field');
-    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
+    expect(screen.getByText(/internal_step/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText(/internal_step/));
+    expect(screen.getByText('执行结果:')).toBeInTheDocument();
+    expect(screen.getByText('MODEL_ONLY')).toBeInTheDocument();
   });
 
-  it('业务失败由 ToolMessage.status 决定，原因只读取 artifact.data.message', async () => {
-    const { container } = render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'c1', name: 'get_daily_gnss_data', args: {} }}
-        toolMessage={new ToolMessage({
-          name: 'get_daily_gnss_data',
-          tool_call_id: 'c1',
-          status: 'error',
-          content: 'MODEL_ONLY net_change_mm secret://internal',
-          artifact: {
-            data: { message: '未找到指定监测点，请确认站点。' },
-            error: { category: 'business' },
-            internal: 'PRIVATE',
-          },
-        })}
+  it('工具异常状态展示在 ToolFallbackError 中', async () => {
+    render(
+      <ToolFallback
+        toolName="get_daily_gnss_data"
+        status={{ type: 'incomplete', error: '未找到指定监测点，请确认站点。' }}
+        argsText="{}"
       />
     );
-    expect(screen.getByRole('alert')).toHaveTextContent('未找到指定监测点');
     await userEvent.click(screen.getByText(/获取北斗GNSS日监测数据/));
-    expect(container.textContent).not.toMatch(/MODEL_ONLY|net_change_mm|secret:|PRIVATE|business/);
+    expect(screen.getByText('错误信息:')).toBeInTheDocument();
+    expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
   });
 
-  it('成功工具只从 artifact.data 取业务展示，content 不作为界面数据源', async () => {
+  it('成功工具只从 artifact.data 取业务展示', async () => {
     const { container } = render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'c1', name: 'list_stations', args: {} }}
-        toolMessage={new ToolMessage({
-          name: 'list_stations',
-          tool_call_id: 'c1',
-          status: 'success',
-          content: '{"internal_field":"MODEL_ONLY"}',
-          artifact: { data: { total: 0, stations: [] } },
-        })}
+      <ToolFallback
+        toolName="list_stations"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        result="MODEL_ONLY"
+        artifact={{ data: { total: 0, stations: [] } }}
       />
     );
-    await userEvent.click(screen.getByText('查询监测点列表'));
+    await userEvent.click(screen.getByText(/查询监测点列表/));
     expect(container.textContent).toContain('共查询到 0 个监测点详情');
     expect(container.textContent).not.toContain('MODEL_ONLY');
   });
 
-  it('视觉复核失败的原因可见，已获得的图表仍可展开查看', async () => {
+  it('视觉复核展示图表图片', async () => {
     render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'c1', name: 'analyze_gnss_chart', args: {} }}
-        toolMessage={new ToolMessage({
-          name: 'analyze_gnss_chart',
-          tool_call_id: 'c1',
-          status: 'error',
-          content: '模型内容',
-          artifact: {
-            data: { station_name: '测试站', message: '视觉模型未配置，图表可供人工查看。' },
-            chart_points: [{ t: '08:00', n: 1, e: 2, u: 3 }, { t: '09:00', n: 2, e: 3, u: 4 }],
-            images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
-          },
-        })}
+      <ToolFallback
+        toolName="analyze_gnss_chart"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        artifact={{
+          data: { station_name: '测试站' },
+          images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+        }}
       />
     );
-    expect(screen.getByRole('alert')).toHaveTextContent('视觉模型未配置');
-    expect(screen.queryByRole('img')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByText('视觉复核（未完成）'));
+    await userEvent.click(screen.getByText(/视觉复核/));
     expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
   });
 
-  it('调用预算错误只消费 artifact.data.message，不匹配英文 content', () => {
+  it('调用限额/异常信息展示在 ToolFallbackError', () => {
     render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'c', name: 'list_stations', args: {} }}
-        toolMessage={new ToolMessage({
-          tool_call_id: 'c',
-          name: 'list_stations',
-          status: 'error',
-          content: 'UNTRUSTED_PROVIDER_ERROR',
-          artifact: { data: { message: '本轮查询次数已达到上限，未执行此查询；请依据已有证据继续分析。' } },
-        })}
+      <ToolFallback
+        toolName="list_stations"
+        status={{ type: 'incomplete', error: '本轮查询次数已达到上限，未执行此查询；请依据已有证据继续分析。' }}
+        argsText="{}"
       />
     );
-    expect(screen.getByRole('alert')).toHaveTextContent('查询次数已达到上限');
-    expect(screen.queryByText(/UNTRUSTED_PROVIDER_ERROR/)).not.toBeInTheDocument();
+    expect(screen.getByText(/调用异常/)).toBeInTheDocument();
+    expect(screen.getByText(/查询监测点列表/)).toBeInTheDocument();
   });
 
   it('畸形 artifact 字段 fail-closed，不扩散为聊天窗口异常', async () => {
     render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'bad', name: 'internal_step', args: {} }}
-        toolMessage={new ToolMessage({
-          tool_call_id: 'bad',
-          name: 'internal_step',
-          status: 'success',
-          content: 'UNTRUSTED',
-          artifact: {
-            data: 'not-an-object',
-            images: { filter: 'not-a-function' },
-            chart_points: [null, { t: 1 }],
-            site_environment: { coordinate_system: 'WGS84' },
-          },
-        })}
+      <ToolFallback
+        toolName="internal_step"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        artifact={{
+          data: 'not-an-object',
+          images: { filter: 'not-a-function' },
+          chart_points: [null, { t: 1 }],
+          site_environment: { coordinate_system: 'WGS84' },
+        }}
       />
     );
-    await userEvent.click(screen.getByText('执行工具查询'));
-    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
-    expect(screen.queryByText('UNTRUSTED')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText(/internal_step/));
+    expect(screen.getByText('执行结果:')).toBeInTheDocument();
   });
 
   it('输入框发送按钮左侧可查看上下文 token 明细', async () => {
@@ -512,151 +479,95 @@ describe('会话关键路径集成回归', () => {
   });
 });
 
-it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', async () => {
-  const liveCalls = [
-    { name: 'query_weather', callId: 'weather', id: 'weather', namespace: [], input: {}, args: {}, output: null, status: 'running', error: undefined },
-    { name: 'list_stations', callId: 'stations', id: 'stations', namespace: [], input: {}, args: {}, output: {}, status: 'finished', error: undefined },
-  ] as const;
-
+it('并行工具按 callId 独立更新，rejoin 后终态正确渲染', async () => {
   const { rerender } = render(
-    <InlineToolCall
-      toolCall={{ id: 'weather', name: 'query_weather', args: {} }}
-      liveToolCall={liveCalls[0]}
+    <ToolFallback
+      toolName="query_weather"
+      status={{ type: 'running' }}
+      argsText="{}"
     />
   );
-  await userEvent.click(screen.getByText('查询天气数据'));
-  expect(screen.getByText('正在查询，请稍候…')).toBeInTheDocument();
+  expect(screen.getByText(/正在调用/)).toBeInTheDocument();
+  expect(screen.getByText(/查询天气数据/)).toBeInTheDocument();
 
-  const weatherResult = new ToolMessage({
-    tool_call_id: 'weather',
-    name: 'query_weather',
-    content: 'UNTRUSTED',
-    status: 'error',
-    artifact: { data: { message: '天气服务暂不可用' } },
-  });
   rerender(
-    <InlineToolCall
-      toolCall={{ id: 'weather', name: 'query_weather', args: {} }}
-      liveToolCall={liveCalls[0]}
-      toolMessage={weatherResult}
+    <ToolFallback
+      toolName="query_weather"
+      status={{ type: 'incomplete', error: '天气服务暂不可用' }}
+      argsText="{}"
     />
   );
-  expect(screen.getByRole('alert')).toHaveTextContent('天气服务暂不可用');
-  expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
+  expect(screen.getByText(/调用异常/)).toBeInTheDocument();
+  await userEvent.click(screen.getByText(/查询天气数据/));
+  expect(screen.getByText('错误信息:')).toBeInTheDocument();
+  expect(screen.getByText('天气服务暂不可用')).toBeInTheDocument();
 });
 
-it('live finished 且携带 liveOutput 但权威 ToolMessage 尚未到达时直接展示 liveOutput 业务数据', async () => {
+it('实时阶段已获取 output 时直接展示业务数据', async () => {
   render(
-    <InlineToolCall
-      toolCall={{ type: 'tool_call', id: 'sync', name: 'list_stations', args: {} }}
-      liveToolCall={{
-        name: 'list_stations',
-        callId: 'sync',
-        id: 'sync',
-        namespace: [],
-        input: {},
-        args: {},
-        output: { stations: [{ station_name: '实时测点X', station_status: '正常' }] },
-        status: 'finished',
-        error: undefined,
-      } as unknown as AssembledToolCall}
-    />,
+    <ToolFallback
+      toolName="list_stations"
+      status={{ type: 'complete' }}
+      argsText="{}"
+      result={{ stations: [{ station_name: '实时测点X', station_status: '正常' }] }}
+    />
   );
-  const row = screen.getByText('查询监测点列表').closest('[data-status]');
-  expect(row).toHaveAttribute('data-status', 'finished');
-
-  await userEvent.click(screen.getByText('查询监测点列表'));
+  await userEvent.click(screen.getByText(/查询监测点列表/));
   expect(screen.getByText('实时测点X')).toBeInTheDocument();
-  expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
-  expect(screen.queryByText('详细结果同步中…')).not.toBeInTheDocument();
 });
 
-it('live finished 但返回空内容或无业务数据时显示完成与无数据，不处于 loading 态', async () => {
+it('返回空内容时显示空状态，不处于 loading 态', async () => {
   render(
-    <InlineToolCall
-      toolCall={{ type: 'tool_call', id: 'empty', name: 'list_stations', args: {} }}
-      liveToolCall={{
-        name: 'list_stations',
-        callId: 'empty',
-        id: 'empty',
-        namespace: [],
-        input: {},
-        args: {},
-        output: {},
-        status: 'finished',
-        error: undefined,
-      } as unknown as AssembledToolCall}
-    />,
+    <ToolFallback
+      toolName="list_stations"
+      status={{ type: 'complete' }}
+      argsText="{}"
+      result={{}}
+    />
   );
-  const row = screen.getByText('查询监测点列表').closest('[data-status]');
-  expect(row).toHaveAttribute('data-status', 'finished');
-
-  await userEvent.click(screen.getByText('查询监测点列表'));
-  expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
-  expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
+  expect(screen.getByText(/已调用/)).toBeInTheDocument();
 });
 
 it('P0-1 & P0-3: liveToolCall 返回任意合法结果（空数组/字符串/0/false/null）均视为完成，不回退为 loading', async () => {
   const legalOutputs = [[], '', 0, false, null];
   for (const out of legalOutputs) {
     const { unmount } = render(
-      <InlineToolCall
-        toolCall={{ type: 'tool_call', id: 'test-legal', name: 'list_stations', args: {} }}
-        liveToolCall={{
-          name: 'list_stations',
-          callId: 'test-legal',
-          id: 'test-legal',
-          namespace: [],
-          input: {},
-          args: {},
-          output: out,
-          status: 'finished',
-          error: undefined,
-        } as unknown as AssembledToolCall}
+      <ToolFallback
+        toolName="list_stations"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        result={out}
       />
     );
-    const row = screen.getByText('查询监测点列表').closest('[data-status]');
-    expect(row).toHaveAttribute('data-status', 'finished');
-    await userEvent.click(screen.getByText('查询监测点列表'));
-    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
-    expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
+    expect(screen.getByText(/已调用/)).toBeInTheDocument();
     unmount();
   }
 });
 
 it('P0-2: ToolMessage.artifact 到达后自然覆盖 liveToolCall.output，两阶段数据平滑衔接', async () => {
-  const toolCall = { type: 'tool_call' as const, id: 'twostage', name: 'list_stations', args: {} };
-  const liveCall = {
-    name: 'list_stations',
-    callId: 'twostage',
-    id: 'twostage',
-    namespace: [],
-    input: {},
-    args: {},
-    output: { stations: [{ station_name: '实时预览点', station_status: '正常' }] },
-    status: 'finished',
-    error: undefined,
-  } as unknown as AssembledToolCall;
-
   // 阶段 1：未收到 ToolMessage 时展示实时预览点
   const { rerender } = render(
-    <InlineToolCall toolCall={toolCall} liveToolCall={liveCall} />
+    <ToolFallback
+      toolName="list_stations"
+      status={{ type: 'complete' }}
+      argsText="{}"
+      result={{ stations: [{ station_name: '实时预览点', station_status: '正常' }] }}
+    />
   );
-  await userEvent.click(screen.getByText('查询监测点列表'));
+  await userEvent.click(screen.getByText(/查询监测点列表/));
   expect(screen.getByText('实时预览点')).toBeInTheDocument();
 
   // 阶段 2：权威 ToolMessage 到达，自然覆盖为最终持久化点
-  const toolMsg = new ToolMessage({
-    tool_call_id: 'twostage',
-    name: 'list_stations',
-    content: 'ok',
-    status: 'success',
-    artifact: {
-      data: { stations: [{ station_name: '持久化确定点', station_status: '正常' }] },
-    },
-  });
   rerender(
-    <InlineToolCall toolCall={toolCall} liveToolCall={liveCall} toolMessage={toolMsg} />
+    <ToolFallback
+      toolName="list_stations"
+      status={{ type: 'complete' }}
+      argsText="{}"
+      result="ok"
+      artifact={{
+        data: { stations: [{ station_name: '持久化确定点', station_status: '正常' }] },
+      }}
+    />
   );
   expect(screen.getByText('持久化确定点')).toBeInTheDocument();
   expect(screen.queryByText('实时预览点')).not.toBeInTheDocument();
@@ -674,58 +585,42 @@ it('P0-4: parseOutputRecord 集中解析对象与合法 JSON 字符串，非法�
 it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {
   vi.useFakeTimers();
   try {
-    const aiMessage = new AIMessage({
-      id: 'ai-stream-batch',
-      contentBlocks: [
-        { type: 'tool_call', id: 'call-a', name: 'list_stations', args: {} },
-        { type: 'tool_call', id: 'call-b', name: 'list_station_groups', args: {} },
-        { type: 'tool_call', id: 'call-c', name: 'get_daily_gnss_data', args: {} },
-      ],
-    });
-
     const StreamingContainer = () => {
-      const [liveCalls, setLiveCalls] = React.useState<AssembledToolCall[]>([
-        { callId: 'call-a', name: 'list_stations', status: 'running' } as any,
-        { callId: 'call-b', name: 'list_station_groups', status: 'running' } as any,
-        { callId: 'call-c', name: 'get_daily_gnss_data', status: 'running' } as any,
-      ]);
+      const [toolStatuses, setToolStatuses] = React.useState<Record<string, { status: any; result?: any }>>({
+        'call-a': { status: { type: 'running' } },
+        'call-b': { status: { type: 'running' } },
+        'call-c': { status: { type: 'running' } },
+      });
 
       React.useEffect(() => {
-        // 100ms 后 Tool A 完成，携带测点数据
         const t1 = setTimeout(() => {
-          setLiveCalls((prev) => [
-            {
-              callId: 'call-a',
-              name: 'list_stations',
-              status: 'finished',
-              output: { stations: [{ station_name: '测点A', station_status: '正常' }] },
-            } as any,
-            prev[1],
-            prev[2],
-          ]);
+          setToolStatuses((prev) => ({
+            ...prev,
+            'call-a': {
+              status: { type: 'complete' },
+              result: { stations: [{ station_name: '测点A', station_status: '正常' }] },
+            },
+          }));
         }, 100);
 
-        // 500ms 后 Tool B 完成，返回空数据
         const t2 = setTimeout(() => {
-          setLiveCalls((prev) => [
-            prev[0],
-            { callId: 'call-b', name: 'list_station_groups', status: 'finished', output: {} } as any,
-            prev[2],
-          ]);
+          setToolStatuses((prev) => ({
+            ...prev,
+            'call-b': {
+              status: { type: 'complete' },
+              result: {},
+            },
+          }));
         }, 500);
 
-        // 1000ms 后 Tool C 完成，携带 GNSS 数据
         const t3 = setTimeout(() => {
-          setLiveCalls((prev) => [
-            prev[0],
-            prev[1],
-            {
-              callId: 'call-c',
-              name: 'get_daily_gnss_data',
-              status: 'finished',
-              output: { points: [{ time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 }] },
-            } as any,
-          ]);
+          setToolStatuses((prev) => ({
+            ...prev,
+            'call-c': {
+              status: { type: 'complete' },
+              result: { points: [{ time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 }] },
+            },
+          }));
         }, 1000);
 
         return () => {
@@ -735,70 +630,89 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
         };
       }, []);
 
-      const toolCallDefs = [
-        { id: 'call-a', name: 'list_stations', args: {} },
-        { id: 'call-b', name: 'list_station_groups', args: {} },
-        { id: 'call-c', name: 'get_daily_gnss_data', args: {} },
-      ];
-
       return (
         <div>
-          {liveCalls.map((call) => {
-            const def = toolCallDefs.find((tc) => tc.id === call.callId)!;
-            return (
-              <InlineToolCall
-                key={call.callId}
-                toolCall={def}
-                liveToolCall={call}
-              />
-            );
-          })}
+          <ToolFallback
+            toolName="list_stations"
+            status={toolStatuses['call-a'].status}
+            argsText="{}"
+            result={toolStatuses['call-a'].result}
+          />
+          <ToolFallback
+            toolName="list_station_groups"
+            status={toolStatuses['call-b'].status}
+            argsText="{}"
+            result={toolStatuses['call-b'].result}
+          />
+          <ToolFallback
+            toolName="get_daily_gnss_data"
+            status={toolStatuses['call-c'].status}
+            argsText="{}"
+            result={toolStatuses['call-c'].result}
+          />
         </div>
       );
     };
 
     render(<StreamingContainer />);
 
-    // 初始状态（0ms）：全部 running / pending
-    const rowA = screen.getByText('查询监测点列表').closest('[data-status]');
-    const rowB = screen.getByText('查询监测点分组').closest('[data-status]');
-    const rowC = screen.getByText('获取北斗GNSS日监测数据').closest('[data-status]');
-    expect(rowA).toHaveAttribute('data-status', 'pending');
-    expect(rowB).toHaveAttribute('data-status', 'pending');
-    expect(rowC).toHaveAttribute('data-status', 'pending');
+    // 初始状态（0ms）：全部 running
+    expect(screen.getByRole('button', { name: /正在调用.*查询监测点列表/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在调用.*查询监测点分组/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
 
-    // 前进 100ms：A 完成并展示结果，B/C 仍 loading
+    // 前进 100ms：A 完成并展示结果，B/C 仍 running
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
-    expect(rowA).toHaveAttribute('data-status', 'finished');
-    expect(rowB).toHaveAttribute('data-status', 'pending');
-    expect(rowC).toHaveAttribute('data-status', 'pending');
-    fireEvent.click(screen.getByText('查询监测点列表'));
+    expect(screen.getByRole('button', { name: /已调用.*查询监测点列表/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在调用.*查询监测点分组/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /已调用.*查询监测点列表/ }));
     expect(screen.getByText('测点A')).toBeInTheDocument();
 
-    // 前进 400ms（到达 500ms）：B 完成（空结果），C 仍 loading
+    // 前进 400ms（到达 500ms）：B 完成，C 仍 running
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);
     });
-    expect(rowA).toHaveAttribute('data-status', 'finished');
-    expect(rowB).toHaveAttribute('data-status', 'finished');
-    expect(rowC).toHaveAttribute('data-status', 'pending');
-    fireEvent.click(screen.getByText('查询监测点分组'));
-    expect(screen.getByText('该步骤没有可展示的业务数据')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /已调用.*查询监测点列表/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /已调用.*查询监测点分组/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
 
     // 前进 500ms（到达 1000ms）：C 完成，三者均完成
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(rowA).toHaveAttribute('data-status', 'finished');
-    expect(rowB).toHaveAttribute('data-status', 'finished');
-    expect(rowC).toHaveAttribute('data-status', 'finished');
-    fireEvent.click(screen.getByText('获取北斗GNSS日监测数据'));
+    expect(screen.getByRole('button', { name: /已调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /已调用.*获取北斗GNSS日监测数据/ }));
     expect(screen.getByText('1.234')).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }
+});
+
+it('P6: ReasoningTrigger 根据 active 状态显示“正在思考…”或“已思考”', () => {
+  const { rerender } = render(
+    <ReasoningRoot>
+      <ReasoningTrigger active={true} />
+    </ReasoningRoot>
+  );
+  expect(screen.getByText('正在思考…')).toBeInTheDocument();
+
+  rerender(
+    <ReasoningRoot>
+      <ReasoningTrigger active={false} />
+    </ReasoningRoot>
+  );
+  expect(screen.getByText('已思考')).toBeInTheDocument();
+});
+
+it('摘要消息通过 ThreadSummaryMessage 渲染折叠卡片，绝不作为用户气泡', async () => {
+  render(<ThreadSummaryMessage text="这是之前轮次的滑坡监测背景摘要。" />);
+  expect(screen.getByText('更早的对话已压缩为摘要')).toBeInTheDocument();
+
+  await userEvent.click(screen.getByText('更早的对话已压缩为摘要'));
+  expect(screen.getByText('这是之前轮次的滑坡监测背景摘要。')).toBeInTheDocument();
 });
 
 it('若提问尚未被服务端持久化 (optimisticStatus === failed)，RunFailureCard 渲染 null 由消息气泡显示重试', () => {

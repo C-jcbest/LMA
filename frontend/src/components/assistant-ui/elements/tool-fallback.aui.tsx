@@ -26,6 +26,10 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  getToolRegistryItem,
+  decodeToolArtifact,
+} from "@/features/monitoring/tools/registry";
 
 const ANIMATION_DURATION = 200;
 
@@ -139,7 +143,19 @@ function ToolFallbackTrigger({
     status?.type === "incomplete" && status.reason === "cancelled";
 
   const Icon = statusIconMap[statusType];
-  const label = isCancelled ? "Cancelled tool" : "Used tool";
+  const item = getToolRegistryItem(toolName);
+  const displayName = item?.label ? `${item.label} (${toolName})` : toolName;
+
+  let actionLabel = "已调用";
+  if (isRunning) {
+    actionLabel = "正在调用";
+  } else if (isCancelled) {
+    actionLabel = "已取消调用";
+  } else if (statusType === "requires-action") {
+    actionLabel = "待确认操作";
+  } else if (statusType === "incomplete") {
+    actionLabel = "调用异常";
+  }
 
   return (
     <CollapsibleTrigger
@@ -156,6 +172,7 @@ function ToolFallbackTrigger({
           "aui-tool-fallback-trigger-icon size-4 shrink-0",
           isCancelled && "text-muted-foreground",
           isRunning && "animate-spin [animation-duration:0.6s]",
+          statusType === "incomplete" && !isCancelled && "text-destructive",
         )}
       />
       <span
@@ -166,7 +183,7 @@ function ToolFallbackTrigger({
           isRunning && "shimmer motion-reduce:animate-none",
         )}
       >
-        {label}: <b>{toolName}</b>
+        {actionLabel}: <b>{displayName}</b>
       </span>
       <ToolFallbackDuration />
       <ChevronDownIcon
@@ -272,7 +289,7 @@ function ToolFallbackResult({
       {...props}
     >
       <p className="aui-tool-fallback-result-header text-muted-foreground text-xs font-medium">
-        Result:
+        执行结果:
       </p>
       <pre className="aui-tool-fallback-result-content bg-muted/50 text-foreground/90 mt-1 rounded-md p-2.5 text-xs whitespace-pre-wrap">
         {formatUnknownValue(result, 2)}
@@ -297,7 +314,7 @@ function ToolFallbackError({
   if (!errorText) return null;
 
   const isCancelled = status.reason === "cancelled";
-  const headerText = isCancelled ? "Cancelled reason:" : "Error:";
+  const headerText = isCancelled ? "已取消原因:" : "错误信息:";
 
   return (
     <div
@@ -315,14 +332,14 @@ function ToolFallbackError({
   );
 }
 
-const APPROVED_RESULT = "Approved by user";
-const DENIED_RESULT = "User denied tool execution";
+const APPROVED_RESULT = "用户已允许执行";
+const DENIED_RESULT = "用户已拒绝执行";
 
 const APPROVAL_OPTION_DEFAULT_LABELS: Record<string, string> = {
-  "allow-once": "Allow",
-  "allow-always": "Always allow",
-  "reject-once": "Deny",
-  "reject-always": "Always deny",
+  "allow-once": "允许本次",
+  "allow-always": "总是允许",
+  "reject-once": "拒绝本次",
+  "reject-always": "总是拒绝",
 };
 
 const isKnownKind = (kind: string) =>
@@ -493,9 +510,9 @@ function ToolFallbackApproval({
         value={answer}
         onChange={(event) => setAnswer(event.target.value)}
         disabled={locked}
-        aria-label={question ? (approval?.prompt ?? "Answer") : "Note"}
+        aria-label={question ? (approval?.prompt ?? "回复") : "备注"}
         placeholder={
-          question ? "Type your answer" : "Add a note to your decision"
+          question ? "输入您的回复" : "为您的决策添加备注"
         }
       />
       {question && (
@@ -505,7 +522,7 @@ function ToolFallbackApproval({
           onClick={submitAnswer}
           disabled={locked || !answer.trim()}
         >
-          Send
+          发送
         </Button>
       )}
     </div>
@@ -551,7 +568,7 @@ function ToolFallbackApproval({
             onClick={() => respondWithOption(confirming)}
             disabled={locked}
           >
-            Confirm
+            确认
           </Button>
           <Button
             size="sm"
@@ -560,7 +577,7 @@ function ToolFallbackApproval({
             onClick={() => setConfirmingId(null)}
             disabled={locked}
           >
-            Back
+            返回
           </Button>
         </div>
       </div>
@@ -606,7 +623,7 @@ function ToolFallbackApproval({
               onClick={() => respond(false)}
               disabled={locked}
             >
-              Deny
+              拒绝
             </Button>
           )}
         </div>
@@ -652,7 +669,7 @@ function ToolFallbackApproval({
           onClick={() => respond(true)}
           disabled={locked}
         >
-          Allow
+          允许
         </Button>
         <Button
           size="sm"
@@ -661,7 +678,7 @@ function ToolFallbackApproval({
           onClick={() => respond(false)}
           disabled={locked}
         >
-          Deny
+          拒绝
         </Button>
       </div>
       {answerField}
@@ -680,6 +697,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   interrupt,
   approval,
   respondToApproval,
+  ...restProps
 }) => {
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
@@ -687,13 +705,26 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   const shouldRenderApproval =
     isRequiresAction && offersInterruptAction(status, approval, interrupt);
 
-  const [open, setOpen] = useState(isRequiresAction);
+  const registryItem = getToolRegistryItem(toolName);
+  const defaultOpen = isRequiresAction || !!registryItem?.defaultExpanded;
+
+  const [open, setOpen] = useState(defaultOpen);
   const [prevRequiresAction, setPrevRequiresAction] =
     useState(isRequiresAction);
   if (isRequiresAction !== prevRequiresAction) {
     setPrevRequiresAction(isRequiresAction);
     if (isRequiresAction) setOpen(true);
   }
+
+  const rawArtifact = (restProps as any).artifact;
+  const envelope =
+    result !== undefined || rawArtifact !== undefined
+      ? decodeToolArtifact(toolName, rawArtifact, result)
+      : undefined;
+
+  const hasBusinessRenderer = !!registryItem;
+  const isBusinessSuccess =
+    envelope && envelope.status === "success" && envelope.data !== undefined;
 
   return (
     <ToolFallbackRoot open={open} onOpenChange={setOpen}>
@@ -714,7 +745,21 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
             status={status}
           />
         )}
-        {!isCancelled && <ToolFallbackResult result={result} />}
+        {!isCancelled &&
+          (hasBusinessRenderer && isBusinessSuccess ? (
+            <div className="mt-1">
+              <registryItem.render
+                envelope={envelope}
+                data={envelope.data}
+                artifactImages={envelope.images}
+                siteEnvironment={envelope.site_environment}
+              />
+            </div>
+          ) : (
+            <ToolFallbackResult
+              result={result !== undefined ? result : rawArtifact}
+            />
+          ))}
       </ToolFallbackContent>
     </ToolFallbackRoot>
   );

@@ -1,12 +1,11 @@
 import React from 'react';
-import type { ToolArtifactEnvelope, ToolArtifactKind } from '../../types/envelope';
-import type { ToolCallImage, SiteEnvironmentArtifact } from '../toolArtifacts';
+import type { ToolArtifactEnvelope, ToolArtifactKind } from '@/types/envelope';
+import type { ToolCallImage, SiteEnvironmentArtifact } from '@/components/toolArtifacts';
 import { StationResultView } from './StationResultView';
 import { GnssResultView } from './GnssResultView';
 import { WeatherResultView } from './WeatherResultView';
 import { VisionResultView } from './VisionResultView';
 import { SiteEnvironmentResultView } from './SiteEnvironmentResultView';
-import { EmptyOrGenericResultView } from './EmptyOrGenericResultView';
 
 export interface ToolRendererProps<T = any> {
   envelope: ToolArtifactEnvelope<T>;
@@ -22,83 +21,52 @@ export interface ToolRegistryItem {
   defaultExpanded?: boolean;
 }
 
-const StationRenderer: React.FC<ToolRendererProps> = ({ data }) => {
-  if (!data || (!Array.isArray(data.groups) && !Array.isArray(data.stations))) {
-    return <EmptyOrGenericResultView />;
-  }
-  return <StationResultView data={data} />;
-};
-
-const GnssRenderer: React.FC<ToolRendererProps> = ({ data }) => {
-  if (!data || !Array.isArray(data.points)) {
-    return <EmptyOrGenericResultView />;
-  }
-  return <GnssResultView data={data} />;
-};
-
-const WeatherRenderer: React.FC<ToolRendererProps> = ({ data }) => {
-  if (!data || (!data.current && !data.rain_summary)) {
-    return <EmptyOrGenericResultView />;
-  }
-  return <WeatherResultView data={data} />;
-};
-
-const VisionRenderer: React.FC<ToolRendererProps> = ({ data, artifactImages }) => {
-  if (!data || !Array.isArray(data.chart_points)) {
-    return <EmptyOrGenericResultView />;
-  }
-  return <VisionResultView data={data} artifactImages={artifactImages} />;
-};
-
-const SiteEnvironmentRenderer: React.FC<ToolRendererProps> = ({ siteEnvironment, data }) => {
-  const env = siteEnvironment || data?.site_environment;
-  if (!env) return <EmptyOrGenericResultView />;
-  return <SiteEnvironmentResultView environment={env} />;
-};
-
 export const toolRegistry: Record<string, ToolRegistryItem> = {
   list_station_groups: {
     label: '查询监测点分组',
     artifactKind: 'station_list',
-    render: StationRenderer,
+    render: ({ data }) => (data ? <StationResultView data={data} /> : null),
   },
   list_stations: {
     label: '查询监测点列表',
     artifactKind: 'station_list',
-    render: StationRenderer,
+    render: ({ data }) => (data ? <StationResultView data={data} /> : null),
   },
   get_daily_gnss_data: {
     label: '获取北斗GNSS日监测数据',
     artifactKind: 'gnss_series',
-    render: GnssRenderer,
+    render: ({ data }) => (data ? <GnssResultView data={data} /> : null),
   },
   query_weather: {
     label: '查询天气数据',
     artifactKind: 'weather',
-    render: WeatherRenderer,
+    render: ({ data }) => (data ? <WeatherResultView data={data} /> : null),
   },
   analyze_gnss_chart: {
     label: '视觉复核',
     artifactKind: 'vision',
-    render: VisionRenderer,
+    render: ({ data, artifactImages, envelope }) => {
+      const mergedData = {
+        ...(data || {}),
+        chart_points: data?.chart_points || envelope?.chart_points || [],
+      };
+      const images = artifactImages || envelope?.images || data?.images || [];
+      return <VisionResultView data={mergedData} artifactImages={images} />;
+    },
   },
   inspect_site_environment: {
     label: '调查站点地形与地质环境',
     artifactKind: 'site_environment',
-    render: SiteEnvironmentRenderer,
+    render: ({ siteEnvironment, data }) => {
+      const env = siteEnvironment || data?.site_environment;
+      return env ? <SiteEnvironmentResultView environment={env} /> : null;
+    },
     defaultExpanded: true,
   },
 };
 
-export function getToolRegistryItem(toolName: string): ToolRegistryItem {
-  return (
-    toolRegistry[toolName] || {
-      label: '执行工具查询',
-      artifactKind: 'generic',
-      render: EmptyOrGenericResultView,
-      defaultExpanded: false,
-    }
-  );
+export function getToolRegistryItem(toolName: string): ToolRegistryItem | undefined {
+  return toolRegistry[toolName];
 }
 
 export const isRecord = (value: unknown): value is Record<string, any> =>
@@ -169,7 +137,7 @@ export function decodeToolArtifact(
 
   return {
     version: 1,
-    kind: item.artifactKind,
+    kind: item?.artifactKind || 'generic',
     status: source.error ? 'error' : 'success',
     data,
     observedAt: source.observedAt,

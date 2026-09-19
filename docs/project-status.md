@@ -53,6 +53,22 @@
   - 左侧新增业务快捷提问菜单（`ComposerQuickActions`），呼出标准监测问题（测点稳定性、降雨天气关联、趋势对比、分组台账）并无缝填充；
   - 右侧通过官方 `useLangChainState("context_usage")` 原生嵌入 `ContextUsageIndicator`，实时反映模型上下文窗口占用；
   - 欢迎界面集成一键快捷提问胶囊按钮。
+- **历史摘要消息标准化与折叠展示**：
+  - 通过 patch `@assistant-ui/react-langchain` 将 `additional_kwargs?.lc_source === "summarization"` 消息映射为 `role: "system"`，彻底杜绝历史摘要展示为用户消息气泡；
+  - `thread.aui.tsx` 中新增 `ThreadSummaryMessage`（归档折叠卡片），默认收起，提示“更早的对话已压缩为摘要”，点击可展开查看摘要纯文本；
+  - 彻底删除旧版 `SummaryCard.tsx`。
+- **Reasoning / Thinking 完全替换（P6 落地）**：
+  - 彻底删除 `ThinkingBlock.tsx`、`ThinkingIndicator.tsx` 与 `components/reasoning.tsx`；
+  - 基于 assistant-ui 官方 `Reasoning` Element 与 Primitive 接管生命周期，默认保持折叠；
+  - 状态汉化对齐为 `正在思考…`（流式运行）与 `已思考`（终态），消除伪造思考耗时与字符串匹配推断。
+- **Tool Call Shell 全部交给 assistant-ui（P7 落地）**：
+  - 彻底删除 `InlineToolCall.tsx` 与旧目录 `components/tools/`；
+  - 业务展示组件完全解耦并迁移至 `features/monitoring/tools/`（`GnssResultView`、`WeatherResultView`、`VisionResultView`、`StationResultView`、`SiteEnvironmentResultView`）；
+  - 工具生命周期（running、complete、cancelled、error、approval、折叠外壳）完全由 assistant-ui 官方 `ToolFallback` 接管，统一进行状态中文化与工具友好命名展示；
+  - `features/monitoring/tools/registry.tsx` 仅保留 `toolName -> business renderer` 字典及 `decodeToolArtifact`，消除零散状态维护与 JSON 猜测。
+- **Markdown 改用 assistant-ui Streamdown（P8 落地）**：
+  - 彻底删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
+  - 基于 `@assistant-ui/react-streamdown` 的 `StreamdownTextPrimitive` 重构 `components/markdown-text.tsx`，保留中文字体排版与代码复制头（`CodeHeader`）。
 - **Stop 与生命周期回归官方**：
   - 前端 Stop 仅调用官方 `stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机；下一条 Human 消息直接提交创建正常新 Run。
 - **Tool Protocol v1 与 Tool Registry 强类型映射**：

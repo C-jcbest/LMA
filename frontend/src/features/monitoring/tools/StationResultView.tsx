@@ -100,3 +100,5 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
 
   return null;
 };
+
+export const StationResult = StationResultView;

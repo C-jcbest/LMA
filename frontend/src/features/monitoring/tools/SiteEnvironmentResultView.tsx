@@ -1,12 +1,12 @@
 import React from 'react';
-import { ErrorBoundary } from '../ErrorBoundary';
-import type { SiteEnvironmentArtifact } from '../toolArtifacts';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import type { SiteEnvironmentArtifact } from '@/components/toolArtifacts';
 
 const SiteEnvironmentCard = React.lazy(() =>
-  import('../SiteEnvironmentCard').then((module) => ({ default: module.SiteEnvironmentCard }))
+  import('@/components/SiteEnvironmentCard').then((module) => ({ default: module.SiteEnvironmentCard }))
 );
 
-interface SiteEnvironmentResultViewProps {
+export interface SiteEnvironmentResultViewProps {
   environment: SiteEnvironmentArtifact;
 }
 
@@ -27,3 +27,5 @@ export const SiteEnvironmentResultView: React.FC<SiteEnvironmentResultViewProps>
     </ErrorBoundary>
   );
 };
+
+export const SiteEnvironmentResult = SiteEnvironmentResultView;

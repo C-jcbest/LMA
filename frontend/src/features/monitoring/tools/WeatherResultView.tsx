@@ -149,3 +149,5 @@ export const WeatherResultView: React.FC<ToolResultProps> = ({ data }) => {
     </div>
   );
 };
+
+export const WeatherResult = WeatherResultView;
