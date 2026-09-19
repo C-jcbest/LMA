@@ -7,6 +7,7 @@ import {
   type StreamdownTextComponents,
   type StreamdownTextPrimitiveProps,
 } from "@assistant-ui/react-streamdown";
+import { code } from "@streamdown/code";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
@@ -222,11 +223,16 @@ export type MarkdownTextProps = StreamdownTextPrimitiveProps;
 const MarkdownTextImpl: FC<MarkdownTextProps> = ({
   className,
   components,
+  plugins,
   ...props
 }) => {
   return (
     <StreamdownTextPrimitive
       className={cn("aui-md", className)}
+      plugins={{
+        code,
+        ...plugins,
+      }}
       components={{
         ...defaultComponents,
         ...components,

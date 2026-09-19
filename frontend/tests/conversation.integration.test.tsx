@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
-import { parseOutputRecord, decodeToolArtifact } from '../src/features/monitoring/tools/registry';
+import { decodeToolArtifact } from '../src/features/monitoring/tools/registry';
 import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView';
 import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
 import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
@@ -121,6 +121,9 @@ describe('会话关键路径集成回归', () => {
         status={{ type: 'complete' }}
         argsText="{}"
         artifact={{
+          version: 1,
+          kind: 'gnss_series',
+          status: 'success',
           data: {
             station_name: '测试站',
             points: [
@@ -132,7 +135,7 @@ describe('会话关键路径集成回归', () => {
         }}
       />
     );
-    await userEvent.click(screen.getByText(/获取北斗GNSS日监测数据/));
+    await userEvent.click(screen.getByText(/已获取 GNSS 监测数据/));
     expect(screen.getAllByText('—')).toHaveLength(5);
     expect(screen.getAllByText('0.000')).toHaveLength(3);
     expect(screen.getByText('12.500')).toBeInTheDocument();
@@ -145,6 +148,9 @@ describe('会话关键路径集成回归', () => {
         status={{ type: 'complete' }}
         argsText="{}"
         artifact={{
+          version: 1,
+          kind: 'vision',
+          status: 'success',
           data: { station_name: '测试站', observations: {}, total_points: 5 },
           chart_points: [
             { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
@@ -156,7 +162,7 @@ describe('会话关键路径集成回归', () => {
         }}
       />
     );
-    await userEvent.click(screen.getByText(/视觉复核/));
+    await userEvent.click(screen.getByText(/已完成位移曲线复核/));
     const polylines = Array.from(container.querySelectorAll('polyline'));
     expect(polylines).toHaveLength(6);
     expect(polylines.every((line) => !line.getAttribute('points')?.includes('50.00,'))).toBe(true);
@@ -169,6 +175,9 @@ describe('会话关键路径集成回归', () => {
         status={{ type: 'complete' }}
         argsText="{}"
         artifact={{
+          version: 1,
+          kind: 'station_list',
+          status: 'success',
           data: {
             stations: [
               { station_name: 'A', station_status: '正常', station_type: '基准站' },
@@ -181,7 +190,7 @@ describe('会话关键路径集成回归', () => {
         }}
       />
     );
-    await userEvent.click(screen.getByText(/查询监测点列表/));
+    await userEvent.click(screen.getByText(/已查询监测点信息/));
     for (const label of ['正常', '离线', '告警', '故障']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
@@ -189,7 +198,7 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByText('正常 (10)')).not.toBeInTheDocument();
   });
 
-  it('未注册工具结果展示在通用 ToolFallbackResult 中', async () => {
+  it('未注册工具以通用友好状态展示，不泄露内部名称与原始调试 JSON', async () => {
     render(
       <ToolFallback
         toolName="internal_step"
@@ -198,13 +207,14 @@ describe('会话关键路径集成回归', () => {
         result="MODEL_ONLY"
       />
     );
-    expect(screen.getByText(/internal_step/)).toBeInTheDocument();
-    await userEvent.click(screen.getByText(/internal_step/));
-    expect(screen.getByText('执行结果:')).toBeInTheDocument();
-    expect(screen.getByText('MODEL_ONLY')).toBeInTheDocument();
+    expect(screen.getByText('已完成辅助查询')).toBeInTheDocument();
+    expect(screen.queryByText(/internal_step/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByText('已完成辅助查询'));
+    expect(screen.getByText(/已完成辅助信息查询并同步至模型上下文/)).toBeInTheDocument();
+    expect(screen.queryByText('MODEL_ONLY')).not.toBeInTheDocument();
   });
 
-  it('工具异常状态展示在 ToolFallbackError 中', async () => {
+  it('工具异常状态展示友好错误信息，不显示机械已调用', async () => {
     render(
       <ToolFallback
         toolName="get_daily_gnss_data"
@@ -212,22 +222,27 @@ describe('会话关键路径集成回归', () => {
         argsText="{}"
       />
     );
-    await userEvent.click(screen.getByText(/获取北斗GNSS日监测数据/));
-    expect(screen.getByText('错误信息:')).toBeInTheDocument();
+    expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('GNSS 数据获取失败'));
     expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
   });
 
-  it('成功工具只从 artifact.data 取业务展示', async () => {
+  it('成功工具只从合法 v1 artifact.data 取业务展示', async () => {
     const { container } = render(
       <ToolFallback
         toolName="list_stations"
         status={{ type: 'complete' }}
         argsText="{}"
         result="MODEL_ONLY"
-        artifact={{ data: { total: 0, stations: [] } }}
+        artifact={{
+          version: 1,
+          kind: 'station_list',
+          status: 'success',
+          data: { total: 0, stations: [] },
+        }}
       />
     );
-    await userEvent.click(screen.getByText(/查询监测点列表/));
+    await userEvent.click(screen.getByText(/已查询监测点信息/));
     expect(container.textContent).toContain('共查询到 0 个监测点详情');
     expect(container.textContent).not.toContain('MODEL_ONLY');
   });
@@ -239,16 +254,19 @@ describe('会话关键路径集成回归', () => {
         status={{ type: 'complete' }}
         argsText="{}"
         artifact={{
+          version: 1,
+          kind: 'vision',
+          status: 'success',
           data: { station_name: '测试站' },
           images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
         }}
       />
     );
-    await userEvent.click(screen.getByText(/视觉复核/));
+    await userEvent.click(screen.getByText(/已完成位移曲线复核/));
     expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
   });
 
-  it('调用限额/异常信息展示在 ToolFallbackError', () => {
+  it('调用限额/异常信息展示友好错误文案', () => {
     render(
       <ToolFallback
         toolName="list_stations"
@@ -256,8 +274,7 @@ describe('会话关键路径集成回归', () => {
         argsText="{}"
       />
     );
-    expect(screen.getByText(/调用异常/)).toBeInTheDocument();
-    expect(screen.getByText(/查询监测点列表/)).toBeInTheDocument();
+    expect(screen.getByText('监测点信息查询失败')).toBeInTheDocument();
   });
 
   it('畸形 artifact 字段 fail-closed，不扩散为聊天窗口异常', async () => {
@@ -274,8 +291,9 @@ describe('会话关键路径集成回归', () => {
         }}
       />
     );
-    await userEvent.click(screen.getByText(/internal_step/));
-    expect(screen.getByText('执行结果:')).toBeInTheDocument();
+    expect(screen.getByText('已完成辅助查询')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('已完成辅助查询'));
+    expect(screen.getByText(/已完成辅助信息查询并同步至模型上下文/)).toBeInTheDocument();
   });
 
   it('输入框发送按钮左侧可查看上下文 token 明细', async () => {
@@ -487,8 +505,7 @@ it('并行工具按 callId 独立更新，rejoin 后终态正确渲染', async (
       argsText="{}"
     />
   );
-  expect(screen.getByText(/正在调用/)).toBeInTheDocument();
-  expect(screen.getByText(/查询天气数据/)).toBeInTheDocument();
+  expect(screen.getByText('正在查询同期天气…')).toBeInTheDocument();
 
   rerender(
     <ToolFallback
@@ -497,22 +514,26 @@ it('并行工具按 callId 独立更新，rejoin 后终态正确渲染', async (
       argsText="{}"
     />
   );
-  expect(screen.getByText(/调用异常/)).toBeInTheDocument();
-  await userEvent.click(screen.getByText(/查询天气数据/));
-  expect(screen.getByText('错误信息:')).toBeInTheDocument();
+  expect(screen.getByText('天气数据查询失败')).toBeInTheDocument();
+  await userEvent.click(screen.getByText('天气数据查询失败'));
   expect(screen.getByText('天气服务暂不可用')).toBeInTheDocument();
 });
 
-it('实时阶段已获取 output 时直接展示业务数据', async () => {
+it('合法 v1 artifact 到达后直接展示业务数据，不依赖 raw JSON', async () => {
   render(
     <ToolFallback
       toolName="list_stations"
       status={{ type: 'complete' }}
       argsText="{}"
-      result={{ stations: [{ station_name: '实时测点X', station_status: '正常' }] }}
+      artifact={{
+        version: 1,
+        kind: 'station_list',
+        status: 'success',
+        data: { stations: [{ station_name: '实时测点X', station_status: '正常' }] },
+      }}
     />
   );
-  await userEvent.click(screen.getByText(/查询监测点列表/));
+  await userEvent.click(screen.getByText(/已查询监测点信息/));
   expect(screen.getByText('实时测点X')).toBeInTheDocument();
 });
 
@@ -522,10 +543,9 @@ it('返回空内容时显示空状态，不处于 loading 态', async () => {
       toolName="list_stations"
       status={{ type: 'complete' }}
       argsText="{}"
-      result={{}}
     />
   );
-  expect(screen.getByText(/已调用/)).toBeInTheDocument();
+  expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
 });
 
 it('P0-1 & P0-3: liveToolCall 返回任意合法结果（空数组/字符串/0/false/null）均视为完成，不回退为 loading', async () => {
@@ -539,25 +559,27 @@ it('P0-1 & P0-3: liveToolCall 返回任意合法结果（空数组/字符串/0/f
         result={out}
       />
     );
-    expect(screen.getByText(/已调用/)).toBeInTheDocument();
+    expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
     unmount();
   }
 });
 
-it('P0-2: ToolMessage.artifact 到达后自然覆盖 liveToolCall.output，两阶段数据平滑衔接', async () => {
-  // 阶段 1：未收到 ToolMessage 时展示实时预览点
+it('P0-2: ToolMessage.artifact 到达后自然呈现业务结果，两阶段数据平滑衔接', async () => {
+  // 阶段 1：未收到 ToolMessage 时处于完成状态并显示通用友好说明，不输出 raw JSON
   const { rerender } = render(
     <ToolFallback
       toolName="list_stations"
       status={{ type: 'complete' }}
       argsText="{}"
-      result={{ stations: [{ station_name: '实时预览点', station_status: '正常' }] }}
+      result="正在同步..."
     />
   );
-  await userEvent.click(screen.getByText(/查询监测点列表/));
-  expect(screen.getByText('实时预览点')).toBeInTheDocument();
+  expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
+  await userEvent.click(screen.getByText('已查询监测点信息'));
+  expect(screen.getByText('未查询到符合条件的业务监测数据。')).toBeInTheDocument();
+  expect(screen.queryByText('正在同步...')).not.toBeInTheDocument();
 
-  // 阶段 2：权威 ToolMessage 到达，自然覆盖为最终持久化点
+  // 阶段 2：权威 ToolMessage 到达，自然渲染业务点列表
   rerender(
     <ToolFallback
       toolName="list_stations"
@@ -565,28 +587,50 @@ it('P0-2: ToolMessage.artifact 到达后自然覆盖 liveToolCall.output，两�
       argsText="{}"
       result="ok"
       artifact={{
+        version: 1,
+        kind: 'station_list',
+        status: 'success',
         data: { stations: [{ station_name: '持久化确定点', station_status: '正常' }] },
       }}
     />
   );
   expect(screen.getByText('持久化确定点')).toBeInTheDocument();
-  expect(screen.queryByText('实时预览点')).not.toBeInTheDocument();
 });
 
-it('P0-4: parseOutputRecord 集中解析对象与合法 JSON 字符串，非法输出安全降级为 undefined', () => {
-  expect(parseOutputRecord({ a: 1 })).toEqual({ a: 1 });
-  expect(parseOutputRecord('{"hello": "world"}')).toEqual({ hello: 'world' });
-  expect(parseOutputRecord('not a json')).toBeUndefined();
-  expect(parseOutputRecord(null)).toBeUndefined();
-  expect(parseOutputRecord(123)).toBeUndefined();
-  expect(parseOutputRecord(undefined)).toBeUndefined();
+it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹配，非法/缺失产物安全返回 undefined', () => {
+  const validEnvelope = {
+    version: 1,
+    kind: 'station_list',
+    status: 'success',
+    data: { stations: [] },
+  };
+  expect(decodeToolArtifact('list_stations', validEnvelope)).toMatchObject({
+    version: 1,
+    kind: 'station_list',
+    status: 'success',
+  });
+
+  // 2. kind 与注册工具不匹配时拒绝
+  expect(decodeToolArtifact('list_stations', { ...validEnvelope, kind: 'weather' })).toBeUndefined();
+
+  // 3. 非 version 1 拒绝
+  expect(decodeToolArtifact('list_stations', { ...validEnvelope, version: 2 })).toBeUndefined();
+
+  // 4. 非法 status 拒绝
+  expect(decodeToolArtifact('list_stations', { ...validEnvelope, status: 'unknown' })).toBeUndefined();
+
+  // 5. 传统无 envelope 结构拒绝
+  expect(decodeToolArtifact('list_stations', { stations: [] })).toBeUndefined();
+  expect(decodeToolArtifact('list_stations', 'not an object')).toBeUndefined();
+  expect(decodeToolArtifact('list_stations', null)).toBeUndefined();
+  expect(decodeToolArtifact('list_stations', undefined)).toBeUndefined();
 });
 
 it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {
   vi.useFakeTimers();
   try {
     const StreamingContainer = () => {
-      const [toolStatuses, setToolStatuses] = React.useState<Record<string, { status: any; result?: any }>>({
+      const [toolStatuses, setToolStatuses] = React.useState<Record<string, { status: any; artifact?: any }>>({
         'call-a': { status: { type: 'running' } },
         'call-b': { status: { type: 'running' } },
         'call-c': { status: { type: 'running' } },
@@ -598,7 +642,12 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
             ...prev,
             'call-a': {
               status: { type: 'complete' },
-              result: { stations: [{ station_name: '测点A', station_status: '正常' }] },
+              artifact: {
+                version: 1,
+                kind: 'station_list',
+                status: 'success',
+                data: { stations: [{ station_name: '测点A', station_status: '正常' }] },
+              },
             },
           }));
         }, 100);
@@ -608,7 +657,12 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
             ...prev,
             'call-b': {
               status: { type: 'complete' },
-              result: {},
+              artifact: {
+                version: 1,
+                kind: 'station_list',
+                status: 'success',
+                data: { groups: [] },
+              },
             },
           }));
         }, 500);
@@ -618,7 +672,12 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
             ...prev,
             'call-c': {
               status: { type: 'complete' },
-              result: { points: [{ time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 }] },
+              artifact: {
+                version: 1,
+                kind: 'gnss_series',
+                status: 'success',
+                data: { points: [{ time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 }] },
+              },
             },
           }));
         }, 1000);
@@ -636,19 +695,19 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
             toolName="list_stations"
             status={toolStatuses['call-a'].status}
             argsText="{}"
-            result={toolStatuses['call-a'].result}
+            artifact={toolStatuses['call-a'].artifact}
           />
           <ToolFallback
             toolName="list_station_groups"
             status={toolStatuses['call-b'].status}
             argsText="{}"
-            result={toolStatuses['call-b'].result}
+            artifact={toolStatuses['call-b'].artifact}
           />
           <ToolFallback
             toolName="get_daily_gnss_data"
             status={toolStatuses['call-c'].status}
             argsText="{}"
-            result={toolStatuses['call-c'].result}
+            artifact={toolStatuses['call-c'].artifact}
           />
         </div>
       );
@@ -657,42 +716,43 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
     render(<StreamingContainer />);
 
     // 初始状态（0ms）：全部 running
-    expect(screen.getByRole('button', { name: /正在调用.*查询监测点列表/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在调用.*查询监测点分组/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在查询监测点信息…/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在查询监测点分组…/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeInTheDocument();
 
     // 前进 100ms：A 完成并展示结果，B/C 仍 running
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
-    expect(screen.getByRole('button', { name: /已调用.*查询监测点列表/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在调用.*查询监测点分组/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /已调用.*查询监测点列表/ }));
+    expect(screen.getByRole('button', { name: /已查询监测点信息/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在查询监测点分组…/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /已查询监测点信息/ }));
     expect(screen.getByText('测点A')).toBeInTheDocument();
 
     // 前进 400ms（到达 500ms）：B 完成，C 仍 running
     await act(async () => {
       await vi.advanceTimersByTimeAsync(400);
     });
-    expect(screen.getByRole('button', { name: /已调用.*查询监测点列表/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /已调用.*查询监测点分组/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /已查询监测点信息/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /已查询监测点分组/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeInTheDocument();
 
     // 前进 500ms（到达 1000ms）：C 完成，三者均完成
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(screen.getByRole('button', { name: /已调用.*获取北斗GNSS日监测数据/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /已调用.*获取北斗GNSS日监测数据/ }));
+    expect(screen.getByRole('button', { name: /已获取 GNSS 监测数据/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /已获取 GNSS 监测数据/ }));
     expect(screen.getByText('1.234')).toBeInTheDocument();
   } finally {
     vi.useRealTimers();
   }
 });
 
-it('P6: ReasoningTrigger 根据 active 状态显示“正在思考…”或“已思考”', () => {
-  const { rerender } = render(
+it('P6: ReasoningTrigger 根据 active 状态显示“正在思考…”或“已思考”，且 streaming 自动控制展开', async () => {
+  // 1. active 状态标签
+  const { rerender, container } = render(
     <ReasoningRoot>
       <ReasoningTrigger active={true} />
     </ReasoningRoot>
@@ -705,6 +765,30 @@ it('P6: ReasoningTrigger 根据 active 状态显示“正在思考…”或“�
     </ReasoningRoot>
   );
   expect(screen.getByText('已思考')).toBeInTheDocument();
+
+  // 2. streaming=true 自动展开面板
+  rerender(
+    <ReasoningRoot streaming={true}>
+      <ReasoningTrigger active={true} />
+      <div data-testid="reasoning-body">正在实时思考推理中...</div>
+    </ReasoningRoot>
+  );
+  const rootEl = container.querySelector('[data-slot="reasoning-root"]');
+  expect(rootEl).toHaveAttribute('data-state', 'open');
+  expect(screen.getByTestId('reasoning-body')).toBeInTheDocument();
+
+  // 3. streaming=false 自动恢复折叠（默认 defaultOpen=false）
+  rerender(
+    <ReasoningRoot streaming={false}>
+      <ReasoningTrigger active={false} />
+      <div data-testid="reasoning-body">正在实时思考推理中...</div>
+    </ReasoningRoot>
+  );
+  expect(rootEl).toHaveAttribute('data-state', 'closed');
+
+  // 4. 用户手动点击展开
+  await userEvent.click(screen.getByRole('button'));
+  expect(rootEl).toHaveAttribute('data-state', 'open');
 });
 
 it('摘要消息通过 ThreadSummaryMessage 渲染折叠卡片，绝不作为用户气泡', async () => {

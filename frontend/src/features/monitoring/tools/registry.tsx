@@ -16,34 +16,66 @@ export interface ToolRendererProps<T = any> {
 
 export interface ToolRegistryItem {
   label: string;
+  runningLabel: string;
+  completeLabel: string;
+  errorLabel?: string;
+  cancelledLabel?: string;
   artifactKind: ToolArtifactKind;
   render: React.ComponentType<ToolRendererProps>;
   defaultExpanded?: boolean;
 }
 
+export const FALLBACK_TOOL_LABELS = {
+  running: '正在获取辅助信息…',
+  complete: '已完成辅助查询',
+  error: '辅助查询失败',
+  cancelled: '已取消辅助查询',
+  requiresAction: '待确认辅助操作',
+} as const;
+
 export const toolRegistry: Record<string, ToolRegistryItem> = {
   list_station_groups: {
     label: '查询监测点分组',
+    runningLabel: '正在查询监测点分组…',
+    completeLabel: '已查询监测点分组',
+    errorLabel: '监测点分组查询失败',
+    cancelledLabel: '已取消查询监测点分组',
     artifactKind: 'station_list',
     render: ({ data }) => (data ? <StationResultView data={data} /> : null),
   },
   list_stations: {
-    label: '查询监测点列表',
+    label: '查询监测点信息',
+    runningLabel: '正在查询监测点信息…',
+    completeLabel: '已查询监测点信息',
+    errorLabel: '监测点信息查询失败',
+    cancelledLabel: '已取消查询监测点信息',
     artifactKind: 'station_list',
     render: ({ data }) => (data ? <StationResultView data={data} /> : null),
   },
   get_daily_gnss_data: {
-    label: '获取北斗GNSS日监测数据',
+    label: '获取 GNSS 监测数据',
+    runningLabel: '正在获取 GNSS 监测数据…',
+    completeLabel: '已获取 GNSS 监测数据',
+    errorLabel: 'GNSS 数据获取失败',
+    cancelledLabel: '已取消获取 GNSS 监测数据',
     artifactKind: 'gnss_series',
     render: ({ data }) => (data ? <GnssResultView data={data} /> : null),
   },
   query_weather: {
-    label: '查询天气数据',
+    label: '查询同期天气',
+    runningLabel: '正在查询同期天气…',
+    completeLabel: '已获取同期天气',
+    errorLabel: '天气数据查询失败',
+    cancelledLabel: '已取消查询天气',
     artifactKind: 'weather',
     render: ({ data }) => (data ? <WeatherResultView data={data} /> : null),
   },
   analyze_gnss_chart: {
-    label: '视觉复核',
+    label: '复核位移曲线',
+    runningLabel: '正在复核位移曲线…',
+    completeLabel: '已完成位移曲线复核',
+    errorLabel: '位移曲线复核失败',
+    cancelledLabel: '已取消复核位移曲线',
     artifactKind: 'vision',
     render: ({ data, artifactImages, envelope }) => {
       const mergedData = {
@@ -55,7 +87,11 @@ export const toolRegistry: Record<string, ToolRegistryItem> = {
     },
   },
   inspect_site_environment: {
-    label: '调查站点地形与地质环境',
+    label: '调查场地环境',
+    runningLabel: '正在获取场地环境信息…',
+    completeLabel: '已获取场地环境信息',
+    errorLabel: '场地环境信息获取失败',
+    cancelledLabel: '已取消调查场地环境',
     artifactKind: 'site_environment',
     render: ({ siteEnvironment, data }) => {
       const env = siteEnvironment || data?.site_environment;
@@ -72,80 +108,85 @@ export function getToolRegistryItem(toolName: string): ToolRegistryItem | undefi
 export const isRecord = (value: unknown): value is Record<string, any> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export const parseOutputRecord = (output: unknown): Record<string, any> | undefined => {
-  if (isRecord(output)) return output;
-  if (typeof output === 'string') {
-    try {
-      const parsed = JSON.parse(output);
-      return isRecord(parsed) ? parsed : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-};
+const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
+  'station_list',
+  'gnss_series',
+  'weather',
+  'vision',
+  'station_comparison',
+  'site_environment',
+  'monitoring_map',
+  'evidence',
+  'generic',
+]);
 
 /**
- * 统一解码函数：将 liveToolCall.output 或 ToolMessage.artifact 统一解码为版本化的 ToolArtifactEnvelope
+ * 严格版本化 ToolArtifactEnvelope 解码函数：
+ * 仅接受符合 version 1 规范且与注册工具 artifactKind 严格匹配的合法产物。
+ * 绝不尝试 JSON.parse 猜测或自动包裹传统未标记结构。
  */
 export function decodeToolArtifact(
   toolName: string,
   rawArtifact: unknown,
-  rawOutput: unknown
-): ToolArtifactEnvelope {
-  const item = getToolRegistryItem(toolName);
-  const artifactRecord = isRecord(rawArtifact) ? rawArtifact : undefined;
-  const outputRecord = parseOutputRecord(rawOutput);
+): ToolArtifactEnvelope | undefined {
+  if (!isRecord(rawArtifact)) return undefined;
 
-  // 1. 若 artifact 本身已符合 version 1 envelope 规范
-  if (artifactRecord && artifactRecord.version === 1 && typeof artifactRecord.kind === 'string') {
-    return {
-      version: 1,
-      kind: artifactRecord.kind as ToolArtifactKind,
-      status: (artifactRecord.status as any) || (artifactRecord.error ? 'error' : 'success'),
-      data: artifactRecord.data !== undefined ? artifactRecord.data : artifactRecord,
-      observedAt: artifactRecord.observedAt,
-      sources: artifactRecord.sources,
-      limitations: artifactRecord.limitations,
-      error: artifactRecord.error,
-      site_environment: artifactRecord.site_environment,
-      chart_points: artifactRecord.chart_points,
-      images: artifactRecord.images,
-    };
+  // 1. 版本严格限制为 1
+  if (rawArtifact.version !== 1) return undefined;
+
+  // 2. kind 必须属于合法 ToolArtifactKind
+  const kind = rawArtifact.kind;
+  if (typeof kind !== 'string' || !KNOWN_ARTIFACT_KINDS.has(kind as ToolArtifactKind)) {
+    return undefined;
   }
 
-  // 2. 若 liveOutput 已符合 version 1 envelope 规范
-  if (outputRecord && outputRecord.version === 1 && typeof outputRecord.kind === 'string') {
-    return {
-      version: 1,
-      kind: outputRecord.kind as ToolArtifactKind,
-      status: (outputRecord.status as any) || (outputRecord.error ? 'error' : 'success'),
-      data: outputRecord.data !== undefined ? outputRecord.data : outputRecord,
-      observedAt: outputRecord.observedAt,
-      sources: outputRecord.sources,
-      limitations: outputRecord.limitations,
-      error: outputRecord.error,
-      site_environment: outputRecord.site_environment,
-      chart_points: outputRecord.chart_points,
-      images: outputRecord.images,
-    };
+  // 3. status 必须合法
+  const status = rawArtifact.status;
+  if (status !== 'success' && status !== 'partial' && status !== 'error') {
+    return undefined;
   }
 
-  // 3. 规整传统结构（ToolMessage.artifact 优先，liveToolCall.output 次之）
-  const source = artifactRecord || outputRecord || {};
-  const data = source.data !== undefined ? source.data : source;
+  // 4. 若为注册的已知工具，kind 必须与 registry 项声明的 artifactKind 严格一致
+  const registryItem = getToolRegistryItem(toolName);
+  if (registryItem && registryItem.artifactKind !== kind) {
+    return undefined;
+  }
+
+  // 5. 业务 success 状态下校验各领域最低限度的数据有效性
+  if (status === 'success') {
+    const data = rawArtifact.data;
+    if (kind === 'gnss_series') {
+      if (!isRecord(data) || !Array.isArray(data.points)) return undefined;
+    } else if (kind === 'station_list') {
+      if (!isRecord(data) || (!Array.isArray(data.stations) && !Array.isArray(data.groups))) {
+        return undefined;
+      }
+    } else if (kind === 'weather') {
+      if (!isRecord(data)) return undefined;
+    } else if (kind === 'vision') {
+      const hasPoints = Array.isArray(rawArtifact.chart_points) || (isRecord(data) && Array.isArray(data.chart_points));
+      const hasImages = Array.isArray(rawArtifact.images) || (isRecord(data) && Array.isArray(data.images));
+      if (!hasPoints && !hasImages && !isRecord(data)) return undefined;
+    } else if (kind === 'site_environment') {
+      const hasEnv =
+        isRecord(rawArtifact.site_environment) ||
+        (isRecord(data) && isRecord(data.site_environment)) ||
+        isRecord(data);
+      if (!hasEnv) return undefined;
+    }
+  }
 
   return {
     version: 1,
-    kind: item?.artifactKind || 'generic',
-    status: source.error ? 'error' : 'success',
-    data,
-    observedAt: source.observedAt,
-    sources: source.sources,
-    limitations: source.limitations,
-    error: source.error,
-    site_environment: source.site_environment,
-    chart_points: source.chart_points,
-    images: source.images,
+    kind: kind as ToolArtifactKind,
+    status,
+    data: rawArtifact.data,
+    observedAt: rawArtifact.observedAt,
+    sources: rawArtifact.sources,
+    limitations: rawArtifact.limitations,
+    error: rawArtifact.error,
+    site_environment: rawArtifact.site_environment,
+    chart_points: rawArtifact.chart_points,
+    images: rawArtifact.images,
   };
 }

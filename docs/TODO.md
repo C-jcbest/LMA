@@ -13,15 +13,17 @@
 1. **历史摘要消息标准化与折叠展示**：
    - Patch `@assistant-ui/react-langchain` 将 `additional_kwargs?.lc_source === "summarization"` 映射为 `role: "system"`，杜绝作为用户气泡；
    - `ThreadSummaryMessage` 实现抽屉式归档折叠，默认收起并支持点击展开查看纯文本；彻底删除 `SummaryCard.tsx`。
-2. **P6：Reasoning / Thinking 完全替换**：
+2. **P6：Reasoning / Thinking 完全替换与官方行为对齐**：
    - 删除 `ThinkingBlock.tsx`、`ThinkingIndicator.tsx` 与 `components/reasoning.tsx`；
-   - 接入 assistant-ui 官方 `Reasoning` Element 与 Primitive，状态汉化（“正在思考…” / “已思考”），默认折叠，不伪造思考耗时。
-3. **P7：Tool Call Shell 全部交给 assistant-ui**：
+   - 接入 assistant-ui 官方 `Reasoning` Element 与 Primitive，恢复官方 `isOpen` 行为（流式中自动展开，结束后恢复折叠），集成 `useScrollLock` 防抖动，统一 `variant="ghost"` 紧凑排版。
+3. **P7：Tool Call Shell 全部交给 assistant-ui 与轻量调查轨迹**：
    - 彻底删除 `InlineToolCall.tsx` 与旧目录 `components/tools/`；
-   - 业务结果展示解耦迁移至 `features/monitoring/tools/`，通用生命周期与外壳由官方 `ToolFallback` 托管，通过 `registry.tsx` 精简分发。
-4. **P8：Markdown 改用 assistant-ui Streamdown**：
+   - 消除内部函数名与原始 JSON 调试杂质，Registry 提供自然业务动词；
+   - 采用 ~28px 行高轻量调查轨迹（`ghost` + 左侧辅助线）；
+   - 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测。
+4. **P8：Markdown 改用 assistant-ui Streamdown 与代码高亮**：
    - 删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
-   - 统一改用 `@assistant-ui/react-streamdown`，保留中文字体样式与代码块复制。
+   - 统一改用 `@assistant-ui/react-streamdown`，引入 `@streamdown/code` 插件提供语法高亮，Tailwind v4 注入 `@source` 编译指令，保留排版与复制能力。
 
 ---
 

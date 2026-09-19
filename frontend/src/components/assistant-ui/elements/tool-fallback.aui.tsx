@@ -29,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   getToolRegistryItem,
   decodeToolArtifact,
+  FALLBACK_TOOL_LABELS,
 } from "@/features/monitoring/tools/registry";
 
 const ANIMATION_DURATION = 200;
@@ -118,7 +119,7 @@ function ToolFallbackDuration({
     <span
       data-slot="tool-fallback-duration"
       className={cn(
-        "aui-tool-fallback-duration text-muted-foreground text-xs tabular-nums",
+        "aui-tool-fallback-duration text-muted-foreground/60 text-[11px] tabular-nums",
         className,
       )}
       {...props}
@@ -144,24 +145,25 @@ function ToolFallbackTrigger({
 
   const Icon = statusIconMap[statusType];
   const item = getToolRegistryItem(toolName);
-  const displayName = item?.label ? `${item.label} (${toolName})` : toolName;
 
-  let actionLabel = "已调用";
+  let displayLabel: string;
   if (isRunning) {
-    actionLabel = "正在调用";
+    displayLabel = item?.runningLabel ?? FALLBACK_TOOL_LABELS.running;
   } else if (isCancelled) {
-    actionLabel = "已取消调用";
+    displayLabel = item?.cancelledLabel ?? FALLBACK_TOOL_LABELS.cancelled;
   } else if (statusType === "requires-action") {
-    actionLabel = "待确认操作";
+    displayLabel = item ? `待确认: ${item.label}` : FALLBACK_TOOL_LABELS.requiresAction;
   } else if (statusType === "incomplete") {
-    actionLabel = "调用异常";
+    displayLabel = item?.errorLabel ?? FALLBACK_TOOL_LABELS.error;
+  } else {
+    displayLabel = item?.completeLabel ?? FALLBACK_TOOL_LABELS.complete;
   }
 
   return (
     <CollapsibleTrigger
       data-slot="tool-fallback-trigger"
       className={cn(
-        "aui-tool-fallback-trigger group/trigger text-muted-foreground hover:text-foreground flex w-fit origin-left items-center gap-2 py-1.5 text-sm transition-[color,scale] active:scale-[0.98]",
+        "aui-tool-fallback-trigger group/trigger text-muted-foreground hover:text-foreground flex w-fit min-h-7 origin-left items-center gap-1.5 py-1 text-xs transition-[color,scale] active:scale-[0.98]",
         className,
       )}
       {...props}
@@ -169,27 +171,28 @@ function ToolFallbackTrigger({
       <Icon
         data-slot="tool-fallback-trigger-icon"
         className={cn(
-          "aui-tool-fallback-trigger-icon size-4 shrink-0",
+          "aui-tool-fallback-trigger-icon size-3.5 shrink-0",
           isCancelled && "text-muted-foreground",
-          isRunning && "animate-spin [animation-duration:0.6s]",
-          statusType === "incomplete" && !isCancelled && "text-destructive",
+          isRunning && "animate-spin [animation-duration:0.8s] text-muted-foreground",
+          statusType === "complete" && "text-muted-foreground/70",
+          statusType === "incomplete" && !isCancelled && "text-destructive/80",
         )}
       />
       <span
         data-slot="tool-fallback-trigger-label"
         className={cn(
-          "aui-tool-fallback-trigger-label-wrapper inline-block text-start leading-none",
+          "aui-tool-fallback-trigger-label-wrapper inline-block text-start leading-none font-normal text-foreground/85",
           isCancelled && "text-muted-foreground line-through",
           isRunning && "shimmer motion-reduce:animate-none",
         )}
       >
-        {actionLabel}: <b>{displayName}</b>
+        {displayLabel}
       </span>
       <ToolFallbackDuration />
       <ChevronDownIcon
         data-slot="tool-fallback-trigger-chevron"
         className={cn(
-          "aui-tool-fallback-trigger-chevron size-4 shrink-0",
+          "aui-tool-fallback-trigger-chevron size-3 shrink-0 text-muted-foreground/50",
           "transition-transform duration-(--animation-duration) ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
           "-rotate-90",
           "group-data-open/trigger:rotate-0",
@@ -718,23 +721,26 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
 
   const rawArtifact = (restProps as any).artifact;
   const envelope =
-    result !== undefined || rawArtifact !== undefined
-      ? decodeToolArtifact(toolName, rawArtifact, result)
-      : undefined;
+    rawArtifact !== undefined ? decodeToolArtifact(toolName, rawArtifact) : undefined;
 
   const hasBusinessRenderer = !!registryItem;
   const isBusinessSuccess =
     envelope && envelope.status === "success" && envelope.data !== undefined;
 
+  const hasError = status?.type === "incomplete" && !isCancelled;
+  const statusError = status?.type === "incomplete" ? status.error : undefined;
+  const errorMessage =
+    envelope?.error?.message ||
+    (typeof statusError === "string"
+      ? statusError
+      : statusError instanceof Error
+        ? statusError.message
+        : null);
+
   return (
     <ToolFallbackRoot open={open} onOpenChange={setOpen}>
       <ToolFallbackTrigger toolName={toolName} status={status} />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
-        <ToolFallbackArgs
-          argsText={argsText}
-          className={cn(isCancelled && "opacity-60")}
-        />
         {shouldRenderApproval && (
           <ToolFallbackApproval
             addResult={addResult}
@@ -745,7 +751,12 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
             status={status}
           />
         )}
-        {!isCancelled &&
+        {hasError && (
+          <div className="text-xs text-destructive/90 py-1 font-medium">
+            {errorMessage || (registryItem ? registryItem.errorLabel : "工具调用异常")}
+          </div>
+        )}
+        {!isCancelled && !hasError &&
           (hasBusinessRenderer && isBusinessSuccess ? (
             <div className="mt-1">
               <registryItem.render
@@ -756,9 +767,9 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
               />
             </div>
           ) : (
-            <ToolFallbackResult
-              result={result !== undefined ? result : rawArtifact}
-            />
+            <div className="text-xs text-muted-foreground/80 py-1 font-normal">
+              {registryItem ? "未查询到符合条件的业务监测数据。" : "已完成辅助信息查询并同步至模型上下文。"}
+            </div>
           ))}
       </ToolFallbackContent>
     </ToolFallbackRoot>

@@ -57,18 +57,21 @@
   - 通过 patch `@assistant-ui/react-langchain` 将 `additional_kwargs?.lc_source === "summarization"` 消息映射为 `role: "system"`，彻底杜绝历史摘要展示为用户消息气泡；
   - `thread.aui.tsx` 中新增 `ThreadSummaryMessage`（归档折叠卡片），默认收起，提示“更早的对话已压缩为摘要”，点击可展开查看摘要纯文本；
   - 彻底删除旧版 `SummaryCard.tsx`。
-- **Reasoning / Thinking 完全替换（P6 落地）**：
+- **Reasoning / Thinking 完全替换与官方行为对齐（P6 落地）**：
   - 彻底删除 `ThinkingBlock.tsx`、`ThinkingIndicator.tsx` 与 `components/reasoning.tsx`；
-  - 基于 assistant-ui 官方 `Reasoning` Element 与 Primitive 接管生命周期，默认保持折叠；
+  - 基于 assistant-ui 官方 `Reasoning` Element 与 Primitive 接管生命周期，恢复官方 `isOpen` 行为（流式中自动展开，结束后恢复默认折叠）；
+  - 搭配 `useScrollLock` 确保展开折叠时视口稳定，排版统一收敛为 `variant="ghost"` 紧凑风格；
   - 状态汉化对齐为 `正在思考…`（流式运行）与 `已思考`（终态），消除伪造思考耗时与字符串匹配推断。
-- **Tool Call Shell 全部交给 assistant-ui（P7 落地）**：
+- **Tool Call Shell 全部交给 assistant-ui 与轻量调查轨迹（P7 落地）**：
   - 彻底删除 `InlineToolCall.tsx` 与旧目录 `components/tools/`；
   - 业务展示组件完全解耦并迁移至 `features/monitoring/tools/`（`GnssResultView`、`WeatherResultView`、`VisionResultView`、`StationResultView`、`SiteEnvironmentResultView`）；
-  - 工具生命周期（running、complete、cancelled、error、approval、折叠外壳）完全由 assistant-ui 官方 `ToolFallback` 接管，统一进行状态中文化与工具友好命名展示；
-  - `features/monitoring/tools/registry.tsx` 仅保留 `toolName -> business renderer` 字典及 `decodeToolArtifact`，消除零散状态维护与 JSON 猜测。
-- **Markdown 改用 assistant-ui Streamdown（P8 落地）**：
+  - 彻底消除内部函数名（如 `(get_daily_gnss_data)`）与原始 args/result JSON 调试杂质，Registry 提供状态动词（如 `正在获取 GNSS 监测数据…` / `已获取 GNSS 监测数据`）；
+  - 工具外壳重构为轻量 ~28px 行高调查轨迹（`ghost` + 左侧辅助线），未命中业务结果或无数据时展示友好纯文本；
+  - `registry.tsx` 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测。
+- **Markdown 改用 assistant-ui Streamdown 与代码高亮（P8 落地）**：
   - 彻底删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
-  - 基于 `@assistant-ui/react-streamdown` 的 `StreamdownTextPrimitive` 重构 `components/markdown-text.tsx`，保留中文字体排版与代码复制头（`CodeHeader`）。
+  - 基于 `@assistant-ui/react-streamdown` 的 `StreamdownTextPrimitive` 重构 `components/markdown-text.tsx`，保留中文字体排版与代码复制头（`CodeHeader`）；
+  - 引入 `@streamdown/code` 插件提供 Shiki 语法高亮，`index.css` 声明 Tailwind v4 `@source` 编译路径。
 - **Stop 与生命周期回归官方**：
   - 前端 Stop 仅调用官方 `stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机；下一条 Human 消息直接提交创建正常新 Run。
 - **Tool Protocol v1 与 Tool Registry 强类型映射**：
@@ -117,7 +120,7 @@
   ```powershell
   cd frontend; pnpm run test; pnpm run build
   ```
-  包含 58 项关键路径与集成回归测试，生产构建无类型与打包错误。
+  包含 60 项关键路径与集成回归测试，生产构建无类型与打包错误。
 - **提交规范**：
   - 执行 `git diff --check` 确认无格式或空白问题；
   - 严禁提交 `.env`、密钥、真实账号或敏感数据。
