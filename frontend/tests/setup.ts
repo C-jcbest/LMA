@@ -171,11 +171,34 @@ vi.mock('@assistant-ui/react', async (importOriginal) => {
     ...actual,
     ThreadPrimitive: {
       ...actual.ThreadPrimitive,
+      If: ({ children, running }: any) => {
+        // running: false renders children when idle; running: true renders children when running
+        return running ? null : React.createElement(React.Fragment, null, children);
+      },
       Suggestion: ({ children, asChild, autoSend, prompt, method, ...props }: any) => {
         if (asChild && React.isValidElement(children)) {
           return React.cloneElement(children as any, props);
         }
         return React.createElement('div', props, children);
+      },
+    },
+    ComposerPrimitive: {
+      ...actual.ComposerPrimitive,
+      Root: ({ children, ...props }: any) => React.createElement('div', props, children),
+      Input: React.forwardRef(({ ...props }: any, ref: any) =>
+        React.createElement('textarea', { ref, ...props })
+      ),
+      Send: ({ children, asChild, ...props }: any) => {
+        if (asChild && React.isValidElement(children)) {
+          return React.cloneElement(children as any, props);
+        }
+        return React.createElement('button', props, children);
+      },
+      Cancel: ({ children, asChild, ...props }: any) => {
+        if (asChild && React.isValidElement(children)) {
+          return React.cloneElement(children as any, props);
+        }
+        return React.createElement('button', props, children);
       },
     },
   };

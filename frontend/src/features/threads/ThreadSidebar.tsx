@@ -9,6 +9,8 @@ import {
   Pencil,
   Trash2,
   Loader2,
+  PanelLeftClose,
+  Server,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -43,11 +45,13 @@ import { formatTime } from '../../lib/datetime';
 
 export interface ThreadSidebarProps {
   onItemSelect?: () => void;
+  onToggleCollapse?: () => void;
   className?: string;
 }
 
 export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
   onItemSelect,
+  onToggleCollapse,
   className = '',
 }) => {
   const navigate = useNavigate();
@@ -122,6 +126,20 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
               LMA 滑坡连续监测
             </span>
           </div>
+
+          {onToggleCollapse && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onToggleCollapse}
+              className="hidden md:flex h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60 cursor-pointer"
+              title="收起侧边栏"
+              aria-label="收起侧边栏"
+            >
+              <PanelLeftClose className="w-3.5 h-3.5" />
+            </Button>
+          )}
         </div>
 
         <Button
@@ -185,40 +203,49 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
                     </div>
                   </div>
 
-                  {/* 会话操作下拉菜单 */}
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
-                  >
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="会话操作"
-                          className="h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60"
-                        >
-                          <MoreHorizontal className="w-3.5 h-3.5" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-32 text-xs">
-                        <DropdownMenuItem
-                          onClick={() => openRenameDialog(session.thread_id, session.name)}
-                          className="gap-2 cursor-pointer"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                          <span>重命名</span>
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => setDeletingThreadId(session.thread_id)}
-                          className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>删除</span>
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                  {/* 会话操作：运行中展示加载动画，否则展示下拉菜单 */}
+                  {session.status === 'busy' ? (
+                    <div
+                      className="shrink-0 p-1 flex items-center justify-center text-indigo-500"
+                      title="生成中，暂不可重命名或删除"
+                    >
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    </div>
+                  ) : (
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+                    >
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="会话操作"
+                            className="h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200/60 cursor-pointer"
+                          >
+                            <MoreHorizontal className="w-3.5 h-3.5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-32 text-xs">
+                          <DropdownMenuItem
+                            onClick={() => openRenameDialog(session.thread_id, session.name)}
+                            className="gap-2 cursor-pointer"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            <span>重命名</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setDeletingThreadId(session.thread_id)}
+                            className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>删除</span>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -230,7 +257,7 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
                   size="sm"
                   disabled={isFetchingNextPage}
                   onClick={() => fetchNextPage()}
-                  className="w-full text-xs text-neutral-500 hover:text-neutral-800"
+                  className="w-full text-xs text-neutral-500 hover:text-neutral-800 cursor-pointer"
                 >
                   {isFetchingNextPage ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -244,10 +271,20 @@ export const ThreadSidebar: React.FC<ThreadSidebarProps> = ({
         )}
       </ScrollArea>
 
-      {/* 底部信息 */}
-      <div className="p-3 border-t border-neutral-200/80 text-[11px] text-neutral-400 flex items-center justify-between">
-        <span>LMA Runtime V2</span>
-        <span className="font-mono">Asia/Shanghai</span>
+      {/* 底部信息卡片 */}
+      <div className="p-2.5 border-t border-neutral-200/80 bg-neutral-100/40">
+        <div className="flex items-center gap-2.5 p-1.5 rounded-xl hover:bg-neutral-200/40 transition-colors">
+          <div className="w-7 h-7 rounded-lg bg-neutral-200/70 border border-neutral-300/80 flex items-center justify-center shrink-0">
+            <Server className="w-3.5 h-3.5 text-neutral-600" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-semibold text-neutral-800 truncate">LMA 监测服务</div>
+            <div className="text-[10px] text-neutral-400 truncate flex items-center justify-between">
+              <span>Runtime V2</span>
+              <span className="font-mono">Asia/Shanghai</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* 重命名 Dialog */}

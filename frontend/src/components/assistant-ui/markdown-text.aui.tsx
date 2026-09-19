@@ -4,24 +4,29 @@ import remarkGfm from 'remark-gfm';
 
 const MarkdownComponents: React.ComponentProps<typeof MarkdownTextPrimitive>['components'] = {
   table: ({ children, ...props }) => (
-    <div className="my-2.5 w-full overflow-x-auto rounded-lg border border-neutral-200 shadow-2xs">
+    <div className="markdown-table-wrap">
       <table className="w-full border-collapse text-left text-xs" {...props}>
         {children}
       </table>
     </div>
   ),
   thead: ({ children, ...props }) => (
-    <thead className="bg-neutral-50/90 text-neutral-700 font-semibold border-b border-neutral-200" {...props}>
+    <thead className="bg-neutral-50/90 text-neutral-800 font-semibold" {...props}>
       {children}
     </thead>
   ),
+  tr: ({ children, ...props }) => (
+    <tr className="even:bg-neutral-50/50 hover:bg-neutral-50/80 transition-colors" {...props}>
+      {children}
+    </tr>
+  ),
   th: ({ children, ...props }) => (
-    <th className="py-2 px-3 whitespace-nowrap font-medium text-neutral-800" {...props}>
+    <th className="py-2 px-3 whitespace-nowrap font-semibold text-neutral-900 border border-neutral-200" {...props}>
       {children}
     </th>
   ),
   td: ({ children, ...props }) => (
-    <td className="py-2 px-3 border-b border-neutral-100 text-neutral-700" {...props}>
+    <td className="py-2 px-3 border border-neutral-200/80 text-neutral-800 text-xs align-middle" {...props}>
       {children}
     </td>
   ),

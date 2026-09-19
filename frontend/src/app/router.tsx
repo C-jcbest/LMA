@@ -17,6 +17,23 @@ export const ChatLayout: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('lma_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('lma_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  }, []);
 
   const handleThreadIdChange = useCallback(
     (newThreadId: string | undefined) => {
@@ -30,8 +47,13 @@ export const ChatLayout: React.FC = () => {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white text-neutral-900">
-      {/* 桌面端常驻侧边栏 */}
-      <ThreadSidebar className="hidden md:flex shrink-0" />
+      {/* 桌面端侧边栏（可折叠） */}
+      {!isSidebarCollapsed && (
+        <ThreadSidebar
+          className="hidden md:flex shrink-0"
+          onToggleCollapse={toggleSidebar}
+        />
+      )}
 
       {/* 移动端侧边抽屉 */}
       <Sheet open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
@@ -46,7 +68,11 @@ export const ChatLayout: React.FC = () => {
           threadId={threadId}
           onThreadIdChange={handleThreadIdChange}
         >
-          <ChatPage onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)} />
+          <ChatPage
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebar={toggleSidebar}
+            onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
+          />
         </LmaRuntimeProvider>
       </main>
     </div>

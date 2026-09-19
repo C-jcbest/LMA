@@ -21,9 +21,19 @@ import { ToolFallback } from './tool-fallback.aui';
 
 export const UserMessage: React.FC = () => {
   return (
-    <MessagePrimitive.Root className="flex justify-end my-3 w-full">
-      <div className="max-w-[85%] rounded-2xl rounded-tr-xs bg-neutral-100 border border-neutral-200/70 px-4 py-2.5 text-sm text-neutral-900 leading-relaxed break-words shadow-2xs">
-        <MessagePrimitive.Content />
+    <MessagePrimitive.Root className="group max-w-4xl mx-auto w-full my-3.5 px-1 sm:px-0">
+      <div className="flex items-start gap-3.5 flex-row-reverse">
+        {/* 用户头像 ME */}
+        <div className="w-8 h-8 rounded-full bg-neutral-100 border border-neutral-200/80 flex items-center justify-center shrink-0 text-xs font-semibold text-neutral-700 select-none shadow-2xs">
+          ME
+        </div>
+
+        {/* 气泡主体 */}
+        <div className="min-w-0 flex flex-col max-w-[78%] items-end">
+          <div className="rounded-2xl rounded-tr-xs bg-[#f3f4f6] border border-neutral-200/60 px-4 py-2.5 text-sm text-neutral-800 leading-relaxed break-words shadow-xs">
+            <MessagePrimitive.Content />
+          </div>
+        </div>
       </div>
     </MessagePrimitive.Root>
   );
@@ -31,50 +41,54 @@ export const UserMessage: React.FC = () => {
 
 export const AssistantMessage: React.FC = () => {
   return (
-    <MessagePrimitive.Root className="group flex items-start gap-3 my-4 w-full">
-      {/* Agent 头像 */}
-      <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0 mt-0.5 shadow-2xs">
-        <Activity className="w-4 h-4" />
-      </div>
+    <MessagePrimitive.Root className="group max-w-4xl mx-auto w-full my-4 px-1 sm:px-0">
+      <div className="flex items-start gap-3.5 flex-row">
+        {/* AI 头像 */}
+        <div className="w-8 h-8 rounded-full bg-black flex items-center justify-center shrink-0 text-xs font-bold text-white select-none shadow-xs mt-0.5">
+          AI
+        </div>
 
-      {/* 回答主体 */}
-      <div className="flex-1 min-w-0 space-y-1.5">
-        <MessagePrimitive.Content
-          components={{
-            Text: MarkdownText,
-            Reasoning: Reasoning,
-            tools: {
-              Fallback: ToolFallback,
-            },
-          }}
-        />
+        {/* 回答主体 */}
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <div className="w-full text-neutral-800 text-sm py-0.5">
+            <MessagePrimitive.Content
+              components={{
+                Text: MarkdownText,
+                Reasoning: Reasoning,
+                tools: {
+                  Fallback: ToolFallback,
+                },
+              }}
+            />
+          </div>
 
-        {/* 悬停操作条 */}
-        <ActionBarPrimitive.Root className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity pt-1">
-          <ActionBarPrimitive.Copy asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
-              title="复制回复"
-            >
-              <Copy className="w-3.5 h-3.5" />
-            </Button>
-          </ActionBarPrimitive.Copy>
+          {/* 悬停操作条 */}
+          <ActionBarPrimitive.Root className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity pt-1">
+            <ActionBarPrimitive.Copy asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 cursor-pointer"
+                title="复制回复"
+              >
+                <Copy className="w-3.5 h-3.5" />
+              </Button>
+            </ActionBarPrimitive.Copy>
 
-          <ActionBarPrimitive.Reload asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
-              title="重新生成"
-            >
-              <RotateCw className="w-3.5 h-3.5" />
-            </Button>
-          </ActionBarPrimitive.Reload>
-        </ActionBarPrimitive.Root>
+            <ActionBarPrimitive.Reload asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 cursor-pointer"
+                title="重新生成"
+              >
+                <RotateCw className="w-3.5 h-3.5" />
+              </Button>
+            </ActionBarPrimitive.Reload>
+          </ActionBarPrimitive.Root>
+        </div>
       </div>
     </MessagePrimitive.Root>
   );
@@ -169,19 +183,21 @@ export interface ThreadProps {
 export const Thread: React.FC<ThreadProps> = ({ onSelectPrompt, children }) => {
   return (
     <ThreadPrimitive.Root className="relative flex flex-col h-full bg-white overflow-hidden">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 sm:px-8 py-6 space-y-4 scroll-smooth">
+      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto px-4 sm:px-6 py-6 space-y-4 scroll-smooth">
         <ThreadPrimitive.Empty>
           <ThreadEmpty onSelectPrompt={onSelectPrompt} />
         </ThreadPrimitive.Empty>
 
-        <ThreadPrimitive.Messages
-          components={{
-            UserMessage,
-            AssistantMessage,
-          }}
-        />
+        <div className="max-w-4xl mx-auto w-full space-y-4">
+          <ThreadPrimitive.Messages
+            components={{
+              UserMessage,
+              AssistantMessage,
+            }}
+          />
 
-        {children}
+          {children}
+        </div>
       </ThreadPrimitive.Viewport>
 
       <ThreadPrimitive.ScrollToBottom asChild>
@@ -189,7 +205,7 @@ export const Thread: React.FC<ThreadProps> = ({ onSelectPrompt, children }) => {
           type="button"
           size="icon"
           variant="outline"
-          className="absolute bottom-24 right-6 h-8 w-8 rounded-full bg-white/95 shadow-md border border-neutral-200 text-neutral-600 hover:text-neutral-900 transition-transform active:scale-95 z-20"
+          className="absolute bottom-5 right-6 h-8 w-8 rounded-full bg-white/95 shadow-md border border-neutral-200 text-neutral-600 hover:text-neutral-900 transition-transform active:scale-95 z-20 cursor-pointer"
           title="回到底部"
         >
           <ArrowDown className="w-4 h-4" />

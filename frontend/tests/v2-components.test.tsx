@@ -13,6 +13,7 @@ import { WeatherResultView } from '../src/features/monitoring/WeatherResultView'
 import { GnssResultView } from '../src/features/monitoring/GnssResultView';
 import { VisionResultView } from '../src/features/monitoring/VisionResultView';
 import { EmptyOrGenericResultView } from '../src/features/monitoring/EmptyOrGenericResultView';
+import { ChatHeader } from '../src/features/chat/ChatHeader';
 import { TooltipProvider } from '../src/components/ui/tooltip';
 
 // Mock assistant-ui stream hook
@@ -211,5 +212,49 @@ describe('V2 ThreadEmpty starter prompts', () => {
     expect(onSelect).toHaveBeenCalledWith(
       '请查询 SCWM-04 最近 3 天的 GNSS 监测数据并分析位移趋势。'
     );
+  });
+});
+
+describe('V2 ChatHeader component', () => {
+  it('渲染标题，并在折叠状态下点击展开侧边栏', () => {
+    const onToggle = vi.fn();
+    render(
+      <ChatHeader
+        title="测试会话"
+        isSidebarCollapsed={true}
+        onToggleSidebar={onToggle}
+      />
+    );
+
+    expect(screen.getByText('测试会话')).toBeInTheDocument();
+    const expandBtn = screen.getByRole('button', { name: '展开侧边栏' });
+    expect(expandBtn).toBeInTheDocument();
+    fireEvent.click(expandBtn);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('在服务离线时展示服务未连接状态徽标', () => {
+    render(
+      <ChatHeader
+        title="测试会话"
+        connectionStatus="unavailable"
+      />
+    );
+
+    expect(screen.getByText('服务未连接')).toBeInTheDocument();
+  });
+});
+
+describe('V2 Composer component', () => {
+  it('点击加号按钮展开快捷业务提问模板菜单', () => {
+    render(<Composer placeholder="输入问题…" />);
+    const plusBtn = screen.getByRole('button', { name: '快捷业务提问模板' });
+    expect(plusBtn).toBeInTheDocument();
+
+    expect(screen.queryByText('推荐监测业务提问')).not.toBeInTheDocument();
+    fireEvent.click(plusBtn);
+
+    expect(screen.getByText('推荐监测业务提问')).toBeInTheDocument();
+    expect(screen.getByText('查询 SCWM-04 监测站近 3 天的位移变化与速率')).toBeInTheDocument();
   });
 });

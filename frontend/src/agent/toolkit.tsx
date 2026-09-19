@@ -57,54 +57,54 @@ export const ToolCardContainer: React.FC<ToolCardContainerProps> = ({
   }, [args]);
 
   return (
-    <div className="my-2 rounded-xl border border-neutral-200/90 bg-neutral-50/60 overflow-hidden text-xs shadow-2xs">
+    <div className="my-2 text-xs">
       {/* 头部状态与折叠触发按钮 */}
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => !isRunning && setIsExpanded((prev) => !prev)}
-        className={`w-full flex items-center justify-between px-3 py-2 text-left transition-colors select-none ${
-          isRunning ? 'cursor-default' : 'cursor-pointer hover:bg-neutral-100/70'
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && !isRunning) {
+            e.preventDefault();
+            setIsExpanded((prev) => !prev);
+          }
+        }}
+        className={`inline-flex items-center gap-1.5 py-1 px-2 -ml-1 rounded-lg text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100/80 transition-colors select-none ${
+          isRunning ? 'cursor-default' : 'cursor-pointer'
         }`}
       >
-        <div className="flex items-center gap-2 min-w-0">
-          {isRunning ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600 shrink-0" />
-          ) : hasError ? (
-            <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-          ) : (
-            <div className="w-3.5 h-3.5 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
-              <Check className="w-2.5 h-2.5 text-emerald-600" />
-            </div>
-          )}
-
-          <span className="font-medium text-neutral-800 truncate">{label}</span>
-
-          {argsSummary && !isRunning && (
-            <span className="text-[11px] text-neutral-400 truncate max-w-xs font-mono">
-              ({argsSummary})
-            </span>
-          )}
-
-          {isRunning && <span className="text-[11px] text-neutral-400">正在查询…</span>}
-        </div>
-
-        {!isRunning && (
-          <div className="flex items-center gap-1 text-neutral-400 shrink-0 ml-2">
-            <span className="text-[11px]">{isExpanded ? '收起' : '展开结果'}</span>
-            {isExpanded ? (
-              <ChevronDown className="w-3.5 h-3.5" />
-            ) : (
-              <ChevronRight className="w-3.5 h-3.5" />
-            )}
-          </div>
+        {isRunning ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-400 shrink-0" />
+        ) : hasError ? (
+          <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+        ) : (
+          <Check className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
         )}
-      </button>
+
+        <span className="font-medium text-neutral-700">{label}</span>
+
+        {argsSummary && !isRunning && (
+          <span className="text-[11px] text-neutral-400 truncate max-w-xs font-mono">
+            ({argsSummary})
+          </span>
+        )}
+
+        {isRunning ? (
+          <span className="text-[11px] text-neutral-400">正在查询…</span>
+        ) : (
+          <ChevronRight
+            className={`w-3.5 h-3.5 text-neutral-400 transition-transform duration-200 ${
+              isExpanded ? 'rotate-90 text-neutral-600' : ''
+            }`}
+          />
+        )}
+      </div>
 
       {/* 展开的详情内容 */}
       {isExpanded && !isRunning && (
-        <div className="border-t border-neutral-200/80 bg-white p-3">
+        <div className="mt-1.5 rounded-xl border border-neutral-200/90 bg-white p-3 max-h-[32rem] overflow-y-auto overscroll-contain shadow-xs animate-in fade-in duration-150">
           {hasError ? (
-            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-red-800">
+            <div className="rounded-lg bg-amber-50/80 border border-amber-200/90 p-3 text-amber-900">
               <div className="font-semibold text-xs mb-1">工具执行失败</div>
               <div className="text-[11px] leading-relaxed">
                 {envelope.error?.message ||

@@ -7,24 +7,42 @@ import { RunStatusBar } from './RunStatusBar';
 import { Recommendations } from './Recommendations';
 import { InterruptHandler } from '../../agent/interrupts';
 import { useFlatThreadList } from '../threads/threadQueries';
+import { useLmaStream } from '../../agent/runtime';
 
 export interface ChatPageProps {
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
   onOpenMobileSidebar?: () => void;
 }
 
-export const ChatPage: React.FC<ChatPageProps> = ({ onOpenMobileSidebar }) => {
+export const ChatPage: React.FC<ChatPageProps> = ({
+  isSidebarCollapsed = false,
+  onToggleSidebar,
+  onOpenMobileSidebar,
+}) => {
   const { threadId } = useParams<{ threadId?: string }>();
   const { sessions } = useFlatThreadList();
+  const stream = useLmaStream();
 
   const currentSession = sessions.find((s) => s.thread_id === threadId);
   const title = currentSession?.name || (threadId ? '监测分析会话' : '新监测分析会话');
+
+  const isUnavailable = Boolean(
+    stream?.error &&
+    typeof stream.error === 'object' &&
+    (('status' in (stream.error as any) && (stream.error as any).status >= 500) ||
+     ('code' in (stream.error as any) && String((stream.error as any).code).includes('ECONN')))
+  );
 
   return (
     <div className="flex flex-col h-full w-full bg-white relative overflow-hidden">
       {/* 顶部标题栏 */}
       <ChatHeader
         title={title}
+        isSidebarCollapsed={isSidebarCollapsed}
+        onToggleSidebar={onToggleSidebar}
         onOpenMobileSidebar={onOpenMobileSidebar}
+        connectionStatus={isUnavailable ? 'unavailable' : 'connected'}
       />
 
       {/* 主对话区 */}
