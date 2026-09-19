@@ -13,7 +13,7 @@ import { RunFailureCard } from '../src/components/RunFailureCard';
 import { STREAM_CONTROLLER } from '@langchain/react';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
-import { projectThreadSessions } from '../src/services/api';
+import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
 import { groupMessagesForDisplay } from '../src/components/messageDisplay';
 
 describe('会话关键路径集成回归', () => {
@@ -431,13 +431,27 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByRole('button', { name: /查看近期趋势/ })).not.toBeInTheDocument();
   });
 
-  it('会话归属依据 graph_id，辅助图即使有名称也不展示', () => {
-    expect(projectThreadSessions([
-      { thread_id: 'temp', created_at: '2026-09-14T00:00:00Z', metadata: { graph_id: 'session-title', name: '辅助名称' } },
-      { thread_id: 'other', created_at: '2026-09-14T00:00:00Z', metadata: { name: '无归属名称' } },
-      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', metadata: { graph_id: 'lma-agent', name: '  站点分析  ' } },
-    ])).toEqual([
-      { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', name: '站点分析', status: undefined },
+  it('会话归属依据 graph_id，adapter.list 严格过滤 assistantId 并映射 remoteId 与 externalId', async () => {
+    const searchMock = vi.fn().mockImplementation(async (query: any) => {
+      expect(query.metadata).toEqual({ graph_id: 'lma-agent' });
+      return [
+        { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', metadata: { graph_id: 'lma-agent', name: '  站点分析  ' } },
+      ];
+    });
+    const mockClient = {
+      threads: { search: searchMock },
+    } as any;
+    const adapter = createLangGraphThreadListAdapter(mockClient);
+    const res = await adapter.list();
+    expect(searchMock).toHaveBeenCalledTimes(1);
+    expect(res.threads).toEqual([
+      {
+        status: 'regular',
+        remoteId: 'real',
+        externalId: 'real',
+        title: '站点分析',
+        lastMessageAt: new Date('2026-09-14T00:00:01Z'),
+      },
     ]);
   });
 

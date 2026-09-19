@@ -13,10 +13,16 @@ import {
   Server,
   Loader2,
 } from 'lucide-react';
-import { ThreadSession } from '../services/api';
 
 // SDK 已分配 ID 的骨架只含展示字段，不伪造服务端 created_at。
-export type SidebarSession = Omit<ThreadSession, 'created_at'> & { created_at?: string; titlePending?: boolean };
+export interface SidebarSession {
+  thread_id: string;
+  name: string;
+  created_at?: string;
+  updated_at?: string;
+  status?: string;
+  titlePending?: boolean;
+}
 
 interface SidebarProps {
   sessions: SidebarSession[];
@@ -26,7 +32,7 @@ interface SidebarProps {
   busyThreadIds: string[];
   /** 实际 DELETE 请求尚未完成的会话，禁止重复操作。 */
   deletingThreadIds?: string[];
-  onSelectSession: (session: Pick<ThreadSession, 'thread_id'>) => void;
+  onSelectSession: (session: Pick<SidebarSession, 'thread_id'>) => void;
   onCreateSession: () => void;
   onRenameSession: (sessionId: string, newName: string) => void;
   onDeleteSession: (sessionId: string) => void;

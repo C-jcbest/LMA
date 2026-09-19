@@ -61,6 +61,7 @@ describe('LangGraph Thread List Adapter (P3)', () => {
     expect(result.threads[0]).toEqual({
       status: 'regular',
       remoteId: 't-1',
+      externalId: 't-1',
       title: '滑坡历史监测 A',
       lastMessageAt: new Date('2026-09-18T10:30:00Z'),
     });
@@ -102,7 +103,7 @@ describe('LangGraph Thread List Adapter (P3)', () => {
         name: '新会话',
       },
     });
-    expect(res).toEqual({ remoteId: 'new-thread-123' });
+    expect(res).toEqual({ remoteId: 'new-thread-123', externalId: 'new-thread-123' });
   });
 
   it('rename() 调用 client.threads.update 更新元数据', async () => {
@@ -146,6 +147,7 @@ describe('LangGraph Thread List Adapter (P3)', () => {
     expect(thread).toEqual({
       status: 'regular',
       remoteId: 't-fetch',
+      externalId: 't-fetch',
       title: '已知监测点',
       lastMessageAt: new Date('2026-09-18T12:05:00Z'),
     });

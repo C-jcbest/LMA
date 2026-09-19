@@ -1,6 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { Client } from '@langchain/langgraph-sdk';
-import { createLangGraphClient, getSessions, getBusySessions, mergeSessions, generateSessionTitle, renameSession } from '../src/services/api';
+import { createLangGraphClient, generateSessionTitle, renameSession } from '../src/services/api';
+import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
 import { useStream } from '@langchain/react';
 import { expect, it, vi } from 'vitest';
 import { useMemo } from 'react';
@@ -12,34 +13,59 @@ it('前端 Stop 完全回归官方 stream.stop 控制，不修改 Thread state',
   expect(stopFn).toHaveBeenCalledWith({ cancel: true });
 });
 
-it('真实 SDK 查询105个业务 Thread：归属、offset、轻量字段与busy IDs 写入 HTTP 请求', async () => {
-  const rows = Array.from({ length: 105 }, (_, index) => ({ thread_id: `thread-${index}`, created_at: '2026-09-16T00:00:00Z', updated_at: new Date(Date.UTC(2026, 8, 16, 0, 0, 105 - index)).toISOString(), metadata: { graph_id: 'lma-agent', ...(index ? { name: `会话${index}` } : {}) }, status: 'idle' }));
+it('真实 SDK 查询105个业务 Thread：通过 createLangGraphThreadListAdapter 进行归属、offset 与分页验证', async () => {
+  const rows = Array.from({ length: 105 }, (_, index) => ({
+    thread_id: `thread-${index}`,
+    created_at: '2026-09-16T00:00:00Z',
+    updated_at: new Date(Date.UTC(2026, 8, 16, 0, 0, 105 - index)).toISOString(),
+    metadata: { graph_id: 'lma-agent', ...(index ? { name: `会话${index}` } : {}) },
+    status: 'idle',
+  }));
   const requests: any[] = [];
   const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url: any, options: any) => {
     const body = JSON.parse(options.body);
     requests.push(body);
     expect(body.metadata).toEqual({ graph_id: 'lma-agent' });
     expect(body.select).not.toContain('values');
-    return new Response(JSON.stringify(body.ids ? rows.filter((row) => body.ids.includes(row.thread_id)) : rows.slice(body.offset, body.offset + body.limit)), { headers: { 'content-type': 'application/json' } });
+    return new Response(
+      JSON.stringify(rows.slice(body.offset, body.offset + body.limit)),
+      { headers: { 'content-type': 'application/json' } }
+    );
   });
   try {
     const client = createLangGraphClient('http://test-server:2024');
-    let offset = 0;
-    let sessions: Awaited<ReturnType<typeof getSessions>>['sessions'] = [];
-    let more = true;
-    while (more) {
-      const page = await getSessions(client, offset);
-      sessions = mergeSessions(sessions, page.sessions);
-      offset = page.nextOffset; more = page.hasMore;
+    const adapter = createLangGraphThreadListAdapter(client);
+
+    // 第一页
+    const page1 = await adapter.list();
+    expect(page1.threads).toHaveLength(20);
+    expect(page1.threads[0].title).toBe('新会话');
+    expect(page1.threads[0].remoteId).toBe('thread-0');
+    expect(page1.threads[0].externalId).toBe('thread-0');
+    expect(page1.nextCursor).toBe('20');
+
+    // 第二页
+    const page2 = await adapter.list({ after: page1.nextCursor });
+    expect(page2.threads).toHaveLength(20);
+    expect(page2.threads[0].title).toBe('会话20');
+    expect(page2.threads[0].remoteId).toBe('thread-20');
+    expect(page2.threads[0].externalId).toBe('thread-20');
+    expect(page2.nextCursor).toBe('40');
+
+    // 翻完全部 105 条
+    let cursor: string | undefined = page2.nextCursor;
+    let totalLoaded = page1.threads.length + page2.threads.length;
+    while (cursor) {
+      const nextPage = await adapter.list({ after: cursor });
+      totalLoaded += nextPage.threads.length;
+      cursor = nextPage.nextCursor;
     }
-    expect(sessions).toHaveLength(105);
-    expect(sessions[0].name).toBe('新会话');
-    expect(sessions.map((item) => item.thread_id)).toEqual(rows.map((item) => item.thread_id));
+    expect(totalLoaded).toBe(105);
     expect(requests.map((item) => item.offset)).toEqual([0, 20, 40, 60, 80, 100]);
     expect(requests.every((item) => item.sort_by === 'updated_at' && item.sort_order === 'desc')).toBe(true);
-    await getBusySessions(client, ['thread-0', 'thread-1']);
-    expect(requests.at(-1).ids).toEqual(['thread-0', 'thread-1']);
-  } finally { fetchSpy.mockRestore(); }
+  } finally {
+    fetchSpy.mockRestore();
+  }
 });
 
 it('真实官方 Hook、Thread CRUD 和标题共享 Client，URL/header 切换一致', async () => {
@@ -62,7 +88,7 @@ it('真实官方 Hook、Thread CRUD 和标题共享 Client，URL/header 切换�
       rerender({ url, auth });
       expect(result.current.stream.client).toBe(result.current.client);
       const start = requests.length;
-      await getSessions(result.current.client);
+      await createLangGraphThreadListAdapter(result.current.client).list();
       await renameSession(result.current.client, 'test-thread', '新标题');
       await result.current.client.threads.delete('test-thread');
       expect(await generateSessionTitle(result.current.client, '首条消息')).toBe('测试标题');

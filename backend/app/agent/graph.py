@@ -5,7 +5,6 @@ LMA middleware 维护展示元数据及推荐契约。
 官方 SummarizationMiddleware 管理历史；推荐退出主 Run 在 TODO 23 实施。
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -24,7 +23,6 @@ from langchain.agents.middleware import (
 from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.errors import GraphBubbleUp
-from langgraph_sdk import get_client
 
 from pydantic import BaseModel, Field
 from app.beidou.client import BeidouApiError
@@ -35,7 +33,6 @@ from app.agent.prompting import SYSTEM_PROMPT
 from app.agent.retry import is_transient_error
 from app.agent.models import create_chat_model
 from app.agent.site import inspect_site_environment
-from app.agent.title import _get_title_llm, clean_generated_title, SYSTEM_PROMPT as TITLE_SYSTEM_PROMPT
 from app.business_time import business_now
 from app.agent.tools import (
     get_current_time,
@@ -61,54 +58,6 @@ def _message_text(message: BaseMessage) -> str:
     if isinstance(content, str):
         return content
     return ""
-
-
-async def _maybe_auto_title(state: "AgentState", runtime) -> None:
-    """首轮对话在后端提炼标题并持久化到 thread.metadata.name，异常静默不影响主回答。"""
-    try:
-        raw_messages = state.get("messages", [])
-        human_messages = [m for m in raw_messages if m.type == "human"]
-        if len(human_messages) != 1:
-            return
-
-        thread_id = None
-        if hasattr(runtime, "execution_info") and runtime.execution_info:
-            thread_id = getattr(runtime.execution_info, "thread_id", None)
-        if not thread_id:
-            from langchain_core.runnables import ensure_config
-            thread_id = ensure_config().get("configurable", {}).get("thread_id")
-        if not thread_id:
-            return
-
-        first_user_text = _message_text(human_messages[0]).strip()
-        if not first_user_text:
-            return
-
-        api_url = os.environ.get("LANGGRAPH_API_URL") or "http://127.0.0.1:2024"
-        client = get_client(url=api_url)
-
-        try:
-            thread_info = await client.threads.get(thread_id)
-            current_name = (thread_info.get("metadata") or {}).get("name")
-            if current_name and current_name != "新会话":
-                return
-        except Exception:
-            pass
-
-        title_llm = _get_title_llm()
-        response = await title_llm.ainvoke(
-            [
-                SystemMessage(content=TITLE_SYSTEM_PROMPT),
-                HumanMessage(content=first_user_text),
-            ],
-            config={"callbacks": []},
-        )
-        title = clean_generated_title(response.text)
-        if title:
-            await client.threads.update(thread_id, metadata={"name": title})
-            logger.info("Auto-generated session title for thread %s: %s", thread_id, title)
-    except Exception as exc:
-        logger.warning("Auto-title generation encountered error: %s", exc)
 
 
 def _sanitize_unanswered_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -219,10 +168,6 @@ class LmaMiddleware(AgentMiddleware):
         return None
 
     async def aafter_agent(self, state, runtime):
-        try:
-            await asyncio.wait_for(_maybe_auto_title(state, runtime), timeout=3.5)
-        except Exception as exc:
-            logger.warning("auto-title attempt encountered exception: %s", exc)
         return await generate_recommendations(state)
 
     async def awrap_tool_call(self, request, handler):

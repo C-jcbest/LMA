@@ -17,7 +17,9 @@ const PAGE_SIZE = 20;
 
 /**
  * 将 LangGraph Server 官方 Thread API 适配为 assistant-ui RemoteThreadListAdapter。
- * 不维护第二套前端会话 store，不向 UI 扩散 unstable API。
+ * 遵循官方 LangGraph 规范：
+ * 明确保证 remoteId === externalId === thread_id，
+ * 使得 Thread List 选中的 ID 与真正传递给底层 useStream 的 LangGraph thread_id 严格对齐。
  */
 export function createLangGraphThreadListAdapter(
   client: Client,
@@ -38,8 +40,9 @@ export function createLangGraphThreadListAdapter(
       });
 
       const remoteThreads: RemoteThreadMetadata[] = threads.map((thread) => ({
-        status: 'regular',
+        status: thread.metadata?.archived ? 'archived' : 'regular',
         remoteId: thread.thread_id,
+        externalId: thread.thread_id,
         title:
           typeof thread.metadata?.name === 'string' && thread.metadata.name.trim()
             ? thread.metadata.name.trim()
@@ -60,14 +63,17 @@ export function createLangGraphThreadListAdapter(
       };
     },
 
-    async initialize(): Promise<{ remoteId: string }> {
+    async initialize(): Promise<{ remoteId: string; externalId: string }> {
       const created = await client.threads.create({
         metadata: {
           graph_id: assistantId,
           name: '新会话',
         },
       });
-      return { remoteId: created.thread_id };
+      return {
+        remoteId: created.thread_id,
+        externalId: created.thread_id,
+      };
     },
 
     async rename(remoteId: string, newTitle: string): Promise<void> {
@@ -80,19 +86,24 @@ export function createLangGraphThreadListAdapter(
       await client.threads.delete(remoteId);
     },
 
-    async archive(): Promise<void> {
-      // 当前 LangGraph 暂无独立归档状态，保持静默兼容
+    async archive(remoteId: string): Promise<void> {
+      await client.threads.update(remoteId, {
+        metadata: { archived: true },
+      });
     },
 
-    async unarchive(): Promise<void> {
-      // 当前 LangGraph 暂无独立解档状态，保持静默兼容
+    async unarchive(remoteId: string): Promise<void> {
+      await client.threads.update(remoteId, {
+        metadata: { archived: false },
+      });
     },
 
     async fetch(threadId: string): Promise<RemoteThreadMetadata> {
       const thread = await client.threads.get(threadId);
       return {
-        status: 'regular',
+        status: thread.metadata?.archived ? 'archived' : 'regular',
         remoteId: thread.thread_id,
+        externalId: thread.thread_id,
         title:
           typeof thread.metadata?.name === 'string' && thread.metadata.name.trim()
             ? thread.metadata.name.trim()

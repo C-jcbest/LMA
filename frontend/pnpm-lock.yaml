@@ -18,7 +18,7 @@ importers:
         specifier: 0.0.32
         version: 0.0.32(@assistant-ui/tap@0.9.18(@types/react@18.3.31)(react@18.3.1))(@langchain/langgraph-sdk@1.11.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@langchain/react@1.1.1(@langchain/core@1.2.11(ws@8.21.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@types/react@18.3.31)(react@18.3.1)
       '@assistant-ui/react-markdown':
-        specifier: ^0.14.16
+        specifier: 0.14.16
         version: 0.14.16(@assistant-ui/react@0.15.21(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@assistant-ui/react-streamdown':
         specifier: 0.3.16

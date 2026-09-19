@@ -13,7 +13,6 @@ import {
   useAuiState,
 } from "@assistant-ui/react";
 import {
-  ArchiveIcon,
   Loader2Icon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -43,6 +42,14 @@ export const ThreadList: FC = () => {
         <ThreadListSearch value={search} onValueChange={setSearch} />
       )}
       <ThreadListItems searchQuery={hasThreads ? search : ""} />
+      <ThreadListPrimitive.LoadMore asChild>
+        <Button
+          variant="ghost"
+          className="w-full text-xs text-neutral-500 hover:text-neutral-900 mt-1 cursor-pointer"
+        >
+          加载更多
+        </Button>
+      </ThreadListPrimitive.LoadMore>
     </ThreadListRoot>
   );
 };
@@ -65,8 +72,8 @@ export const ThreadListSearch = forwardRef<
         type="search"
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
-        aria-label="Search threads"
-        placeholder="Search threads"
+        aria-label="搜索会话"
+        placeholder="搜索会话"
         className={cn("h-8 ps-8 text-sm", className)}
         {...props}
       />
@@ -113,16 +120,16 @@ const dateGroupLabel = (
   date: Date | undefined,
   startOfToday: number,
 ): string => {
-  if (!date || date.getTime() >= startOfToday) return "Today";
-  if (date.getTime() >= startOfToday - DAY_IN_MS) return "Yesterday";
-  return "Earlier";
+  if (!date || date.getTime() >= startOfToday) return "今天";
+  if (date.getTime() >= startOfToday - DAY_IN_MS) return "昨天";
+  return "更早";
 };
 
 export type ThreadListGroup = { label: string; indices: number[] };
 
 /**
  * Filters the thread list by title and buckets the matches by last activity
- * (Today, Yesterday, Earlier). `groups` is null when no thread carries a
+ * (今天, 昨天, 更早). `groups` is null when no thread carries a
  * date, in which case `filteredIndices` keeps the runtime order.
  */
 export const useThreadListGroups = (searchQuery = "") => {
@@ -139,7 +146,7 @@ export const useThreadListGroups = (searchQuery = "") => {
       .filter(
         ({ id }) =>
           !query ||
-          (itemsById.get(id)?.title || "New Chat")
+          (itemsById.get(id)?.title || "新会话")
             .toLowerCase()
             .includes(query),
       )
@@ -185,7 +192,7 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
         data-slot="aui_thread-list-empty"
         className="text-muted-foreground px-2.5 py-4 text-sm"
       >
-        No threads found
+        未找到相关会话
       </div>
     );
   }
@@ -245,7 +252,7 @@ export const ThreadListNew = forwardRef<
               data-slot="aui_thread-list-new-label"
               className={cn("whitespace-nowrap", labelClassName)}
             >
-              New Thread
+              新建会话
             </span>
           </>
         )}
@@ -263,7 +270,7 @@ const ThreadListSkeleton: FC = () => {
         <div
           key={i}
           role="status"
-          aria-label="Loading threads"
+          aria-label="正在加载会话"
           data-slot="aui_thread-list-skeleton-wrapper"
           className="flex h-8 items-center px-2.5"
         >
@@ -318,9 +325,9 @@ export const ThreadListItem: FC = () => {
             data-slot="aui_thread-list-item-title"
             className="min-w-0 flex-1 truncate"
           >
-            <ThreadListItemPrimitive.Title fallback="New Chat" />
+            <ThreadListItemPrimitive.Title fallback="新会话" />
           </span>
-          {isRunning && <span className="sr-only">Running</span>}
+          {isRunning && <span className="sr-only">运行中</span>}
         </ThreadListItemPrimitive.Trigger>
       )}
       <ThreadListItemMore onRename={() => setIsRenaming(true)} />
@@ -374,7 +381,7 @@ const ThreadListItemRename: FC<{
       ref={inputRef}
       autoFocus
       data-slot="aui_thread-list-item-rename"
-      aria-label="Rename thread"
+      aria-label="重命名会话"
       value={value}
       className="h-7 min-w-0 flex-1 ps-2.5 pe-9 text-sm"
       onChange={(event) => setValue(event.target.value)}
@@ -403,7 +410,7 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           className="data-[state=open]:bg-accent absolute end-1.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 group-hover:opacity-100 group-has-focus-visible:opacity-100 group-data-active:opacity-100 data-[state=open]:opacity-100"
         >
           <MoreHorizontalIcon className="size-3.5" />
-          <span className="sr-only">More options</span>
+          <span className="sr-only">更多选项</span>
         </Button>
       </ThreadListItemMorePrimitive.Trigger>
       <ThreadListItemMorePrimitive.Content
@@ -419,24 +426,15 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           onSelect={onRename}
         >
           <PencilIcon className="size-4" />
-          Rename
+          重命名
         </ThreadListItemMorePrimitive.Item>
-        <ThreadListItemPrimitive.Archive asChild>
-          <ThreadListItemMorePrimitive.Item
-            data-slot="aui_thread-list-item-more-item"
-            className="hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
-          >
-            <ArchiveIcon className="size-4" />
-            Archive
-          </ThreadListItemMorePrimitive.Item>
-        </ThreadListItemPrimitive.Archive>
         <ThreadListItemPrimitive.Delete asChild>
           <ThreadListItemMorePrimitive.Item
             data-slot="aui_thread-list-item-more-item"
             className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
           >
             <TrashIcon className="size-4" />
-            Delete
+            删除
           </ThreadListItemMorePrimitive.Item>
         </ThreadListItemPrimitive.Delete>
       </ThreadListItemMorePrimitive.Content>
