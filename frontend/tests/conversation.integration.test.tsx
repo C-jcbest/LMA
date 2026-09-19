@@ -20,6 +20,7 @@ import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
 import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
 import { groupMessagesForDisplay } from '../src/components/messageDisplay';
+import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
 
 describe('会话关键路径集成回归', () => {
   it('官方内部摘要不成为用户气泡，分组保留原始 BaseMessage 引用', () => {
@@ -1064,4 +1065,112 @@ it('Sidebar 列表加载失败时以 amber 样式呈现，支持重试与关闭'
 
   fireEvent.click(screen.getByTitle('关闭'));
   expect(onDismiss).toHaveBeenCalledTimes(1);
+});
+
+it('ReasoningTrigger 与 ToolFallbackTrigger 排版对齐：思考去图标、工具运行态隐藏 Chevron 并禁止交互', async () => {
+  // 1. ReasoningTrigger：不渲染 BrainIcon，仅文本与极淡 Chevron
+  const { container: reasoningContainer, rerender: rerenderReasoning } = render(
+    <ReasoningRoot>
+      <ReasoningTrigger active={true} />
+    </ReasoningRoot>
+  );
+  expect(screen.getByText('正在思考…')).toBeInTheDocument();
+  expect(reasoningContainer.querySelector('svg.aui-reasoning-trigger-icon')).not.toBeInTheDocument();
+  expect(reasoningContainer.querySelector('svg.aui-reasoning-trigger-chevron')).toBeInTheDocument();
+
+  rerenderReasoning(
+    <ReasoningRoot>
+      <ReasoningTrigger active={false} />
+    </ReasoningRoot>
+  );
+  expect(screen.getByText('已思考')).toBeInTheDocument();
+  expect(reasoningContainer.querySelector('svg.aui-reasoning-trigger-icon')).not.toBeInTheDocument();
+
+  // 2. ToolFallback: running 时无 chevron 且 disabled
+  const { container: toolContainer, rerender: rerenderTool } = render(
+    <ToolFallback
+      toolName="get_daily_gnss_data"
+      status={{ type: 'running' }}
+      argsText="{}"
+    />
+  );
+  expect(screen.getByText('正在获取 GNSS 监测数据…')).toBeInTheDocument();
+  expect(toolContainer.querySelector('svg.aui-tool-fallback-trigger-chevron')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeDisabled();
+
+  // 3. ToolFallback: complete 时有 chevron，且默认折叠
+  rerenderTool(
+    <ToolFallback
+      toolName="get_daily_gnss_data"
+      status={{ type: 'complete' }}
+      argsText="{}"
+      artifact={{
+        version: 1,
+        kind: 'gnss_series',
+        status: 'success',
+        data: {
+          station_name: '测试站-01',
+          points: [{ time: '2026-09-19 12:00:00', n: 1.0, e: 2.0, u: 3.0 }],
+        },
+      }}
+    />
+  );
+  expect(screen.getByText('已获取 GNSS 监测数据')).toBeInTheDocument();
+  expect(toolContainer.querySelector('svg.aui-tool-fallback-trigger-chevron')).toBeInTheDocument();
+  expect(screen.queryByText('测试站-01')).not.toBeInTheDocument();
+
+  // 点击展开后，直接展示业务结果（无二级查看详细数据层级）
+  await userEvent.click(screen.getByText('已获取 GNSS 监测数据'));
+  expect(screen.getByText('测试站-01')).toBeInTheDocument();
+  expect(screen.getByText('2026-09-19 12:00:00')).toBeInTheDocument();
+});
+
+it('所有普通工具（包括场地环境）默认折叠，仅 HITL / requires-action 自动展开', async () => {
+  // 1. inspect_site_environment 默认折叠（移除 defaultExpanded）
+  render(
+    <ToolFallback
+      toolName="inspect_site_environment"
+      status={{ type: 'complete' }}
+      argsText="{}"
+      artifact={{
+        version: 1,
+        kind: 'site_environment',
+        status: 'success',
+        data: {
+          site_environment: {
+            station: { id: 's1', name: '监测点A', latitude: 30.1, longitude: 104.2 },
+            terrain: { elevation_m: 520 },
+            geology: { unit_name: '泥质灰岩' },
+          },
+        },
+      }}
+    />
+  );
+  expect(screen.getByText('已获取场地环境信息')).toBeInTheDocument();
+  expect(screen.queryByText('监测点A')).not.toBeInTheDocument();
+
+  // 2. requires-action 工具默认展开供用户交互
+  const TestAuiWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    const runtime = useLocalRuntime({});
+    return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+  };
+
+  render(
+    <TestAuiWrapper>
+      <ToolFallback
+        toolName="dangerous_action"
+        status={{ type: 'requires-action', reason: 'approval' }}
+        argsText="{}"
+        approval={{
+          type: 'approval',
+          decision: 'pending',
+          prompt: '请确认是否执行此辅助调查操作？',
+        } as any}
+      />
+    </TestAuiWrapper>
+  );
+  expect(screen.getByText(/待确认辅助操作|待确认/)).toBeInTheDocument();
+  expect(screen.getByText('请确认是否执行此辅助调查操作？')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '允许' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument();
 });

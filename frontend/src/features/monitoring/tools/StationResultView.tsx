@@ -9,16 +9,16 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
         <div className="text-[11px] text-neutral-400 px-0.5">
           共查询到 {data.groups.length} 个监测分组
         </div>
-        <div className="border border-neutral-200/90 rounded-lg bg-white max-h-64 overflow-auto overscroll-contain shadow-sm">
+        <div className="border border-border/60 rounded-lg bg-background/60 max-h-64 overflow-auto overscroll-contain">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="sticky top-0 z-10 bg-[#f9fafb] text-neutral-600 font-semibold border-b border-neutral-200/90 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+            <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
               <tr>
                 <th className="py-2 px-3 whitespace-nowrap">分组名称</th>
                 <th className="py-2 px-3 whitespace-nowrap">监测点数</th>
                 <th className="py-2 px-3">分组说明</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-100 text-neutral-800">
+            <tbody className="divide-y divide-border/40 text-neutral-800">
               {data.groups.map((g: any, i: number) => (
                 <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
                   <td className="py-2 px-3 font-medium text-neutral-900 whitespace-nowrap">{g.group_name}</td>
@@ -51,9 +51,9 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
         <div className="text-[11px] text-neutral-400 px-0.5">
           共查询到 {data.stations.length} 个监测点详情
         </div>
-        <div className="border border-neutral-200/90 rounded-lg bg-white max-h-64 overflow-auto overscroll-contain shadow-sm">
+        <div className="border border-border/60 rounded-lg bg-background/60 max-h-64 overflow-auto overscroll-contain">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="sticky top-0 z-10 bg-[#f9fafb] text-neutral-600 font-semibold border-b border-neutral-200/90 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+            <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
               <tr>
                 <th className="py-2 px-3 whitespace-nowrap">序号</th>
                 <th className="py-2 px-3 whitespace-nowrap">监测点名称</th>
@@ -62,7 +62,7 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
                 <th className="py-2 px-3 whitespace-nowrap">测点类型</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-100 text-neutral-800">
+            <tbody className="divide-y divide-border/40 text-neutral-800">
               {data.stations.map((s: any, i: number) => {
                 const status = statusStyles[s.station_status] || {
                   dot: 'bg-neutral-300',

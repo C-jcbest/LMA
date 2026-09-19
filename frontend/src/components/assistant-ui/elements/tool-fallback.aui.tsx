@@ -11,6 +11,7 @@ import {
 import {
   toolApprovalAcceptsText,
   useAuiState,
+  useScrollLock,
   useToolCallElapsed,
   type ToolApprovalOption,
   type ToolCallMessagePart,
@@ -54,6 +55,7 @@ function ToolFallbackRoot({
   ...props
 }: ToolFallbackRootProps) {
   const collapsibleRef = useRef<HTMLDivElement>(null);
+  const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
 
   const isControlled = controlledOpen !== undefined;
@@ -61,12 +63,13 @@ function ToolFallbackRoot({
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
+      lockScroll();
       if (!isControlled) {
         setUncontrolledOpen(open);
       }
       controlledOnOpenChange?.(open);
     },
-    [isControlled, controlledOnOpenChange],
+    [lockScroll, isControlled, controlledOnOpenChange],
   );
 
   return (
@@ -166,6 +169,7 @@ function ToolFallbackTrigger({
         "aui-tool-fallback-trigger group/trigger text-muted-foreground hover:text-foreground flex w-fit min-h-7 origin-left items-center gap-1.5 py-1 text-xs transition-[color,scale] active:scale-[0.98]",
         className,
       )}
+      disabled={isRunning}
       {...props}
     >
       <Icon
@@ -174,8 +178,9 @@ function ToolFallbackTrigger({
           "aui-tool-fallback-trigger-icon size-3.5 shrink-0",
           isCancelled && "text-muted-foreground",
           isRunning && "animate-spin [animation-duration:0.8s] text-muted-foreground",
-          statusType === "complete" && "text-muted-foreground/70",
+          statusType === "complete" && "text-muted-foreground",
           statusType === "incomplete" && !isCancelled && "text-destructive/80",
+          statusType === "requires-action" && "text-amber-500/90",
         )}
       />
       <span
@@ -189,16 +194,18 @@ function ToolFallbackTrigger({
         {displayLabel}
       </span>
       <ToolFallbackDuration />
-      <ChevronDownIcon
-        data-slot="tool-fallback-trigger-chevron"
-        className={cn(
-          "aui-tool-fallback-trigger-chevron size-3 shrink-0 text-muted-foreground/50",
-          "transition-transform duration-(--animation-duration) ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-          "-rotate-90",
-          "group-data-open/trigger:rotate-0",
-          "group-data-panel-open/trigger:rotate-0",
-        )}
-      />
+      {!isRunning && (
+        <ChevronDownIcon
+          data-slot="tool-fallback-trigger-chevron"
+          className={cn(
+            "aui-tool-fallback-trigger-chevron size-3 shrink-0 text-muted-foreground/50",
+            "transition-transform duration-(--animation-duration) ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+            "-rotate-90",
+            "group-data-open/trigger:rotate-0",
+            "group-data-panel-open/trigger:rotate-0",
+          )}
+        />
+      )}
     </CollapsibleTrigger>
   );
 }
@@ -225,7 +232,7 @@ function ToolFallbackContent({
     >
       <div
         className={cn(
-          "flex flex-col gap-2 ps-6 pt-1 pb-2 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:animate-none",
+          "flex flex-col gap-2 ps-5 my-1.5 border-s border-border/40 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:animate-none",
           "group-data-open/collapsible-content:animate-in group-data-open/collapsible-content:fade-in-0 group-data-open/collapsible-content:blur-in-[2px] group-data-open/collapsible-content:slide-in-from-top-1",
           "group-data-closed/collapsible-content:animate-out group-data-closed/collapsible-content:fade-out-0 group-data-closed/collapsible-content:blur-out-[2px] group-data-closed/collapsible-content:slide-out-to-top-1",
           "group-data-closed/collapsible-content:animation-duration-(--animation-duration) group-data-open/collapsible-content:animation-duration-(--animation-duration)",
@@ -709,7 +716,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     isRequiresAction && offersInterruptAction(status, approval, interrupt);
 
   const registryItem = getToolRegistryItem(toolName);
-  const defaultOpen = isRequiresAction || !!registryItem?.defaultExpanded;
+  const defaultOpen = isRequiresAction;
 
   const [open, setOpen] = useState(defaultOpen);
   const [prevRequiresAction, setPrevRequiresAction] =

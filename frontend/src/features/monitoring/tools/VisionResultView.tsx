@@ -72,9 +72,9 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
             return (
               <figure
                 key={img.name}
-                className="border border-neutral-200/90 rounded-lg bg-white shadow-sm overflow-hidden max-w-3xl"
+                className="border border-border/60 rounded-lg bg-background/60 overflow-hidden max-w-3xl"
               >
-                <figcaption className="px-3 py-1.5 text-[11px] font-medium text-neutral-600 border-b border-neutral-100 bg-[#f9fafb]">
+                <figcaption className="px-3 py-1.5 text-[11px] font-medium text-muted-foreground border-b border-border/60 bg-muted/40">
                   图{i + 1} · {title}
                 </figcaption>
                 <img
@@ -91,7 +91,7 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
 
       {/* 兜底：无 artifact 图片时用 chart_points 渲染 SVG 迷你时序图 */}
       {visibleImages.length === 0 && (
-        <div className="border border-neutral-200/90 rounded-lg bg-white p-3 shadow-sm space-y-2 max-w-3xl">
+        <div className="border border-border/60 rounded-lg bg-background/60 p-3 space-y-2 max-w-3xl">
           {(['n', 'e', 'u'] as const).map((key) => {
             const label =
               key === 'n' ? 'N 北向 (m)' : key === 'e' ? 'E 东向 (m)' : 'U 垂直 (m)';
@@ -144,7 +144,7 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
             {candidates.map((c: any, i: number) => (
               <div
                 key={i}
-                className="text-xs text-neutral-800 bg-white/80 border border-amber-100 rounded-md px-2 py-1.5"
+                className="text-xs text-neutral-800 bg-background/80 border border-amber-200/40 rounded-md px-2 py-1.5"
               >
                 <div className="flex items-center gap-1.5 text-[10px] text-neutral-500">
                   <span className="px-1.5 py-0.5 bg-neutral-100 rounded font-mono">{c.metric}</span>
@@ -163,7 +163,7 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
       {(obs.fact_text ||
         (obs.trends && obs.trends.length > 0) ||
         (obs.turning_points && obs.turning_points.length > 0)) && (
-        <div className="border border-neutral-200/90 rounded-lg bg-white p-3 shadow-sm max-w-3xl">
+        <div className="border border-border/60 rounded-lg bg-background/60 p-3 max-w-3xl">
           {obs.fact_text && (
             <div className="text-xs text-neutral-800 leading-relaxed">{obs.fact_text}</div>
           )}

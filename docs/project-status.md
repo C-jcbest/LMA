@@ -57,16 +57,18 @@
   - 通过 patch `@assistant-ui/react-langchain` 将 `additional_kwargs?.lc_source === "summarization"` 消息映射为 `role: "system"`，彻底杜绝历史摘要展示为用户消息气泡；
   - `thread.aui.tsx` 中新增 `ThreadSummaryMessage`（归档折叠卡片），默认收起，提示“更早的对话已压缩为摘要”，点击可展开查看摘要纯文本；
   - 彻底删除旧版 `SummaryCard.tsx`。
-- **Reasoning / Thinking 完全替换与官方行为对齐（P6 落地）**：
+- **Reasoning / Thinking 与工具同级排版及防抖动优化（P6 落地）**：
   - 彻底删除 `ThinkingBlock.tsx`、`ThinkingIndicator.tsx` 与 `components/reasoning.tsx`；
-  - 基于 assistant-ui 官方 `Reasoning` Element 与 Primitive 接管生命周期，恢复官方 `isOpen` 行为（流式中自动展开，结束后恢复默认折叠）；
-  - 搭配 `useScrollLock` 确保展开折叠时视口稳定，排版统一收敛为 `variant="ghost"` 紧凑风格；
-  - 状态汉化对齐为 `正在思考…`（流式运行）与 `已思考`（终态），消除伪造思考耗时与字符串匹配推断。
-- **Tool Call Shell 全部交给 assistant-ui 与轻量调查轨迹（P7 落地）**：
-  - 彻底删除 `InlineToolCall.tsx` 与旧目录 `components/tools/`；
-  - 业务展示组件完全解耦并迁移至 `features/monitoring/tools/`（`GnssResultView`、`WeatherResultView`、`VisionResultView`、`StationResultView`、`SiteEnvironmentResultView`）；
+  - 基于 assistant-ui 官方 `Reasoning` Element 与 Primitive 接管生命周期，触发器去除图标仅保留纯文本与极淡 Chevron，与工具行统一度量（~28px 紧凑风格）；
+  - 恢复官方 `isOpen` 行为（流式中自动展开，结束后恢复折叠）；
+  - 在 `Collapsible` 与 `ReasoningRoot` 中正确透传 DOM `ref`，并结合 `useScrollLock` 彻底消除视口展开折叠抖动；
+  - 状态汉化对齐为 `正在思考…`（流式运行）与 `已思考`（终态），消除伪造思考耗时。
+- **Tool Call 两层单折叠交互、去 ToolGroup 与轻量视觉（P7 落地）**：
+  - 彻底删除 `ToolGroup`（`tool-group.aui.tsx`）及三层嵌套外壳，Tool 与 Reasoning 成为同级 Sibling Message Part；
+  - 每个 Tool 自身作为独立 Collapsible，所有普通工具（含场地环境）默认收起，仅 HITL / `requires-action` 自动展开；
+  - 运行中隐藏 Chevron 并禁用折叠，完成后展示真实耗时与 Chevron，用户点击后直接展示完整业务数据（无第二级折叠）；
   - 彻底消除内部函数名（如 `(get_daily_gnss_data)`）与原始 args/result JSON 调试杂质，Registry 提供状态动词（如 `正在获取 GNSS 监测数据…` / `已获取 GNSS 监测数据`）；
-  - 工具外壳重构为轻量 ~28px 行高调查轨迹（`ghost` + 左侧辅助线），未命中业务结果或无数据时展示友好纯文本；
+  - 业务展示组件（`features/monitoring/tools/`）弱化边框与阴影，采用极简无阴影卡片与表格；
   - `registry.tsx` 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测。
 - **Markdown 改用 assistant-ui Streamdown 与代码高亮（P8 落地）**：
   - 彻底删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
@@ -120,7 +122,7 @@
   ```powershell
   cd frontend; pnpm run test; pnpm run build
   ```
-  包含 60 项关键路径与集成回归测试，生产构建无类型与打包错误。
+  包含 62 项关键路径与集成回归测试，生产构建无类型与打包错误。
 - **提交规范**：
   - 执行 `git diff --check` 确认无格式或空白问题；
   - 严禁提交 `.env`、密钥、真实账号或敏感数据。

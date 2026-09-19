@@ -17,9 +17,9 @@ export const GnssResultView: React.FC<ToolResultProps> = ({ data }) => {
           {data.downsampled ? '，超限已等间隔降采样' : ''}，支持上下滚动）
         </span>
       </div>
-      <div className="border border-neutral-200/90 rounded-lg bg-white h-56 max-h-56 overflow-y-auto overscroll-contain shadow-sm">
+      <div className="border border-border/60 rounded-lg bg-background/60 h-56 max-h-56 overflow-y-auto overscroll-contain">
         <table className="w-full text-left text-xs border-collapse">
-          <thead className="sticky top-0 z-10 bg-[#f9fafb] text-neutral-600 font-semibold border-b border-neutral-200/90 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+          <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
             <tr>
               <th className="py-2 px-3 whitespace-nowrap">#</th>
               <th className="py-2 px-3 whitespace-nowrap">采样时刻</th>
@@ -28,7 +28,7 @@ export const GnssResultView: React.FC<ToolResultProps> = ({ data }) => {
               <th className="py-2 px-3 whitespace-nowrap">垂直坐标 U (m)</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-neutral-100 text-neutral-800 font-mono text-[11px]">
+          <tbody className="divide-y divide-border/40 text-neutral-800 font-mono text-[11px]">
             {allPoints.map((p: any, i: number) => (
               <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
                 <td className="py-1 px-3 text-neutral-400">{i + 1}</td>

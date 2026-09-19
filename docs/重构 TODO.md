@@ -347,11 +347,15 @@ components/tools/
 
 彻底移除对通用工具生命周期的手写维护（isPending, isError, hasToolMessageResult, hasLiveOutput, isLiveRunning, spinner/check/error 图标生命周期、折叠 Shell、通用 Tool 错误 Shell）。
 
-## 7.1 使用 ToolFallback
-- 采用官方 `ToolFallback` 架构，在 `src/components/assistant-ui/elements/tool-fallback.aui.tsx` 中增强：
-  - 汉化工具状态（`正在调用` / `已调用` / `已取消调用` / `待确认操作` / `调用异常`）并展示工具友好中文名；
-  - 汉化 `ToolFallbackResult`、`ToolFallbackError`、`ToolFallbackApproval` 的操作按钮与表头；
-  - `ToolFallbackImpl` 接收到结果/artifact 时，若命中业务工具且数据有效，在内容区直接渲染领域结果组件；若未命中业务工具或结果非业务结构，平滑回退至通用 `ToolFallbackResult`。
+## 7.1 使用 ToolFallback（两层单折叠交互）
+- 彻底移除 `ToolGroup` 与“X项监测调查操作”外层壳，Tool 与 Reasoning 处于同级 Sibling Message Part；
+- 采用官方 `ToolFallback` 架构，在 `src/components/assistant-ui/elements/tool-fallback.aui.tsx` 中实现单工具折叠：
+  - 触发器高度收敛为 ~28px（`text-xs`），与思考行排版统一度量；
+  - 运行态隐藏 Chevron 并禁用交互，完成后显示真实耗时与极淡 Chevron；
+  - 默认收起（`defaultOpen = false`，场地环境不特殊展开），仅 HITL / `requires-action` 自动展开；
+  - 展开后直接呈现完整业务数据（无第二级折叠），左侧辅以极淡轨迹线（`border-s border-border/40`）；
+  - 汉化工具状态动词并展示工具友好中文名；
+  - `ToolFallbackImpl` 接收到结果/artifact 时，若命中业务工具且数据有效，在内容区直接渲染领域结果组件；若未命中业务工具或结果非业务结构，平滑回退至通用友好纯文本说明。
 
 ## 7.2 LMA 工具只保留“结果内容”
 业务展示组件全部迁移至 `src/features/monitoring/tools/`：

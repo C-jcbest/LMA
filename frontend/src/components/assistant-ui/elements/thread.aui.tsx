@@ -17,11 +17,6 @@ import {
   ReasoningTrigger,
 } from "@/components/assistant-ui/elements/reasoning.aui";
 import { ToolFallback } from "@/components/assistant-ui/elements/tool-fallback.aui";
-import {
-  ToolGroupContent,
-  ToolGroupRoot,
-  ToolGroupTrigger,
-} from "@/components/assistant-ui/elements/tool-group.aui";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -93,9 +88,6 @@ export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
-  ToolGroup?:
-    | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
-    | undefined;
   ReasoningGroup?:
     | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
     | undefined;
@@ -103,19 +95,16 @@ export type ThreadComponents = {
 };
 
 const messageGroupBy = groupPartByType({
-  reasoning: ["group-chainOfThought", "group-reasoning"],
-  "tool-call": ["group-chainOfThought", "group-tool"],
+  reasoning: ["group-reasoning"],
+  "tool-call": [],
   "standalone-tool-call": [],
 });
 
 type ThreadGroupKey =
-  | "group-chainOfThought"
   | "group-reasoning"
-  | "group-tool"
   | "group-task";
 
 const TASK_GROUP_PATH: readonly ThreadGroupKey[] = [
-  "group-chainOfThought",
   "group-task",
 ];
 
@@ -126,7 +115,6 @@ const taskAwareGroupBy = (
   const path = messageGroupBy(part, context);
   return part.type === "tool-call" &&
     part.messages !== undefined &&
-    path.length > 0 &&
     !context?.toolUIs?.[part.toolName]?.length
     ? TASK_GROUP_PATH
     : path;
@@ -675,7 +663,6 @@ const MessageError: FC = () => {
 const AssistantMessage: FC = () => {
   const {
     ToolFallback: ToolFallbackComponent = ToolFallback,
-    ToolGroup,
     ReasoningGroup,
     TaskGroup: TaskGroupComponent,
   } = useContext(ThreadComponentsContext);
@@ -698,25 +685,10 @@ const AssistantMessage: FC = () => {
         <MessagePrimitive.GroupedParts groupBy={groupBy}>
           {({ part, children }) => {
             switch (part.type) {
-              case "group-chainOfThought":
-                return <div data-slot="aui_chain-of-thought">{children}</div>;
               case "group-task":
                 return TaskGroupComponent ? (
                   <TaskGroupComponent group={part} />
                 ) : null;
-              case "group-tool":
-                if (ToolGroup) {
-                  return <ToolGroup group={part}>{children}</ToolGroup>;
-                }
-                return (
-                  <ToolGroupRoot variant="ghost">
-                    <ToolGroupTrigger
-                      count={part.indices.length}
-                      active={part.status.type === "running"}
-                    />
-                    <ToolGroupContent>{children}</ToolGroupContent>
-                  </ToolGroupRoot>
-                );
               case "group-reasoning": {
                 if (ReasoningGroup) {
                   return (

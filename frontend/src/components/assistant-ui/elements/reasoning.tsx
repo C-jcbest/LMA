@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { cva, type VariantProps } from "class-variance-authority";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon } from "lucide-react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -58,6 +58,7 @@ export type ReasoningRootProps = Omit<
   };
 
 function ReasoningRoot({
+  ref,
   className,
   variant,
   open: controlledOpen,
@@ -67,7 +68,7 @@ function ReasoningRoot({
   onAnimationStart,
   children,
   ...props
-}: ReasoningRootProps) {
+}: ReasoningRootProps & { ref?: React.Ref<HTMLDivElement> }) {
   const [initialOpen] = useState(defaultOpen);
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
 
@@ -101,6 +102,7 @@ function ReasoningRoot({
 
   return (
     <Collapsible
+      ref={ref}
       data-slot="reasoning-root"
       data-variant={variant}
       open={isOpen}
@@ -170,25 +172,19 @@ function ReasoningTrigger({
   active?: boolean;
   duration?: number;
 }) {
-  const durationText = duration ? ` (${duration}s)` : "";
-
   return (
     <CollapsibleTrigger
       data-slot="reasoning-trigger"
       className={cn(
-        "aui-reasoning-trigger group/trigger text-muted-foreground hover:text-foreground flex max-w-[75%] origin-left items-center gap-1.5 py-1 text-xs transition-[color,scale] active:scale-[0.98]",
+        "aui-reasoning-trigger group/trigger text-muted-foreground hover:text-foreground flex w-fit min-h-7 origin-left items-center gap-1.5 py-1 text-xs transition-[color,scale] active:scale-[0.98]",
         className,
       )}
       {...props}
     >
-      <BrainIcon
-        data-slot="reasoning-trigger-icon"
-        className="aui-reasoning-trigger-icon size-3.5 shrink-0 text-muted-foreground/70"
-      />
       <span
         data-slot="reasoning-trigger-label"
         className={cn(
-          "aui-reasoning-trigger-label-wrapper inline-block leading-none tabular-nums font-normal",
+          "aui-reasoning-trigger-label-wrapper inline-block leading-none tabular-nums font-normal text-foreground/85",
           active && "shimmer motion-reduce:animate-none",
         )}
       >

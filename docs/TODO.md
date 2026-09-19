@@ -13,13 +13,15 @@
 1. **历史摘要消息标准化与折叠展示**：
    - Patch `@assistant-ui/react-langchain` 将 `additional_kwargs?.lc_source === "summarization"` 映射为 `role: "system"`，杜绝作为用户气泡；
    - `ThreadSummaryMessage` 实现抽屉式归档折叠，默认收起并支持点击展开查看纯文本；彻底删除 `SummaryCard.tsx`。
-2. **P6：Reasoning / Thinking 完全替换与官方行为对齐**：
+2. **P6：Reasoning / Thinking 与工具同级排版及防抖动优化**：
    - 删除 `ThinkingBlock.tsx`、`ThinkingIndicator.tsx` 与 `components/reasoning.tsx`；
-   - 接入 assistant-ui 官方 `Reasoning` Element 与 Primitive，恢复官方 `isOpen` 行为（流式中自动展开，结束后恢复折叠），集成 `useScrollLock` 防抖动，统一 `variant="ghost"` 紧凑排版。
-3. **P7：Tool Call Shell 全部交给 assistant-ui 与轻量调查轨迹**：
-   - 彻底删除 `InlineToolCall.tsx` 与旧目录 `components/tools/`；
-   - 消除内部函数名与原始 JSON 调试杂质，Registry 提供自然业务动词；
-   - 采用 ~28px 行高轻量调查轨迹（`ghost` + 左侧辅助线）；
+   - 接入 assistant-ui 官方 `Reasoning` Element 与 Primitive，思考触发器去除图标仅保留文本与极淡 Chevron，与工具行统一为 ~28px 紧凑排版；
+   - 恢复官方 `isOpen` 流式展开并在 `Collapsible`/`ReasoningRoot` 贯通 `ref` 与 `useScrollLock`，彻底消除折叠展开抖动。
+3. **P7：Tool Call 两层单折叠交互、去 ToolGroup 与轻量视觉**：
+   - 彻底删除 `ToolGroup`（`tool-group.aui.tsx`）及三层嵌套外壳，Tool 与 Reasoning 成为同级 Sibling Message Part；
+   - 每个 Tool 自身作为独立 Collapsible，所有普通工具（含场地环境）默认收起，仅 HITL / `requires-action` 自动展开；
+   - 运行中隐藏 Chevron 并禁用折叠，完成后展示耗时与 Chevron，点击展开直接呈现完整业务数据（无第二级折叠）；
+   - 消除内部函数名与原始 JSON 调试杂质，Registry 提供状态动词，弱化 Station/GNSS/Weather/Vision 边框与阴影；
    - 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测。
 4. **P8：Markdown 改用 assistant-ui Streamdown 与代码高亮**：
    - 删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；

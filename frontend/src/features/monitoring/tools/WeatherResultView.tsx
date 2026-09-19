@@ -99,7 +99,7 @@ export const WeatherResultView: React.FC<ToolResultProps> = ({ data }) => {
           （天气服务小时数据）
         </div>
       )}
-      <div className="border border-neutral-200/90 rounded-lg bg-white p-3 shadow-sm max-w-3xl">
+      <div className="border border-border/60 rounded-lg bg-background/60 p-3 max-w-3xl">
         <div className="flex items-center gap-2 text-sm text-neutral-800 font-medium">
           <CloudRain className="w-4 h-4 text-neutral-500" />
           <span>{cur.condition ?? '-'}</span>
@@ -112,7 +112,7 @@ export const WeatherResultView: React.FC<ToolResultProps> = ({ data }) => {
           {cells.map((c, i) => (
             <div
               key={i}
-              className="px-2.5 py-2 bg-neutral-50 border border-neutral-100 rounded-md"
+              className="px-2.5 py-2 bg-muted/30 border border-border/40 rounded-md"
             >
               <div className="text-[10px] text-neutral-400">{c.label}</div>
               <div className="text-xs text-neutral-800 font-mono mt-0.5">{c.value}</div>
@@ -121,9 +121,9 @@ export const WeatherResultView: React.FC<ToolResultProps> = ({ data }) => {
         </div>
       </div>
       {dates.length > 0 && (
-        <div className="border border-neutral-200/90 rounded-lg bg-white max-h-64 overflow-auto overscroll-contain shadow-sm">
+        <div className="border border-border/60 rounded-lg bg-background/60 max-h-64 overflow-auto overscroll-contain">
           <table className="w-full text-left text-xs border-collapse">
-            <thead className="sticky top-0 z-10 bg-[#f9fafb] text-neutral-600 font-semibold border-b border-neutral-200/90 shadow-[0_1px_0_rgba(0,0,0,0.04)]">
+            <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
               <tr>
                 <th className="py-2 px-3 whitespace-nowrap">日期</th>
                 <th className="py-2 px-3 whitespace-nowrap">历史降雨 (mm)</th>
@@ -132,7 +132,7 @@ export const WeatherResultView: React.FC<ToolResultProps> = ({ data }) => {
                 <th className="py-2 px-3 whitespace-nowrap">最大风速 (km/h)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-100 text-neutral-800 font-mono text-[11px]">
+            <tbody className="divide-y divide-border/40 text-neutral-800 font-mono text-[11px]">
               {dates.map((d: string) => (
                 <tr key={d} className="hover:bg-neutral-50/70 transition-colors">
                   <td className="py-1 px-3 text-neutral-600 whitespace-nowrap">{d}</td>

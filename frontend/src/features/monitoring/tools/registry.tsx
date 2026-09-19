@@ -22,7 +22,6 @@ export interface ToolRegistryItem {
   cancelledLabel?: string;
   artifactKind: ToolArtifactKind;
   render: React.ComponentType<ToolRendererProps>;
-  defaultExpanded?: boolean;
 }
 
 export const FALLBACK_TOOL_LABELS = {
@@ -97,7 +96,6 @@ export const toolRegistry: Record<string, ToolRegistryItem> = {
       const env = siteEnvironment || data?.site_environment;
       return env ? <SiteEnvironmentResultView environment={env} /> : null;
     },
-    defaultExpanded: true,
   },
 };
 
