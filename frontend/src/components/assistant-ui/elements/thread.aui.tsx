@@ -25,7 +25,10 @@ import {
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import * as Popover from "@radix-ui/react-popover";
+import { ContextUsageIndicator, type ContextUsage } from "@/components/ContextUsageIndicator";
 import { cn } from "@/lib/utils";
+import { useLangChainState } from "@assistant-ui/react-langchain";
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
@@ -42,6 +45,7 @@ import {
   type ImageMessagePartComponent,
   type TextMessagePartComponent,
   type ToolCallMessagePartComponent,
+  useAui,
   useAuiState,
 } from "@assistant-ui/react";
 import {
@@ -58,6 +62,7 @@ import {
   PencilIcon,
   PhoneIcon,
   RefreshCwIcon,
+  SparklesIcon,
   SquareIcon,
   ThumbsDownIcon,
   ThumbsUpIcon,
@@ -65,6 +70,7 @@ import {
 import {
   createContext,
   useContext,
+  useState,
   type ComponentType,
   type FC,
   type PropsWithChildren,
@@ -191,7 +197,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
       style={{
-        ["--thread-max-width" as string]: "44rem",
+        ["--thread-max-width" as string]: "56rem",
         ["--composer-bg" as string]:
           "color-mix(in oklab, var(--color-muted) 30%, transparent)",
         ["--composer-radius" as string]: "1rem",
@@ -373,12 +379,35 @@ const ThreadScrollToBottom: FC = () => {
   );
 };
 
+const SAMPLE_PROMPTS = [
+  "ZJ-MS10 2025年10月监测数据稳定性如何",
+  "查询 ZJ-MS04 站点周边近期的天气与降雨情况",
+  "对比某监测点近期趋势与长期变化背景",
+  "平台当前有权访问的分组和监测点数量是多少？",
+];
+
 const ThreadWelcome: FC = () => {
+  const aui = useAui();
   return (
     <div className="aui-thread-welcome-root mb-6 flex flex-col px-2">
       <p className="aui-thread-welcome-message-inner fade-in slide-in-from-bottom-1 animate-in fill-mode-both text-2xl font-medium tracking-tight duration-200">
-        How can I help you today?
+        您好，我是滑坡连续监测智能体
       </p>
+      <p className="text-sm text-neutral-500 mt-1.5 leading-relaxed">
+        可以向我咨询监测点状态、形变位移、气象分析或现场多源环境证据。
+      </p>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {SAMPLE_PROMPTS.map((prompt, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={() => aui.composer.setText(prompt)}
+            className="rounded-full border border-neutral-200/80 bg-neutral-50/80 px-3 py-1.5 text-xs text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 transition-colors cursor-pointer text-left"
+          >
+            {prompt}
+          </button>
+        ))}
+      </div>
     </div>
   );
 };
@@ -427,12 +456,12 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
         >
           <ComposerAttachments />
           <ComposerPrimitive.Input
-            placeholder="Send a message..."
+            placeholder="询问监测数据、变化趋势、降雨关联或场地环境…"
             className="aui-composer-input caret-primary placeholder:text-muted-foreground/60 max-h-48 min-h-10 w-full resize-none bg-transparent px-2.5 py-1 text-base leading-6 outline-none"
             rows={1}
             autoFocus={autoFocus}
             enterKeyHint="send"
-            aria-label="Message input"
+            aria-label="输入监测问题"
           />
           <ComposerAction />
         </div>
@@ -441,22 +470,80 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
   );
 };
 
+const ComposerQuickActions: FC = () => {
+  const aui = useAui();
+
+  return (
+    <Popover.Root>
+      <Popover.Trigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="size-7 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted-foreground/15 transition-colors"
+          title="推荐业务提问"
+          aria-label="推荐业务提问"
+        >
+          <SparklesIcon className="size-4 text-primary" />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="top"
+          align="start"
+          sideOffset={8}
+          className="z-50 w-80 rounded-2xl border border-neutral-200 bg-white p-2 text-xs shadow-lg focus:outline-none"
+        >
+          <div className="px-2.5 py-1.5 font-semibold text-neutral-500 flex items-center gap-1.5">
+            <SparklesIcon className="size-3.5 text-primary" />
+            <span>推荐监测业务提问</span>
+          </div>
+          <div className="flex flex-col gap-0.5 mt-1">
+            {SAMPLE_PROMPTS.map((prompt, idx) => (
+              <Popover.Close asChild key={idx}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    aui.composer.setText(prompt);
+                  }}
+                  className="w-full text-left px-2.5 py-2 rounded-md text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors line-clamp-2 cursor-pointer"
+                >
+                  {prompt}
+                </button>
+              </Popover.Close>
+            ))}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+};
+
+const ComposerContextUsage: FC = () => {
+  const contextUsage = useLangChainState<ContextUsage>("context_usage");
+  return <ContextUsageIndicator usage={contextUsage} />;
+};
+
 const ComposerAction: FC = () => {
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
-      <ComposerAddAttachment />
+      <div className="flex items-center gap-1">
+        <ComposerQuickActions />
+        <ComposerAddAttachment />
+      </div>
       <div className="flex items-center gap-1.5">
+        <ComposerContextUsage />
         <AuiIf condition={(s) => s.thread.capabilities.dictation}>
           <AuiIf condition={(s) => s.composer.dictation == null}>
             <ComposerPrimitive.Dictate asChild>
               <TooltipIconButton
-                tooltip="Voice input"
+                tooltip="语音输入"
                 side="bottom"
                 type="button"
                 variant="ghost"
                 size="icon"
                 className="aui-composer-dictate text-muted-foreground hover:text-foreground size-7 rounded-full"
-                aria-label="Start voice input"
+                aria-label="开始语音输入"
               >
                 <MicIcon className="aui-composer-dictate-icon size-4" />
               </TooltipIconButton>
@@ -465,13 +552,13 @@ const ComposerAction: FC = () => {
           <AuiIf condition={(s) => s.composer.dictation != null}>
             <ComposerPrimitive.StopDictation asChild>
               <TooltipIconButton
-                tooltip="Stop dictation"
+                tooltip="停止语音"
                 side="bottom"
                 type="button"
                 variant="ghost"
                 size="icon"
                 className="aui-composer-stop-dictation text-destructive size-7 rounded-full"
-                aria-label="Stop voice input"
+                aria-label="停止语音输入"
               >
                 <SquareIcon className="aui-composer-stop-dictation-icon size-3.5 animate-pulse fill-current" />
               </TooltipIconButton>
@@ -481,13 +568,13 @@ const ComposerAction: FC = () => {
         <AuiIf condition={(s) => !s.thread.isRunning}>
           <ComposerPrimitive.Send asChild>
             <TooltipIconButton
-              tooltip="Send message"
+              tooltip="发送消息"
               side="bottom"
               type="button"
               variant="default"
               size="icon"
               className="aui-composer-send size-7 rounded-full"
-              aria-label="Send message"
+              aria-label="发送消息"
             >
               <ArrowUpIcon className="aui-composer-send-icon size-4" />
             </TooltipIconButton>
@@ -500,7 +587,7 @@ const ComposerAction: FC = () => {
               variant="default"
               size="icon"
               className="aui-composer-cancel size-7 rounded-full"
-              aria-label="Stop generating"
+              aria-label="停止生成"
             >
               <SquareIcon className="aui-composer-cancel-icon size-3.5 fill-current" />
             </Button>

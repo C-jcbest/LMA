@@ -60,11 +60,24 @@ vi.mock('@radix-ui/react-popover', async () => {
     Content,
     Anchor: ({ children }: any) => React.createElement(React.Fragment, null, children),
     Arrow: () => null,
-    Close: ({ children, onClick, ...props }: any) => {
+    Close: ({ children, asChild, onClick, ...props }: any) => {
       const { setOpen } = React.useContext(Context);
+      const handleClick = (e: any) => {
+        onClick?.(e);
+        setOpen(false);
+      };
+      if (asChild && React.isValidElement(children)) {
+        return React.cloneElement(children as any, {
+          onClick: (e: any) => {
+            (children.props as any)?.onClick?.(e);
+            handleClick(e);
+          },
+          ...props,
+        });
+      }
       return React.createElement(
         'button',
-        { onClick: (e: any) => { onClick?.(e); setOpen(false); }, ...props },
+        { onClick: handleClick, ...props },
         children
       );
     },

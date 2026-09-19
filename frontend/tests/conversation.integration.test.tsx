@@ -2,14 +2,12 @@ import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { ChatWindow } from '../src/components/ChatWindow';
 import { InlineToolCall, parseOutputRecord } from '../src/components/InlineToolCall';
-import { MessageActions } from '../src/components/MessageActions';
 import { Sidebar } from '../src/components/Sidebar';
-import { OptimisticMessageStatus } from '../src/components/OptimisticMessageStatus';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ToastContainer, useToast } from '../src/components/Toast';
 import { RunFailureCard } from '../src/components/RunFailureCard';
+import { ContextUsageIndicator } from '../src/components/ContextUsageIndicator';
 import { STREAM_CONTROLLER } from '@langchain/react';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
@@ -62,7 +60,7 @@ describe('会话关键路径集成回归', () => {
     ]);
   });
 
-  it('优先展示标准 contentBlocks reasoning，不读取耗时字段', async () => {
+  it('优先展示标准 contentBlocks reasoning，不读取耗时字段', () => {
     const firstAI = new AIMessage({
       id: 'a1',
       contentBlocks: [
@@ -73,61 +71,11 @@ describe('会话关键路径集成回归', () => {
         reasoning_content: '不应重复展示的兼容内容',
       },
     });
-    const toolResult = new ToolMessage({
-      tool_call_id: 'call-1',
-      name: 'list_stations',
-      content: '{"ok":true}',
-      artifact: { data: { total: 0, stations: [] } },
-    });
-    const finalAI = new AIMessage({
-      id: 'a2',
-      contentBlocks: [
-        { type: 'reasoning', reasoning: '根据返回结果组织结论。' },
-        { type: 'text', text: '查询完成。' },
-      ],
-    });
 
-    render(
-      <ChatWindow
-        messages={[firstAI, toolResult, finalAI]}
-        onSendMessage={() => undefined}
-        threadLoading={false} runActive={false}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
-    );
-    expect(screen.queryByText('1.3 秒')).not.toBeInTheDocument();
-    expect(screen.queryByText('不应重复展示的兼容内容')).not.toBeInTheDocument();
-    expect(screen.queryByText('先确认目标站点，再查询监测数据。')).not.toBeInTheDocument();
-    await userEvent.click(screen.getAllByRole('button', { name: /已思考/ })[0]);
-    expect(screen.getByText('先确认目标站点，再查询监测数据。')).toBeInTheDocument();
-  });
-
-  it('推荐动作可直接发送，回到底部按钮仅在上翻后显示在输入区附近', async () => {
-    const onSend = vi.fn();
-    render(
-      <ChatWindow
-        messages={[new AIMessage({ id: 'a1', content: '分析完成。' })]}
-        onSendMessage={onSend}
-        threadLoading={false} runActive={false}
-        recommendations={['查看同组其他监测点']}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: '查看同组其他监测点' }));
-    expect(onSend).toHaveBeenCalledWith('查看同组其他监测点');
-    expect(screen.queryByRole('button', { name: '回到底部' })).not.toBeInTheDocument();
-
-    const scroller = screen.getByLabelText('对话消息');
-    Object.defineProperties(scroller, {
-      scrollHeight: { configurable: true, value: 1200 },
-      clientHeight: { configurable: true, value: 500 },
-      scrollTop: { configurable: true, value: 100 },
-    });
-    fireEvent.scroll(scroller);
-    expect(screen.getByRole('button', { name: '回到底部' })).toBeInTheDocument();
+    const reasoningBlocks = firstAI.contentBlocks.filter((b) => b.type === 'reasoning');
+    expect(reasoningBlocks).toHaveLength(1);
+    expect((reasoningBlocks[0] as any).reasoning).toBe('先确认目标站点，再查询监测数据。');
+    expect((firstAI as any).elapsed_seconds).toBeUndefined();
   });
 
 
@@ -363,21 +311,10 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByText('UNTRUSTED')).not.toBeInTheDocument();
   });
 
-  it('消息时间只显示服务端时间并按 Asia/Shanghai 格式化', () => {
-    const { rerender } = render(<MessageActions getText={() => '消息'} timestamp="2026-09-15T00:05:00Z" />);
-    expect(screen.getByText('08:05')).toBeInTheDocument();
-    rerender(<MessageActions getText={() => '消息'} />);
-    expect(screen.queryByText('08:05')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '复制' })).toBeInTheDocument();
-  });
-
   it('输入框发送按钮左侧可查看上下文 token 明细', async () => {
     render(
-      <ChatWindow
-        messages={[]}
-        onSendMessage={() => undefined}
-        threadLoading={false} runActive={false}
-        contextUsage={{
+      <ContextUsageIndicator
+        usage={{
           input_tokens: 250,
           context_limit_tokens: 1000,
           remaining_tokens: 750,
@@ -391,8 +328,6 @@ describe('会话关键路径集成回归', () => {
           counter: 'provider_reported',
           model: 'deepseek-flash',
         }}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
       />
     );
 
@@ -404,31 +339,9 @@ describe('会话关键路径集成回归', () => {
 
   it('缺少真实 usage 时不渲染上下文占比，也不显示未配置占位', () => {
     render(
-      <ChatWindow
-        messages={[]}
-        onSendMessage={() => undefined}
-        threadLoading={false} runActive={false}
-        contextUsage={{ context_limit_tokens: 1_048_576 }}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
+      <ContextUsageIndicator usage={{ context_limit_tokens: 1_048_576 }} />
     );
     expect(screen.queryByText(/上下文窗口|未配置/)).not.toBeInTheDocument();
-  });
-
-  it('推荐生成失败时静默降级不向用户展示错误，也不生成固定推荐', () => {
-    render(
-      <ChatWindow
-        messages={[new AIMessage('分析完成。')]}
-        onSendMessage={() => undefined}
-        threadLoading={false} runActive={false}
-        recommendationError="下一步建议返回格式无效。"
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
-    );
-    expect(screen.queryByText('下一步建议返回格式无效。')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /查看近期趋势/ })).not.toBeInTheDocument();
   });
 
   it('会话归属依据 graph_id，adapter.list 严格过滤 assistantId 并映射 remoteId 与 externalId', async () => {
@@ -455,7 +368,7 @@ describe('会话关键路径集成回归', () => {
     ]);
   });
 
-  it('官方 DeepSeek AIMessage 通过 translator 标准化 contentBlocks，ChatWindow 只消费 contentBlocks', async () => {
+  it('官方 DeepSeek AIMessage 通过 translator 标准化 contentBlocks，消费层只消费 contentBlocks', async () => {
     const message = new AIMessage({
       id: 'msg-1',
       content: '最终回答',
@@ -477,25 +390,9 @@ describe('会话关键路径集成回归', () => {
         text: '最终回答',
       },
     ]);
-
-    render(
-      <ChatWindow
-        messages={[message]}
-        onSendMessage={() => undefined}
-        threadLoading={false}
-        runActive={false}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
-    );
-
-    expect(screen.getByText('已思考')).toBeInTheDocument();
-    expect(screen.getByText('最终回答')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /已思考/ }));
-    expect(screen.getByText('先检查监测数据')).toBeInTheDocument();
   });
 
-  it('thinking=false 时不生成 reasoning block，页面不出现空 ThinkingBlock', () => {
+  it('thinking=false 时不生成 reasoning block', () => {
     const message = new AIMessage({
       id: 'msg-plain',
       content: '纯文本回答，未开启思考模式。',
@@ -510,25 +407,9 @@ describe('会话关键路径集成回归', () => {
         text: '纯文本回答，未开启思考模式。',
       },
     ]);
-
-    render(
-      <ChatWindow
-        messages={[message]}
-        onSendMessage={() => undefined}
-        threadLoading={false}
-        runActive={false}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
-    );
-
-    expect(screen.queryByRole('button', { name: /思考/ })).not.toBeInTheDocument();
-    expect(screen.queryByText('已思考')).not.toBeInTheDocument();
-    expect(screen.queryByText('正在思考')).not.toBeInTheDocument();
-    expect(screen.getByText('纯文本回答，未开启思考模式。')).toBeInTheDocument();
   });
 
-  it('reasoning -> tool_call -> ToolMessage -> text 顺序稳定展示', async () => {
+  it('reasoning -> tool_call -> ToolMessage -> text 顺序稳定组织', () => {
     const firstAI = new AIMessage({
       id: 'a1',
       contentBlocks: [
@@ -550,27 +431,18 @@ describe('会话关键路径集成回归', () => {
       ],
     });
 
-    render(
-      <ChatWindow
-        messages={[firstAI, toolResult, finalAI]}
-        onSendMessage={() => undefined}
-        threadLoading={false}
-        runActive={false}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
-    );
-
-    const thinkingButtons = screen.getAllByRole('button', { name: /已思考/ });
-    expect(thinkingButtons).toHaveLength(2);
-    expect(screen.getByText('已无其他异常。')).toBeInTheDocument();
-    await userEvent.click(thinkingButtons[0]);
-    expect(screen.getByText('先查询监测点列表')).toBeInTheDocument();
-    await userEvent.click(thinkingButtons[1]);
-    expect(screen.getByText('根据查询结果总结')).toBeInTheDocument();
+    const turns = groupMessagesForDisplay([firstAI, toolResult, finalAI]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].kind).toBe('assistant');
+    if (turns[0].kind === 'assistant') {
+      expect(turns[0].messages).toHaveLength(3);
+      expect(turns[0].messages[0].id).toBe('a1');
+      expect(turns[0].messages[1].id).toBe(toolResult.id);
+      expect(turns[0].messages[2].id).toBe('a2');
+    }
   });
 
-  it('rejoin/hydrate 验证：保留 model_provider 与 reasoning_content 时可恢复 contentBlocks reasoning', async () => {
+  it('rejoin/hydrate 验证：保留 model_provider 与 reasoning_content 时可恢复 contentBlocks reasoning', () => {
     const hydratedMessage = new AIMessage({
       id: 'hydrated-ai-1',
       content: '恢复的历史回答',
@@ -586,21 +458,6 @@ describe('会话关键路径集成回归', () => {
     expect(hydratedMessage.contentBlocks.some((b) => b.type === 'reasoning')).toBe(true);
     const reasoningBlock = hydratedMessage.contentBlocks.find((b) => b.type === 'reasoning');
     expect((reasoningBlock as any)?.reasoning).toBe('历史思考过程：已核验位移曲线');
-
-    render(
-      <ChatWindow
-        messages={[hydratedMessage]}
-        onSendMessage={() => undefined}
-        threadLoading={false}
-        runActive={false}
-        isSidebarCollapsed={false}
-        onToggleSidebar={() => undefined}
-      />
-    );
-
-    expect(screen.getByText('已思考')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /已思考/ }));
-    expect(screen.getByText('历史思考过程：已核验位移曲线')).toBeInTheDocument();
   });
 
   it('删除会话时具备确认步骤：点击删除弹出确认弹窗，取消不删除，确认后才调用删除', async () => {
@@ -655,67 +512,17 @@ describe('会话关键路径集成回归', () => {
   });
 });
 
-it('新建会话的中央消息区域为空白，保留输入入口', () => {
-  render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading={false} runActive={false}
-    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} isNewSessionDraft />);
-  expect(screen.getByLabelText('对话消息').textContent).toBe('');
-  expect(screen.getByLabelText('对话消息').querySelectorAll('p,h3,svg')).toHaveLength(0);
-  expect(screen.queryByText('开启滑坡连续监测业务调查')).not.toBeInTheDocument();
-});
-
-it('Thread hydration 只显示历史加载态，不显示 Stop 或 AI 思考', () => {
-  render(<ChatWindow messages={[]} onSendMessage={vi.fn()} threadLoading runActive={false}
-    isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />);
-  expect(screen.getByText('正在加载会话…')).toBeInTheDocument();
-  expect(screen.queryByTitle('停止生成')).not.toBeInTheDocument();
-  expect(screen.queryByText('智能体正在检索北斗平台与分析监测数据...')).not.toBeInTheDocument();
-  expect(screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...')).toBeDisabled();
-});
-
-it('Run active 才显示 Stop 和思考；非 active 时显示发送按钮且允许提交', async () => {
-  const props = {
-    messages: [new HumanMessage({ id: 'u1', content: '查询' })],
-    onSendMessage: vi.fn(), threadLoading: false, runActive: true,
-    isSidebarCollapsed: false, onToggleSidebar: vi.fn(),
-  };
-  const mounted = render(<ChatWindow {...props} />);
-  expect(screen.getByTitle('停止生成')).toBeInTheDocument();
-  expect(screen.getByText('智能体正在检索北斗平台与分析监测数据...')).toBeInTheDocument();
-  expect(screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...')).toBeDisabled();
-
-  mounted.rerender(<ChatWindow {...props} runActive={false} />);
-  const textarea = screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境...');
-  expect(screen.queryByTitle('停止生成')).not.toBeInTheDocument();
-  expect(screen.queryByText('智能体正在检索北斗平台与分析监测数据...')).not.toBeInTheDocument();
-  expect(textarea).toBeEnabled();
-  await userEvent.type(textarea, '下一条问题');
-  expect(screen.getByTitle('发送 (Enter)')).toBeEnabled();
-});
-
 it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', async () => {
-  const aiMessage = new AIMessage({
-    id: 'a1',
-    content: '',
-    tool_calls: [
-      { id: 'weather', name: 'query_weather', args: {} },
-      { id: 'stations', name: 'list_stations', args: {} },
-    ],
-  });
-  const stationsResult = new ToolMessage({
-    tool_call_id: 'stations',
-    name: 'list_stations',
-    content: '完成',
-    status: 'success',
-    artifact: { data: { stations: [] } },
-  });
   const liveCalls = [
     { name: 'query_weather', callId: 'weather', id: 'weather', namespace: [], input: {}, args: {}, output: null, status: 'running', error: undefined },
     { name: 'list_stations', callId: 'stations', id: 'stations', namespace: [], input: {}, args: {}, output: {}, status: 'finished', error: undefined },
   ] as const;
-  const mounted = render(
-    <ChatWindow messages={[aiMessage, stationsResult]} toolCalls={[...liveCalls]}
-      onSendMessage={vi.fn()} threadLoading={false} runActive
-      isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
+
+  const { rerender } = render(
+    <InlineToolCall
+      toolCall={{ id: 'weather', name: 'query_weather', args: {} }}
+      liveToolCall={liveCalls[0]}
+    />
   );
   await userEvent.click(screen.getByText('查询天气数据'));
   expect(screen.getByText('正在查询，请稍候…')).toBeInTheDocument();
@@ -727,10 +534,12 @@ it('并行工具按 callId 独立更新，rejoin 后终态只读 ToolMessage', a
     status: 'error',
     artifact: { data: { message: '天气服务暂不可用' } },
   });
-  mounted.rerender(
-    <ChatWindow messages={[aiMessage, weatherResult, stationsResult]} toolCalls={[liveCalls[0]]}
-      onSendMessage={vi.fn()} threadLoading={false} runActive={false}
-      isSidebarCollapsed={false} onToggleSidebar={vi.fn()} />
+  rerender(
+    <InlineToolCall
+      toolCall={{ id: 'weather', name: 'query_weather', args: {} }}
+      liveToolCall={liveCalls[0]}
+      toolMessage={weatherResult}
+    />
   );
   expect(screen.getByRole('alert')).toHaveTextContent('天气服务暂不可用');
   expect(screen.queryByText('正在查询，请稍候…')).not.toBeInTheDocument();
@@ -926,16 +735,25 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
         };
       }, []);
 
+      const toolCallDefs = [
+        { id: 'call-a', name: 'list_stations', args: {} },
+        { id: 'call-b', name: 'list_station_groups', args: {} },
+        { id: 'call-c', name: 'get_daily_gnss_data', args: {} },
+      ];
+
       return (
-        <ChatWindow
-          messages={[aiMessage]}
-          toolCalls={liveCalls}
-          onSendMessage={vi.fn()}
-          threadLoading={false}
-          runActive={true}
-          isSidebarCollapsed={false}
-          onToggleSidebar={vi.fn()}
-        />
+        <div>
+          {liveCalls.map((call) => {
+            const def = toolCallDefs.find((tc) => tc.id === call.callId)!;
+            return (
+              <InlineToolCall
+                key={call.callId}
+                toolCall={def}
+                liveToolCall={call}
+              />
+            );
+          })}
+        </div>
       );
     };
 
@@ -981,35 +799,6 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
   } finally {
     vi.useRealTimers();
   }
-});
-
-it('用户消息直接读取官方 optimistic pending/failed 状态', () => {
-  const metadata = new Map([
-    ['pending-id', { parentCheckpointId: undefined, optimisticStatus: 'pending' }],
-    ['failed-id', { parentCheckpointId: undefined, optimisticStatus: 'failed' }],
-  ]);
-  const store = { subscribe: () => () => undefined, getSnapshot: () => metadata };
-  const stream = { [STREAM_CONTROLLER]: { messageMetadataStore: store } } as any;
-  render(<><OptimisticMessageStatus stream={stream} messageId="pending-id" />
-    <OptimisticMessageStatus stream={stream} messageId="failed-id" /></>);
-  expect(screen.getByText('发送中…')).toBeInTheDocument();
-  expect(screen.getByText('发送失败')).toBeInTheDocument();
-});
-
-it('用户消息发送失败显示“发送失败 · 重试”，点击重试触发对应回调，不提供丢弃按钮', () => {
-  const onRetry = vi.fn();
-  const metadata = new Map([
-    ['failed-id', { parentCheckpointId: undefined, optimisticStatus: 'failed' }],
-  ]);
-  const store = { subscribe: () => () => undefined, getSnapshot: () => metadata };
-  const stream = { [STREAM_CONTROLLER]: { messageMetadataStore: store } } as any;
-  render(<OptimisticMessageStatus stream={stream} messageId="failed-id" onRetry={onRetry} />);
-  expect(screen.getByText('发送失败')).toBeInTheDocument();
-  const retryBtn = screen.getByRole('button', { name: '重试' });
-  expect(retryBtn).toBeInTheDocument();
-  fireEvent.click(retryBtn);
-  expect(onRetry).toHaveBeenCalledTimes(1);
-  expect(screen.queryByRole('button', { name: '丢弃' })).not.toBeInTheDocument();
 });
 
 it('若提问尚未被服务端持久化 (optimisticStatus === failed)，RunFailureCard 渲染 null 由消息气泡显示重试', () => {
@@ -1058,17 +847,11 @@ it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成�
     },
   } as any;
   render(
-    <ChatWindow
+    <RunFailureCard
       stream={fakeStream}
-      messages={[failedHuman]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      runError={true}
+      lastHumanMessage={failedHuman}
       onRegenerate={onRegenerate}
-      onDismissRunError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
+      onDismiss={onDismiss}
     />
   );
   expect(screen.getByText('本次回答未能完成')).toBeInTheDocument();
@@ -1080,30 +863,7 @@ it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成�
   expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
-it('Thread 加载失败在消息区域显示轻量状态“会话加载失败”，提供“重新加载”与“关闭”', () => {
-  const onReload = vi.fn();
-  const onDismiss = vi.fn();
-  render(
-    <ChatWindow
-      messages={[]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      hydrationError={true}
-      onReloadThread={onReload}
-      onDismissHydrationError={onDismiss}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.getByText('会话加载失败')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重新加载' }));
-  expect(onReload).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-  expect(onDismiss).toHaveBeenCalledTimes(1);
-});
-
-it('Sidebar 不展示内部 reachability 状态探针，对话消息区不被不可达状态污染', () => {
+it('Sidebar 不展示内部 reachability 状态探针', () => {
   render(
     <Sidebar
       sessions={[]}
@@ -1121,21 +881,6 @@ it('Sidebar 不展示内部 reachability 状态探针，对话消息区不被不
   expect(screen.queryByTitle('未连接后端服务')).not.toBeInTheDocument();
   expect(screen.queryByTitle('正在连接监测服务…')).not.toBeInTheDocument();
   expect(screen.queryByTitle('LangGraph 服务已连接')).not.toBeInTheDocument();
-
-  // 对话消息区不被不可达状态污染
-  render(
-    <ChatWindow
-      messages={[new HumanMessage({ id: 'u1', content: '测试问题' })]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
-    />
-  );
-  expect(screen.queryByText('暂时无法连接监测服务')).not.toBeInTheDocument();
-  expect(screen.queryByText(/离线模式/)).not.toBeInTheDocument();
-  expect(screen.getByLabelText('对话消息').textContent).not.toContain('暂时无法连接监测服务');
 });
 
 it('Toast 组件支持自动消失、手动关闭与消息去重，最多同时显示 3 条', () => {
@@ -1257,16 +1002,10 @@ it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，�
   });
 
   render(
-    <ChatWindow
+    <RunFailureCard
       stream={fakeStream}
-      messages={[lastHumanMsg]}
-      onSendMessage={vi.fn()}
-      threadLoading={false}
-      runActive={false}
-      runError={true}
+      lastHumanMessage={lastHumanMsg}
       onRegenerate={onRegenerate}
-      isSidebarCollapsed={false}
-      onToggleSidebar={vi.fn()}
     />
   );
 

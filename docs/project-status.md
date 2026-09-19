@@ -42,6 +42,17 @@
   - 全面升级至 React 19.3 + Vite 8.3 + TypeScript 7.0 + Tailwind v4.3.3；
   - 声明 `packageManager: "pnpm@10.30.3"` 与 `engines: { "node": "^20.19.0 || >=22.12.0" }`，提供 `.nvmrc`；
   - 在 `index.css` 的 `@theme inline` 中完整注册 shadcn 所需的 `--color-*` 与 collapsible 折叠动画 tokens。
+- **官方 Thread Element 全面替换旧聊天壳（P4 落地）**：
+  - 彻底删除旧版 `ChatWindow.tsx`、`components/chat/*`（8 个组件）、`MessageActions.tsx`、`OptimisticMessageStatus.tsx` 共 11 个旧文件及目录；
+  - 官方 `Thread` Element 直接驱动 Message List、Composer、Auto-scroll、Scroll-to-bottom、Welcome 等核心交互，无冗余聊天容器；
+  - 视觉样式精准对齐：`--thread-max-width: 56rem`（即 `max-w-4xl`），正文式 Assistant Message，极简边框与轻量阴影；
+  - 欢迎界面（`ThreadWelcome`）全面中文化，精准引导滑坡监测业务。
+- **Composer 完全回归 assistant-ui 与业务功能扩展（P5 落地）**：
+  - 彻底移除 `inputText`、`textareaRef`、IME 手写控制、自动高度与手工 Send/Stop 状态切换等脆弱逻辑；
+  - 依托 assistant-ui 官方 `ComposerPrimitive` 驱动生命周期，占位符对齐业务：“询问监测数据、变化趋势、降雨关联或场地环境…”；
+  - 左侧新增业务快捷提问菜单（`ComposerQuickActions`），呼出标准监测问题（测点稳定性、降雨天气关联、趋势对比、分组台账）并无缝填充；
+  - 右侧通过官方 `useLangChainState("context_usage")` 原生嵌入 `ContextUsageIndicator`，实时反映模型上下文窗口占用；
+  - 欢迎界面集成一键快捷提问胶囊按钮。
 - **Stop 与生命周期回归官方**：
   - 前端 Stop 仅调用官方 `stream.stop({ cancel: true })`，不修补 checkpoint、不维护任何本地状态机；下一条 Human 消息直接提交创建正常新 Run。
 - **Tool Protocol v1 与 Tool Registry 强类型映射**：
@@ -90,7 +101,7 @@
   ```powershell
   cd frontend; pnpm run test; pnpm run build
   ```
-  包含 65 项单元与集成测试，生产构建无类型与打包错误。
+  包含 58 项关键路径与集成回归测试，生产构建无类型与打包错误。
 - **提交规范**：
   - 执行 `git diff --check` 确认无格式或空白问题；
   - 严禁提交 `.env`、密钥、真实账号或敏感数据。

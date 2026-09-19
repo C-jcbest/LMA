@@ -197,7 +197,7 @@ assistant-ui `ThreadListPrimitive` 已负责新建、选择和 Thread 列表上�
 
 ------
 
-# P4：用官方 Thread Element 替换整个聊天壳
+# P4：用官方 Thread Element 替换整个聊天壳（✅ 已完成）
 
 优先安装并使用官方 `Thread` Element。
 
@@ -264,7 +264,7 @@ max-w-4xl
 
 ------
 
-# P5：Composer 完全回归 assistant-ui
+# P5：Composer 完全回归 assistant-ui（✅ 已完成）
 
 删除现有：
 
