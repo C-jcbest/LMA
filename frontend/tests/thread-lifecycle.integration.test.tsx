@@ -260,7 +260,12 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     });
   });
 
-  it('AssistantProvider 与浏览器 URL 保持双向同步，驱动 pushState 并支持 popstate 历史导航切换会话', async () => {
+  it('AssistantProvider 与浏览器 URL 保持双向同步，驱动 pushState 并通过真实 history.back 返回上一个会话', async () => {
+    mockClient.threads.search.mockResolvedValue([
+      { thread_id: 't-history-1', metadata: { graph_id: 'lma-agent', name: '会话 1' }, created_at: '2026-09-18T10:00:00Z', updated_at: '2026-09-18T10:00:00Z' },
+      { thread_id: 't-history-2', metadata: { graph_id: 'lma-agent', name: '会话 2' }, created_at: '2026-09-18T11:00:00Z', updated_at: '2026-09-18T11:00:00Z' },
+    ]);
+
     // 1. 初始挂载：URL 带有 ?threadId=t-history-1
     window.history.replaceState(null, '', '?threadId=t-history-1');
     const pushStateSpy = vi.spyOn(window.history, 'pushState');
@@ -305,13 +310,13 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     // 校验主动切换触发了 window.history.pushState
     expect(pushStateSpy).toHaveBeenCalledTimes(1);
 
-    // 3. 模拟浏览器后退（Back）触发 popstate
-    act(() => {
-      window.history.replaceState(null, '', '?threadId=t-history-1');
-      window.dispatchEvent(new PopStateEvent('popstate'));
+    // 3. 触发真实浏览器后退（window.history.back）通过 history 栈返回上一个会话
+    await act(async () => {
+      window.history.back();
     });
 
     await waitFor(() => {
+      expect(new URL(window.location.href).searchParams.get('threadId')).toBe('t-history-1');
       expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-1');
       expect(capturedAui.threads.getState().mainThreadId).toBe('t-history-1');
     });

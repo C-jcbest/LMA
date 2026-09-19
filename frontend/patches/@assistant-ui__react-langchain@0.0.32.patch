@@ -1,0 +1,70 @@
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index ae175c71078582d902fa0dda25fe9448f13cdcbb..1a3b6075efe26ca4c7b0843785d01cac844dc5e4 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -89,6 +89,8 @@ export type LangChainRuntimeExtraOptions = ExternalStoreSharedOptions & {
+    * surfaced.
+    */
+   onThreadIdChange?: ((threadId: string | undefined) => void) | undefined;
++  threadId?: string | undefined;
++  initialThreadId?: string | undefined;
+   cloud?: AssistantCloud | undefined;
+   adapters?: {
+     attachments?: AttachmentAdapter | undefined;
+diff --git a/dist/useStreamRuntime.js b/dist/useStreamRuntime.js
+index 18ad20f2504ef48c3f7abbd7cec27299d8379fec..9648594b18bb40d1a2a7e4fa4c7be0145c5803c8 100644
+--- a/dist/useStreamRuntime.js
++++ b/dist/useStreamRuntime.js
+@@ -351,7 +351,7 @@ const useStreamThreadRuntime = (options) => {
+ * ```
+ */
+ const useStreamRuntime = (rawOptions) => {
+-	const { cloud, unstable_threadListAdapter, create, delete: deleteFn, onThreadIdChange, ...options } = rawOptions;
++	const { cloud, unstable_threadListAdapter, create, delete: deleteFn, onThreadIdChange, threadId, initialThreadId, ...options } = rawOptions;
+ 	const aui = useAui();
+ 	const cloudAdapter = useCloudThreadListAdapter({
+ 		sdk: LANGCHAIN_SDK,
+@@ -365,6 +365,8 @@ const useStreamRuntime = (rawOptions) => {
+ 		},
+ 		adapter: unstable_threadListAdapter ?? cloudAdapter,
+ 		allowNesting: true,
++		threadId,
++		initialThreadId,
+ 		onThreadIdChange
+ 	});
+ };
+diff --git a/src/types.ts b/src/types.ts
+index 2bee2fbd950badbf4d5beef16a29c4c61539b7f6..6fed161f00ca70c91e42d421fa67b6bb858fcd77 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -117,6 +117,8 @@ export type LangChainRuntimeExtraOptions = ExternalStoreSharedOptions & {
+    * surfaced.
+    */
+   onThreadIdChange?: ((threadId: string | undefined) => void) | undefined;
++  threadId?: string | undefined;
++  initialThreadId?: string | undefined;
+   cloud?: AssistantCloud | undefined;
+   adapters?:
+     | {
+diff --git a/src/useStreamRuntime.ts b/src/useStreamRuntime.ts
+index 542cd8002bdab00bba1c08c982be173f8e50d200..6f624ff654bfa6fa5b706fb4e507b5c794b5cafc 100644
+--- a/src/useStreamRuntime.ts
++++ b/src/useStreamRuntime.ts
+@@ -649,6 +649,8 @@ export const useStreamRuntime = (rawOptions: UseStreamRuntimeOptions) => {
+     create,
+     delete: deleteFn,
+     onThreadIdChange,
++    threadId,
++    initialThreadId,
+     ...options
+   } = rawOptions;
+ 
+@@ -670,6 +672,8 @@ export const useStreamRuntime = (rawOptions: UseStreamRuntimeOptions) => {
+     },
+     adapter,
+     allowNesting: true,
++    threadId,
++    initialThreadId,
+     onThreadIdChange,
+   });
+ };
