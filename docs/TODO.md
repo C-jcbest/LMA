@@ -23,9 +23,13 @@
    - 运行中隐藏 Chevron 并禁用折叠，完成后展示耗时与 Chevron，点击展开直接呈现完整业务数据（无第二级折叠）；
    - 消除内部函数名与原始 JSON 调试杂质，Registry 提供状态动词，弱化 Station/GNSS/Weather/Vision 边框与阴影；
    - 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测。
-4. **P8：Markdown 改用 assistant-ui Streamdown 与代码高亮**：
+4. **P8：Markdown 改用 assistant-ui Streamdown**：
    - 删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
-   - 统一改用 `@assistant-ui/react-streamdown`，引入 `@streamdown/code` 插件提供语法高亮，Tailwind v4 注入 `@source` 编译指令，保留排版与复制能力。
+   - 统一改用 `@assistant-ui/react-streamdown`，保留中文字体样式与代码块复制。
+5. **实时工具流式两阶段事件桥接与展示优化**：
+   - 新增 `LiveToolEventsProvider`，通过 LangGraph stream tools channel 实时桥接流式工具事件；
+   - `ToolFallback` 实行两阶段消费与四态严格互斥渲染（requires-action/incomplete/complete/running）；
+   - 优化 `VisionResultView`、`WeatherResultView` 视觉排版与 `Thread.Viewport` 滚动条体验。引入 `@streamdown/code` 插件提供语法高亮，Tailwind v4 注入 `@source` 编译指令，保留排版与复制能力。
 
 ---
 

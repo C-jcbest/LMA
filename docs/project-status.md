@@ -69,7 +69,8 @@
   - 运行中隐藏 Chevron 并禁用折叠，完成后展示真实耗时与 Chevron，用户点击后直接展示完整业务数据（无第二级折叠）；
   - 彻底消除内部函数名（如 `(get_daily_gnss_data)`）与原始 args/result JSON 调试杂质，Registry 提供状态动词（如 `正在获取 GNSS 监测数据…` / `已获取 GNSS 监测数据`）；
   - 业务展示组件（`features/monitoring/tools/`）弱化边框与阴影，采用极简无阴影卡片与表格；
-  - `registry.tsx` 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测。
+  - `registry.tsx` 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测；
+  - 引入 `LiveToolEventsProvider` 与 `live-tool-results` 桥接 LangGraph stream 的 tools 事件，实现流式两阶段衔接：流式阶段消费 live artifact，终态阶段消费持久化 `ToolMessage.artifact`，四态严格互斥分支渲染。
 - **Markdown 改用 assistant-ui Streamdown 与代码高亮（P8 落地）**：
   - 彻底删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
   - 基于 `@assistant-ui/react-streamdown` 的 `StreamdownTextPrimitive` 重构 `components/markdown-text.tsx`，保留中文字体排版与代码复制头（`CodeHeader`）；

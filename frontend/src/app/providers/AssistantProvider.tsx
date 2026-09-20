@@ -5,6 +5,8 @@ import { AssistantRuntimeProvider } from '@assistant-ui/react';
 import { LMA_ASSISTANT_ID } from '@/services/api';
 import { createLangGraphThreadListAdapter } from '@/lib/langgraph/thread-list-adapter';
 
+import { LiveToolEventsProvider } from '@/lib/langgraph/live-tool-results';
+
 export interface AssistantProviderProps {
   client: Client;
   children: React.ReactNode;
@@ -72,7 +74,9 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {children}
+      <LiveToolEventsProvider>
+        {children}
+      </LiveToolEventsProvider>
     </AssistantRuntimeProvider>
   );
 };

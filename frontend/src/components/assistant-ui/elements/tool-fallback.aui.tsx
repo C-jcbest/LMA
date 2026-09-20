@@ -28,10 +28,17 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  useLangChainToolCalls,
+} from "@assistant-ui/react-langchain";
+import {
   getToolRegistryItem,
   decodeToolArtifact,
   FALLBACK_TOOL_LABELS,
 } from "@/features/monitoring/tools/registry";
+import {
+  useLiveToolEvents,
+  getLiveToolArtifact,
+} from "@/lib/langgraph/live-tool-results";
 
 const ANIMATION_DURATION = 200;
 
@@ -241,104 +248,6 @@ function ToolFallbackContent({
         {children}
       </div>
     </CollapsibleContent>
-  );
-}
-
-function ToolFallbackArgs({
-  argsText,
-  className,
-  ...props
-}: React.ComponentProps<"div"> & {
-  argsText?: string;
-}) {
-  if (!argsText) return null;
-
-  return (
-    <div
-      data-slot="tool-fallback-args"
-      className={cn("aui-tool-fallback-args", className)}
-      {...props}
-    >
-      <pre className="aui-tool-fallback-args-value bg-muted/50 text-foreground/90 rounded-md p-2.5 text-xs whitespace-pre-wrap">
-        {argsText}
-      </pre>
-    </div>
-  );
-}
-
-const formatUnknownValue = (value: unknown, space?: number): string => {
-  if (typeof value === "string") return value;
-
-  try {
-    if (value instanceof Error) return String(value);
-
-    const json = JSON.stringify(value, null, space);
-    if (json !== undefined) return json;
-  } catch {}
-
-  try {
-    return String(value);
-  } catch {
-    return "[Unserializable value]";
-  }
-};
-
-function ToolFallbackResult({
-  result,
-  className,
-  ...props
-}: React.ComponentProps<"div"> & {
-  result?: unknown;
-}) {
-  if (result === undefined) return null;
-
-  return (
-    <div
-      data-slot="tool-fallback-result"
-      className={cn("aui-tool-fallback-result", className)}
-      {...props}
-    >
-      <p className="aui-tool-fallback-result-header text-muted-foreground text-xs font-medium">
-        执行结果:
-      </p>
-      <pre className="aui-tool-fallback-result-content bg-muted/50 text-foreground/90 mt-1 rounded-md p-2.5 text-xs whitespace-pre-wrap">
-        {formatUnknownValue(result, 2)}
-      </pre>
-    </div>
-  );
-}
-
-function ToolFallbackError({
-  status,
-  className,
-  ...props
-}: React.ComponentProps<"div"> & {
-  status?: ToolCallMessagePartStatus;
-}) {
-  if (status?.type !== "incomplete") return null;
-
-  const error = status.error;
-  const errorText =
-    error === undefined || error === null ? null : formatUnknownValue(error);
-
-  if (!errorText) return null;
-
-  const isCancelled = status.reason === "cancelled";
-  const headerText = isCancelled ? "已取消原因:" : "错误信息:";
-
-  return (
-    <div
-      data-slot="tool-fallback-error"
-      className={cn("aui-tool-fallback-error", className)}
-      {...props}
-    >
-      <p className="aui-tool-fallback-error-header text-muted-foreground font-semibold">
-        {headerText}
-      </p>
-      <p className="aui-tool-fallback-error-reason text-muted-foreground">
-        {errorText}
-      </p>
-    </div>
   );
 }
 
@@ -697,23 +606,67 @@ function ToolFallbackApproval({
   );
 }
 
-const ToolFallbackImpl: ToolCallMessagePartComponent = ({
-  toolName,
-  argsText,
-  result,
-  status,
-  addResult,
-  resume,
-  interrupt,
-  approval,
-  respondToApproval,
-  ...restProps
-}) => {
-  const isCancelled =
-    status?.type === "incomplete" && status.reason === "cancelled";
-  const isRequiresAction = status?.type === "requires-action";
+function getEffectiveStatus(
+  liveToolCall: any | undefined,
+  part: { status: ToolCallMessagePartStatus },
+): ToolCallMessagePartStatus {
+  if (part.status.type === "requires-action") {
+    return part.status;
+  }
+  const statusType = liveToolCall?.status?.type ?? liveToolCall?.status;
+  if (statusType === "running") {
+    return { type: "running" };
+  }
+  if (statusType === "finished") {
+    return { type: "complete" };
+  }
+  if (statusType === "error") {
+    return {
+      type: "incomplete",
+      reason: "error",
+      error:
+        liveToolCall.status?.error ??
+        liveToolCall.error ??
+        (part.status.type === "incomplete" ? part.status.error : undefined),
+    };
+  }
+  return part.status;
+}
+
+const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
+  const {
+    toolName,
+    status,
+    addResult,
+    resume,
+    interrupt,
+    approval,
+    respondToApproval,
+    ...restProps
+  } = props;
+  const toolCallId = (props as any).toolCallId;
+
+  // 1. 读取官方 live tool call，驱动独立实时的状态更新
+  const toolCalls = useLangChainToolCalls();
+  const liveToolCall = toolCalls.find(
+    (c: any) => c && (c.id === toolCallId || c.callId === toolCallId),
+  );
+  const effectiveStatus = getEffectiveStatus(liveToolCall, { status });
+
+  // 2. 两阶段 artifact：优先使用 ToolMessage 已落盘持久化的 artifact；
+  // 运行流式阶段使用 tools channel 的 live artifact
+  const toolEvents = useLiveToolEvents();
+  const liveArtifact = toolCallId ? getLiveToolArtifact(toolEvents, toolCallId) : undefined;
+  const persistedArtifact =
+    effectiveStatus.type === "complete"
+      ? (status as any).artifact ?? (restProps as any).artifact
+      : undefined;
+  const rawArtifact = persistedArtifact ?? liveArtifact;
+  const envelope = decodeToolArtifact(toolName, rawArtifact);
+
+  const isRequiresAction = effectiveStatus?.type === "requires-action";
   const shouldRenderApproval =
-    isRequiresAction && offersInterruptAction(status, approval, interrupt);
+    isRequiresAction && offersInterruptAction(effectiveStatus, approval, interrupt);
 
   const registryItem = getToolRegistryItem(toolName);
   const defaultOpen = isRequiresAction;
@@ -726,59 +679,84 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     if (isRequiresAction) setOpen(true);
   }
 
-  const rawArtifact = (restProps as any).artifact;
-  const envelope =
-    rawArtifact !== undefined ? decodeToolArtifact(toolName, rawArtifact) : undefined;
-
-  const hasBusinessRenderer = !!registryItem;
-  const isBusinessSuccess =
-    envelope && envelope.status === "success" && envelope.data !== undefined;
-
-  const hasError = status?.type === "incomplete" && !isCancelled;
-  const statusError = status?.type === "incomplete" ? status.error : undefined;
-  const errorMessage =
-    envelope?.error?.message ||
-    (typeof statusError === "string"
-      ? statusError
-      : statusError instanceof Error
-        ? statusError.message
-        : null);
-
-  return (
-    <ToolFallbackRoot open={open} onOpenChange={setOpen}>
-      <ToolFallbackTrigger toolName={toolName} status={status} />
-      <ToolFallbackContent>
-        {shouldRenderApproval && (
+  // 3. 四态严格互斥分支渲染
+  const renderContent = () => {
+    // 分支 1: requires-action -> 仅审批 UI
+    if (effectiveStatus.type === "requires-action") {
+      if (shouldRenderApproval) {
+        return (
           <ToolFallbackApproval
             addResult={addResult}
             resume={resume}
             interrupt={interrupt}
             approval={approval}
             respondToApproval={respondToApproval}
-            status={status}
+            status={effectiveStatus}
           />
-        )}
-        {hasError && (
-          <div className="text-xs text-destructive/90 py-1 font-medium">
-            {errorMessage || (registryItem ? registryItem.errorLabel : "工具调用异常")}
+        );
+      }
+      return null;
+    }
+
+    // 分支 2: incomplete -> 仅错误信息
+    if (effectiveStatus.type === "incomplete") {
+      if ((effectiveStatus as any).reason === "cancelled") {
+        return (
+          <div className="text-xs text-muted-foreground py-1 font-normal">
+            操作已取消
           </div>
-        )}
-        {!isCancelled && !hasError &&
-          (hasBusinessRenderer && isBusinessSuccess ? (
-            <div className="mt-1">
-              <registryItem.render
-                envelope={envelope}
-                data={envelope.data}
-                artifactImages={envelope.images}
-                siteEnvironment={envelope.site_environment}
-              />
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground/80 py-1 font-normal">
-              {registryItem ? "未查询到符合条件的业务监测数据。" : "已完成辅助信息查询并同步至模型上下文。"}
-            </div>
-          ))}
-      </ToolFallbackContent>
+        );
+      }
+      const statusError = effectiveStatus.error;
+      const errorMessage =
+        envelope?.error?.message ||
+        (typeof statusError === "string"
+          ? statusError
+          : statusError instanceof Error
+            ? statusError.message
+            : null);
+      return (
+        <div className="text-xs text-destructive/90 py-1 font-medium">
+          {errorMessage || (registryItem ? registryItem.errorLabel : "工具调用异常")}
+        </div>
+      );
+    }
+
+    // 分支 3: complete -> 业务组件 / 业务提示，支持 partial 等非 error 状态
+    if (effectiveStatus.type === "complete") {
+      const isBusinessSuccess =
+        envelope && envelope.status !== "error" && envelope.data !== undefined;
+
+      if (registryItem && isBusinessSuccess) {
+        return (
+          <div className="mt-1">
+            <registryItem.render
+              envelope={envelope}
+              data={envelope.data}
+              artifactImages={envelope.images}
+              siteEnvironment={envelope.site_environment}
+            />
+          </div>
+        );
+      }
+
+      return (
+        <div className="text-xs text-muted-foreground/80 py-1 font-normal">
+          {registryItem
+            ? "未查询到符合条件的业务监测数据。"
+            : "已完成辅助信息查询并同步至模型上下文。"}
+        </div>
+      );
+    }
+
+    // 分支 4: running -> 纯净无多余占位
+    return null;
+  };
+
+  return (
+    <ToolFallbackRoot open={open} onOpenChange={setOpen}>
+      <ToolFallbackTrigger toolName={toolName} status={effectiveStatus} />
+      <ToolFallbackContent>{renderContent()}</ToolFallbackContent>
     </ToolFallbackRoot>
   );
 };
@@ -789,9 +767,6 @@ const ToolFallback = memo(
   Root: typeof ToolFallbackRoot;
   Trigger: typeof ToolFallbackTrigger;
   Content: typeof ToolFallbackContent;
-  Args: typeof ToolFallbackArgs;
-  Result: typeof ToolFallbackResult;
-  Error: typeof ToolFallbackError;
   Approval: typeof ToolFallbackApproval;
 };
 
@@ -799,20 +774,13 @@ ToolFallback.displayName = "ToolFallback";
 ToolFallback.Root = ToolFallbackRoot;
 ToolFallback.Trigger = ToolFallbackTrigger;
 ToolFallback.Content = ToolFallbackContent;
-ToolFallback.Args = ToolFallbackArgs;
-ToolFallback.Result = ToolFallbackResult;
-ToolFallback.Error = ToolFallbackError;
 ToolFallback.Approval = ToolFallbackApproval;
 
 export {
-  formatUnknownValue,
   offersInterruptAction,
   ToolFallback,
   ToolFallbackRoot,
   ToolFallbackTrigger,
   ToolFallbackContent,
-  ToolFallbackArgs,
-  ToolFallbackResult,
-  ToolFallbackError,
   ToolFallbackApproval,
 };

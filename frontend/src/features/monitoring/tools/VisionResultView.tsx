@@ -1,5 +1,4 @@
 import React from 'react';
-import { Eye } from 'lucide-react';
 import type { ToolResultProps } from './types';
 import { toFiniteGnssNumber } from './gnssUtils';
 
@@ -134,57 +133,60 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
         </div>
       )}
 
-      {/* 异常候选（高亮） */}
+      {/* 形态异常候选（轻量文本导引线，去外层黄色卡片与内层卡片） */}
       {candidates.length > 0 && (
-        <div className="border border-amber-200/80 rounded-lg bg-amber-50/60 p-2.5 max-w-3xl">
-          <div className="text-[11px] font-semibold text-amber-700 mb-1.5 flex items-center gap-1">
-            <Eye className="w-3.5 h-3.5" />形态异常候选（{candidates.length}）
+        <div className="space-y-2 pt-1 max-w-3xl">
+          <div className="text-[11px] font-medium text-foreground/80 flex items-center gap-1.5">
+            <span>形态异常候选</span>
+            <span className="font-mono text-xs text-amber-600 dark:text-amber-400 font-semibold">
+              {candidates.length}
+            </span>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2 ps-0.5">
             {candidates.map((c: any, i: number) => (
               <div
                 key={i}
-                className="text-xs text-neutral-800 bg-background/80 border border-amber-200/40 rounded-md px-2 py-1.5"
+                className="border-s border-amber-300/60 ps-3 py-0.5 text-xs"
               >
-                <div className="flex items-center gap-1.5 text-[10px] text-neutral-500">
-                  <span className="px-1.5 py-0.5 bg-neutral-100 rounded font-mono">{c.metric}</span>
-                  <span className="font-mono">
-                    {String(c.start_at).slice(0, 16)} ~ {String(c.end_at).slice(5, 16)}
-                  </span>
+                <div className="text-[11px] font-mono text-muted-foreground">
+                  {c.metric} · {String(c.start_at).slice(0, 16)} — {String(c.end_at).slice(5, 16)}
                 </div>
-                <div className="mt-1">{c.description || '（未描述）'}</div>
+                <div className="mt-0.5 text-foreground/85 leading-relaxed">
+                  {c.description || '（未描述）'}
+                </div>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* 形态观察摘要 */}
+      {/* 形态观察摘要（轻量纯文本块，border-s border-border/60 ps-3） */}
       {(obs.fact_text ||
         (obs.trends && obs.trends.length > 0) ||
         (obs.turning_points && obs.turning_points.length > 0)) && (
-        <div className="border border-border/60 rounded-lg bg-background/60 p-3 max-w-3xl">
+        <div className="space-y-1.5 pt-1 max-w-3xl border-s border-border/60 ps-3">
+          <div className="text-[11px] font-medium text-muted-foreground">观察结果</div>
           {obs.fact_text && (
-            <div className="text-xs text-neutral-800 leading-relaxed">{obs.fact_text}</div>
+            <div className="text-xs text-foreground/85 leading-relaxed">{obs.fact_text}</div>
           )}
           {(obs.trends?.length > 0 || obs.turning_points?.length > 0) && (
-            <ul className="mt-1.5 space-y-1">
+            <ul className="space-y-0.5 text-[11px] text-foreground/80">
               {obs.trends?.map((t: string, i: number) => (
-                <li key={`t${i}`} className="text-[11px] text-neutral-600 flex gap-1.5">
-                  <span className="text-neutral-300">•</span>
+                <li key={`t${i}`} className="flex gap-1.5">
+                  <span className="text-muted-foreground/60">•</span>
                   <span>趋势：{t}</span>
                 </li>
               ))}
               {obs.turning_points?.map((t: string, i: number) => (
-                <li key={`p${i}`} className="text-[11px] text-neutral-600 flex gap-1.5">
-                  <span className="text-neutral-300">•</span>
+                <li key={`p${i}`} className="flex gap-1.5">
+                  <span className="text-muted-foreground/60">•</span>
                   <span>拐点：{t}</span>
                 </li>
               ))}
             </ul>
           )}
           {obs.image_quality && (
-            <div className="mt-1.5 text-[10px] text-neutral-400">图像质量：{obs.image_quality}</div>
+            <div className="text-[10px] text-muted-foreground/70">图像质量：{obs.image_quality}</div>
           )}
         </div>
       )}

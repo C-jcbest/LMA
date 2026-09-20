@@ -99,27 +99,22 @@ export const WeatherResultView: React.FC<ToolResultProps> = ({ data }) => {
           （天气服务小时数据）
         </div>
       )}
-      <div className="border border-border/60 rounded-lg bg-background/60 p-3 max-w-3xl">
-        <div className="flex items-center gap-2 text-sm text-neutral-800 font-medium">
-          <CloudRain className="w-4 h-4 text-neutral-500" />
-          <span>{cur.condition ?? '-'}</span>
-          <span className="text-neutral-500 font-normal">
-            {cur.temperature_2m ?? '-'}℃（体感 {cur.apparent_temperature ?? '-'}℃，湿度{' '}
-            {cur.relative_humidity_2m ?? '-'}%）
-          </span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2.5 max-h-64 overflow-y-auto overscroll-contain">
-          {cells.map((c, i) => (
-            <div
-              key={i}
-              className="px-2.5 py-2 bg-muted/30 border border-border/40 rounded-md"
-            >
-              <div className="text-[10px] text-neutral-400">{c.label}</div>
-              <div className="text-xs text-neutral-800 font-mono mt-0.5">{c.value}</div>
-            </div>
-          ))}
-        </div>
+      <div className="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-200 font-medium pt-1">
+        <CloudRain className="w-4 h-4 text-neutral-500 shrink-0" />
+        <span>{cur.condition ?? '-'}</span>
+        <span className="text-muted-foreground font-normal text-xs">
+          {cur.temperature_2m ?? '-'}℃（体感 {cur.apparent_temperature ?? '-'}℃，湿度{' '}
+          {cur.relative_humidity_2m ?? '-'}%）
+        </span>
       </div>
+      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-3">
+        {cells.map((c, i) => (
+          <div key={i} className="flex flex-col gap-0.5 min-w-0">
+            <dt className="text-[11px] text-muted-foreground truncate">{c.label}</dt>
+            <dd className="font-mono text-foreground/90 font-medium text-xs truncate">{c.value}</dd>
+          </div>
+        ))}
+      </dl>
       {dates.length > 0 && (
         <div className="border border-border/60 rounded-lg bg-background/60 max-h-64 overflow-auto overscroll-contain">
           <table className="w-full text-left text-xs border-collapse">
