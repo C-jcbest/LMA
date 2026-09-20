@@ -282,3 +282,83 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_messages[0].content, "工具执行失败，未取得可用数据，请说明这一限制。")
         self.assertEqual(tool_messages[0].artifact["error"]["category"], "internal")
         self.assertEqual(tool_messages[0].artifact["data"]["message"], "工具执行失败，未取得可用数据，请说明这一限制。")
+
+    async def test_parallel_tools_stream_events_finish_independently(self):
+        """测试真实 LangGraph stream：同批并行工具分别完成并实时产生包含 artifact 的 tool 事件。"""
+        import asyncio
+        import time
+
+        @tool(response_format="content_and_artifact")
+        async def tool_quick() -> tuple[str, dict]:
+            """Tool Quick"""
+            await asyncio.sleep(0.1)
+            return "已查询测点快", {
+                "version": 1,
+                "kind": "station_list",
+                "status": "success",
+                "data": {"stations": [{"station_name": "测点快"}]},
+            }
+
+        @tool(response_format="content_and_artifact")
+        async def tool_medium() -> tuple[str, dict]:
+            """Tool Medium"""
+            await asyncio.sleep(0.3)
+            return "已查询分组中", {
+                "version": 1,
+                "kind": "station_list",
+                "status": "success",
+                "data": {"groups": [{"group_name": "分组中"}]},
+            }
+
+        @tool(response_format="content_and_artifact")
+        async def tool_slow() -> tuple[str, dict]:
+            """Tool Slow"""
+            await asyncio.sleep(0.5)
+            return "已查询测点慢", {
+                "version": 1,
+                "kind": "gnss_series",
+                "status": "success",
+                "data": {"station_name": "测点慢", "points": []},
+            }
+
+        model = ScriptedModel(script=[
+            AIMessage(content="", tool_calls=[
+                {"id": "call-1", "name": "tool_quick", "args": {}},
+                {"id": "call-2", "name": "tool_medium", "args": {}},
+                {"id": "call-3", "name": "tool_slow", "args": {}},
+            ]),
+            AIMessage(content="所有工具均已完成"),
+        ])
+        agent = graph.create_lma_agent(
+            model,
+            agent_tools=[tool_quick, tool_medium, tool_slow],
+            retry_delay=0,
+            summary_model=ScriptedModel(script=[]),
+        )
+
+        t0 = time.time()
+        tool_end_events = []
+        async for event in agent.astream_events({"messages": [HumanMessage(content="查询数据")]}, version="v2"):
+            if event.get("event") == "on_tool_end":
+                elapsed = time.time() - t0
+                tool_end_events.append({
+                    "time": elapsed,
+                    "name": event.get("name"),
+                    "output": event.get("data", {}).get("output"),
+                })
+
+        # 1. 验证三个工具都触发了 on_tool_end
+        self.assertEqual(len(tool_end_events), 3)
+
+        # 2. 验证完成顺序是 quick -> medium -> slow
+        names = [e["name"] for e in tool_end_events]
+        self.assertEqual(names, ["tool_quick", "tool_medium", "tool_slow"])
+
+        # 3. 验证 quick 在 medium 之前完成，medium 在 slow 之前完成（时间阶梯递增）
+        self.assertLess(tool_end_events[0]["time"], tool_end_events[1]["time"])
+        self.assertLess(tool_end_events[1]["time"], tool_end_events[2]["time"])
+
+        # 4. 验证从真实输出中成功解出各自严格 version: 1 的 artifact 载荷
+        self.assertEqual(tool_end_events[0]["output"].artifact["data"]["stations"][0]["station_name"], "测点快")
+        self.assertEqual(tool_end_events[1]["output"].artifact["data"]["groups"][0]["group_name"], "分组中")
+        self.assertEqual(tool_end_events[2]["output"].artifact["data"]["station_name"], "测点慢")

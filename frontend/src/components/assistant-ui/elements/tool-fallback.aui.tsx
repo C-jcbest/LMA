@@ -610,27 +610,34 @@ function getEffectiveStatus(
   liveToolCall: any | undefined,
   part: { status: ToolCallMessagePartStatus },
 ): ToolCallMessagePartStatus {
-  if (part.status.type === "requires-action") {
+  // assistant-ui 已有确定终态时，永远以 Message Part 为准
+  if (part.status.type !== "running") {
     return part.status;
   }
-  const statusType = liveToolCall?.status?.type ?? liveToolCall?.status;
-  if (statusType === "running") {
-    return { type: "running" };
+  if (!liveToolCall) {
+    return part.status;
   }
-  if (statusType === "finished") {
-    return { type: "complete" };
+  const statusType =
+    typeof liveToolCall.status === "object" && liveToolCall.status
+      ? liveToolCall.status.type
+      : liveToolCall.status;
+  switch (statusType) {
+    case "running":
+      return { type: "running" };
+    case "finished":
+      return { type: "complete" };
+    case "error":
+      return {
+        type: "incomplete",
+        reason: "error",
+        error:
+          (typeof liveToolCall.status === "object" && liveToolCall.status
+            ? liveToolCall.status.error
+            : undefined) ?? liveToolCall.error,
+      };
+    default:
+      return part.status;
   }
-  if (statusType === "error") {
-    return {
-      type: "incomplete",
-      reason: "error",
-      error:
-        liveToolCall.status?.error ??
-        liveToolCall.error ??
-        (part.status.type === "incomplete" ? part.status.error : undefined),
-    };
-  }
-  return part.status;
 }
 
 const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {

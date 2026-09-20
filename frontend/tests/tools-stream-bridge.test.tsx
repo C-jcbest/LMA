@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import {
   AssistantRuntimeProvider,
@@ -40,6 +40,34 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
     expect(ToolFallback.Content).toBeDefined();
     expect(ToolFallback.Approval).toBeDefined();
     expect(offersInterruptAction).toBeDefined();
+  });
+
+  it("getEffectiveStatus 终态优先级：Message Part 处于终态时永远以 Message Part 为准，不被 live 状态覆盖", () => {
+    // 模拟 liveToolCall 因函数运行结束而呈现 finished
+    mockUseLangChainToolCalls.mockReturnValue([
+      { id: "call-err-1", name: "get_daily_gnss_data", status: "finished" },
+    ]);
+
+    // 但底座 Message Part 已确立错误终态 (incomplete/error)
+    const { container } = render(
+      <TestAuiWrapper>
+        <ToolFallback
+          toolName="get_daily_gnss_data"
+          toolCallId="call-err-1"
+          status={{ type: "incomplete", error: "未找到指定监测点，请确认站点。" }}
+          argsText="{}"
+        />
+      </TestAuiWrapper>
+    );
+
+    // 关键断言：终态以 Message Part 为准，显示错误而不是 liveToolCall 的成功 complete
+    expect(screen.getByRole("button", { name: /GNSS 数据获取失败/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /已获取 GNSS 监测数据/ })).not.toBeInTheDocument();
+
+    // 打开内容区：展示错误原因，绝对不能显示“未查询到符合条件的业务监测数据。”
+    fireEvent.click(screen.getByRole("button", { name: /GNSS 数据获取失败/ }));
+    expect(screen.getByText("未找到指定监测点，请确认站点。")).toBeInTheDocument();
+    expect(screen.queryByText("未查询到符合条件的业务监测数据。")).not.toBeInTheDocument();
   });
 
   it("HITL 状态边界：requires-action 不会被 live tool 的 running 状态意外冲掉，且转为 running 后内容区禁止渲染空数据文案", () => {
@@ -86,8 +114,9 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
     expect(screen.queryByText("已完成辅助信息查询并同步至模型上下文。")).not.toBeInTheDocument();
   });
 
-  it("getLiveToolArtifact 纯查找 helper 从 tools channel 中提取指定 toolCallId 的 artifact", () => {
+  it("getLiveToolArtifact 严格支持 ToolMessage wire envelope (artifact / kwargs / lc_kwargs) 且仅接受 tool-finished 事件", () => {
     const sampleEvents: any[] = [
+      // 1. started 事件应被跳过
       {
         params: {
           data: {
@@ -97,6 +126,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
           },
         },
       },
+      // 2. 标准 output.artifact
       {
         params: {
           data: {
@@ -116,14 +146,54 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
           },
         },
       },
+      // 3. LangGraph wire envelope: output.kwargs.artifact
       {
         params: {
           data: {
             event: "tool-finished",
-            tool_call_id: "call-2",
+            tool_call_id: "call-kwargs",
+            tool_name: "list_station_groups",
+            output: {
+              kwargs: {
+                artifact: {
+                  version: 1,
+                  kind: "station_list",
+                  status: "success",
+                  data: { groups: [{ group_name: "分组K" }] },
+                },
+              },
+            },
+          },
+        },
+      },
+      // 4. LangGraph wire envelope: output.lc_kwargs.artifact
+      {
+        params: {
+          data: {
+            event: "tool-finished",
+            tool_call_id: "call-lc-kwargs",
+            tool_name: "get_daily_gnss_data",
+            output: {
+              lc_kwargs: {
+                artifact: {
+                  version: 1,
+                  kind: "gnss_series",
+                  status: "success",
+                  data: { station_name: "测点LC", points: [] },
+                },
+              },
+            },
+          },
+        },
+      },
+      // 5. 无 artifact 的 finished 事件
+      {
+        params: {
+          data: {
+            event: "tool-finished",
+            tool_call_id: "call-no-artifact",
             tool_name: "get_weather",
             output: {
-              type: "tool",
               content: "无 artifact 输出",
             },
           },
@@ -131,26 +201,36 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
       },
     ];
 
-    // 1. 成功提取对应 toolCallId 的 artifact
-    const artifact1 = getLiveToolArtifact(sampleEvents, "call-1");
-    expect(artifact1).toEqual({
+    // 标准 artifact
+    expect(getLiveToolArtifact(sampleEvents, "call-1")).toEqual({
       version: 1,
       kind: "station_list",
       status: "success",
       data: { stations: [{ station_name: "测点A" }] },
     });
 
-    // 2. 存在事件但无 output.artifact，返回 undefined
-    const artifact2 = getLiveToolArtifact(sampleEvents, "call-2");
-    expect(artifact2).toBeUndefined();
+    // kwargs.artifact
+    expect(getLiveToolArtifact(sampleEvents, "call-kwargs")).toEqual({
+      version: 1,
+      kind: "station_list",
+      status: "success",
+      data: { groups: [{ group_name: "分组K" }] },
+    });
 
-    // 3. 不存在的 toolCallId，返回 undefined
-    const artifact3 = getLiveToolArtifact(sampleEvents, "call-not-exist");
-    expect(artifact3).toBeUndefined();
+    // lc_kwargs.artifact
+    expect(getLiveToolArtifact(sampleEvents, "call-lc-kwargs")).toEqual({
+      version: 1,
+      kind: "gnss_series",
+      status: "success",
+      data: { station_name: "测点LC", points: [] },
+    });
 
-    // 4. 空数组或无 toolCallId，安全返回 undefined
+    // 无 artifact
+    expect(getLiveToolArtifact(sampleEvents, "call-no-artifact")).toBeUndefined();
+
+    // 不存在的 tool_call_id
+    expect(getLiveToolArtifact(sampleEvents, "call-not-exist")).toBeUndefined();
     expect(getLiveToolArtifact([], "call-1")).toBeUndefined();
-    expect(getLiveToolArtifact(sampleEvents, "")).toBeUndefined();
   });
 
   it("ToolFallback 对独立工具状态更新正确渲染", async () => {
@@ -266,15 +346,15 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
     }
   });
 
-  it("真实 LangGraph tools-channel 测试：同批并行工具按 100ms/500ms/1000ms 异步完成，无需等待最慢工具", async () => {
+  it("tools-channel bridge：模拟独立 tool-finished 事件时，各工具独立完成", async () => {
     vi.useFakeTimers();
 
     try {
       const TestAgentToolsStream: React.FC = () => {
         const [activeCalls, setActiveCalls] = useState<any[]>([
-          { id: "call-quick", name: "list_stations", status: { type: "running" } },
-          { id: "call-medium", name: "list_station_groups", status: { type: "running" } },
-          { id: "call-slow", name: "get_daily_gnss_data", status: { type: "running" } },
+          { id: "call-quick", name: "list_stations", status: "running" },
+          { id: "call-medium", name: "list_station_groups", status: "running" },
+          { id: "call-slow", name: "get_daily_gnss_data", status: "running" },
         ]);
 
         const [toolEvents, setToolEvents] = useState<any[]>([]);
@@ -297,7 +377,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
                         version: 1,
                         kind: "station_list",
                         status: "success",
-                        data: { stations: [{ station_name: "测点快" }] },
+                        data: { stations: [{ station_name: "测点快", station_status: "正常" }] },
                       },
                     },
                   },
@@ -305,7 +385,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
               },
             ]);
             setActiveCalls((prev) => [
-              { id: "call-quick", name: "list_stations", status: { type: "finished" } },
+              { id: "call-quick", name: "list_stations", status: "finished" },
               prev[1],
               prev[2],
             ]);
@@ -324,9 +404,9 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
                     output: {
                       artifact: {
                         version: 1,
-                        kind: "station_group_list",
+                        kind: "station_list",
                         status: "success",
-                        data: { groups: [{ group_name: "分组中" }] },
+                        data: { groups: [{ group_name: "分组中", station_count: 5 }] },
                       },
                     },
                   },
@@ -335,7 +415,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
             ]);
             setActiveCalls((prev) => [
               prev[0],
-              { id: "call-medium", name: "list_station_groups", status: { type: "finished" } },
+              { id: "call-medium", name: "list_station_groups", status: "finished" },
               prev[2],
             ]);
           }, 500);
@@ -353,9 +433,12 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
                     output: {
                       artifact: {
                         version: 1,
-                        kind: "gnss_data",
+                        kind: "gnss_series",
                         status: "success",
-                        data: { station_name: "测点慢", records: [] },
+                        data: {
+                          station_name: "测点慢",
+                          points: [{ time: "2026-09-20 12:00:00", n: 1.234, e: 2.345, u: 3.456 }],
+                        },
                       },
                     },
                   },
@@ -365,7 +448,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
             setActiveCalls((prev) => [
               prev[0],
               prev[1],
-              { id: "call-slow", name: "get_daily_gnss_data", status: { type: "finished" } },
+              { id: "call-slow", name: "get_daily_gnss_data", status: "finished" },
             ]);
           }, 1000);
 
@@ -413,32 +496,41 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
       expect(screen.getByRole("button", { name: /正在查询监测点分组…/ })).toBeDisabled();
       expect(screen.getByRole("button", { name: /正在获取 GNSS 监测数据…/ })).toBeDisabled();
 
-      // 100ms 时：第一个工具 complete，其余两个仍为 running
+      // 100ms 时：第一个工具 complete，点击展开后必须渲染出业务数据“测点快”！
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);
       });
 
-      expect(screen.getByRole("button", { name: /已查询监测点信息/ })).not.toBeDisabled();
+      const btnA = screen.getByRole("button", { name: /已查询监测点信息/ });
+      expect(btnA).not.toBeDisabled();
       expect(screen.getByRole("button", { name: /正在查询监测点分组…/ })).toBeDisabled();
       expect(screen.getByRole("button", { name: /正在获取 GNSS 监测数据…/ })).toBeDisabled();
 
-      // 500ms 时：第二个工具 complete，第三个仍为 running
+      fireEvent.click(btnA);
+      expect(screen.getByText("测点快")).toBeInTheDocument();
+
+      // 500ms 时：第二个工具 complete，点击展开后必须渲染出业务数据“分组中”！
       await act(async () => {
         await vi.advanceTimersByTimeAsync(400);
       });
 
-      expect(screen.getByRole("button", { name: /已查询监测点信息/ })).not.toBeDisabled();
-      expect(screen.getByRole("button", { name: /已查询监测点分组/ })).not.toBeDisabled();
+      const btnB = screen.getByRole("button", { name: /已查询监测点分组/ });
+      expect(btnB).not.toBeDisabled();
       expect(screen.getByRole("button", { name: /正在获取 GNSS 监测数据…/ })).toBeDisabled();
 
-      // 1000ms 时：第三个工具 complete，全部完成
+      fireEvent.click(btnB);
+      expect(screen.getByText("分组中")).toBeInTheDocument();
+
+      // 1000ms 时：第三个工具 complete，点击展开后必须渲染出业务数据“测点慢”！
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500);
       });
 
-      expect(screen.getByRole("button", { name: /已查询监测点信息/ })).not.toBeDisabled();
-      expect(screen.getByRole("button", { name: /已查询监测点分组/ })).not.toBeDisabled();
-      expect(screen.getByRole("button", { name: /已获取 GNSS 监测数据/ })).not.toBeDisabled();
+      const btnC = screen.getByRole("button", { name: /已获取 GNSS 监测数据/ });
+      expect(btnC).not.toBeDisabled();
+
+      fireEvent.click(btnC);
+      expect(screen.getByText("测点慢")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
