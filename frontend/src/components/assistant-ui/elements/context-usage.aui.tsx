@@ -1,7 +1,5 @@
-import * as React from "react";
-import { Popover, PopoverContent, PopoverTrigger, PopoverHeader, PopoverTitle } from "@/components/ui/popover";
+import React, { FC } from "react";
 import { CircularProgress } from "@/components/ui/circular-progress";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export interface ContextUsage {
@@ -17,7 +15,7 @@ export interface ContextUsage {
   accounting_difference_tokens?: number;
   output_reserve_tokens?: number;
   safety_margin_tokens?: number;
-  counter?: 'provider_reported';
+  counter?: "provider_reported";
   model?: string;
 }
 
@@ -33,7 +31,7 @@ const formatTokens = (value?: number | null) => {
   return Math.round(value).toLocaleString("zh-CN");
 };
 
-export const ContextUsageElement: React.FC<ContextUsageElementProps> = ({
+export const ContextUsageElement: FC<ContextUsageElementProps> = ({
   usage,
   className,
 }) => {
@@ -49,110 +47,62 @@ export const ContextUsageElement: React.FC<ContextUsageElementProps> = ({
   const ratio = Math.max(0, Math.min(1, usage.usage_ratio as number));
   const percent = Math.round(ratio * 100);
 
-  const isCritical = ratio >= 0.8;
-  const isWarning = ratio >= 0.6;
+  const indicatorColorClass =
+    ratio >= 0.8
+      ? "stroke-rose-500"
+      : ratio >= 0.6
+        ? "stroke-amber-500"
+        : "stroke-emerald-500";
 
-  const tone = isCritical
-    ? {
-        indicator: "stroke-rose-500",
-        badge: "text-rose-600 bg-rose-50 border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-900/50",
-        label: "即将超限",
-      }
-    : isWarning
-      ? {
-          indicator: "stroke-amber-500",
-          badge: "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-900/50",
-          label: "用量较高",
-        }
-      : {
-          indicator: "stroke-emerald-500",
-          badge: "text-emerald-600 bg-emerald-50 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-900/50",
-          label: "容量充裕",
-        };
+  const dotColorClass =
+    ratio >= 0.8
+      ? "bg-rose-500"
+      : ratio >= 0.6
+        ? "bg-amber-500"
+        : "bg-emerald-500";
 
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className={cn(
-            "h-7 gap-1.5 rounded-full border border-neutral-200/80 bg-background/80 px-2 text-xs font-normal text-muted-foreground shadow-2xs backdrop-blur-xs transition-colors hover:bg-muted/80 hover:text-foreground dark:border-neutral-800/80",
-            className
-          )}
-          title={`上下文预算已用 ${percent}%`}
-          aria-label={`上下文预算已用 ${percent}%`}
-        >
-          <CircularProgress
-            value={percent}
-            size={15}
-            strokeWidth={2.4}
-            indicatorClassName={tone.indicator}
-          />
-          <span className="tabular-nums font-mono text-[11px] font-medium leading-none text-foreground/80">
-            {percent}%
-          </span>
-        </Button>
-      </PopoverTrigger>
-
-      <PopoverContent
-        side="top"
-        align="end"
-        sideOffset={8}
-        className="w-68 rounded-2xl border border-neutral-200/90 bg-background/95 p-4 shadow-xl backdrop-blur-md dark:border-neutral-800"
+    <div className="group relative inline-flex items-center justify-center">
+      <button
+        type="button"
+        className={cn(
+          "inline-flex size-5 items-center justify-center p-0 m-0 border-0 bg-transparent cursor-pointer rounded-full outline-hidden transition-opacity hover:opacity-80 focus-visible:ring-1 focus-visible:ring-ring",
+          className
+        )}
+        aria-label={`上下文预算已用 ${percent}%`}
       >
-        <PopoverHeader className="flex flex-row items-center gap-3 space-y-0 pb-1">
-          <CircularProgress
-            value={percent}
-            size={42}
-            strokeWidth={3.8}
-            indicatorClassName={tone.indicator}
-          >
-            <span className="font-mono text-[11px] font-semibold tabular-nums text-foreground">
-              {percent}%
-            </span>
-          </CircularProgress>
+        <CircularProgress
+          value={percent}
+          size={18}
+          strokeWidth={2.2}
+          indicatorClassName={indicatorColorClass}
+          trackClassName="stroke-neutral-200/80 dark:stroke-neutral-800"
+        />
+      </button>
 
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-1.5">
-              <PopoverTitle className="text-xs font-medium text-foreground">
-                上下文窗口
-              </PopoverTitle>
-              <span
-                className={cn(
-                  "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-medium leading-none",
-                  tone.badge
-                )}
-              >
-                {tone.label}
-              </span>
-            </div>
-            <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-              {usage.model || "标准模型"}
-            </p>
+      {/* 定制悬浮提示窗（非浏览器原生样式，悬停与聚焦时平滑显示） */}
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 z-50 w-max rounded-lg border border-neutral-200/80 bg-white/95 px-3 py-2 text-xs text-neutral-800 shadow-md backdrop-blur-xs transition-all duration-200 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 dark:border-neutral-800/80 dark:bg-neutral-900/95 dark:text-neutral-200"
+      >
+        <div className="flex flex-col gap-1 text-left">
+          <div className="flex items-center gap-1.5 font-medium whitespace-nowrap">
+            <span className={cn("size-1.5 rounded-full", dotColorClass)} />
+            <span>上下文已用 {percent}%</span>
           </div>
-        </PopoverHeader>
-
-        <div className="mt-3.5 grid grid-cols-2 gap-2 rounded-xl bg-muted/40 p-2.5 text-xs">
-          <div>
-            <span className="text-[10px] text-muted-foreground">当前请求输入</span>
-            <div className="mt-0.5 font-mono text-[11px] font-medium text-foreground">
+          <div className="flex items-center gap-1 text-[11px] text-neutral-500 whitespace-nowrap dark:text-neutral-400">
+            <span>当前请求输入</span>
+            <span className="font-mono font-medium text-neutral-700 dark:text-neutral-300">
               {formatTokens(usage.input_tokens)}
-            </div>
-          </div>
-          <div>
-            <span className="text-[10px] text-muted-foreground">模型上下文窗口</span>
-            <div className="mt-0.5 font-mono text-[11px] font-medium text-foreground">
+            </span>
+            <span>/</span>
+            <span>上限</span>
+            <span className="font-mono font-medium text-neutral-700 dark:text-neutral-300">
               {formatTokens(usage.context_limit_tokens)}
-            </div>
+            </span>
           </div>
         </div>
-
-        <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground/80">
-          💡 上下文超限时系统将自动压缩历史轮次，确保推理连续。
-        </p>
-      </PopoverContent>
-    </Popover>
+      </div>
+    </div>
   );
 };
