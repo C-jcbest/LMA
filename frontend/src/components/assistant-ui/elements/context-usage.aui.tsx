@@ -1,5 +1,5 @@
 import React, { FC } from "react";
-import { CircularProgress } from "@/components/ui/circular-progress";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
 export interface ContextUsage {
@@ -49,10 +49,10 @@ export const ContextUsageElement: FC<ContextUsageElementProps> = ({
 
   const indicatorColorClass =
     ratio >= 0.8
-      ? "stroke-rose-500"
+      ? "bg-rose-500"
       : ratio >= 0.6
-        ? "stroke-amber-500"
-        : "stroke-emerald-500";
+        ? "bg-amber-500"
+        : "bg-emerald-500";
 
   const dotColorClass =
     ratio >= 0.8
@@ -66,18 +66,18 @@ export const ContextUsageElement: FC<ContextUsageElementProps> = ({
       <button
         type="button"
         className={cn(
-          "inline-flex size-5 items-center justify-center p-0 m-0 border-0 bg-transparent cursor-pointer rounded-full outline-hidden transition-opacity hover:opacity-80 focus-visible:ring-1 focus-visible:ring-ring",
+          "inline-flex items-center justify-center p-0.5 m-0 border-0 bg-transparent cursor-pointer rounded-full outline-hidden transition-opacity hover:opacity-80 focus-visible:ring-1 focus-visible:ring-ring",
           className
         )}
         aria-label={`上下文预算已用 ${percent}%`}
       >
-        <CircularProgress
-          value={percent}
-          size={18}
-          strokeWidth={2.2}
-          indicatorClassName={indicatorColorClass}
-          trackClassName="stroke-neutral-200/80 dark:stroke-neutral-800"
-        />
+        <div className="w-7">
+          <Progress
+            value={percent}
+            className="h-1.5 w-full bg-slate-200 dark:bg-slate-700"
+            indicatorClassName={indicatorColorClass}
+          />
+        </div>
       </button>
 
       {/* 定制悬浮提示窗（非浏览器原生样式，悬停与聚焦时平滑显示） */}
@@ -106,7 +106,3 @@ export const ContextUsageElement: FC<ContextUsageElementProps> = ({
     </div>
   );
 };
-
-// 兼容旧命名的薄别名导出（允许 import { ContextUsageIndicator } from "@/components/assistant-ui/elements/context-usage.aui"）
-export { ContextUsageElement as ContextUsageIndicator };
-export type { ContextUsageElementProps as ContextUsageIndicatorProps };

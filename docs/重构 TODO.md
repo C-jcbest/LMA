@@ -470,7 +470,7 @@ assistant-ui Elements 已提供 Context Display，用于 ring、bar、text 及 h
 
 实现说明：
 1. 上下文指示器全面收敛为官方 Element 规范 `context-usage.aui.tsx`（`ContextUsageElement`）；
-2. 进度环收敛至标准无障碍 Radix 组件 `CircularProgress`（`@/components/ui/circular-progress`），视觉上仅保留精致的纯环形进度，外面零额外包裹；
+2. 进度组件收敛至标准 shadcn/Radix 组件 `Progress`（`@/components/ui/progress`），视觉上保留精致微型进度，外面零额外包裹；
 3. 悬浮提示采用定制轻量毛玻璃卡片（杜绝默认浏览器原生黄色/黑色方块），仅直观呈现使用百分比、输入用量与总上限两行精炼数据；
 4. 全量删除旧的 `ContextUsageIndicator.tsx` 文件与兼容引用，测试与业务层直接消费 `ContextUsageElement`。
 

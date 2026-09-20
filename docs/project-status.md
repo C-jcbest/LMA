@@ -51,7 +51,7 @@
   - 彻底移除 `inputText`、`textareaRef`、IME 手写控制、自动高度与手工 Send/Stop 状态切换等脆弱逻辑；
   - 依托 assistant-ui 官方 `ComposerPrimitive` 驱动生命周期，占位符对齐业务：“询问监测数据、变化趋势、降雨关联或场地环境…”；
   - 左侧新增业务快捷提问菜单（`ComposerQuickActions`），呼出标准监测问题（测点稳定性、降雨天气关联、趋势对比、分组台账）并无缝填充；
-  - 右侧通过官方 `useLangChainState("context_usage")` 原生嵌入 `ContextUsageIndicator`，实时反映模型上下文窗口占用；
+  - 右侧通过官方 `useLangChainState("context_usage")` 原生嵌入 `ContextUsageElement`，实时反映模型上下文窗口占用；
   - 欢迎界面集成一键快捷提问胶囊按钮。
 - **历史摘要消息标准化与折叠展示**：
   - 通过 patch `@assistant-ui/react-langchain` 将 `additional_kwargs?.lc_source === "summarization"` 消息映射为 `role: "system"`，彻底杜绝历史摘要展示为用户消息气泡；
