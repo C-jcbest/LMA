@@ -30,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   useLangChainToolCalls,
 } from "@assistant-ui/react-langchain";
+import type { AssembledToolCall } from "@langchain/react";
 import {
   getToolRegistryItem,
   decodeToolArtifact,
@@ -606,8 +607,28 @@ function ToolFallbackApproval({
   );
 }
 
+/**
+ * 归一化 live tool call 的状态。
+ * 官方 AssembledToolCall.status 为 "running" | "finished" | "error"，
+ * 同时兼容历史遗留的 { type, error } 对象形态，避免旧调用方被误判为未知态。
+ */
+function normalizeLiveToolStatus(
+  liveToolCall: AssembledToolCall,
+): { type?: string; error?: unknown } {
+  const raw: unknown = liveToolCall.status;
+  if (typeof raw === "string") return { type: raw };
+  if (raw && typeof raw === "object") {
+    const record = raw as { type?: unknown; error?: unknown };
+    return {
+      type: typeof record.type === "string" ? record.type : undefined,
+      error: record.error,
+    };
+  }
+  return {};
+}
+
 function getEffectiveStatus(
-  liveToolCall: any | undefined,
+  liveToolCall: AssembledToolCall | undefined,
   part: { status: ToolCallMessagePartStatus },
 ): ToolCallMessagePartStatus {
   // assistant-ui 已有确定终态时，永远以 Message Part 为准
@@ -617,24 +638,27 @@ function getEffectiveStatus(
   if (!liveToolCall) {
     return part.status;
   }
-  const statusType =
-    typeof liveToolCall.status === "object" && liveToolCall.status
-      ? liveToolCall.status.type
-      : liveToolCall.status;
-  switch (statusType) {
+  const liveStatus = normalizeLiveToolStatus(liveToolCall);
+  switch (liveStatus.type) {
     case "running":
       return { type: "running" };
     case "finished":
       return { type: "complete" };
-    case "error":
+    case "error": {
+      const liveError =
+        typeof liveStatus.error === "string"
+          ? liveStatus.error
+          : undefined;
+      const streamError =
+        typeof liveToolCall.error === "string"
+          ? liveToolCall.error
+          : undefined;
       return {
         type: "incomplete",
         reason: "error",
-        error:
-          (typeof liveToolCall.status === "object" && liveToolCall.status
-            ? liveToolCall.status.error
-            : undefined) ?? liveToolCall.error,
+        error: liveError ?? streamError,
       };
+    }
     default:
       return part.status;
   }
@@ -651,24 +675,25 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
     respondToApproval,
     ...restProps
   } = props;
-  const toolCallId = (props as any).toolCallId;
+  const { toolCallId } = props;
 
   // 1. 读取官方 live tool call，驱动独立实时的状态更新
   const toolCalls = useLangChainToolCalls();
   const liveToolCall = toolCalls.find(
-    (c: any) => c && (c.id === toolCallId || c.callId === toolCallId),
+    (c) => c && (c.id === toolCallId || c.callId === toolCallId),
   );
   const effectiveStatus = getEffectiveStatus(liveToolCall, { status });
 
-  // 2. 两阶段 artifact：优先使用 ToolMessage 已落盘持久化的 artifact；
-  // 运行流式阶段使用 tools channel 的 live artifact
+  // 2. 两阶段 artifact：持久化 ToolMessage.artifact 永远优先
+  // （success / partial / error 一致），仅流式阶段未落盘时才回退
+  // tools channel 的 live artifact
   const toolEvents = useLiveToolEvents();
-  const liveArtifact = toolCallId ? getLiveToolArtifact(toolEvents, toolCallId) : undefined;
-  const persistedArtifact =
-    effectiveStatus.type === "complete"
-      ? (status as any).artifact ?? (restProps as any).artifact
-      : undefined;
-  const rawArtifact = persistedArtifact ?? liveArtifact;
+  const liveArtifact = toolCallId
+    ? getLiveToolArtifact(toolEvents, toolCallId)
+    : undefined;
+  const persistedArtifact = restProps.artifact;
+  const rawArtifact =
+    persistedArtifact !== undefined ? persistedArtifact : liveArtifact;
   const envelope = decodeToolArtifact(toolName, rawArtifact);
 
   const isRequiresAction = effectiveStatus?.type === "requires-action";
@@ -707,7 +732,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
 
     // 分支 2: incomplete -> 仅错误信息
     if (effectiveStatus.type === "incomplete") {
-      if ((effectiveStatus as any).reason === "cancelled") {
+      if (effectiveStatus.reason === "cancelled") {
         return (
           <div className="text-xs text-muted-foreground py-1 font-normal">
             操作已取消

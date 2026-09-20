@@ -535,4 +535,102 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
       vi.useRealTimers();
     }
   });
+
+  it("历史错误 ToolMessage 使用持久化 error artifact：incomplete 终态同样读取 ToolMessage.artifact", () => {
+    mockUseLangChainToolCalls.mockReturnValue([]);
+
+    render(
+      <TestAuiWrapper>
+        <ToolFallback
+          toolName="get_daily_gnss_data"
+          toolCallId="call-error"
+          status={{
+            type: "incomplete",
+            error: "fallback error",
+          }}
+          artifact={{
+            version: 1,
+            kind: "gnss_series",
+            status: "error",
+            data: {
+              message: "该监测点为基准站",
+            },
+            error: {
+              code: "business",
+              category: "business",
+              message: "该监测点为基准站",
+              retryable: false,
+            },
+          }}
+          argsText="{}"
+        />
+      </TestAuiWrapper>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /GNSS 数据获取失败/,
+      }),
+    );
+
+    // 刷新/历史回放后 effectiveStatus 为 incomplete，持久化 error artifact 仍必须参与渲染
+    expect(screen.getByText("该监测点为基准站")).toBeInTheDocument();
+    // 具体业务错误不再退化为 status.error 或 registryItem.errorLabel
+    expect(screen.queryByText("fallback error")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("未查询到符合条件的业务监测数据。"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("持久化 ToolMessage.artifact 永远优先于 live tools channel artifact", () => {
+    const liveEvents: any[] = [
+      {
+        params: {
+          data: {
+            event: "tool-finished",
+            tool_call_id: "call-persisted",
+            tool_name: "get_daily_gnss_data",
+            output: {
+              artifact: {
+                version: 1,
+                kind: "gnss_series",
+                status: "success",
+                data: { station_name: "流式阶段测点", points: [] },
+              },
+            },
+          },
+        },
+      },
+    ];
+
+    mockUseLangChainToolCalls.mockReturnValue([
+      { id: "call-persisted", name: "get_daily_gnss_data", status: "finished" },
+    ]);
+
+    render(
+      <TestAuiWrapper>
+        <LiveToolEventsProvider eventsOverride={liveEvents}>
+          <ToolFallback
+            toolName="get_daily_gnss_data"
+            toolCallId="call-persisted"
+            status={{ type: "complete" }}
+            artifact={{
+              version: 1,
+              kind: "gnss_series",
+              status: "success",
+              data: { station_name: "持久化测点", points: [] },
+            }}
+            argsText="{}"
+          />
+        </LiveToolEventsProvider>
+      </TestAuiWrapper>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /已获取 GNSS 监测数据/ }),
+    );
+
+    expect(screen.getByText("持久化测点")).toBeInTheDocument();
+    expect(screen.queryByText("流式阶段测点")).not.toBeInTheDocument();
+  });
 });

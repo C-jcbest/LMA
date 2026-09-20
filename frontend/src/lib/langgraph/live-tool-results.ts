@@ -1,12 +1,17 @@
 "use client";
 
 import React, { createContext, useContext } from "react";
-import { useChannel, STREAM_CONTROLLER, type AnyStream } from "@langchain/react";
+import {
+  useChannel,
+  STREAM_CONTROLLER,
+  type AnyStream,
+  type Event,
+} from "@langchain/react";
 import { useLangChainStream } from "@assistant-ui/react-langchain";
 
-const EMPTY_EVENTS: readonly any[] = [];
+const EMPTY_EVENTS: readonly Event[] = [];
 
-const LiveToolEventsContext = createContext<readonly any[]>(EMPTY_EVENTS);
+const LiveToolEventsContext = createContext<readonly Event[]>(EMPTY_EVENTS);
 
 /**
  * 协议字段解包辅助函数：
@@ -46,29 +51,43 @@ function getWireField(
   ) {
     return (lcKwargs as Record<string, unknown>)[field];
   }
-  return undefined;
+}
+
+const TOOL_FINISHED_EVENT = "tool-finished";
+
+interface ToolFinishedPayload {
+  event: string;
+  tool_call_id: string;
+  output: unknown;
+}
+
+function isToolFinishedPayload(
+  data: unknown,
+): data is ToolFinishedPayload {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return false;
+  }
+  const record = data as Record<string, unknown>;
+  return (
+    record.event === TOOL_FINISHED_EVENT &&
+    typeof record.tool_call_id === "string"
+  );
 }
 
 /**
- * 纯只读 helper：从 tools channel 事件流中纯查找指定 toolCallId 的 artifact
+ * 纯只读 helper：从 tools channel 事件流中查找指定 toolCallId 的 artifact
  * 严格遵照 event.params.data 协议，只接受 tool-finished 事件，
  * 并支持 ToolMessage wire envelope 解包；未找到或非 finished 事件安全返回 undefined。
  */
 export function getLiveToolArtifact(
-  events: readonly any[],
+  events: readonly Event[],
   toolCallId: string,
 ): unknown | undefined {
   if (!events || !toolCallId) return undefined;
   for (let i = events.length - 1; i >= 0; i--) {
-    const data = events[i]?.params?.data as
-      | Record<string, unknown>
-      | undefined;
-    if (
-      data?.event !== "tool-finished" ||
-      data.tool_call_id !== toolCallId
-    ) {
-      continue;
-    }
+    const data = events[i]?.params?.data;
+    if (!isToolFinishedPayload(data)) continue;
+    if (data.tool_call_id !== toolCallId) continue;
     return getWireField(data.output, "artifact");
   }
   return undefined;
@@ -76,7 +95,7 @@ export function getLiveToolArtifact(
 
 const LiveToolEventsSubscription: React.FC<{
   stream: AnyStream;
-  children: (events: readonly any[]) => React.ReactNode;
+  children: (events: readonly Event[]) => React.ReactNode;
 }> = ({ stream, children }) => {
   const events = useChannel(stream, ["tools"], undefined, {
     bufferSize: 100,
@@ -87,9 +106,7 @@ const LiveToolEventsSubscription: React.FC<{
 
 const LiveToolEventsStreamProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const stream = useLangChainStream();
-  const hasValidStream = Boolean(
-    stream && typeof stream === "object" && (stream as any)[STREAM_CONTROLLER],
-  );
+  const hasValidStream = Boolean(stream?.[STREAM_CONTROLLER]);
 
   if (!hasValidStream) {
     return React.createElement(
@@ -101,7 +118,7 @@ const LiveToolEventsStreamProvider: React.FC<{ children: React.ReactNode }> = ({
 
   return React.createElement(LiveToolEventsSubscription, {
     stream: stream as AnyStream,
-    children: (events: readonly any[]) =>
+    children: (events: readonly Event[]) =>
       React.createElement(
         LiveToolEventsContext.Provider,
         { value: events },
@@ -117,7 +134,7 @@ const LiveToolEventsStreamProvider: React.FC<{ children: React.ReactNode }> = ({
  */
 export const LiveToolEventsProvider: React.FC<{
   children: React.ReactNode;
-  eventsOverride?: readonly any[];
+  eventsOverride?: readonly Event[];
 }> = ({ children, eventsOverride }) => {
   if (eventsOverride) {
     return React.createElement(
@@ -132,6 +149,6 @@ export const LiveToolEventsProvider: React.FC<{
 /**
  * 读取当前 tools channel 的最新事件列表
  */
-export function useLiveToolEvents(): readonly any[] {
+export function useLiveToolEvents(): readonly Event[] {
   return useContext(LiveToolEventsContext);
 }

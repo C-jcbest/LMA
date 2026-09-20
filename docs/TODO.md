@@ -30,6 +30,8 @@
    - 新增 `LiveToolEventsProvider`，通过 LangGraph stream tools channel 实时桥接流式工具事件；
    - `ToolFallback` 实行两阶段消费与四态严格互斥渲染（requires-action/incomplete/complete/running）；
    - 优化 `VisionResultView`、`WeatherResultView` 视觉排版与 `Thread.Viewport` 滚动条体验。引入 `@streamdown/code` 插件提供语法高亮，Tailwind v4 注入 `@source` 编译指令，保留排版与复制能力。
+   - artifact 消费规则收敛为「持久化 `ToolMessage.artifact` 永远优先，live tools channel artifact 仅作流式阶段兜底」，success / partial / error 一致，确保历史错误业务信息刷新后不丢失；
+   - 后端并行工具回归测试改为直接消费生产链路 `stream_mode="tools"` 的 `tool-finished` 事件（而非 `astream_events` 的 `on_tool_end`），与前端 `useChannel(["tools"])` 同源；`live-tool-results.ts` 与 `getEffectiveStatus` 改用官方 `Event` / `AssembledToolCall` 类型，移除 `any`。
 
 ---
 

@@ -283,8 +283,8 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tool_messages[0].artifact["error"]["category"], "internal")
         self.assertEqual(tool_messages[0].artifact["data"]["message"], "工具执行失败，未取得可用数据，请说明这一限制。")
 
-    async def test_parallel_tools_stream_events_finish_independently(self):
-        """测试真实 LangGraph stream：同批并行工具分别完成并实时产生包含 artifact 的 tool 事件。"""
+    async def test_parallel_tools_stream_mode_finish_independently(self):
+        """测试生产链路：真实 stream_mode="tools" 下同批并行工具独立完成，tool-finished 携带 artifact。"""
         import asyncio
         import time
 
@@ -336,29 +336,60 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             summary_model=ScriptedModel(script=[]),
         )
 
-        t0 = time.time()
-        tool_end_events = []
-        async for event in agent.astream_events({"messages": [HumanMessage(content="查询数据")]}, version="v2"):
-            if event.get("event") == "on_tool_end":
-                elapsed = time.time() - t0
-                tool_end_events.append({
-                    "time": elapsed,
-                    "name": event.get("name"),
-                    "output": event.get("data", {}).get("output"),
+        # 直接消费前端 useChannel(["tools"]) 对应的 stream_mode="tools" 事件流
+        t0 = time.monotonic()
+        finished = []
+        async for _ns, mode, payload in agent.astream(
+            {"messages": [HumanMessage(content="查询数据")]},
+            stream_mode=["tools"],
+            subgraphs=True,
+        ):
+            if (
+                mode == "tools"
+                and isinstance(payload, dict)
+                and payload.get("event") == "tool-finished"
+            ):
+                finished.append({
+                    "time": time.monotonic() - t0,
+                    "id": payload["tool_call_id"],
+                    "output": payload["output"],
                 })
 
-        # 1. 验证三个工具都触发了 on_tool_end
-        self.assertEqual(len(tool_end_events), 3)
+        # 1. 三个工具都独立产生真实的 tool-finished 事件
+        self.assertEqual(len(finished), 3)
 
-        # 2. 验证完成顺序是 quick -> medium -> slow
-        names = [e["name"] for e in tool_end_events]
-        self.assertEqual(names, ["tool_quick", "tool_medium", "tool_slow"])
+        # 2. 完成顺序是 quick -> medium -> slow
+        self.assertEqual(
+            [item["id"] for item in finished],
+            ["call-1", "call-2", "call-3"],
+        )
 
-        # 3. 验证 quick 在 medium 之前完成，medium 在 slow 之前完成（时间阶梯递增）
-        self.assertLess(tool_end_events[0]["time"], tool_end_events[1]["time"])
-        self.assertLess(tool_end_events[1]["time"], tool_end_events[2]["time"])
+        # 3. 时间阶梯递增：quick 先于 medium，medium 先于 slow 完成
+        self.assertLess(finished[0]["time"], finished[1]["time"])
+        self.assertLess(finished[1]["time"], finished[2]["time"])
 
-        # 4. 验证从真实输出中成功解出各自严格 version: 1 的 artifact 载荷
-        self.assertEqual(tool_end_events[0]["output"].artifact["data"]["stations"][0]["station_name"], "测点快")
-        self.assertEqual(tool_end_events[1]["output"].artifact["data"]["groups"][0]["group_name"], "分组中")
-        self.assertEqual(tool_end_events[2]["output"].artifact["data"]["station_name"], "测点慢")
+        # 4. output 为携带严格 version: 1 artifact 的 ToolMessage，
+        #    与 Agent Server wire protocol -> useChannel -> getLiveToolArtifact 同源
+        quick_output = finished[0]["output"]
+        self.assertIsInstance(quick_output, ToolMessage)
+        self.assertEqual(quick_output.artifact["version"], 1)
+        self.assertEqual(quick_output.artifact["kind"], "station_list")
+        self.assertEqual(quick_output.artifact["status"], "success")
+        self.assertEqual(
+            quick_output.artifact["data"]["stations"][0]["station_name"],
+            "测点快",
+        )
+
+        medium_output = finished[1]["output"]
+        self.assertIsInstance(medium_output, ToolMessage)
+        self.assertEqual(
+            medium_output.artifact["data"]["groups"][0]["group_name"],
+            "分组中",
+        )
+
+        slow_output = finished[2]["output"]
+        self.assertIsInstance(slow_output, ToolMessage)
+        self.assertEqual(
+            slow_output.artifact["data"]["station_name"],
+            "测点慢",
+        )
