@@ -106,3 +106,7 @@ export const ContextUsageElement: FC<ContextUsageElementProps> = ({
     </div>
   );
 };
+
+// 兼容旧命名的薄别名导出（允许 import { ContextUsageIndicator } from "@/components/assistant-ui/elements/context-usage.aui"）
+export { ContextUsageElement as ContextUsageIndicator };
+export type { ContextUsageElementProps as ContextUsageIndicatorProps };
