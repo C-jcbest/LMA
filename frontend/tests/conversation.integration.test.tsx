@@ -14,7 +14,7 @@ import { Sidebar } from '../src/components/Sidebar';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ToastContainer, useToast } from '../src/components/Toast';
 import { RunFailureCard } from '../src/components/RunFailureCard';
-import { ContextUsageIndicator } from '../src/components/ContextUsageIndicator';
+import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
 import { STREAM_CONTROLLER } from '@langchain/react';
 import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
@@ -299,7 +299,7 @@ describe('会话关键路径集成回归', () => {
 
   it('输入框发送按钮左侧可查看上下文 token 明细', async () => {
     render(
-      <ContextUsageIndicator
+      <ContextUsageElement
         usage={{
           input_tokens: 250,
           context_limit_tokens: 1000,
@@ -325,7 +325,7 @@ describe('会话关键路径集成回归', () => {
 
   it('缺少真实 usage 时不渲染上下文占比，也不显示未配置占位', () => {
     render(
-      <ContextUsageIndicator usage={{ context_limit_tokens: 1_048_576 }} />
+      <ContextUsageElement usage={{ context_limit_tokens: 1_048_576 }} />
     );
     expect(screen.queryByText(/上下文窗口|未配置/)).not.toBeInTheDocument();
   });
