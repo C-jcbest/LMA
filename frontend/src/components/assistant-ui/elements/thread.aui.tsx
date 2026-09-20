@@ -21,7 +21,7 @@ import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import * as Popover from "@radix-ui/react-popover";
-import { ContextUsageIndicator, type ContextUsage } from "@/components/ContextUsageIndicator";
+import { ContextUsageElement, type ContextUsage } from "@/components/assistant-ui/elements/context-usage.aui";
 import { cn } from "@/lib/utils";
 import { useLangChainState } from "@assistant-ui/react-langchain";
 import {
@@ -573,7 +573,7 @@ const ComposerQuickActions: FC = () => {
 
 const ComposerContextUsage: FC = () => {
   const contextUsage = useLangChainState<ContextUsage>("context_usage");
-  return <ContextUsageIndicator usage={contextUsage} />;
+  return <ContextUsageElement usage={contextUsage} />;
 };
 
 const ComposerAction: FC = () => {

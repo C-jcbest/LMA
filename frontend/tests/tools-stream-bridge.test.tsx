@@ -239,9 +239,9 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
     try {
       const TestParallelContainer: React.FC = () => {
         const [activeCalls, setActiveCalls] = useState<any[]>([
-          { id: "call-1", name: "list_stations", status: { type: "running" } },
-          { id: "call-2", name: "list_station_groups", status: { type: "running" } },
-          { id: "call-3", name: "get_daily_gnss_data", status: { type: "running" } },
+          { id: "call-1", name: "list_stations", status: "running" },
+          { id: "call-2", name: "list_station_groups", status: "running" },
+          { id: "call-3", name: "get_daily_gnss_data", status: "running" },
         ]);
 
         mockUseLangChainToolCalls.mockReturnValue(activeCalls);
@@ -250,7 +250,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
           // 100ms: A 完成
           const t1 = setTimeout(() => {
             setActiveCalls((prev) => [
-              { id: "call-1", name: "list_stations", status: { type: "finished" } },
+              { id: "call-1", name: "list_stations", status: "finished" },
               prev[1],
               prev[2],
             ]);
@@ -260,7 +260,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
           const t2 = setTimeout(() => {
             setActiveCalls((prev) => [
               prev[0],
-              { id: "call-2", name: "list_station_groups", status: { type: "finished" } },
+              { id: "call-2", name: "list_station_groups", status: "finished" },
               prev[2],
             ]);
           }, 500);
@@ -270,7 +270,7 @@ describe("真实 Tools Channel Bridge 与同批工具异步流 (P7)", () => {
             setActiveCalls((prev) => [
               prev[0],
               prev[1],
-              { id: "call-3", name: "get_daily_gnss_data", status: { type: "finished" } },
+              { id: "call-3", name: "get_daily_gnss_data", status: "finished" }
             ]);
           }, 1000);
 

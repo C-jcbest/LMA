@@ -607,26 +607,6 @@ function ToolFallbackApproval({
   );
 }
 
-/**
- * 归一化 live tool call 的状态。
- * 官方 AssembledToolCall.status 为 "running" | "finished" | "error"，
- * 同时兼容历史遗留的 { type, error } 对象形态，避免旧调用方被误判为未知态。
- */
-function normalizeLiveToolStatus(
-  liveToolCall: AssembledToolCall,
-): { type?: string; error?: unknown } {
-  const raw: unknown = liveToolCall.status;
-  if (typeof raw === "string") return { type: raw };
-  if (raw && typeof raw === "object") {
-    const record = raw as { type?: unknown; error?: unknown };
-    return {
-      type: typeof record.type === "string" ? record.type : undefined,
-      error: record.error,
-    };
-  }
-  return {};
-}
-
 function getEffectiveStatus(
   liveToolCall: AssembledToolCall | undefined,
   part: { status: ToolCallMessagePartStatus },
@@ -638,32 +618,21 @@ function getEffectiveStatus(
   if (!liveToolCall) {
     return part.status;
   }
-  const liveStatus = normalizeLiveToolStatus(liveToolCall);
-  switch (liveStatus.type) {
+  switch (liveToolCall.status) {
     case "running":
       return { type: "running" };
     case "finished":
       return { type: "complete" };
-    case "error": {
-      const liveError =
-        typeof liveStatus.error === "string"
-          ? liveStatus.error
-          : undefined;
-      const streamError =
-        typeof liveToolCall.error === "string"
-          ? liveToolCall.error
-          : undefined;
+    case "error":
       return {
         type: "incomplete",
         reason: "error",
-        error: liveError ?? streamError,
+        error: liveToolCall.error,
       };
-    }
     default:
       return part.status;
   }
 }
-
 const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
   const {
     toolName,

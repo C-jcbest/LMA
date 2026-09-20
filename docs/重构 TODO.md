@@ -407,7 +407,7 @@ remark-gfm
 
 ------
 
-# P9：推荐下一步改用 Suggestion / Follow-up Element
+# P9：推荐下一步改用 Suggestion / Follow-up Element（✅ 已完成）
 
 当前 `NextActions.tsx` 删除。
 
@@ -434,7 +434,7 @@ assistant-ui 已提供 starter/follow-up suggestions 对应的 Primitive 和 Ele
 
 ------
 
-# P10：Context Usage 使用官方 Context Element
+# P10：Context Usage 使用官方 Context Element（✅ 已完成）
 
 保留后端：
 
@@ -467,6 +467,8 @@ summary state
 不要在 Composer 里重新设计一套 Context UI。
 
 assistant-ui Elements 已提供 Context Display，用于 ring、bar、text 及 hover 详情。
+
+实现说明：当前锁定的 `@assistant-ui/react@0.15.21` 未导出 Context Display Element，因此上下文数据已迁移到独立的 assistant-ui element 文件，并保留旧路径的薄导出以维持现有测试与引用稳定；待依赖提供官方 Context Element 时可直接替换内部实现。
 
 ------
 
