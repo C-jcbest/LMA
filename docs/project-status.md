@@ -25,6 +25,7 @@
 - 持久化 `ToolMessage.artifact` 是工具展示的权威数据；前端不再订阅 tools channel，不维护 wire parser、工具 Registry 生命周期或 live artifact 上下文。
 - 前端 artifact 使用与后端对应的 TypeScript 判别联合和 fail-closed decoder；领域 Renderer 接收具体 `data` 类型，不猜测旧字段位置。
 - 上下文入口使用 assistant-ui registry 的 Context Display；通用类名合并使用官方 `cn` 包，不再维护 CircularProgress、`clsx` 或 `tailwind-merge` 直接依赖。
+- assistant-ui Elements 已与当前 registry 复核；保留中文产品交互、LangChain 状态投影、工具与 Reasoning 同层展示及 Streamdown，其余通用 shadcn 组件跟随 registry。未使用的 `@assistant-ui/core`、`sonner`、`tw-shimmer` 直接依赖已删除。
 - 布局保持左侧 Thread List 与中央 Chat；前端继续使用 React、TypeScript、Vite、Tailwind CSS、assistant-ui、Streamdown 和 shadcn/ui。
 
 ## 持续有效决策

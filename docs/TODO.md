@@ -1472,12 +1472,12 @@ Context Ring
 
 ## R6 — Elements / 依赖升级治理
 
--  assistant-ui Elements 与 registry 对比
--  只保留必要 LMA 样式差异
--  `pnpm why` 检查 direct dependencies
--  删除未使用依赖
--  不修改第三方 runtime internals
--  全部测试与 build 通过
+- [x] assistant-ui Elements 与 registry 对比
+- [x] 只保留必要 LMA 样式差异
+- [x] `pnpm why` 检查 direct dependencies
+- [x] 删除未使用依赖
+- [x] 不修改第三方 runtime internals
+- [x] 全部测试与 build 通过
 
 ------
 
@@ -1713,10 +1713,10 @@ generateSessionTitle
 -  R3 Artifact 已收敛为后端 Pydantic、前端判别联合与唯一 `artifact.data` 业务字段位置
 -  R4 已通过公共 Thread action 完成 URL 双向导航，摘要按 LangChain metadata 渲染，依赖 patch 已删除
 -  R5 已采用 assistant-ui Context Display；用量只投影 provider usage 与 Model Profile，并完成 `cn`、Radix 直接依赖收敛
+-  R6 已复核 assistant-ui registry，保留 Streamdown 与 LMA 产品差异，删除未使用的直接依赖
 
 当前剩余的真正架构性工作：
 
--  R6 依赖与 Elements 收敛
 -  R7 Stop / DeepSeek 例外复核
 -  R8 部署与文档清理
 
