@@ -53,6 +53,40 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test('深链接、浏览器前进后退与刷新保持同一 Thread', async ({ page }) => {
+  const suffix = Date.now().toString(36);
+  const firstName = `导航会话一-${suffix}`;
+  const secondName = `导航会话二-${suffix}`;
+  const firstId = await createThread(firstName);
+  const secondId = await createThread(secondName);
+
+  try {
+    await seedThread(firstId, '浏览器导航第一条消息');
+    await seedThread(secondId, '浏览器导航第二条消息');
+
+    await openThread(page, firstId);
+    await expect(page.getByText('已继续处理：浏览器导航第一条消息')).toBeVisible();
+
+    await switchThread(page, secondName, secondId);
+    await expect(page.getByText('已继续处理：浏览器导航第二条消息')).toBeVisible();
+
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`threadId=${firstId}`));
+    await expect(page.getByText('已继续处理：浏览器导航第一条消息')).toBeVisible();
+
+    await page.goForward();
+    await expect(page).toHaveURL(new RegExp(`threadId=${secondId}`));
+    await expect(page.getByText('已继续处理：浏览器导航第二条消息')).toBeVisible();
+
+    await page.reload();
+    await expect(page).toHaveURL(new RegExp(`threadId=${secondId}`));
+    await expect(page.getByText('已继续处理：浏览器导航第二条消息')).toBeVisible();
+  } finally {
+    await client.threads.delete(firstId);
+    await client.threads.delete(secondId);
+  }
+});
+
 test('生成中切换会话再返回：后台 Run 继续且返回后恢复状态与内容', async ({ page }) => {
   const suffix = Date.now().toString(36);
   const activeName = `生成中会话-${suffix}`;

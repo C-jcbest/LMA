@@ -313,7 +313,6 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
 
   it('AssistantProvider 与浏览器 URL 保持双向同步，驱动 pushState 并通过真实 history.back 返回上一个会话', async () => {
     mockClient.threads.search.mockResolvedValue([
-      { thread_id: 't-history-1', metadata: { graph_id: 'lma-agent', name: '会话 1' }, created_at: '2026-09-18T10:00:00Z', updated_at: '2026-09-18T10:00:00Z' },
       { thread_id: 't-history-2', metadata: { graph_id: 'lma-agent', name: '会话 2' }, created_at: '2026-09-18T11:00:00Z', updated_at: '2026-09-18T11:00:00Z' },
     ]);
 
@@ -346,6 +345,8 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       expect(capturedAui.threads.getState().mainThreadId).toBe('t-history-1');
       expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-1');
     });
+    // 深链接目标不在首屏列表时，官方 switchToThread 会通过 adapter.fetch 精确加载。
+    expect(mockClient.threads.get).toHaveBeenCalledWith('t-history-1');
     // 初始挂载读取 URL，不应重复触发 pushState
     expect(pushStateSpy).not.toHaveBeenCalled();
 
@@ -371,6 +372,17 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-1');
       expect(capturedAui.threads.getState().mainThreadId).toBe('t-history-1');
     });
+
+    // 4. 前进应再次切回 t-history-2，且不会额外写入 history。
+    await act(async () => {
+      window.history.forward();
+    });
+
+    await waitFor(() => {
+      expect(new URL(window.location.href).searchParams.get('threadId')).toBe('t-history-2');
+      expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-2');
+    });
+    expect(pushStateSpy).toHaveBeenCalledTimes(1);
   });
 
   it('多会话切换与创建集成：从初始未绑定到 initialize 创建、externalId 与 thread_id 对齐并在切走切回时保持一致', async () => {

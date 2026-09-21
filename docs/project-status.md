@@ -18,7 +18,8 @@
 
 - 单向链路为 assistant-ui runtime -> `@assistant-ui/react-langchain` -> `@langchain/react useStream` -> LangGraph Server。
 - Thread、Message、Composer、Reasoning、Tool Call 和 Thread List 使用 assistant-ui 官方 Primitives/Elements；LMA 只维护领域 Renderer 和必要适配。
-- 会话 ID 满足 `remoteId === externalId === thread_id`，列表使用官方 `ThreadListPrimitive.LoadMore`；URL 仅承担当前会话导航。
+- 会话 ID 满足 `remoteId === externalId === thread_id`，列表使用官方 `ThreadListPrimitive.LoadMore`；URL 仅承担当前会话导航，通过公共 `threads.switchToThread` / `switchToNewThread` action 支持深链接、刷新及浏览器前进后退。
+- LangChain 摘要消息保持官方 converter 的 HumanMessage 角色，前端通过公开 `useLangChainState("messages")` 读取 `lc_source` metadata 并渲染折叠摘要；仓库不再维护依赖 patch。
 - 已知监测工具通过 `features/monitoring/toolkit.tsx` 注册为 assistant-ui backend Toolkit renderer，只读取官方 ToolCall Part 的 `status`、`result`、`artifact`、`isError` 与 timing；未知工具才进入通用 `ToolFallback`。
 - 持久化 `ToolMessage.artifact` 是工具展示的权威数据；前端不再订阅 tools channel，不维护 wire parser、工具 Registry 生命周期或 live artifact 上下文。
 - 前端 artifact 使用与后端对应的 TypeScript 判别联合和 fail-closed decoder；领域 Renderer 接收具体 `data` 类型，不猜测旧字段位置。
@@ -37,7 +38,6 @@
 
 ## 临时例外
 
-- `frontend/patches/@assistant-ui__react-langchain@0.0.32.patch` 当前补足 controlled thread 与摘要展示缺口；R4 将改用公共 Runtime action 和本地摘要 Renderer 后删除整个 patch。
 - `_sanitize_unanswered_tool_calls` 当前在新 Run 前修复 Stop 遗留的悬空 tool-call；R7 以真实 Agent Server E2E 验证官方 cancel 后决定是否删除。
 - `DeepSeekThinkingChatModel` 当前只补足 DeepSeek 多轮 tool-loop 的 `reasoning_content` 回传；上游原生支持并通过回归测试后删除。
 - 场地环境外部服务故障必须局部隔离：DEM 或地质数据源单点失败不阻断其他证据，限制写入 `limitations`。

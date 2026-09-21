@@ -6,11 +6,6 @@
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
-  "pnpm": {
-    "patchedDependencies": {
-      "@assistant-ui/react-langchain@0.0.32": "patches/@assistant-ui__react-langchain@0.0.32.patch"
-    }
-  },
   "type": "module",
   "scripts": {
     "dev": "vite",

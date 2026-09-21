@@ -301,17 +301,47 @@ export const ThreadSummaryMessage: FC<{ text?: string }> = ({
   return <AuiSummaryMessageText />;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const EMPTY_LANGCHAIN_MESSAGES: readonly unknown[] = [];
+
+// 官方 converter 保持摘要 HumanMessage 的 user 角色，且不会把顶层 lc_source
+// 提升到 assistant-ui custom metadata，因此按消息 ID 从公开 LangGraph state 复核。
+export const hasSummarizationSource = (
+  messages: readonly unknown[],
+  messageId: string,
+) =>
+  messages.some((message) => {
+    if (!isRecord(message) || message.id !== messageId) return false;
+    const additionalKwargs = message.additional_kwargs;
+    if (!isRecord(additionalKwargs)) return false;
+    if (additionalKwargs.lc_source === "summarization") return true;
+    return (
+      isRecord(additionalKwargs.metadata) &&
+      additionalKwargs.metadata.lc_source === "summarization"
+    );
+  });
+
 const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
+  const messageId = useAuiState((s) => s.message.id);
   const isEditing = useAuiState((s) => s.message.composer.isEditing);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
-  const isSummary = useAuiState(
-    (s) =>
-      s.message.role === "system" ||
-      (s.message.metadata.custom as any)?.lc_source === "summarization",
+  const hasSummaryMetadata = useAuiState((s) => {
+    const custom = s.message.metadata.custom;
+    return isRecord(custom) && custom.lc_source === "summarization";
+  });
+  const langChainMessages = useLangChainState<readonly unknown[]>(
+    "messages",
+    EMPTY_LANGCHAIN_MESSAGES,
   );
+  const isSummary =
+    role === "system" ||
+    hasSummaryMetadata ||
+    hasSummarizationSource(langChainMessages, messageId);
 
   if (isEditing) return <EditComposer />;
   if (isSpoken) return <SpokenMessage />;

@@ -11,14 +11,18 @@ import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView'
 import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
 import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
 import { WeatherResultView } from '../src/features/monitoring/tools/WeatherResultView';
-import { ThreadSummaryMessage } from '../src/components/assistant-ui/elements/thread.aui';
+import {
+  hasSummarizationSource,
+  ThreadSummaryMessage,
+} from '../src/components/assistant-ui/elements/thread.aui';
 import { ReasoningRoot, ReasoningTrigger } from '../src/components/assistant-ui/elements/reasoning';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
-import { AIMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
 import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
 import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
+import { convertLangChainBaseMessage } from '@assistant-ui/react-langchain';
 
 const ToolFallback: typeof GenericToolFallback = (props) => {
   const renderer = monitoringToolkit[props.toolName as keyof typeof monitoringToolkit]?.render;
@@ -718,6 +722,19 @@ it('摘要消息通过 ThreadSummaryMessage 渲染折叠卡片，绝不作为用
 
   await userEvent.click(screen.getByText('更早的对话已压缩为摘要'));
   expect(screen.getByText('这是之前轮次的滑坡监测背景摘要。')).toBeInTheDocument();
+});
+
+it('LangChain 摘要 HumanMessage 通过原始 metadata 识别，不依赖消息角色补丁', () => {
+  const summaryMessage = new HumanMessage({
+    id: 'summary-human-message',
+    content: '这是从 LangGraph checkpoint 恢复的历史摘要。',
+    additional_kwargs: { lc_source: 'summarization' },
+  });
+  const converted = convertLangChainBaseMessage(summaryMessage);
+
+  expect(converted.role).toBe('user');
+  expect(hasSummarizationSource([summaryMessage], 'summary-human-message')).toBe(true);
+  expect(hasSummarizationSource([summaryMessage], 'another-message')).toBe(false);
 });
 
 it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页面”，局部级提供“重新加载”与“隐藏”', () => {

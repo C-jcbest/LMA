@@ -1444,13 +1444,13 @@ Context Ring
 
 ## R4 — 删除 assistant-ui patch
 
--  URL -> Runtime 使用公共 ThreadListRuntime action
--  Runtime -> URL 单向同步
--  popstate E2E
--  deep-link E2E
--  Summary 根据 metadata 自定义渲染
--  删除 patched dependency
--  删除 patch 文件
+- [x] URL -> Runtime 使用公共 ThreadListRuntime action
+- [x] Runtime -> URL 单向同步
+- [x] popstate E2E
+- [x] deep-link E2E
+- [x] Summary 根据 metadata 自定义渲染
+- [x] 删除 patched dependency
+- [x] 删除 patch 文件
 
 最终仓库不存在 package patch。
 
@@ -1711,10 +1711,10 @@ generateSessionTitle
 -  R1 后端 Tool Middleware 与错误生命周期已收敛
 -  R2 已知监测工具已迁移 assistant-ui Toolkit，旧 tools channel/Registry 已删除
 -  R3 Artifact 已收敛为后端 Pydantic、前端判别联合与唯一 `artifact.data` 业务字段位置
+-  R4 已通过公共 Thread action 完成 URL 双向导航，摘要按 LangChain metadata 渲染，依赖 patch 已删除
 
 当前剩余的真正架构性工作：
 
--  R4 删除 assistant-ui patch
 -  R5 Context Display / Model Profile / `cn`
 -  R6 依赖与 Elements 收敛
 -  R7 Stop / DeepSeek 例外复核
