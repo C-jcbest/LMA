@@ -45,6 +45,7 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 "station_name_or_uuid": "不存在的站点", "begin_time": "2026-09-01 00:00:00",
                 "end_time": "2026-09-02 00:00:00"})
         self.assertEqual(message.status, "error")
+        self.assertEqual(message.artifact["kind"], "gnss_series")
         self.assertIn("未找到", message.artifact["data"]["message"])
         self.assertEqual(client.get_stations.await_count, 1)
         client.get_daily_data.assert_not_called()

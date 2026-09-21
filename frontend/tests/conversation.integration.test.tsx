@@ -10,64 +10,14 @@ import { StationResultView } from '../src/features/monitoring/tools/StationResul
 import { WeatherResultView } from '../src/features/monitoring/tools/WeatherResultView';
 import { ThreadSummaryMessage } from '../src/components/assistant-ui/elements/thread.aui';
 import { ReasoningRoot, ReasoningTrigger } from '../src/components/assistant-ui/elements/reasoning';
-import { Sidebar } from '../src/components/Sidebar';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
-import { ToastContainer, useToast } from '../src/components/Toast';
-import { RunFailureCard } from '../src/components/RunFailureCard';
 import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
-import { STREAM_CONTROLLER } from '@langchain/react';
-import { AIMessage, HumanMessage, ToolMessage } from '@langchain/core/messages';
+import { AIMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
 import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
-import { groupMessagesForDisplay } from '../src/components/messageDisplay';
 import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
 
 describe('会话关键路径集成回归', () => {
-  it('官方内部摘要不成为用户气泡，分组保留原始 BaseMessage 引用', () => {
-    const summary = new HumanMessage({
-      id: 'summary',
-      content: '历史摘要',
-      additional_kwargs: { lc_source: 'summarization' },
-    });
-    const user = new HumanMessage({ id: 'user', content: '历史摘要' });
-    const answer = new AIMessage({ id: 'answer', content: '回答' });
-
-    const turns = groupMessagesForDisplay([summary, user, answer]);
-    expect(turns).toHaveLength(2);
-    expect(turns[0]).toEqual({ kind: 'human', message: user });
-    expect(turns[1]).toMatchObject({ kind: 'assistant', messages: [answer] });
-    expect(turns[1].kind === 'assistant' && turns[1].messages[0]).toBe(answer);
-  });
-  it('用户消息正常分组展示', () => {
-    const raw = [
-      { type: 'human', id: 'u1', content: '查询站点' },
-    ];
-
-    expect(groupMessagesForDisplay([new HumanMessage(raw[0] as any)]))
-      .toMatchObject([{ kind: 'human', message: { id: 'u1', content: '查询站点' } }]);
-  });
-
-  it('已完成的 ToolMessage 与 AI tool call 在同一助手回合保留官方对象', () => {
-    const aiCall = new AIMessage({
-      content: '',
-      tool_calls: [{ id: 'call-1', name: 'list_stations', args: {} }],
-    });
-    const toolResult = new ToolMessage({
-      tool_call_id: 'call-1',
-      name: 'list_stations',
-      content: '{"ok":true}',
-    });
-    const answer = new AIMessage('查询完成。');
-
-    const turns = groupMessagesForDisplay([aiCall, toolResult, answer]);
-    expect(turns).toHaveLength(1);
-    expect(turns[0].kind === 'assistant' && turns[0].messages).toEqual([
-      aiCall,
-      toolResult,
-      answer,
-    ]);
-  });
-
   it('优先展示标准 contentBlocks reasoning，不读取耗时字段', () => {
     const firstAI = new AIMessage({
       id: 'a1',
@@ -86,34 +36,6 @@ describe('会话关键路径集成回归', () => {
     expect((firstAI as any).elapsed_seconds).toBeUndefined();
   });
 
-
-  it('停止后继续提问时，旧助手回合与新回合保持独立且引用不变', () => {
-    const firstUser = new HumanMessage({ id: 'u1', content: '查询监测数据' });
-    const toolAI = new AIMessage({
-      id: 'a1',
-      content: '',
-      tool_calls: [{ id: 'c1', name: 'get_daily_gnss_data', args: {} }],
-    });
-    const toolResult = new ToolMessage({
-      id: 't1',
-      tool_call_id: 'c1',
-      name: 'get_daily_gnss_data',
-      content: '完成',
-    });
-    const secondUser = new HumanMessage({ id: 'u2', content: '继续' });
-    const secondAnswer = new AIMessage({ id: 'a2', content: '这是新 Run 的总结。' });
-
-    const turns = groupMessagesForDisplay([
-      firstUser,
-      toolAI,
-      toolResult,
-      secondUser,
-      secondAnswer,
-    ]);
-    expect(turns.map((turn) => turn.kind)).toEqual(['human', 'assistant', 'human', 'assistant']);
-    expect(turns[1].kind === 'assistant' && turns[1].messages).toEqual([toolAI, toolResult]);
-    expect(turns[3].kind === 'assistant' && turns[3].messages[0]).toBe(secondAnswer);
-  });
 
   it('GNSS 空值与非有限值显示为缺测，不会转换为零', async () => {
     render(
@@ -395,39 +317,6 @@ describe('会话关键路径集成回归', () => {
     ]);
   });
 
-  it('reasoning -> tool_call -> ToolMessage -> text 顺序稳定组织', () => {
-    const firstAI = new AIMessage({
-      id: 'a1',
-      contentBlocks: [
-        { type: 'reasoning', reasoning: '先查询监测点列表' },
-        { type: 'tool_call', id: 'call-1', name: 'list_stations', args: {} },
-      ],
-    });
-    const toolResult = new ToolMessage({
-      tool_call_id: 'call-1',
-      name: 'list_stations',
-      content: '{"ok":true}',
-      artifact: { data: { total: 0, stations: [] } },
-    });
-    const finalAI = new AIMessage({
-      id: 'a2',
-      contentBlocks: [
-        { type: 'reasoning', reasoning: '根据查询结果总结' },
-        { type: 'text', text: '已无其他异常。' },
-      ],
-    });
-
-    const turns = groupMessagesForDisplay([firstAI, toolResult, finalAI]);
-    expect(turns).toHaveLength(1);
-    expect(turns[0].kind).toBe('assistant');
-    if (turns[0].kind === 'assistant') {
-      expect(turns[0].messages).toHaveLength(3);
-      expect(turns[0].messages[0].id).toBe('a1');
-      expect(turns[0].messages[1].id).toBe(toolResult.id);
-      expect(turns[0].messages[2].id).toBe('a2');
-    }
-  });
-
   it('rejoin/hydrate 验证：保留 model_provider 与 reasoning_content 时可恢复 contentBlocks reasoning', () => {
     const hydratedMessage = new AIMessage({
       id: 'hydrated-ai-1',
@@ -446,56 +335,6 @@ describe('会话关键路径集成回归', () => {
     expect((reasoningBlock as any)?.reasoning).toBe('历史思考过程：已核验位移曲线');
   });
 
-  it('删除会话时具备确认步骤：点击删除弹出确认弹窗，取消不删除，确认后才调用删除', async () => {
-    const user = userEvent.setup();
-    const handleDeleteSession = vi.fn();
-    const sessions = [
-      { thread_id: 'thread-1', name: '监测点A形变分析', created_at: '2026-09-15T12:00:00Z' },
-      { thread_id: 'thread-2', name: '监测点B滑坡调查', created_at: '2026-09-15T13:00:00Z' },
-    ];
-
-    render(
-      <Sidebar
-        sessions={sessions}
-        activeSessionId="thread-1"
-        isNewSessionDraft={false}
-        busyThreadIds={[]}
-        onSelectSession={() => undefined}
-        onCreateSession={() => undefined}
-        onRenameSession={() => undefined}
-        onDeleteSession={handleDeleteSession}
-        onToggleCollapse={() => undefined}
-        onOpenConfig={() => undefined}
-        isLiveServer={true}
-      />
-    );
-
-    const deleteButtons = screen.getAllByTitle('删除');
-    expect(deleteButtons.length).toBe(2);
-
-    // 1. 点击删除按钮，不应立刻触发删除，而应弹出确认弹窗
-    await user.click(deleteButtons[0]);
-    expect(handleDeleteSession).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('删除会话')).toBeInTheDocument();
-    expect(screen.getByText(/确定要删除会话/)).toBeInTheDocument();
-    expect(screen.getByText(/“监测点A形变分析”/)).toBeInTheDocument();
-
-    // 2. 点击取消，弹窗关闭，未触发删除
-    const cancelButton = screen.getByRole('button', { name: '取消' });
-    await user.click(cancelButton);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(handleDeleteSession).not.toHaveBeenCalled();
-
-    // 3. 再次点击删除，并在弹窗中点击“确认删除”
-    await user.click(deleteButtons[0]);
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    const confirmButton = screen.getByRole('button', { name: '确认删除' });
-    await user.click(confirmButton);
-    expect(handleDeleteSession).toHaveBeenCalledTimes(1);
-    expect(handleDeleteSession).toHaveBeenCalledWith('thread-1');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  });
 });
 
 it('并行工具按 callId 独立更新，rejoin 后终态正确渲染', async () => {
@@ -800,132 +639,6 @@ it('摘要消息通过 ThreadSummaryMessage 渲染折叠卡片，绝不作为用
   expect(screen.getByText('这是之前轮次的滑坡监测背景摘要。')).toBeInTheDocument();
 });
 
-it('若提问尚未被服务端持久化 (optimisticStatus === failed)，RunFailureCard 渲染 null 由消息气泡显示重试', () => {
-  const lastHumanMsg = { id: 'u1', type: 'human' as const, content: '查询边坡稳定情况' };
-  const snapshotMap = new Map([
-    ['u1', { parentCheckpointId: 'chk-1', optimisticStatus: 'failed' }],
-  ]);
-  const fakeStream = {
-    messages: [lastHumanMsg],
-    isLoading: false,
-    [STREAM_CONTROLLER]: {
-      messageMetadataStore: {
-        getSnapshot: () => snapshotMap,
-        subscribe: () => () => undefined,
-      },
-    },
-  } as any;
-  const { container } = render(
-    <RunFailureCard
-      stream={fakeStream}
-      lastHumanMessage={lastHumanMsg}
-      onRegenerate={vi.fn()}
-    />
-  );
-  expect(container.firstChild).toBeNull();
-});
-
-it('主 Run 失败在回答位置显示轻量失败卡，提供“重新生成”与“关闭”，且关闭不修改权威状态', () => {
-  const onRegenerate = vi.fn();
-  const onDismiss = vi.fn();
-  const snapshotMap = new Map([
-    ['u1', { parentCheckpointId: 'chk-checkpoint-before-u1', optimisticStatus: 'sent' }],
-  ]);
-  const failedHuman = new HumanMessage({ id: 'u1', content: '查询边坡稳定情况' });
-  const fakeStream = {
-    messages: [
-      failedHuman,
-      new AIMessage({ id: 'a1', content: '' }),
-    ],
-    isLoading: false,
-    [STREAM_CONTROLLER]: {
-      messageMetadataStore: {
-        getSnapshot: () => snapshotMap,
-        subscribe: () => () => undefined,
-      },
-    },
-  } as any;
-  render(
-    <RunFailureCard
-      stream={fakeStream}
-      lastHumanMessage={failedHuman}
-      onRegenerate={onRegenerate}
-      onDismiss={onDismiss}
-    />
-  );
-  expect(screen.getByText('本次回答未能完成')).toBeInTheDocument();
-  expect(screen.queryByText(/error|exception|status|runId|checkpoint/i)).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重新生成' }));
-  expect(onRegenerate).toHaveBeenCalledTimes(1);
-  expect(onRegenerate).toHaveBeenCalledWith('chk-checkpoint-before-u1', expect.objectContaining({ id: 'u1', type: 'human' }));
-  fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-  expect(onDismiss).toHaveBeenCalledTimes(1);
-});
-
-it('Sidebar 不展示内部 reachability 状态探针', () => {
-  render(
-    <Sidebar
-      sessions={[]}
-      activeSessionId={null}
-      isNewSessionDraft={true}
-      busyThreadIds={[]}
-      onSelectSession={vi.fn()}
-      onCreateSession={vi.fn()}
-      onRenameSession={vi.fn()}
-      onDeleteSession={vi.fn()}
-      onToggleCollapse={vi.fn()}
-      onOpenConfig={vi.fn()}
-    />
-  );
-  expect(screen.queryByTitle('未连接后端服务')).not.toBeInTheDocument();
-  expect(screen.queryByTitle('正在连接监测服务…')).not.toBeInTheDocument();
-  expect(screen.queryByTitle('LangGraph 服务已连接')).not.toBeInTheDocument();
-});
-
-it('Toast 组件支持自动消失、手动关闭与消息去重，最多同时显示 3 条', () => {
-  vi.useFakeTimers();
-  const TestToastHarness = () => {
-    const { toasts, showToast, dismissToast } = useToast();
-    return (
-      <div>
-        <button onClick={() => showToast('删除失败，请稍后重试', 'error')}>触发删除错误</button>
-        <button onClick={() => showToast('重命名失败，请稍后重试', 'error')}>触发重命名错误</button>
-        <button onClick={() => showToast('提示A')}>提示A</button>
-        <button onClick={() => showToast('提示B')}>提示B</button>
-        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      </div>
-    );
-  };
-  render(<TestToastHarness />);
-
-  // 1. 触发两次相同错误，去重只显示一条
-  fireEvent.click(screen.getByText('触发删除错误'));
-  fireEvent.click(screen.getByText('触发删除错误'));
-  expect(screen.getAllByText('删除失败，请稍后重试')).toHaveLength(1);
-
-  // 2. 手动关闭
-  fireEvent.click(screen.getByRole('button', { name: '关闭通知' }));
-  expect(screen.queryByText('删除失败，请稍后重试')).not.toBeInTheDocument();
-
-  // 3. 自动定时消失
-  fireEvent.click(screen.getByText('触发重命名错误'));
-  expect(screen.getByText('重命名失败，请稍后重试')).toBeInTheDocument();
-  act(() => {
-    vi.advanceTimersByTime(4500);
-  });
-  expect(screen.queryByText('重命名失败，请稍后重试')).not.toBeInTheDocument();
-
-  // 4. 最多 3 条
-  fireEvent.click(screen.getByText('触发删除错误'));
-  fireEvent.click(screen.getByText('触发重命名错误'));
-  fireEvent.click(screen.getByText('提示A'));
-  fireEvent.click(screen.getByText('提示B'));
-  expect(screen.getByLabelText('系统通知').children).toHaveLength(3);
-  expect(screen.queryByText('删除失败，请稍后重试')).not.toBeInTheDocument();
-
-  vi.useRealTimers();
-});
-
 it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页面”，局部级提供“重新加载”与“隐藏”', () => {
   const ProblematicChild = ({ shouldThrow }: { shouldThrow: boolean }) => {
     if (shouldThrow) {
@@ -967,104 +680,6 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
   expect(refreshBtn).toBeInTheDocument();
   fireEvent.click(refreshBtn);
   expect(reloadSpy).toHaveBeenCalled();
-});
-
-it('官方 fork retry：通过 useMessageMetadata 提取 parentCheckpointId，并在 submit 中重传原 HumanMessage，新分支规范历史保持单一 U1', async () => {
-  const lastHumanMsg = new HumanMessage({ id: 'u1', content: '查询边坡稳定情况' });
-  const mockSubmit = vi.fn().mockResolvedValue(undefined);
-
-  const snapshotMap = new Map([
-    ['u1', { parentCheckpointId: 'chk-checkpoint-before-u1', optimisticStatus: 'sent' }],
-  ]);
-  // 模拟官方 useStream 句柄及其内部 controller store
-  const fakeStream = {
-    messages: [
-      lastHumanMsg,
-      new AIMessage({ id: 'a1', content: '' }), // 失败的 AI turn
-    ],
-    isLoading: false,
-    submit: mockSubmit,
-    [STREAM_CONTROLLER]: {
-      messageMetadataStore: {
-        getSnapshot: () => snapshotMap,
-        subscribe: () => () => undefined,
-      },
-    },
-  } as any;
-
-  const onRegenerate = vi.fn(async (checkpointId: string, message: any) => {
-    // 模拟 handleRegenerate 的核心协议行为：重新提交原 BaseMessage 实例
-    await fakeStream.submit(
-      { messages: [message] },
-      { forkFrom: checkpointId, multitaskStrategy: 'reject' }
-    );
-  });
-
-  render(
-    <RunFailureCard
-      stream={fakeStream}
-      lastHumanMessage={lastHumanMsg}
-      onRegenerate={onRegenerate}
-    />
-  );
-
-  expect(screen.getByText('本次回答未能完成')).toBeInTheDocument();
-  const regenButton = screen.getByRole('button', { name: '重新生成' });
-  expect(regenButton).not.toBeDisabled();
-
-  fireEvent.click(regenButton);
-
-  // 1. 验证回调参数：正确拿到 parentCheckpointId 与原 HumanMessage 对象
-  expect(onRegenerate).toHaveBeenCalledWith('chk-checkpoint-before-u1', lastHumanMsg);
-
-  // 2. 核心真实协议断言：
-  // 必须把原 BaseMessage 作为新 continuation 输入重新提交，保证对象同一性，绝不能传 submit(null, { forkFrom })！
-  expect(mockSubmit).toHaveBeenCalledTimes(1);
-  const [submitPayload, submitOptions] = mockSubmit.mock.calls[0];
-  expect(submitPayload.messages[0]).toBe(lastHumanMsg);
-  expect(submitPayload).not.toBeNull();
-  expect(submitOptions).toMatchObject({
-    forkFrom: 'chk-checkpoint-before-u1',
-    multitaskStrategy: 'reject',
-  });
-
-  // 3. 规范历史延续性断言：
-  // 新 continuation supersede 旧分支后，新规范历史中仍只有一个 U1，旧失败轮次被替代
-  const canonicalUser = new HumanMessage({ id: 'u1-new', content: '查询边坡稳定情况' });
-  const canonicalAnswer = new AIMessage({ id: 'a2', content: '边坡整体处于稳定状态。' });
-  const turns = groupMessagesForDisplay([canonicalUser, canonicalAnswer]);
-  expect(turns).toHaveLength(2);
-  expect(turns[0]).toEqual({ kind: 'human', message: canonicalUser });
-  expect(turns[1].kind === 'assistant' && turns[1].messages[0]).toBe(canonicalAnswer);
-});
-
-
-it('Sidebar 列表加载失败时以 amber 样式呈现，支持重试与关闭', () => {
-  const onRefresh = vi.fn();
-  const onDismiss = vi.fn();
-  render(
-    <Sidebar
-      sessions={[]}
-      activeSessionId={null}
-      isNewSessionDraft={true}
-      busyThreadIds={[]}
-      onSelectSession={vi.fn()}
-      onCreateSession={vi.fn()}
-      onRenameSession={vi.fn()}
-      onDeleteSession={vi.fn()}
-      onToggleCollapse={vi.fn()}
-      onOpenConfig={vi.fn()}
-      listError="会话列表加载失败，请重试"
-      onRefreshSessions={onRefresh}
-      onDismissListError={onDismiss}
-    />
-  );
-  expect(screen.getByText('会话列表加载失败，请重试')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: '重试加载会话' }));
-  expect(onRefresh).toHaveBeenCalledTimes(1);
-
-  fireEvent.click(screen.getByTitle('关闭'));
-  expect(onDismiss).toHaveBeenCalledTimes(1);
 });
 
 it('ReasoningTrigger 与 ToolFallbackTrigger 排版对齐：思考去图标、工具运行态隐藏 Chevron 并禁止交互', async () => {

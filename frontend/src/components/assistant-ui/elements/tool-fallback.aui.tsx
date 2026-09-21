@@ -651,7 +651,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
   const liveToolCall = toolCalls.find(
     (c) => c && (c.id === toolCallId || c.callId === toolCallId),
   );
-  const effectiveStatus = getEffectiveStatus(liveToolCall, { status });
+  const streamStatus = getEffectiveStatus(liveToolCall, { status });
 
   // 2. 两阶段 artifact：持久化 ToolMessage.artifact 永远优先
   // （success / partial / error 一致），仅流式阶段未落盘时才回退
@@ -664,6 +664,18 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
   const rawArtifact =
     persistedArtifact !== undefined ? persistedArtifact : liveArtifact;
   const envelope = decodeToolArtifact(toolName, rawArtifact);
+  // ToolMessage.artifact 是业务结果事实源；即使上游 Message Part 在 hydrate 时
+  // 暂时保留 complete/running，error envelope 也必须恢复为错误终态。
+  const effectiveStatus: ToolCallMessagePartStatus =
+    envelope?.status === "error" &&
+    streamStatus.type !== "requires-action" &&
+    !(streamStatus.type === "incomplete" && streamStatus.reason === "cancelled")
+      ? {
+          type: "incomplete",
+          reason: "error",
+          error: envelope.error?.message,
+        }
+      : streamStatus;
 
   const isRequiresAction = effectiveStatus?.type === "requires-action";
   const shouldRenderApproval =

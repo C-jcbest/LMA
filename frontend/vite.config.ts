@@ -15,7 +15,7 @@ export default defineConfig({
     strictPort: false,
     proxy: {
       '/langgraph-api': {
-        target: 'http://127.0.0.1:2024',
+        target: process.env.LMA_LANGGRAPH_PROXY_TARGET || 'http://127.0.0.1:2024',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/langgraph-api/, ''),
       },

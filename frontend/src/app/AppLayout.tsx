@@ -36,13 +36,17 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
                 </span>
               </div>
             </div>
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
               onClick={() => setIsSidebarCollapsed(true)}
-              className="p-1 rounded-md text-neutral-400 hover:text-neutral-600 hover:bg-neutral-200/60 transition-colors cursor-pointer"
+              className="text-neutral-400 hover:text-neutral-600"
               title="折叠侧边栏"
+              aria-label="折叠侧边栏"
             >
               <PanelLeftClose className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           {/* 会话列表 */}
@@ -70,13 +74,17 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
       <main className="flex-1 h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden">
         {isSidebarCollapsed && (
           <div className="h-11 border-b border-neutral-100 flex items-center px-4 bg-white shrink-0">
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
               onClick={() => setIsSidebarCollapsed(false)}
-              className="p-1.5 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors cursor-pointer"
+              className="text-neutral-400 hover:text-neutral-700"
               title="展开侧边栏"
+              aria-label="展开侧边栏"
             >
               <PanelLeftOpen className="w-4 h-4" />
-            </button>
+            </Button>
             <span className="ml-3 text-xs font-medium text-neutral-500">
               LMA 滑坡监测智能体
             </span>

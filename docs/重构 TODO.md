@@ -476,7 +476,7 @@ assistant-ui Elements 已提供 Context Display，用于 ring、bar、text 及 h
 
 ------
 
-# P11：Sidebar 重构为 ThreadList Element
+# P11：Sidebar 重构为 ThreadList Element（✅ 已完成）
 
 视觉继续保持当前约 240px 左侧栏。
 
@@ -632,7 +632,7 @@ API URL
 
 ------
 
-# P15：整理新的目录结构
+# P15：整理新的目录结构（✅ 已完成）
 
 目标：
 
@@ -741,7 +741,7 @@ OldComposer
 
 ------
 
-# P17：CSS 大幅清理
+# P17：CSS 大幅清理（✅ 已完成）
 
 当前 `styles/index.css` 重构。
 
@@ -876,7 +876,7 @@ Thread rename/delete 正确调用 LangGraph API
 
 ------
 
-# P21：更新项目协作规则
+# P21：更新项目协作规则（✅ 已完成）
 
 同步修改 `AGENTS.md`。
 
@@ -909,28 +909,16 @@ OptimisticMessageStatus
 
 # P22：完成条件
 
-本轮重构只有同时满足下面条件才能结束：
+本轮重构只按架构与功能事实验收：
 
--  `App.tsx` 不再直接管理消息、Run、Tool Call 生命周期。
--  `ChatWindow` 等旧聊天框架完全删除。
--  Thread / Composer / Message / ActionBar / ThreadList 使用 assistant-ui。
--  Reasoning 使用 assistant-ui 官方能力。
--  Tool Call 通用状态使用 assistant-ui。
--  未注册 Tool 使用官方 ToolFallback。
--  Markdown 使用 assistant-ui Streamdown。
--  Suggestion 使用 assistant-ui。
--  Context display 优先使用 assistant-ui。
--  Dialog / AlertDialog / Dropdown / Tooltip / Toast 等全部使用 shadcn/Sonner。
--  只剩一个很薄的 LangGraph Thread List Adapter。
--  GNSS / Weather / Vision / Station / Site Environment 作为领域 Renderer 保留。
--  不存在 legacy/compat 双实现。
--  不修改当前 ToolMessage 大数据/图片存储方案。
--  页面仍为当前单侧栏 + 中央聊天设计。
--  `pnpm build` 通过。
--  前端测试通过。
--  后端测试无回归。
--  切换正在生成的 Thread 再返回后可以继续正确显示其状态/内容。
--  Stop、Regenerate、Tool Error、空 Tool Result 均完成实际端到端验证。
+-  前端只有一个 assistant-ui Runtime；Thread、Message、Composer、Tool 与会话列表不再存在 legacy/compat 双实现。
+-  项目代码不得访问 `STREAM_CONTROLLER`、内部 store 或其他 private runtime API，只允许使用公开的 `useLangChainStream` / `useChannel` 等边界。
+-  浏览器 E2E 必须通过：生成中切换会话再返回、Stop 后继续提问、Regenerate checkpoint fork、Tool error / 空结果 / artifact 刷新恢复。
+-  `pnpm run build`、前端测试与后端测试全部通过。
+-  Tool 展示唯一事实源为持久化 `ToolMessage.artifact`，live tools channel artifact 只在未落盘的流式阶段兜底。
+-  Thread/Checkpoint 是会话历史与生命周期的唯一事实源，前端不得复制 Runtime 状态机。
+
+`@assistant-ui/react-langchain@0.0.32` patch 仅保留到上游版本同时原生支持 controlled `threadId` 透传与摘要消息正确映射。升级时必须先删除 `patchedDependencies` 和 patch 文件，再以本节 E2E 与 build/tests 全量复验；任一条件不满足不得移除 patch。
 
 ------
 

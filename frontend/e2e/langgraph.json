@@ -1,0 +1,26 @@
+{
+  "dependencies": ["../../backend"],
+  "graphs": {
+    "lma-agent": "../../backend/app/agent/graph.py:graph",
+    "session-title": "../../backend/app/agent/title.py:graph"
+  },
+  "env": {
+    "LLM_PROVIDER": "deepseek",
+    "LLM_BASE_URL": "http://127.0.0.1:19090/v1",
+    "LLM_API_KEY": "INVALID_E2E_KEY",
+    "LLM_MODEL": "deepseek-chat",
+    "LLM_THINKING": "false",
+    "TITLE_THINKING": "false",
+    "RECOMMEND_ENABLED": "false",
+    "CONTEXT_MODEL_CONTEXT": "1048576",
+    "AGENT_MODEL_RUN_LIMIT": "4",
+    "AGENT_TOOL_RUN_LIMIT": "3",
+    "AGENT_MAX_RETRIES": "0",
+    "CONTEXT_TOKEN_THRESHOLD": "50000",
+    "CONTEXT_KEEP_TOKENS": "1000",
+    "BEIDOU_API_BASE_URL": "http://127.0.0.1:19090",
+    "BEIDOU_USERNAME": "INVALID_E2E_USER",
+    "BEIDOU_PASSWORD": "INVALID_E2E_PASSWORD",
+    "LANGSMITH_TRACING": "false"
+  }
+}

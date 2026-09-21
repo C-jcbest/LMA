@@ -232,7 +232,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     expect(getByText('内部业务界面')).toBeInTheDocument();
   });
 
-  it('App 根组件正确挂载并渲染 Sidebar 品牌标识与主聊天视口', async () => {
+  it('App 根组件正确挂载并渲染 ThreadList 品牌区与主聊天视口', async () => {
     render(<App />);
 
     expect(screen.getByText('LMA Monitor')).toBeInTheDocument();
@@ -290,7 +290,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     });
   });
 
-  it('点击服务配置能正常呼出 ConfigModal，修改 API URL 后更新客户端', async () => {
+  it('点击服务配置能正常呼出 ServiceSettingsDialog，修改 API URL 后更新客户端', async () => {
     render(<App />);
 
     // 点击服务配置按钮

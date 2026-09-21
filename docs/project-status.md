@@ -1,6 +1,6 @@
 # 项目状态与有效决策
 
-更新：2026-09-19。只保留当前系统权威实现、持续有效决策、临时兼容边界与验证基线。
+更新：2026-09-21。只保留当前系统权威实现、持续有效决策、临时兼容边界与验证基线。
 产品口径以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准，活跃演进待办以 [现行待办入口](TODO.md) 与 [重构 TODO.md](重构%20TODO.md) 为准。
 
 ---
@@ -38,6 +38,11 @@
   - `AssistantProvider` 作为薄适配层，将 `urlThreadId` 与 `handleThreadIdChange` 传入 `useStreamRuntime`；
   - 通过 `pnpm patch` 修复了 `@assistant-ui/react-langchain@0.0.32` 遗漏向底层 `useRemoteThreadListRuntime` 透传 `threadId` 的上游缺陷，完全依靠 assistant-ui 官方 controlled 机制驱动切换；
   - 彻底删除了手写 `switchToThread` 的副作用与冗余 external props，UI 会话切换主动驱动 `pushState` 保证浏览器前进/后退（`popstate`）真实可用，支持刷新保留与 URL 分享，不维护额外状态机。
+- **公开 Runtime API 边界与遗留清理（P11/P15/P17/P21 完成）**：
+  - `LiveToolEventsProvider` 仅通过公开的 `useLangChainStream` 与 `useChannel` 订阅 tools channel，项目代码不再导入或读取 `STREAM_CONTROLLER`；
+  - 删除退出主链的 `Sidebar.tsx`、`Toast.tsx`、`RunFailureCard.tsx`、`messageDisplay.ts` 及对应旧测试，Thread List、错误展示与通知完全回归 assistant-ui / Sonner 主链；
+  - 服务设置迁入 `features/settings/ServiceSettingsDialog.tsx`，统一使用现有 shadcn Dialog、Button 与 Input；业务快捷 Popover 不再直接引用 Radix；
+  - 全仓引用检查确认不存在上述 legacy 组件的生产或测试引用。
 - **前端基础技术栈升级（P1 落地）**：
   - 全面升级至 React 19.3 + Vite 8.3 + TypeScript 7.0 + Tailwind v4.3.3；
   - 声明 `packageManager: "pnpm@10.30.3"` 与 `engines: { "node": "^20.19.0 || >=22.12.0" }`，提供 `.nvmrc`；
@@ -71,6 +76,7 @@
   - 业务展示组件（`features/monitoring/tools/`）弱化边框与阴影，采用极简无阴影卡片与表格；
   - `registry.tsx` 严格按 v1 Envelope 解码并校验 `artifactKind`，彻底移除 `parseOutputRecord` 与 JSON 猜测；
   - 引入 `LiveToolEventsProvider` 与 `live-tool-results` 桥接 LangGraph stream 的 tools 事件，实现流式两阶段衔接：流式阶段消费 live artifact，终态阶段消费持久化 `ToolMessage.artifact`，四态严格互斥分支渲染。
+  - 持久化 artifact 永远优先于 live artifact；`status="error"` 的 envelope 即使 hydrate 阶段 Message Part 暂为 complete/running，也恢复为错误终态；GNSS 领域失败统一生成 `kind="gnss_series"`，刷新后仍可通过严格解码展示业务原因。
 - **Markdown 改用 assistant-ui Streamdown 与代码高亮（P8 落地）**：
   - 彻底删除 `MarkdownMessage.tsx`，卸载 `react-markdown`、`remark-gfm` 与 `@assistant-ui/react-markdown`；
   - 基于 `@assistant-ui/react-streamdown` 的 `StreamdownTextPrimitive` 重构 `components/markdown-text.tsx`，保留中文字体排版与代码复制头（`CodeHeader`）；
@@ -96,17 +102,21 @@
    - 视觉复核（Qwen3.7-plus）通过 `extra_body={"enable_thinking": False}` 关闭思考，全面采用官方 `with_structured_output(VisionObservations, method="json_mode", include_raw=True)`，消除手工正则与 `json.loads` 修补；
    - 所有 `AIMessage` 纯文本读取统一使用 `BaseMessage.text`，严禁 `str(content)`；Recommendation 统一使用 `with_structured_output(RecommendationResult)`。
 4. **分层错误与安全脱敏**：
-   - 用户输入错误就地在消息气泡重试，主 Run 错误以 `RunFailureCard` 展示，工具错误局限在单工具卡内；
+   - 用户输入与主 Run 错误由 assistant-ui 官方 Message / Error 生命周期展示，工具错误局限在单工具卡内；
    - 业务/参数失败返回 `status="error"` 并常驻展示原因；内部异常、请求 URL、堆栈与敏感凭据只记后端日志，严禁流入 content、artifact 或前端界面。
 
 ---
 
 ## 三、临时兼容与隔离边界
 
-1. **DeepSeek Thinking 多轮 Adapter**：
+1. **`@assistant-ui/react-langchain@0.0.32` patch 删除条件**：
+   - 当前 patch 只承担两项上游缺口：向 `useRemoteThreadListRuntime` 透传 controlled `threadId` / `initialThreadId`，以及把 `lc_source="summarization"` 历史摘要映射为 system message；
+   - 只有上游新版本同时原生覆盖两项行为时才可删除；升级必须先移除 `pnpm.patchedDependencies` 与 `frontend/patches/@assistant-ui__react-langchain@0.0.32.patch`，再通过关键浏览器 E2E、前端单测、构建和后端回归；
+   - 若上游只修复其中一项，继续保留最小 patch，不得用项目自有 Runtime 状态机替代。
+2. **DeepSeek Thinking 多轮 Adapter**：
    - `langchain-deepseek==1.1.0` 尚未在多轮 tool-loop 中原生回传 `reasoning_content`；
    - 极窄请求适配器 `DeepSeekThinkingChatModel._get_request_payload()` 仅限定在主 Agent 多轮场景，一旦官方上游修复即刻删除。
-2. **Site Environment 外部故障强隔离**：
+3. **Site Environment 外部故障强隔离**：
    - `inspect_site_environment` 中 Open-Meteo DEM 地形与 Macrostrat 地质单元的网络/HTTP 异常在局部完全捕获并记录至 `limitations`；
    - 外部服务单点故障绝不导致主流程崩溃，站点信息及成功获取的另一方数据完整保留。
 
@@ -118,12 +128,12 @@
   ```powershell
   cd backend; .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test*.py" -v
   ```
-  常规包含 68 项单元与集成测试（66 项通过，2 项隔离 Server E2E 需环境变量 `LMA_RUN_SERVER_E2E=1` 触发）。
-- **前端自动化测试与构建**：
+  常规包含 69 项单元与集成测试（67 项通过，2 项隔离 Server E2E 需环境变量 `LMA_RUN_SERVER_E2E=1` 触发）。
+- **前端自动化测试、浏览器 E2E 与构建**：
   ```powershell
-  cd frontend; pnpm run test; pnpm run build
+  cd frontend; pnpm run test:gate
   ```
-  包含 62 项关键路径与集成回归测试，生产构建无类型与打包错误。
+  `test:gate` 顺序执行 58 项 Vitest、4 项 Playwright 浏览器 E2E 和生产构建；E2E 使用独立运行目录中的 LangGraph Server 与本地受控 stub，覆盖生成中切换会话、Stop 后续问、Regenerate checkpoint fork、Tool error / 空结果 / artifact 刷新恢复。首次运行前可执行 `pnpm run test:e2e:install` 安装 Chromium。
 - **提交规范**：
   - 执行 `git diff --check` 确认无格式或空白问题；
   - 严禁提交 `.env`、密钥、真实账号或敏感数据。

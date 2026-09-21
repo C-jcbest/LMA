@@ -16,7 +16,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e:install": "playwright install chromium",
+    "test:e2e": "playwright test",
+    "test:gate": "pnpm test && pnpm test:e2e && pnpm build"
   },
   "dependencies": {
     "@assistant-ui/core": "0.3.20",
@@ -49,6 +52,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@playwright/test": "1.55.0",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^6.10.0",
     "@testing-library/react": "^16.3.3",

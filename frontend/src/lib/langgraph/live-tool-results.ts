@@ -3,7 +3,6 @@
 import React, { createContext, useContext } from "react";
 import {
   useChannel,
-  STREAM_CONTROLLER,
   type AnyStream,
   type Event,
 } from "@langchain/react";
@@ -106,9 +105,8 @@ const LiveToolEventsSubscription: React.FC<{
 
 const LiveToolEventsStreamProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const stream = useLangChainStream();
-  const hasValidStream = Boolean(stream?.[STREAM_CONTROLLER]);
 
-  if (!hasValidStream) {
+  if (!stream) {
     return React.createElement(
       LiveToolEventsContext.Provider,
       { value: EMPTY_EVENTS },
@@ -117,7 +115,7 @@ const LiveToolEventsStreamProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   return React.createElement(LiveToolEventsSubscription, {
-    stream: stream as AnyStream,
+    stream,
     children: (events: readonly Event[]) =>
       React.createElement(
         LiveToolEventsContext.Provider,
@@ -129,7 +127,7 @@ const LiveToolEventsStreamProvider: React.FC<{ children: React.ReactNode }> = ({
 
 /**
  * 极薄的只读 tools channel 事件上下文 Provider：
- * 仅在存在有效 AnyStream 实例时挂载 useChannel (replay: false)，
+ * 仅通过 useLangChainStream 的公开返回值判断是否挂载 useChannel (replay: false)，
  * 供下游纯函数 getLiveToolArtifact 提取实时未落盘的 artifact 载荷。
  */
 export const LiveToolEventsProvider: React.FC<{

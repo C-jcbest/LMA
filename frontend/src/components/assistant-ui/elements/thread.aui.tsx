@@ -20,7 +20,11 @@ import { ToolFallback } from "@/components/assistant-ui/elements/tool-fallback.a
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import * as Popover from "@radix-ui/react-popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { ContextUsageElement, type ContextUsage } from "@/components/assistant-ui/elements/context-usage.aui";
 import { cn } from "@/lib/utils";
 import { useLangChainState } from "@assistant-ui/react-langchain";
@@ -524,10 +528,11 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
 
 const ComposerQuickActions: FC = () => {
   const aui = useAui();
+  const [open, setOpen] = useState(false);
 
   return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
         <Button
           type="button"
           variant="ghost"
@@ -538,36 +543,35 @@ const ComposerQuickActions: FC = () => {
         >
           <SparklesIcon className="size-4 text-primary" />
         </Button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="top"
-          align="start"
-          sideOffset={8}
-          className="z-50 w-80 rounded-2xl border border-neutral-200 bg-white p-2 text-xs shadow-lg focus:outline-none"
-        >
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        className="w-80 rounded-2xl p-2 text-xs"
+      >
           <div className="px-2.5 py-1.5 font-semibold text-neutral-500 flex items-center gap-1.5">
             <SparklesIcon className="size-3.5 text-primary" />
             <span>推荐监测业务提问</span>
           </div>
           <div className="flex flex-col gap-0.5 mt-1">
             {SAMPLE_PROMPTS.map((prompt, idx) => (
-              <Popover.Close asChild key={idx}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    aui.composer.setText(prompt);
-                  }}
-                  className="w-full text-left px-2.5 py-2 rounded-md text-xs text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-colors line-clamp-2 cursor-pointer"
-                >
-                  {prompt}
-                </button>
-              </Popover.Close>
+              <Button
+                type="button"
+                variant="ghost"
+                key={idx}
+                onClick={() => {
+                  aui.composer.setText(prompt);
+                  setOpen(false);
+                }}
+                className="h-auto w-full justify-start whitespace-normal px-2.5 py-2 text-left text-xs font-normal text-neutral-700"
+              >
+                {prompt}
+              </Button>
             ))}
           </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+      </PopoverContent>
+    </Popover>
   );
 };
 

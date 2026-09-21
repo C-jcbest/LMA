@@ -152,14 +152,23 @@ async def _resolve_station(
         for station in stations:
             if station.station_uuid == station_name_or_uuid:
                 return station
-        raise ToolFailure("未找到指定 UUID 对应的监测点，请确认站点。")
+        raise ToolFailure(
+            "未找到指定 UUID 对应的监测点，请确认站点。",
+            kind="gnss_series",
+        )
 
     stations = await client.get_stations(station_name=station_name_or_uuid)
     if not stations:
-        raise ToolFailure(f"未找到名称包含“{station_name_or_uuid}”的监测点")
+        raise ToolFailure(
+            f"未找到名称包含“{station_name_or_uuid}”的监测点",
+            kind="gnss_series",
+        )
     if len(stations) > 1:
         names = [item.station_name for item in stations[:20]]
-        raise ToolFailure(f"匹配到 {len(stations)} 个监测点，请确认具体站点：" + "、".join(names))
+        raise ToolFailure(
+            f"匹配到 {len(stations)} 个监测点，请确认具体站点：" + "、".join(names),
+            kind="gnss_series",
+        )
     return stations[0]
 
 
@@ -322,7 +331,10 @@ async def get_daily_gnss_data(
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
         if station.station_type == 1:
-            raise ToolFailure("该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。")
+            raise ToolFailure(
+                "该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。",
+                kind="gnss_series",
+            )
 
         points = await client.get_daily_data(
             station_uuid=station.station_uuid,

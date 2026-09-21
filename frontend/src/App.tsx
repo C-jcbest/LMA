@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { createLangGraphClient, getStoredApiUrl } from '@/services/api';
 import { AssistantProvider } from './app/providers/AssistantProvider';
 import { AppLayout } from './app/AppLayout';
-import { ConfigModal } from './components/ConfigModal';
+import { ServiceSettingsDialog } from './features/settings/ServiceSettingsDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 /**
@@ -22,9 +22,9 @@ export const App: React.FC = () => {
         <AppLayout onOpenSettings={() => setIsConfigOpen(true)} />
       </AssistantProvider>
 
-      <ConfigModal
-        isOpen={isConfigOpen}
-        onClose={() => setIsConfigOpen(false)}
+      <ServiceSettingsDialog
+        open={isConfigOpen}
+        onOpenChange={setIsConfigOpen}
         onSaved={() => {
           const nextUrl = getStoredApiUrl();
           if (nextUrl !== apiUrl) {

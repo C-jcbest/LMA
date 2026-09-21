@@ -22,11 +22,12 @@
 - `backend/app/agent/prompts/system.md` 是主业务策略唯一可编辑来源，`vision.md` 是视觉策略唯一可编辑来源；`prompting.py` 仅导出静态提示词，`create_agent` 直接使用 `system_prompt=SYSTEM_PROMPT`。
 - LangGraph checkpoint/thread 是会话历史唯一事实来源；前端状态只保存展示态，不复制一套权威历史。
 - 前端通用聊天与会话框架完全委托 assistant-ui 生态：统一采用 `assistant-ui runtime` ↓ `@assistant-ui/react-langchain` (`useStreamRuntime`) ↓ `@langchain/react useStream` ↓ `LangGraph Server` 的标准单向流式架构。
+- 前端不得访问 `STREAM_CONTROLLER`、内部 store、符号键或其他未公开 Runtime API；跨层读取仅允许通过 `useLangChainStream`、`useChannel` 及 assistant-ui / LangChain 明确公开的 hooks、Primitives 与类型。
 - 前端不得聚合或复制底层运行时状态机，不得自定义聊天框架、消息状态机、滚动管理或会话列表状态；聊天 Thread、Message、Composer、ActionBar、Reasoning、Tool Call 生命周期与 Thread List 完全由 assistant-ui 官方 Primitives 与 Elements 驱动。
 - 会话选择采用 assistant-ui controlled 模式（通过 `threadId` 与 `onThreadIdChange` 与 URL searchParams `?threadId=...` 原生同步，支持刷新会话保留、前进/后退与分享链接）；会话列表由统一的 `createLangGraphThreadListAdapter` 适配，且满足 `remoteId === externalId === thread_id`；分页使用官方 `ThreadListPrimitive.LoadMore`。
 - 会话标题统一由 assistant-ui Adapter 的 `generateTitle()` 生命周期托管（异步调用 `session-title` 图生成并通过 rename 持久化回写到 `thread.metadata.name`），后端不再在主图 `aafter_agent` 执行自动标题逻辑。
 - Stop 完全回归官方 Stream / Thread 生命周期：由 assistant-ui 触发官方 `stream.stop({ cancel: true })`，不维护任何本地状态机或补丁。Thread/Checkpoint 的一致性由 Agent Runtime 服务端负责（在进入模型前通过 `_sanitize_unanswered_tool_calls` 自动清洗/自愈因客户端取消等遗留的悬空 AI tool-call）。下一条 HumanMessage 直接提交创建正常新 Run。
-- 工具完成条件严格以“工具结果是否已经返回”（优先成功 ToolMessage，实时阶段为产生合法 output 且非 running 态）为准；业务展示采用两阶段数据源：优先消费 `liveToolCall.output` 实时展示结果，后续 `ToolMessage.artifact` 到达后作为最终持久化内容平滑覆盖；顶层统一通过集中解析函数处理 output，禁止在各个工具 renderer 中做 JSON 字符串猜测。
+- 工具完成条件严格以“工具结果是否已经返回”为准；业务展示采用两阶段数据源：持久化 `ToolMessage.artifact`（含 success / partial / error）永远优先，live tools channel artifact 仅在未落盘的流式阶段兜底；顶层统一通过集中解析函数处理 output，禁止在各个工具 renderer 中做 JSON 字符串猜测。
 - Retry 只处理可判定的瞬时失败，参数错误、权限错误、业务拒绝和数据为空不得盲目重试；所有工具目前均应保持只读。
 - 新增任何兼容性分支或兜底策略前，必须先向用户说明触发条件、用户可见行为和可能造成的误导。如果不设置该策略可能导致数据丢失、会话损坏、不可恢复操作或其他风险，必须等待用户明确同意后才能实现。不得用伪造数据、固定占位进度或本地假成功掩盖未配置、请求失败或状态未同步；此类情况应显式报错或保持上一个已确认状态不变。
 - 工具统一使用官方 content/artifact/status：content 供模型判断，artifact 仅含可发送客户端的展示数据；前端不解析工具 content 或展示原始 JSON。业务/参数失败必须为 error，原因可见，已有证据与缺失并列说明；内部异常、请求 URL、堆栈与秘密只写后端日志，不放入消息或 artifact。
