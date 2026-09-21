@@ -1406,25 +1406,25 @@ Context Ring
 
 ## R2 — Tool UI 官方化
 
--  建立 `features/monitoring/toolkit.tsx`
--  先迁 Station Tool
--  迁 GNSS
--  迁 Weather
--  迁 Vision
--  迁 Site Environment
--  ToolFallback 恢复为 generic fallback
--  删除 Tool Registry 通用 lifecycle 逻辑
--  删除 `live-tool-results.ts`
--  删除 `LiveToolEventsProvider`
--  只读 ToolCall part 的 `status/result/artifact/isError/timing`
+- [x] 建立 `features/monitoring/toolkit.tsx`
+- [x] 迁移 Station Tool
+- [x] 迁移 GNSS
+- [x] 迁移 Weather
+- [x] 迁移 Vision
+- [x] 迁移 Site Environment
+- [x] ToolFallback 恢复为 generic fallback
+- [x] 删除 Tool Registry 通用 lifecycle 逻辑
+- [x] 删除 `live-tool-results.ts`
+- [x] 删除 `LiveToolEventsProvider`
+- [x] 只读 ToolCall part 的 `status/result/artifact/isError/timing`
 
 重点验证：
 
--  并行 Tool 分别完成
--  空结果 complete
--  error 正常
--  artifact refresh 恢复
--  image refresh 恢复
+- [x] 并行 Tool 分别完成
+- [x] 空结果 complete
+- [x] error 正常
+- [x] artifact refresh 恢复
+- [x] image refresh 恢复
 
 ------
 
@@ -1711,7 +1711,6 @@ generateSessionTitle
 
 当前剩余的真正架构性工作：
 
--  R2 Toolkit + 删除 tools wire parser
 -  R3 Artifact 强类型
 -  R4 删除 assistant-ui patch
 -  R5 Context Display / Model Profile / `cn`

@@ -177,38 +177,6 @@ if (typeof window !== 'undefined') {
   Element.prototype.releasePointerCapture = Element.prototype.releasePointerCapture || (() => {});
 }
 
-let defaultUseLangChainToolCalls = () => [];
-let defaultUseLangChainStream = () => undefined;
-export const mockUseLangChainToolCalls = vi.fn(() => defaultUseLangChainToolCalls());
-export const mockUseLangChainStream = vi.fn(() => defaultUseLangChainStream());
-
-vi.mock('@assistant-ui/react-langchain', async (importOriginal) => {
-  const actual = await importOriginal<any>();
-  defaultUseLangChainToolCalls = () => {
-    try {
-      return actual.useLangChainToolCalls();
-    } catch {
-      return [];
-    }
-  };
-  defaultUseLangChainStream = () => {
-    try {
-      return actual.useLangChainStream();
-    } catch {
-      return undefined;
-    }
-  };
-  return {
-    ...actual,
-    useLangChainToolCalls: mockUseLangChainToolCalls,
-    useLangChainStream: mockUseLangChainStream,
-  };
-});
-
 afterEach(() => {
   cleanup();
-  mockUseLangChainToolCalls.mockReset();
-  mockUseLangChainToolCalls.mockImplementation(() => defaultUseLangChainToolCalls());
-  mockUseLangChainStream.mockReset();
-  mockUseLangChainStream.mockImplementation(() => defaultUseLangChainStream());
 });

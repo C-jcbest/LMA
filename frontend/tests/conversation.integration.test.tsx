@@ -2,8 +2,11 @@ import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { ToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
-import { decodeToolArtifact } from '../src/features/monitoring/tools/registry';
+import { ToolFallback as GenericToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
+import {
+  decodeToolArtifact,
+  monitoringToolkit,
+} from '../src/features/monitoring/toolkit';
 import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView';
 import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
 import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
@@ -16,6 +19,12 @@ import { AIMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
 import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
 import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
+
+const ToolFallback: typeof GenericToolFallback = (props) => {
+  const renderer = monitoringToolkit[props.toolName as keyof typeof monitoringToolkit]?.render;
+  const Renderer = renderer ?? GenericToolFallback;
+  return <Renderer {...props} />;
+};
 
 describe('会话关键路径集成回归', () => {
   it('优先展示标准 contentBlocks reasoning，不读取耗时字段', () => {
@@ -431,7 +440,7 @@ it('P0-2: ToolMessage.artifact 到达后自然呈现业务结果，两阶段数�
   );
   expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
   await userEvent.click(screen.getByText('已查询监测点信息'));
-  expect(screen.getByText('未查询到符合条件的业务监测数据。')).toBeInTheDocument();
+  expect(screen.getByText('未查询到符合条件的监测点。')).toBeInTheDocument();
   expect(screen.queryByText('正在同步...')).not.toBeInTheDocument();
 
   // 阶段 2：权威 ToolMessage 到达，自然渲染业务点列表
@@ -459,26 +468,26 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
     status: 'success',
     data: { stations: [] },
   };
-  expect(decodeToolArtifact('list_stations', validEnvelope)).toMatchObject({
+  expect(decodeToolArtifact('station_list', validEnvelope)).toMatchObject({
     version: 1,
     kind: 'station_list',
     status: 'success',
   });
 
   // 2. kind 与注册工具不匹配时拒绝
-  expect(decodeToolArtifact('list_stations', { ...validEnvelope, kind: 'weather' })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { ...validEnvelope, kind: 'weather' })).toBeUndefined();
 
   // 3. 非 version 1 拒绝
-  expect(decodeToolArtifact('list_stations', { ...validEnvelope, version: 2 })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { ...validEnvelope, version: 2 })).toBeUndefined();
 
   // 4. 非法 status 拒绝
-  expect(decodeToolArtifact('list_stations', { ...validEnvelope, status: 'unknown' })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { ...validEnvelope, status: 'unknown' })).toBeUndefined();
 
   // 5. 传统无 envelope 结构拒绝
-  expect(decodeToolArtifact('list_stations', { stations: [] })).toBeUndefined();
-  expect(decodeToolArtifact('list_stations', 'not an object')).toBeUndefined();
-  expect(decodeToolArtifact('list_stations', null)).toBeUndefined();
-  expect(decodeToolArtifact('list_stations', undefined)).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { stations: [] })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', 'not an object')).toBeUndefined();
+  expect(decodeToolArtifact('station_list', null)).toBeUndefined();
+  expect(decodeToolArtifact('station_list', undefined)).toBeUndefined();
 });
 
 it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {

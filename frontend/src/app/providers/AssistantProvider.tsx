@@ -1,11 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Client } from '@langchain/langgraph-sdk';
 import { useStreamRuntime } from '@assistant-ui/react-langchain';
-import { AssistantRuntimeProvider } from '@assistant-ui/react';
+import { AssistantRuntimeProvider, AuiConfig, Tools } from '@assistant-ui/react';
 import { LMA_ASSISTANT_ID } from '@/services/api';
 import { createLangGraphThreadListAdapter } from '@/lib/langgraph/thread-list-adapter';
+import { monitoringToolkit } from '@/features/monitoring/toolkit';
 
-import { LiveToolEventsProvider } from '@/lib/langgraph/live-tool-results';
+const MONITORING_CONFIG = AuiConfig({
+  tools: Tools({ toolkit: monitoringToolkit }),
+});
 
 export interface AssistantProviderProps {
   client: Client;
@@ -73,10 +76,8 @@ export const AssistantProvider: React.FC<AssistantProviderProps> = ({
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <LiveToolEventsProvider>
-        {children}
-      </LiveToolEventsProvider>
+    <AssistantRuntimeProvider runtime={runtime} config={MONITORING_CONFIG}>
+      {children}
     </AssistantRuntimeProvider>
   );
 };

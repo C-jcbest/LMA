@@ -18,7 +18,8 @@
 - 单向链路为 assistant-ui runtime -> `@assistant-ui/react-langchain` -> `@langchain/react useStream` -> LangGraph Server。
 - Thread、Message、Composer、Reasoning、Tool Call 和 Thread List 使用 assistant-ui 官方 Primitives/Elements；LMA 只维护领域 Renderer 和必要适配。
 - 会话 ID 满足 `remoteId === externalId === thread_id`，列表使用官方 `ThreadListPrimitive.LoadMore`；URL 仅承担当前会话导航。
-- 持久化 `ToolMessage.artifact` 是工具展示的权威数据。当前 live tools channel 与 Tool Registry 仍是待移除的临时实现，删除计划见 `docs/TODO.md` 的 R2。
+- 已知监测工具通过 `features/monitoring/toolkit.tsx` 注册为 assistant-ui backend Toolkit renderer，只读取官方 ToolCall Part 的 `status`、`result`、`artifact`、`isError` 与 timing；未知工具才进入通用 `ToolFallback`。
+- 持久化 `ToolMessage.artifact` 是工具展示的权威数据；前端不再订阅 tools channel，不维护 wire parser、工具 Registry 生命周期或 live artifact 上下文。
 - 布局保持左侧 Thread List 与中央 Chat；前端继续使用 React、TypeScript、Vite、Tailwind CSS、assistant-ui、Streamdown 和 shadcn/ui。
 
 ## 持续有效决策
