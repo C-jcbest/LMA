@@ -8,6 +8,7 @@
 
 - 主图 `backend/app/agent/graph.py:graph` 使用 LangChain `create_agent`，由 LangGraph Agent Server 管理 Thread、Run 与 Checkpoint。
 - 长上下文、模型/工具重试、调用限额和最终工具错误转换使用官方 Middleware；`ToolErrorMiddleware` 在外层统一脱敏，`ToolRetryMiddleware` 在内层只重试瞬时异常，底层模型 SDK 不叠加重试。
+- 上下文展示的实际用量只来自供应商 `usage_metadata`，窗口上限只从模型 `profile.max_input_tokens` 读取；官方 Profile 优先，自定义模型只补入缺失的最小 Profile。摘要阈值与展示用量彼此独立。
 - 工具使用 Pydantic 参数与 `response_format="content_and_artifact"`；`content` 供模型判断，`artifact` 仅在成功或需要保留部分证据时供客户端展示。普通错误不伪造 artifact。
 - Artifact 按 `kind` 使用严格 Pydantic 判别联合；客户端展示字段只位于 `artifact.data`，来源、限制、观测时间和错误保持 envelope 元数据。
 - `system.md` 和 `vision.md` 分别是主业务与视觉策略的唯一编辑源；System Prompt 保持静态，当前业务时间通过 `get_current_time` 获取，时区统一为 `Asia/Shanghai`。
@@ -23,6 +24,7 @@
 - 已知监测工具通过 `features/monitoring/toolkit.tsx` 注册为 assistant-ui backend Toolkit renderer，只读取官方 ToolCall Part 的 `status`、`result`、`artifact`、`isError` 与 timing；未知工具才进入通用 `ToolFallback`。
 - 持久化 `ToolMessage.artifact` 是工具展示的权威数据；前端不再订阅 tools channel，不维护 wire parser、工具 Registry 生命周期或 live artifact 上下文。
 - 前端 artifact 使用与后端对应的 TypeScript 判别联合和 fail-closed decoder；领域 Renderer 接收具体 `data` 类型，不猜测旧字段位置。
+- 上下文入口使用 assistant-ui registry 的 Context Display；通用类名合并使用官方 `cn` 包，不再维护 CircularProgress、`clsx` 或 `tailwind-merge` 直接依赖。
 - 布局保持左侧 Thread List 与中央 Chat；前端继续使用 React、TypeScript、Vite、Tailwind CSS、assistant-ui、Streamdown 和 shadcn/ui。
 
 ## 持续有效决策

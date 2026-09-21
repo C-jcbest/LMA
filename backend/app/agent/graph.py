@@ -24,11 +24,11 @@ from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
-from app.agent.context import build_context_budget
+from app.agent.context import build_context_usage
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
 from app.agent.retry import is_transient_error
-from app.agent.models import create_chat_model
+from app.agent.models import create_chat_model, model_max_input_tokens
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
 from app.agent.tools import (
@@ -115,6 +115,7 @@ def _get_llm():
         protocol=protocol,
         tool_loop=True,
         temperature=0,
+        profile={"max_input_tokens": settings.context_model_context},
     )
 
 
@@ -122,8 +123,13 @@ def _get_llm():
 class LmaMiddleware(AgentMiddleware):
     state_schema = AgentState
 
-    def __init__(self, bound_tools):
-        self.bound_tools = bound_tools
+    def __init__(self, model):
+        self.max_input_tokens = model_max_input_tokens(model)
+        self.model_name = (
+            getattr(model, "model_name", None)
+            or getattr(model, "model", None)
+            or get_settings().llm_model
+        )
 
     async def abefore_agent(self, state, runtime):
         anchor = business_now().isoformat(timespec="seconds")
@@ -158,14 +164,25 @@ class LmaMiddleware(AgentMiddleware):
         message = state["messages"][index]
         usage = getattr(message, "usage_metadata", None) or {}
         input_tokens = usage.get("input_tokens")
-        if isinstance(input_tokens, int) and not isinstance(input_tokens, bool) and input_tokens >= 0:
-            budget = build_context_budget(
-                state["messages"][:index],
-                system_prompt=SYSTEM_PROMPT, bound_tools=self.bound_tools,
+        if not (
+            isinstance(input_tokens, int)
+            and not isinstance(input_tokens, bool)
+            and input_tokens >= 0
+        ):
+            logger.warning("model response did not include input token usage; preserve previous context_usage")
+            return None
+        if self.max_input_tokens is None:
+            logger.warning(
+                "model profile does not include max_input_tokens; preserve previous context_usage"
             )
-            return {"context_usage": budget.usage_snapshot(usage)}
-        logger.warning("model response did not include input token usage; preserve previous context_usage")
-        return None
+            return None
+        return {
+            "context_usage": build_context_usage(
+                usage,
+                max_input_tokens=self.max_input_tokens,
+                model=self.model_name,
+            )
+        }
 
     async def aafter_agent(self, state, runtime):
         return await generate_recommendations(state)
@@ -284,7 +301,7 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
-            LmaMiddleware(bound_tools),
+            LmaMiddleware(model),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,
             ),

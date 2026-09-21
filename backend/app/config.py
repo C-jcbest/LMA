@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     # 官方摘要的消息 token 触发阈值（正整数，默认 800000）；使用官方计数，不采用展示估算或窗口比例。
     context_token_threshold: int = Field(default=800_000, gt=0)
-    # 当前主模型上下文窗口大小，单位 token（必填正整数，无默认）；用于用量展示，换模型时同步修改，不决定压缩触发线。
+    # 自定义端点主模型的最大输入 token 数（必填正整数，无默认）；写入 LangChain Model Profile 供用量展示，换模型时同步修改，不决定压缩触发线。
     context_model_context: int = Field(
         gt=0
     )
@@ -73,15 +73,6 @@ class Settings(BaseSettings):
     context_keep_tokens: int = Field(default=400_000, gt=0)
     # 摘要模型单次输出的 max_tokens（正整数，默认 2000）；不代表保留历史的 token budget。
     context_summary_max_tokens: int = Field(default=2000, gt=0)
-    # 用量展示为本轮输出预留的 token 数（建议非负，默认 8192）；负值运行时按 0 处理，不设置主模型输出上限或压缩规则。
-    context_output_reserve_tokens: int = 8192
-    # 用量展示为协议/计数误差预留的 token 数（建议非负，默认 2048）；负值运行时按 0 处理，不参与官方压缩决策。
-    context_safety_margin_tokens: int = 2048
-    # 展示估算的保守倍率（建议 ≥1，默认 1.1）；运行时至少按 1 计算，不改变供应商实际 usage 或官方摘要计数。
-    context_token_estimate_factor: float = 1.1
-    # 展示近似计数的字符/token 换算值（必须 >0，默认 1.6667）；按模型调整，非正值估算时报错，不参与官方摘要计数。
-    context_chars_per_token: float = 1.6667
-
     # 历史摘要模型独立思考开关（默认 false）；开关语义同 LLM_THINKING，使用当前主模型配置但不继承主模型开关。
     compress_thinking: bool = False
 

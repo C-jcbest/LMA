@@ -290,37 +290,30 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText(/已完成辅助信息查询并同步至模型上下文/)).toBeInTheDocument();
   });
 
-  it('输入框发送按钮左侧可查看上下文 token 明细', async () => {
+  it('输入框发送按钮左侧显示可访问的上下文用量入口', () => {
     render(
       <ContextUsageElement
         usage={{
           input_tokens: 250,
-          context_limit_tokens: 1000,
-          remaining_tokens: 750,
+          output_tokens: 20,
+          total_tokens: 270,
+          max_input_tokens: 1000,
           usage_ratio: 0.25,
-          estimated_history_tokens: 120,
-          estimated_fixed_input_tokens: 130,
-          accounting_difference_tokens: 0,
-          output_reserve_tokens: 100,
-          safety_margin_tokens: 20,
-          trigger_tokens: 800,
-          counter: 'provider_reported',
           model: 'deepseek-flash',
         }}
       />
     );
 
-    await userEvent.click(screen.getByLabelText('上下文预算已用 25%'));
-    expect(screen.getByText('当前请求输入')).toBeInTheDocument();
-    expect(screen.getByText('250')).toBeInTheDocument();
-    expect(screen.queryByText('75.0K')).not.toBeInTheDocument();
+    const trigger = screen.getByLabelText('上下文用量');
+    expect(trigger).toHaveTextContent('25%');
+    expect(trigger.querySelector('svg')).toBeInTheDocument();
   });
 
   it('缺少真实 usage 时不渲染上下文占比，也不显示未配置占位', () => {
     render(
-      <ContextUsageElement usage={{ context_limit_tokens: 1_048_576 }} />
+      <ContextUsageElement usage={{ max_input_tokens: 1_048_576 }} />
     );
-    expect(screen.queryByText(/上下文窗口|未配置/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('上下文用量')).not.toBeInTheDocument();
   });
 
   it('会话归属依据 graph_id，adapter.list 严格过滤 assistantId 并映射 remoteId 与 externalId', async () => {

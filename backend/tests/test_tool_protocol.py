@@ -9,7 +9,7 @@ import httpx
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.messages.utils import convert_to_openai_messages
 from langchain_core.tools import tool
-from app.agent import graph, context, summarization, tools, vision, weather, site
+from app.agent import graph, summarization, tools, vision, weather, site
 from app.agent.tool_protocol import tool_error_result, tool_result
 from runtime_fixtures import ScriptedModel
 
@@ -18,10 +18,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         settings = SimpleNamespace(recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
             agent_model_run_limit=20, agent_tool_run_limit=40, llm_model="test", context_token_threshold=800000,
-            context_model_context=1048576, context_keep_tokens=400000, context_summary_max_tokens=2000,
-            context_output_reserve_tokens=100, context_safety_margin_tokens=20,
-            context_token_estimate_factor=1.0, context_chars_per_token=1.6667)
-        for module in (graph, context, summarization):
+            context_model_context=1048576, context_keep_tokens=400000, context_summary_max_tokens=2000)
+        for module in (graph, summarization):
             patcher = patch.object(module, "get_settings", return_value=settings)
             patcher.start()
             self.addCleanup(patcher.stop)

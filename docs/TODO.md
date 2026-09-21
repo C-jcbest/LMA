@@ -1458,15 +1458,15 @@ Context Ring
 
 ## R5 — Context 与前端组件收敛
 
--  安装 assistant-ui Context Display
--  替换手写 CircularProgress
--  Context 最大值改 Model Profile
--  实际用量只使用 provider usage
--  删除无价值的 fixed/history Token 估算
--  删除对应配置项
--  `shadcn migrate cn`
--  清理 `clsx` / `tailwind-merge`
--  检查重复 Radix 依赖
+- [x] 安装 assistant-ui Context Display
+- [x] 替换手写 CircularProgress
+- [x] Context 最大值改 Model Profile
+- [x] 实际用量只使用 provider usage
+- [x] 删除无价值的 fixed/history Token 估算
+- [x] 删除对应配置项
+- [x] `shadcn migrate cn`
+- [x] 清理 `clsx` / `tailwind-merge`
+- [x] 检查重复 Radix 依赖
 
 ------
 
@@ -1712,10 +1712,10 @@ generateSessionTitle
 -  R2 已知监测工具已迁移 assistant-ui Toolkit，旧 tools channel/Registry 已删除
 -  R3 Artifact 已收敛为后端 Pydantic、前端判别联合与唯一 `artifact.data` 业务字段位置
 -  R4 已通过公共 Thread action 完成 URL 双向导航，摘要按 LangChain metadata 渲染，依赖 patch 已删除
+-  R5 已采用 assistant-ui Context Display；用量只投影 provider usage 与 Model Profile，并完成 `cn`、Radix 直接依赖收敛
 
 当前剩余的真正架构性工作：
 
--  R5 Context Display / Model Profile / `cn`
 -  R6 依赖与 Elements 收敛
 -  R7 Stop / DeepSeek 例外复核
 -  R8 部署与文档清理

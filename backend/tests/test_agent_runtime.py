@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.agent import context, graph, summarization
+from app.agent import graph, summarization
 from app.beidou.client import BeidouApiError
 from runtime_fixtures import ScriptedModel, call
 
@@ -21,11 +21,9 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
             agent_model_run_limit=20, agent_tool_run_limit=40, context_token_threshold=800_000,
             context_model_context=1_048_576,
-            context_keep_tokens=400000, context_output_reserve_tokens=100,
-            context_safety_margin_tokens=20, context_token_estimate_factor=1.0,
-            context_chars_per_token=1.6667,  context_summary_max_tokens=2000, llm_model="test",
+            context_keep_tokens=400000, context_summary_max_tokens=2000, llm_model="test",
         )
-        for module in (graph, context, summarization):
+        for module in (graph, summarization):
             patcher = patch.object(module, "get_settings", return_value=self.settings)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -40,7 +38,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             """读取站点。"""
             return "站点甲，缺测"
 
-        model = ScriptedModel(script=[call(), AIMessage(
+        model = ScriptedModel(profile={"max_input_tokens": 1_048_576}, script=[call(), AIMessage(
             content="数据缺测，不能判断",
             additional_kwargs={"reasoning_content": "核对证据"},
             usage_metadata={"input_tokens": 321, "output_tokens": 20, "total_tokens": 341},
@@ -55,7 +53,8 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["messages"][0].additional_kwargs["created_at"], first.isoformat())
         self.assertEqual(result["messages"][-1].additional_kwargs["reasoning_content"], "核对证据")
         self.assertEqual(result["context_usage"]["input_tokens"], 321)
-        self.assertEqual(result["context_usage"]["remaining_tokens"], 1_048_576 - 321 - 120)
+        self.assertEqual(result["context_usage"]["max_input_tokens"], 1_048_576)
+        self.assertAlmostEqual(result["context_usage"]["usage_ratio"], 321 / 1_048_576)
         self.assertEqual(model.inputs[0][0].content, model.inputs[1][0].content)
         with patch.object(graph, "business_now", return_value=second):
             result = await agent.ainvoke({"messages": [HumanMessage(content="昨天呢？")]}, config)
@@ -212,7 +211,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             calls.append(1)
             return "真实证据"
         request = AIMessage(content="", tool_calls=[*call("c1").tool_calls, *call("c2").tool_calls])
-        model = ScriptedModel(script=[request, AIMessage(content="说明限制",
+        model = ScriptedModel(profile={"max_input_tokens": 1_048_576}, script=[request, AIMessage(content="说明限制",
             usage_metadata={"input_tokens": 123, "output_tokens": 2, "total_tokens": 125})])
         result = await graph.create_lma_agent(model, agent_tools=[station]).ainvoke({"messages": [HumanMessage(content="查询")]})
         self.assertEqual(len(calls), 1)
