@@ -1,5 +1,7 @@
 # LMA 待办入口
 
+当前全栈“官方栈优先”重构的权威计划见 [official-stack-refactor.md](official-stack-refactor.md)。后续全栈重构 PR 应优先维护该文档中的问题 ID、证据、迁移状态与验收结果；[重构 TODO.md](重构%20TODO.md) 作为此前前端迁移历史继续保留。
+
 当前核心架构演进与前端重构清单见 [重构 TODO.md](重构%20TODO.md)。
 当前系统实现与持续有效决策见 [project-status.md](project-status.md)。
 产品口径以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准。
