@@ -48,14 +48,18 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             "仅取得部分证据",
             tool_call_id="call-partial",
             tool_name="partial_tool",
-            kind="vision",
-            artifact={"version": 99, "kind": "wrong", "status": "success"},
+            kind="generic",
+            data={
+                "current_time": "2026-09-21 12:00:00",
+                "timezone": "Asia/Shanghai",
+            },
         )
         self.assertEqual(message.status, "error")
         self.assertIs(message.artifact, artifact)
         self.assertEqual(artifact["version"], 1)
-        self.assertEqual(artifact["kind"], "vision")
+        self.assertEqual(artifact["kind"], "generic")
         self.assertEqual(artifact["status"], "error")
+        self.assertEqual(artifact["error"]["message"], "仅取得部分证据")
 
     async def test_station_not_found_is_error_and_model_can_continue(self):
         client = AsyncMock()
@@ -146,8 +150,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
              patch.object(site, "_fetch_geology", AsyncMock(return_value=(None, "该位置未获得可用地质单元"))):
             message, _ = await self.run_tool(site.inspect_site_environment, {"station_name_or_uuid": "测试站"})
         self.assertEqual(message.status, "error")
-        self.assertEqual(message.artifact["site_environment"]["terrain"]["slope_degrees"], 12)
-        self.assertIn("资料不完整", message.artifact["data"]["message"])
+        self.assertEqual(message.artifact["data"]["terrain"]["slope_degrees"], 12)
+        self.assertIn("资料不完整", message.artifact["error"]["message"])
         self.assertIn("slope_degrees", message.content)
 
     async def test_weather_forecast_days_zero_is_valid(self):
@@ -179,9 +183,9 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             message, _ = await self.run_tool(site.inspect_site_environment, {"station_name_or_uuid": "测试站"})
         self.assertEqual(message.status, "error")
         # 即使地形网络发生 503 异常，地质有效证据绝不被抹掉
-        self.assertEqual(message.artifact["site_environment"]["geology"]["name"], "泥盆系灰岩")
-        self.assertIsNone(message.artifact["site_environment"]["terrain"])
-        self.assertIn("缺少地形证据", message.artifact["data"]["message"])
+        self.assertEqual(message.artifact["data"]["geology"]["name"], "泥盆系灰岩")
+        self.assertIsNone(message.artifact["data"].get("terrain"))
+        self.assertIn("缺少地形证据", message.artifact["error"]["message"])
 
     async def test_unconfigured_vision_preserves_charts_with_error_status(self):
         client = AsyncMock()
@@ -196,9 +200,9 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             message, _ = await self.run_tool(vision.analyze_gnss_chart, {"station_name_or_uuid": "测试站",
                 "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
         self.assertEqual(message.status, "error")
-        self.assertEqual(len(message.artifact["chart_points"]), 5)
+        self.assertEqual(len(message.artifact["data"]["chart_points"]), 5)
         self.assertEqual(message.artifact["data"]["station_name"], "测试站")
-        self.assertIn("未配置", message.artifact["data"]["message"])
+        self.assertIn("未配置", message.artifact["error"]["message"])
         self.assertNotIn("VISION_", message.content)
         self.assertNotIn("TEST_IMAGE", str(convert_to_openai_messages([message])))
 
@@ -206,11 +210,22 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         @tool(response_format="content_and_artifact")
         def evidence():
             """测试模型事实与展示序列分离。"""
-            return tool_result({"station_name": "测试站", "net_change_mm": 2},
-                artifact={"chart_points": [{"t": "DISPLAY_ONLY", "n": 1}]}, display={"station_name": "测试站"})
+            return tool_result(
+                {"station_name": "测试站", "net_change_mm": 2},
+                kind="vision",
+                display={
+                    "station_name": "测试站",
+                    "begin_time": "2026-09-21 00:00:00",
+                    "end_time": "2026-09-21 01:00:00",
+                    "timezone": "Asia/Shanghai",
+                    "total_points": 1,
+                    "images": [],
+                    "chart_points": [{"t": "DISPLAY_ONLY", "n": 1, "e": 2, "u": 3}],
+                },
+            )
         message, _ = await self.run_tool(evidence, {})
         self.assertEqual(message.status, "success")
-        self.assertEqual(message.artifact["chart_points"][0]["t"], "DISPLAY_ONLY")
+        self.assertEqual(message.artifact["data"]["chart_points"][0]["t"], "DISPLAY_ONLY")
         self.assertNotIn("DISPLAY_ONLY", str(convert_to_openai_messages([message])))
         self.assertIn("net_change_mm", message.content)
 
@@ -242,7 +257,7 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(message.status, "error")
                 self.assertEqual(bound_structured.ainvoke.await_count, 1)
                 recheck.assert_not_called()
-                self.assertEqual(len(message.artifact["chart_points"]), 5)
+                self.assertEqual(len(message.artifact["data"]["chart_points"]), 5)
 
 
     async def test_get_current_time_success_in_agent_run(self):

@@ -9,6 +9,7 @@
 - 主图 `backend/app/agent/graph.py:graph` 使用 LangChain `create_agent`，由 LangGraph Agent Server 管理 Thread、Run 与 Checkpoint。
 - 长上下文、模型/工具重试、调用限额和最终工具错误转换使用官方 Middleware；`ToolErrorMiddleware` 在外层统一脱敏，`ToolRetryMiddleware` 在内层只重试瞬时异常，底层模型 SDK 不叠加重试。
 - 工具使用 Pydantic 参数与 `response_format="content_and_artifact"`；`content` 供模型判断，`artifact` 仅在成功或需要保留部分证据时供客户端展示。普通错误不伪造 artifact。
+- Artifact 按 `kind` 使用严格 Pydantic 判别联合；客户端展示字段只位于 `artifact.data`，来源、限制、观测时间和错误保持 envelope 元数据。
 - `system.md` 和 `vision.md` 分别是主业务与视觉策略的唯一编辑源；System Prompt 保持静态，当前业务时间通过 `get_current_time` 获取，时区统一为 `Asia/Shanghai`。
 - 会话标题由 assistant-ui Adapter 的 `generateTitle()` 调用独立 `session-title` 图生成并写入 `thread.metadata.name`；主图不生成标题。
 - 下一步建议当前仍在主 Run 的 `aafter_agent` 阶段生成，是否拆为独立 Run 以实测延迟为准。
@@ -20,6 +21,7 @@
 - 会话 ID 满足 `remoteId === externalId === thread_id`，列表使用官方 `ThreadListPrimitive.LoadMore`；URL 仅承担当前会话导航。
 - 已知监测工具通过 `features/monitoring/toolkit.tsx` 注册为 assistant-ui backend Toolkit renderer，只读取官方 ToolCall Part 的 `status`、`result`、`artifact`、`isError` 与 timing；未知工具才进入通用 `ToolFallback`。
 - 持久化 `ToolMessage.artifact` 是工具展示的权威数据；前端不再订阅 tools channel，不维护 wire parser、工具 Registry 生命周期或 live artifact 上下文。
+- 前端 artifact 使用与后端对应的 TypeScript 判别联合和 fail-closed decoder；领域 Renderer 接收具体 `data` 类型，不猜测旧字段位置。
 - 布局保持左侧 Thread List 与中央 Chat；前端继续使用 React、TypeScript、Vite、Tailwind CSS、assistant-ui、Streamdown 和 shadcn/ui。
 
 ## 持续有效决策

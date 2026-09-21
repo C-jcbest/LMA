@@ -11,27 +11,160 @@ import {
   ToolFallbackTrigger,
   type ToolDisplayLabels,
 } from '@/components/assistant-ui/elements/tool-fallback.aui';
-import type { ToolArtifactEnvelope, ToolArtifactKind } from '@/types/envelope';
+import type {
+  ToolArtifactEnvelope,
+  ToolArtifactKind,
+} from '@/types/envelope';
 import { GnssResultView } from './tools/GnssResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
 import { StationResultView } from './tools/StationResultView';
 import { VisionResultView } from './tools/VisionResultView';
 import { WeatherResultView } from './tools/WeatherResultView';
 
-const isRecord = (value: unknown): value is Record<string, any> =>
+const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
+  'generic',
   'station_list',
   'gnss_series',
   'weather',
   'vision',
-  'station_comparison',
   'site_environment',
-  'monitoring_map',
-  'evidence',
-  'generic',
 ]);
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+
+const isEvidenceSource = (value: unknown) => {
+  if (!isRecord(value)) return false;
+  return [
+    'provider',
+    'name',
+    'role',
+    'coordinate_system',
+    'observed_at',
+    'url',
+    'license',
+  ].every((key) => value[key] == null || typeof value[key] === 'string');
+};
+
+const isStation = (value: unknown) =>
+  isRecord(value) &&
+  typeof value.station_name === 'string' &&
+  value.coordinate_system === 'WGS84';
+
+const isVisionData = (value: unknown) => {
+  if (
+    !isRecord(value) ||
+    typeof value.station_name !== 'string' ||
+    typeof value.begin_time !== 'string' ||
+    typeof value.end_time !== 'string' ||
+    typeof value.timezone !== 'string' ||
+    typeof value.total_points !== 'number' ||
+    !Array.isArray(value.images) ||
+    !Array.isArray(value.chart_points)
+  ) {
+    return false;
+  }
+  if (
+    !value.images.every(
+      (image) =>
+        isRecord(image) &&
+        typeof image.name === 'string' &&
+        typeof image.png_base64 === 'string',
+    ) ||
+    !value.chart_points.every(
+      (point) => isRecord(point) && typeof point.t === 'string',
+    )
+  ) {
+    return false;
+  }
+  if (value.observations == null) return true;
+  if (!isRecord(value.observations)) return false;
+  const { candidates, trends, turning_points } = value.observations;
+  return (
+    (candidates === undefined ||
+      (Array.isArray(candidates) &&
+        candidates.every(
+          (candidate) =>
+            isRecord(candidate) &&
+            typeof candidate.metric === 'string' &&
+            typeof candidate.start_at === 'string' &&
+            typeof candidate.end_at === 'string',
+        ))) &&
+    (trends === undefined || isStringArray(trends)) &&
+    (turning_points === undefined || isStringArray(turning_points))
+  );
+};
+
+const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
+  if (!isRecord(value)) return false;
+  switch (kind) {
+    case 'generic':
+      return (
+        typeof value.current_time === 'string' && typeof value.timezone === 'string'
+      );
+    case 'station_list': {
+      const groupsValid =
+        value.groups === undefined ||
+        value.groups === null ||
+        (Array.isArray(value.groups) &&
+          value.groups.every(
+            (group) =>
+              isRecord(group) &&
+              typeof group.group_name === 'string' &&
+              typeof group.station_count === 'number',
+          ));
+      const stationsValid =
+        value.stations === undefined ||
+        value.stations === null ||
+        (Array.isArray(value.stations) && value.stations.every(isStation));
+      return (
+        typeof value.total === 'number' &&
+        groupsValid &&
+        stationsValid &&
+        (Array.isArray(value.groups) !== Array.isArray(value.stations))
+      );
+    }
+    case 'gnss_series':
+      return (
+        typeof value.station_name === 'string' &&
+        typeof value.begin_time === 'string' &&
+        typeof value.end_time === 'string' &&
+        typeof value.timezone === 'string' &&
+        typeof value.total_points === 'number' &&
+        typeof value.returned_points === 'number' &&
+        typeof value.downsampled === 'boolean' &&
+        Array.isArray(value.points) &&
+        value.points.every(
+          (point) => isRecord(point) && typeof point.time === 'string',
+        ) &&
+        isRecord(value.summary)
+      );
+    case 'weather':
+      return (
+        typeof value.ok === 'boolean' &&
+        isRecord(value.location) &&
+        typeof value.location.latitude === 'number' &&
+        typeof value.location.longitude === 'number' &&
+        isRecord(value.query)
+      );
+    case 'vision':
+      return isVisionData(value);
+    case 'site_environment':
+      return (
+        value.version === 1 &&
+        typeof value.observed_at === 'string' &&
+        value.coordinate_system === 'WGS84' &&
+        isStation(value.center_station) &&
+        Array.isArray(value.group_stations) &&
+        value.group_stations.every(isStation) &&
+        isRecord(value.faults) &&
+        isRecord(value.layer_sources)
+      );
+  }
+};
 
 /** 仅接受当前版本且 kind 与 renderer 声明一致的持久化 artifact。 */
 export function decodeToolArtifact(
@@ -54,49 +187,54 @@ export function decodeToolArtifact(
     return undefined;
   }
 
-  if (status === 'success') {
-    const data = rawArtifact.data;
-    if (kind === 'gnss_series') {
-      if (!isRecord(data) || !Array.isArray(data.points)) return undefined;
-    } else if (kind === 'station_list') {
-      if (
-        !isRecord(data) ||
-        (!Array.isArray(data.stations) && !Array.isArray(data.groups))
-      ) {
-        return undefined;
-      }
-    } else if (kind === 'weather') {
-      if (!isRecord(data)) return undefined;
-    } else if (kind === 'vision') {
-      const hasPoints =
-        Array.isArray(rawArtifact.chart_points) ||
-        (isRecord(data) && Array.isArray(data.chart_points));
-      const hasImages =
-        Array.isArray(rawArtifact.images) ||
-        (isRecord(data) && Array.isArray(data.images));
-      if (!hasPoints && !hasImages && !isRecord(data)) return undefined;
-    } else if (kind === 'site_environment') {
-      const hasEnvironment =
-        isRecord(rawArtifact.site_environment) ||
-        (isRecord(data) && isRecord(data.site_environment)) ||
-        isRecord(data);
-      if (!hasEnvironment) return undefined;
-    }
+  if (!isArtifactData(expectedKind, rawArtifact.data)) return undefined;
+  if (rawArtifact.observedAt !== undefined && typeof rawArtifact.observedAt !== 'string') {
+    return undefined;
+  }
+  if (
+    rawArtifact.limitations !== undefined &&
+    !isStringArray(rawArtifact.limitations)
+  ) {
+    return undefined;
+  }
+  if (
+    rawArtifact.sources !== undefined &&
+    (!Array.isArray(rawArtifact.sources) ||
+      !rawArtifact.sources.every(isEvidenceSource))
+  ) {
+    return undefined;
+  }
+  if (
+    rawArtifact.error !== undefined &&
+    (!isRecord(rawArtifact.error) ||
+      typeof rawArtifact.error.code !== 'string' ||
+      typeof rawArtifact.error.category !== 'string' ||
+      typeof rawArtifact.error.message !== 'string' ||
+      typeof rawArtifact.error.retryable !== 'boolean')
+  ) {
+    return undefined;
+  }
+  if (
+    (status === 'error' && rawArtifact.error === undefined) ||
+    (status !== 'error' && rawArtifact.error !== undefined)
+  ) {
+    return undefined;
   }
 
   return {
     version: 1,
-    kind: kind as ToolArtifactKind,
+    kind: expectedKind,
     status,
     data: rawArtifact.data,
-    observedAt: rawArtifact.observedAt,
-    sources: rawArtifact.sources,
-    limitations: rawArtifact.limitations,
-    error: rawArtifact.error,
-    site_environment: rawArtifact.site_environment,
-    chart_points: rawArtifact.chart_points,
-    images: rawArtifact.images,
-  };
+    ...(typeof rawArtifact.observedAt === 'string'
+      ? { observedAt: rawArtifact.observedAt }
+      : {}),
+    ...(Array.isArray(rawArtifact.sources) ? { sources: rawArtifact.sources } : {}),
+    ...(isStringArray(rawArtifact.limitations)
+      ? { limitations: rawArtifact.limitations }
+      : {}),
+    ...(isRecord(rawArtifact.error) ? { error: rawArtifact.error } : {}),
+  } as ToolArtifactEnvelope;
 }
 
 type MonitoringToolDefinition = {
@@ -200,13 +338,19 @@ const definitions = {
       requiresAction: '待确认监测点分组查询',
     },
     emptyText: '未查询到符合条件的监测点分组。',
-    render: (envelope) => <StationResultView data={envelope.data} />,
+    render: (envelope) =>
+      envelope.kind === 'station_list' ? (
+        <StationResultView data={envelope.data} />
+      ) : null,
   },
   list_stations: {
     kind: 'station_list',
     labels: stationLabels,
     emptyText: '未查询到符合条件的监测点。',
-    render: (envelope) => <StationResultView data={envelope.data} />,
+    render: (envelope) =>
+      envelope.kind === 'station_list' ? (
+        <StationResultView data={envelope.data} />
+      ) : null,
   },
   get_daily_gnss_data: {
     kind: 'gnss_series',
@@ -218,7 +362,10 @@ const definitions = {
       requiresAction: '待确认 GNSS 数据查询',
     },
     emptyText: '未查询到符合条件的业务监测数据。',
-    render: (envelope) => <GnssResultView data={envelope.data} />,
+    render: (envelope) =>
+      envelope.kind === 'gnss_series' ? (
+        <GnssResultView data={envelope.data} />
+      ) : null,
   },
   query_weather: {
     kind: 'weather',
@@ -230,7 +377,10 @@ const definitions = {
       requiresAction: '待确认天气查询',
     },
     emptyText: '未查询到符合条件的天气数据。',
-    render: (envelope) => <WeatherResultView data={envelope.data} />,
+    render: (envelope) =>
+      envelope.kind === 'weather' ? (
+        <WeatherResultView data={envelope.data} />
+      ) : null,
   },
   analyze_gnss_chart: {
     kind: 'vision',
@@ -242,15 +392,10 @@ const definitions = {
       requiresAction: '待确认位移曲线复核',
     },
     emptyText: '未取得可展示的位移曲线复核结果。',
-    render: (envelope) => {
-      const data = isRecord(envelope.data) ? envelope.data : {};
-      const mergedData = {
-        ...data,
-        chart_points: data.chart_points || envelope.chart_points || [],
-      };
-      const images = envelope.images || data.images || [];
-      return <VisionResultView data={mergedData} artifactImages={images} />;
-    },
+    render: (envelope) =>
+      envelope.kind === 'vision' ? (
+        <VisionResultView data={envelope.data} />
+      ) : null,
   },
   inspect_site_environment: {
     kind: 'site_environment',
@@ -262,14 +407,13 @@ const definitions = {
       requiresAction: '待确认场地环境调查',
     },
     emptyText: '未取得可展示的场地环境信息。',
-    render: (envelope) => {
-      const data = isRecord(envelope.data) ? envelope.data : undefined;
-      const environment =
-        envelope.site_environment || data?.site_environment || data;
-      return environment ? (
-        <SiteEnvironmentResultView environment={environment} />
-      ) : null;
-    },
+    render: (envelope) =>
+      envelope.kind === 'site_environment' ? (
+        <SiteEnvironmentResultView
+          environment={envelope.data}
+          limitations={envelope.limitations}
+        />
+      ) : null,
   },
 } satisfies Record<string, MonitoringToolDefinition>;
 

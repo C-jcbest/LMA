@@ -1,7 +1,7 @@
 import React from 'react';
-import type { ToolResultProps } from './types';
+import type { StationListArtifactData } from '@/types/envelope';
 
-export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
+export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({ data }) => {
   // 1. 监测分组表格（展示全部数据，无截断）
   if (data?.groups && Array.isArray(data.groups)) {
     return (
@@ -19,7 +19,7 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/40 text-neutral-800">
-              {data.groups.map((g: any, i: number) => (
+              {data.groups.map((g, i) => (
                 <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
                   <td className="py-2 px-3 font-medium text-neutral-900 whitespace-nowrap">{g.group_name}</td>
                   <td className="py-2 px-3 whitespace-nowrap">
@@ -63,8 +63,11 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/40 text-neutral-800">
-              {data.stations.map((s: any, i: number) => {
-                const status = statusStyles[s.station_status] || {
+              {data.stations.map((s, i) => {
+                const status =
+                  (typeof s.station_status === 'string'
+                    ? statusStyles[s.station_status]
+                    : undefined) || {
                   dot: 'bg-neutral-300',
                   text: '未知',
                 };

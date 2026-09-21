@@ -656,15 +656,15 @@ async def analyze_gnss_chart(
         charts = await asyncio.to_thread(
             _render_all_charts, points, baseline, station.station_name, begin_time, end_time
         )
-        # chart_points 始终随 artifact 返回：渲染失败时前端仍可用全量序列兑底绘制
-        artifact = {"images": charts, "chart_points": chart_points, "data": base_result}
+        # 展示数据只存在 artifact.data：渲染失败时仍可用全量序列兜底绘制。
+        artifact_data = {**base_result, "images": charts, "chart_points": chart_points}
         if not charts:
             return tool_error_result(
                 "图表渲染失败，无法进行视觉复核",
                 tool_call_id=tool_call_id,
                 tool_name="analyze_gnss_chart",
                 kind="vision",
-                artifact=artifact,
+                data=artifact_data,
             )
 
         if not (settings.vision_base_url and settings.vision_api_key and settings.vision_model):
@@ -674,7 +674,7 @@ async def analyze_gnss_chart(
                 tool_name="analyze_gnss_chart",
                 kind="vision",
                 category="configuration",
-                artifact={**artifact, "data": base_result},
+                data=artifact_data,
             )
 
         # 单次视觉调用（单一提示词）：送累计位移与合成位移两张图做全窗口观察。
@@ -723,7 +723,7 @@ async def analyze_gnss_chart(
                 tool_call_id=tool_call_id,
                 tool_name="analyze_gnss_chart",
                 kind="vision",
-                artifact=artifact,
+                data=artifact_data,
             )
 
         parsed = response.get("parsed") if isinstance(response, dict) else None
@@ -734,7 +734,7 @@ async def analyze_gnss_chart(
                 tool_call_id=tool_call_id,
                 tool_name="analyze_gnss_chart",
                 kind="vision",
-                artifact=artifact,
+                data=artifact_data,
             )
 
         validated = _validate_observations(parsed, time_start, time_end)
@@ -744,7 +744,7 @@ async def analyze_gnss_chart(
                 tool_call_id=tool_call_id,
                 tool_name="analyze_gnss_chart",
                 kind="vision",
-                artifact=artifact,
+                data=artifact_data,
             )
         if len(validated.candidates) > settings.vision_max_candidates:
             return tool_error_result(
@@ -753,7 +753,7 @@ async def analyze_gnss_chart(
                 tool_name="analyze_gnss_chart",
                 kind="vision",
                 category="budget",
-                artifact=artifact,
+                data=artifact_data,
             )
 
 
@@ -796,7 +796,7 @@ async def analyze_gnss_chart(
                 tool_name="analyze_gnss_chart",
                 kind="vision",
                 facts={"ok": False, **base_result, "observations": observations_out},
-                artifact={**artifact, "data": {**base_result, "observations": validated.model_dump()}},
+                data={**artifact_data, "observations": validated.model_dump()},
             )
         return tool_result(
             {
@@ -805,6 +805,9 @@ async def analyze_gnss_chart(
                 "observations": observations_out,
             },
             kind="vision",
-            artifact=artifact,
-            display={"ok": True, **base_result, "observations": validated.model_dump()},
+            display={
+                **artifact_data,
+                "ok": True,
+                "observations": validated.model_dump(),
+            },
         )

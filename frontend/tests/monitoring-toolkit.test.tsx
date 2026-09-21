@@ -59,12 +59,20 @@ describe('assistant-ui monitoring toolkit', () => {
           version: 1,
           kind: 'vision',
           status: 'error',
-          data: { station_name: '测试站' },
-          images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+          data: {
+            station_name: '测试站',
+            begin_time: '2026-09-21 00:00:00',
+            end_time: '2026-09-21 01:00:00',
+            timezone: 'Asia/Shanghai',
+            total_points: 1,
+            images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+            chart_points: [],
+          },
           error: {
             code: 'configuration',
             category: 'configuration',
             message: '视觉模型未配置，已返回图表供人工查看。',
+            retryable: false,
           },
         }}
       />,

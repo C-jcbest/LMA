@@ -9,10 +9,11 @@ import {
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Compass, Expand, Layers3, MapPin, Mountain, X } from 'lucide-react';
-import { SiteEnvironmentArtifact, SiteStation } from './toolArtifacts';
+import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
 
 interface SiteEnvironmentCardProps {
-  environment: SiteEnvironmentArtifact;
+  environment: SiteEnvironmentArtifactData;
+  limitations?: string[];
 }
 
 type BaseLayer = 'satellite' | 'terrain';
@@ -72,7 +73,7 @@ const BASE_STYLE: StyleSpecification = {
   ],
 };
 
-const validStations = (environment: SiteEnvironmentArtifact): SiteStation[] => {
+const validStations = (environment: SiteEnvironmentArtifactData): StationArtifact[] => {
   const candidates = [environment.center_station, ...(environment.group_stations || [])];
   const seen = new Set<string>();
   return candidates.filter((station) => {
@@ -84,7 +85,10 @@ const validStations = (environment: SiteEnvironmentArtifact): SiteStation[] => {
   });
 };
 
-export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ environment }) => {
+export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({
+  environment,
+  limitations = [],
+}) => {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
@@ -389,11 +393,11 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
         </div>
       </div>
 
-      {(environment.limitations || []).length > 0 && (
+      {limitations.length > 0 && (
         <details className="border-t border-stone-300 bg-[#ece8dc] px-3 py-2 text-[10px] text-stone-600">
           <summary className="cursor-pointer font-medium text-stone-700">资料限制</summary>
           <ul className="mt-2 list-disc space-y-1 pl-4">
-            {environment.limitations?.map((item, index) => <li key={index}>{item}</li>)}
+            {limitations.map((item, index) => <li key={index}>{item}</li>)}
           </ul>
         </details>
       )}

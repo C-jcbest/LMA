@@ -1430,13 +1430,13 @@ Context Ring
 
 ## R3 — Tool Artifact 强类型化
 
--  后端建立明确 Pydantic Artifact Schema
--  每类字段只存在一个位置
--  前端建立对应 TS Types
--  删除 `any`
--  删除 index signature
--  删除字段位置 fallback
--  Renderer 不再猜 JSON
+- [x] 后端建立明确 Pydantic Artifact Schema
+- [x] 每类字段只存在一个位置
+- [x] 前端建立对应 TS Types
+- [x] 删除 `any`
+- [x] 删除 index signature
+- [x] 删除字段位置 fallback
+- [x] Renderer 不再猜 JSON
 
 不引入新的自定义 transport。
 
@@ -1708,10 +1708,12 @@ generateSessionTitle
 -  Streamdown 已采用
 -  shadcn/Radix 已用于大部分通用 UI
 -  R0 仓库级 GitHub Actions 与本地回归基线已建立
+-  R1 后端 Tool Middleware 与错误生命周期已收敛
+-  R2 已知监测工具已迁移 assistant-ui Toolkit，旧 tools channel/Registry 已删除
+-  R3 Artifact 已收敛为后端 Pydantic、前端判别联合与唯一 `artifact.data` 业务字段位置
 
 当前剩余的真正架构性工作：
 
--  R3 Artifact 强类型
 -  R4 删除 assistant-ui patch
 -  R5 Context Display / Model Profile / `cn`
 -  R6 依赖与 Elements 收敛

@@ -172,28 +172,26 @@ async def inspect_site_environment(
             "license": "CC BY 4.0",
         },
     ]
-    artifact = {
-        "site_environment": {
-            "version": 1,
-            "observed_at": business_now().isoformat(timespec="seconds"),
-            "coordinate_system": "WGS84",
-            "center_station": center,
-            "group_stations": map_stations,
-            "terrain": terrain,
-            "geology": geology,
-            "faults": {
-                "available": True,
-                "distance_km": None,
-                "note": "断层以 Macrostrat 构造线图层展示；当前公开接口不提供可靠的最近断层距离。",
-            },
-            "layer_sources": {
-                "geology_tiles": "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt",
-                "geology_source_layer": "units",
-                "fault_source_layer": "lines",
-            },
-            "sources": sources,
-            "limitations": [message for message in (terrain_error, geology_error) if message],
-        }
+    limitations = [message for message in (terrain_error, geology_error) if message]
+    observed_at = business_now().isoformat(timespec="seconds")
+    environment = {
+        "version": 1,
+        "observed_at": observed_at,
+        "coordinate_system": "WGS84",
+        "center_station": center,
+        "group_stations": map_stations,
+        "terrain": terrain,
+        "geology": geology,
+        "faults": {
+            "available": True,
+            "distance_km": None,
+            "note": "断层以 Macrostrat 构造线图层展示；当前公开接口不提供可靠的最近断层距离。",
+        },
+        "layer_sources": {
+            "geology_tiles": "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt",
+            "geology_source_layer": "units",
+            "fault_source_layer": "lines",
+        },
     }
     content = {
         "ok": True,
@@ -201,23 +199,27 @@ async def inspect_site_environment(
         "same_group_station_count": len(map_stations),
         "terrain": terrain,
         "geology": geology,
-        "faults": artifact["site_environment"]["faults"],
-        "limitations": artifact["site_environment"]["limitations"],
+        "faults": environment["faults"],
+        "limitations": limitations,
         "sources": sources,
     }
-    if content["limitations"]:
+    if limitations:
         return tool_error_result(
-            "场地环境资料不完整：" + "；".join(content["limitations"]),
+            "场地环境资料不完整：" + "；".join(limitations),
             tool_call_id=tool_call_id,
             tool_name="inspect_site_environment",
             kind="site_environment",
             facts=content,
-            artifact={**artifact, "data": content},
+            data=environment,
+            sources=sources,
+            limitations=limitations,
+            observed_at=observed_at,
         )
     return tool_result(
         content,
         kind="site_environment",
-        artifact=artifact,
+        display=environment,
         sources=sources,
-        limitations=content["limitations"],
+        limitations=limitations,
+        observed_at=observed_at,
     )

@@ -583,12 +583,14 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 "args": {"station_name_or_uuid": "ZJ-MS10"},
             })
         self.assertTrue(json.loads(message.content)["ok"])
-        environment = message.artifact["site_environment"]
+        environment = message.artifact["data"]
         self.assertEqual(environment["version"], 1)
         self.assertEqual(environment["coordinate_system"], "WGS84")
         self.assertEqual(environment["center_station"]["station_name"], "ZJ-MS10")
-        self.assertEqual(environment["terrain"], terrain)
-        self.assertEqual(environment["geology"], geology)
+        self.assertEqual(environment["terrain"]["dem_elevation_m"], terrain["dem_elevation_m"])
+        self.assertEqual(environment["terrain"]["slope_degrees"], terrain["slope_degrees"])
+        self.assertEqual(environment["geology"]["name"], geology["name"])
+        self.assertEqual(environment["geology"]["lithology"], geology["lithology"])
 
     async def test_invalid_title_is_reported_instead_of_fabricated(self):
         with self.assertRaises(ValueError):

@@ -1,27 +1,30 @@
 import React from 'react';
 import { CloudRain } from 'lucide-react';
-import type { ToolResultProps } from './types';
+import type { WeatherArtifactData } from '@/types/envelope';
 
-export const WeatherResultView: React.FC<ToolResultProps> = ({ data }) => {
+export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ data }) => {
   if (!data?.current || !data?.rain_summary) return null;
 
   const loc = data.location || {};
   const cur = data.current || {};
   const rain = data.rain_summary || {};
   const wind = data.wind_summary || {};
-  const hist = data.history?.daily || {};
-  const fc = data.forecast?.daily || {};
+  const hist = data.history?.daily;
+  const fc = data.forecast?.daily;
 
-  const histRain = new Map<string, number>();
-  (hist.time || []).forEach((d: string, i: number) =>
-    histRain.set(d, hist.precipitation_sum?.[i] ?? null)
+  const histRain = new Map<string, number | null>();
+  (hist?.time || []).forEach((d: string, i: number) =>
+    histRain.set(d, hist?.precipitation_sum?.[i] ?? null)
   );
-  const fcByDate = new Map<string, any>();
-  (fc.time || []).forEach((d: string, i: number) =>
+  const fcByDate = new Map<
+    string,
+    { rain?: number | null; prob?: number | null; wind?: number | null }
+  >();
+  (fc?.time || []).forEach((d: string, i: number) =>
     fcByDate.set(d, {
-      rain: fc.precipitation_sum?.[i],
-      prob: fc.precipitation_probability_max?.[i],
-      wind: fc.wind_speed_10m_max?.[i],
+      rain: fc?.precipitation_sum?.[i],
+      prob: fc?.precipitation_probability_max?.[i],
+      wind: fc?.wind_speed_10m_max?.[i],
     })
   );
   const dates = [...new Set([...histRain.keys(), ...fcByDate.keys()])].sort();

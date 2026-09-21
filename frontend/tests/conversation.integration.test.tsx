@@ -26,6 +26,50 @@ const ToolFallback: typeof GenericToolFallback = (props) => {
   return <Renderer {...props} />;
 };
 
+const station = (station_name: string, fields: Record<string, unknown> = {}) => ({
+  station_name,
+  coordinate_system: 'WGS84',
+  ...fields,
+});
+
+const stationListData = (stations: Array<Record<string, unknown>>) => ({
+  total: stations.length,
+  stations: stations.map((item) => station(String(item.station_name), item)),
+});
+
+const stationGroupData = (groups: Array<Record<string, unknown>>) => ({
+  total: groups.length,
+  groups,
+});
+
+const gnssData = (station_name: string, points: Array<Record<string, unknown>>) => ({
+  station_name,
+  begin_time: '2026-09-15 00:00:00',
+  end_time: '2026-09-20 00:00:00',
+  timezone: 'Asia/Shanghai',
+  total_points: points.length,
+  returned_points: points.length,
+  downsampled: false,
+  points,
+  summary: {
+    n: { count: points.length },
+    e: { count: points.length },
+    u: { count: points.length },
+    gaps: [],
+  },
+});
+
+const visionData = (fields: Record<string, unknown> = {}) => ({
+  station_name: '测试站',
+  begin_time: '2026-09-15 00:00:00',
+  end_time: '2026-09-16 00:00:00',
+  timezone: 'Asia/Shanghai',
+  total_points: 0,
+  images: [],
+  chart_points: [],
+  ...fields,
+});
+
 describe('会话关键路径集成回归', () => {
   it('优先展示标准 contentBlocks reasoning，不读取耗时字段', () => {
     const firstAI = new AIMessage({
@@ -56,14 +100,11 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'gnss_series',
           status: 'success',
-          data: {
-            station_name: '测试站',
-            points: [
+          data: gnssData('测试站', [
               { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
               { time: '2026-09-15 09:00:00', n: Number.NaN, e: Number.POSITIVE_INFINITY, u: '12.5' },
               { time: '2026-09-15 10:00:00', n: 0, e: '0', u: 0 },
-            ],
-          },
+            ]),
         }}
       />
     );
@@ -83,14 +124,17 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'vision',
           status: 'success',
-          data: { station_name: '测试站', observations: {}, total_points: 5 },
-          chart_points: [
+          data: visionData({
+            observations: {},
+            total_points: 5,
+            chart_points: [
             { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
             { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
-            { t: '2026-09-15 10:00:00', n: null, e: '', u: Number.NaN },
+            { t: '2026-09-15 10:00:00', n: null, e: null, u: null },
             { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
             { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
-          ],
+            ],
+          }),
         }}
       />
     );
@@ -110,15 +154,13 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'station_list',
           status: 'success',
-          data: {
-            stations: [
+          data: stationListData([
               { station_name: 'A', station_status: '正常', station_type: '基准站' },
               { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
               { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
               { station_name: 'D', station_status: '故障', station_type: '中继站' },
-              { station_name: 'E', station_status: 10 },
-            ],
-          },
+              { station_name: 'E', station_status: '其他' },
+            ]),
         }}
       />
     );
@@ -204,8 +246,9 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'vision',
           status: 'success',
-          data: { station_name: '测试站' },
-          images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+          data: visionData({
+            images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+          }),
         }}
       />
     );
@@ -393,7 +436,7 @@ it('合法 v1 artifact 到达后直接展示业务数据，不依赖 raw JSON', 
         version: 1,
         kind: 'station_list',
         status: 'success',
-        data: { stations: [{ station_name: '实时测点X', station_status: '正常' }] },
+        data: stationListData([{ station_name: '实时测点X', station_status: '正常' }]),
       }}
     />
   );
@@ -454,7 +497,7 @@ it('P0-2: ToolMessage.artifact 到达后自然呈现业务结果，两阶段数�
         version: 1,
         kind: 'station_list',
         status: 'success',
-        data: { stations: [{ station_name: '持久化确定点', station_status: '正常' }] },
+        data: stationListData([{ station_name: '持久化确定点', station_status: '正常' }]),
       }}
     />
   );
@@ -466,7 +509,7 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
     version: 1,
     kind: 'station_list',
     status: 'success',
-    data: { stations: [] },
+    data: stationListData([]),
   };
   expect(decodeToolArtifact('station_list', validEnvelope)).toMatchObject({
     version: 1,
@@ -488,6 +531,18 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
   expect(decodeToolArtifact('station_list', 'not an object')).toBeUndefined();
   expect(decodeToolArtifact('station_list', null)).toBeUndefined();
   expect(decodeToolArtifact('station_list', undefined)).toBeUndefined();
+
+  // 6. 已删除的顶层业务字段不得再被兼容读取
+  expect(
+    decodeToolArtifact('vision', {
+      version: 1,
+      kind: 'vision',
+      status: 'success',
+      data: { station_name: '旧协议' },
+      images: [{ name: 'raw_coordinates', png_base64: 'LEGACY' }],
+      chart_points: [],
+    }),
+  ).toBeUndefined();
 });
 
 it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {
@@ -510,7 +565,7 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
                 version: 1,
                 kind: 'station_list',
                 status: 'success',
-                data: { stations: [{ station_name: '测点A', station_status: '正常' }] },
+                data: stationListData([{ station_name: '测点A', station_status: '正常' }]),
               },
             },
           }));
@@ -525,7 +580,7 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
                 version: 1,
                 kind: 'station_list',
                 status: 'success',
-                data: { groups: [] },
+                data: stationGroupData([]),
               },
             },
           }));
@@ -540,7 +595,9 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
                 version: 1,
                 kind: 'gnss_series',
                 status: 'success',
-                data: { points: [{ time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 }] },
+                data: gnssData('GNSS', [
+                  { time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 },
+                ]),
               },
             },
           }));
@@ -747,10 +804,9 @@ it('ReasoningTrigger 与 ToolFallbackTrigger 排版对齐：思考去图标、�
         version: 1,
         kind: 'gnss_series',
         status: 'success',
-        data: {
-          station_name: '测试站-01',
-          points: [{ time: '2026-09-19 12:00:00', n: 1.0, e: 2.0, u: 3.0 }],
-        },
+        data: gnssData('测试站-01', [
+          { time: '2026-09-19 12:00:00', n: 1.0, e: 2.0, u: 3.0 },
+        ]),
       }}
     />
   );
@@ -776,10 +832,22 @@ it('所有普通工具（包括场地环境）默认折叠，仅 HITL / requires
         kind: 'site_environment',
         status: 'success',
         data: {
-          site_environment: {
-            station: { id: 's1', name: '监测点A', latitude: 30.1, longitude: 104.2 },
-            terrain: { elevation_m: 520 },
-            geology: { unit_name: '泥质灰岩' },
+          version: 1,
+          observed_at: '2026-09-21T12:00:00+08:00',
+          coordinate_system: 'WGS84',
+          center_station: station('监测点A', {
+            station_uuid: 's1',
+            latitude: 30.1,
+            longitude: 104.2,
+          }),
+          group_stations: [],
+          terrain: { dem_elevation_m: 520 },
+          geology: { name: '泥质灰岩' },
+          faults: { available: false, note: '未取得断层距离' },
+          layer_sources: {
+            geology_tiles: 'Macrostrat',
+            geology_source_layer: 'units',
+            fault_source_layer: 'lines',
           },
         },
       }}
