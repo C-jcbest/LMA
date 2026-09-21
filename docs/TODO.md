@@ -8,8 +8,11 @@
 >
 > - `docs/official-stack-refactor.md`
 > - `docs/重构 TODO.md`
+> - `docs/TODO_2026-09-15.md`
+> - `docs/TODO_2026-09-18.md`
+> - `docs/TODO_simplify.md`
 >
-> 后续重构以本文为唯一架构与 TODO 标准。旧文档仅保留审计历史，不再分别维护完成状态。
+> 后续重构以本文为唯一架构与 TODO 标准。旧文档已从活动树删除，仅保留在 Git 历史用于审计。
 >
 > 本轮允许破坏式重构，不要求兼容旧前端、旧 Tool UI 或旧消息展示结构。保留 LMA 核心监测能力与当前基本视觉风格，不为历史实现保留双轨兼容代码。
 
@@ -1504,15 +1507,15 @@ Context Ring
 
 ## R8 — 部署与文档清理
 
--  Compose 定位改成开发/小规模自托管
--  补 standalone Server 必要环境变量说明
--  增加 healthcheck
--  明确 Vite production static hosting
--  配置同源 Agent Server proxy
--  真正生产需求才引入官方 Helm/Kubernetes
--  更新 `project-status.md`
--  两份旧 TODO 标记 archived/superseded
--  本文成为唯一 TODO
+- [x] Compose 定位改成开发/小规模自托管
+- [x] 补 standalone Server 必要环境变量说明
+- [x] 增加 healthcheck
+- [x] 明确 Vite production static hosting
+- [x] 配置同源 Agent Server proxy
+- [x] 真正生产需求才引入官方 Helm/Kubernetes
+- [x] 更新 `project-status.md`
+- [x] 旧 TODO 从活动树删除，仅保留 Git 历史审计
+- [x] 本文成为唯一 TODO
 
 ------
 
@@ -1715,10 +1718,7 @@ generateSessionTitle
 -  R5 已采用 assistant-ui Context Display；用量只投影 provider usage 与 Model Profile，并完成 `cn`、Radix 直接依赖收敛
 -  R6 已复核 assistant-ui registry，保留 Streamdown 与 LMA 产品差异，删除未使用的直接依赖
 
-当前剩余的真正架构性工作：
-
-- [x] R7 Stop / DeepSeek / Recommendation 例外复核
--  R8 部署与文档清理
+本轮官方优先重构 R0-R8 已完成。后续新增事项只在本文追加，不再创建并行 TODO 文件。
 
 完成这些工作以后，LMA 的前后端结构应基本收敛为：
 
