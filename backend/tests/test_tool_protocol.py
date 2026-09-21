@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.messages.utils import convert_to_openai_messages
 from langchain_core.tools import tool
 from app.agent import graph, context, summarization, tools, vision, weather, site
-from app.agent.tool_protocol import tool_result
+from app.agent.tool_protocol import tool_error_result, tool_result
 from runtime_fixtures import ScriptedModel
 
 
@@ -36,6 +36,27 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["messages"][-1].content, "依据可用证据继续说明")
         return message, model
 
+    def test_injected_tool_call_id_is_not_exposed_to_model(self):
+        for agent_tool in (site.inspect_site_environment, vision.analyze_gnss_chart):
+            with self.subTest(tool=agent_tool.name):
+                schema = agent_tool.tool_call_schema.model_json_schema()
+                self.assertNotIn("tool_call_id", schema.get("properties", {}))
+                self.assertNotIn("tool_call_id", schema.get("required", []))
+
+    def test_partial_error_envelope_keeps_canonical_error_status(self):
+        message, artifact = tool_error_result(
+            "仅取得部分证据",
+            tool_call_id="call-partial",
+            tool_name="partial_tool",
+            kind="vision",
+            artifact={"version": 99, "kind": "wrong", "status": "success"},
+        )
+        self.assertEqual(message.status, "error")
+        self.assertIs(message.artifact, artifact)
+        self.assertEqual(artifact["version"], 1)
+        self.assertEqual(artifact["kind"], "vision")
+        self.assertEqual(artifact["status"], "error")
+
     async def test_station_not_found_is_error_and_model_can_continue(self):
         client = AsyncMock()
         client.__aenter__.return_value = client
@@ -45,8 +66,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 "station_name_or_uuid": "不存在的站点", "begin_time": "2026-09-01 00:00:00",
                 "end_time": "2026-09-02 00:00:00"})
         self.assertEqual(message.status, "error")
-        self.assertEqual(message.artifact["kind"], "gnss_series")
-        self.assertIn("未找到", message.artifact["data"]["message"])
+        self.assertIn("未找到", message.content)
+        self.assertIsNone(message.artifact)
         self.assertEqual(client.get_stations.await_count, 1)
         client.get_daily_data.assert_not_called()
 
@@ -67,7 +88,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 with self.subTest(tool=agent_tool.name, args=args):
                     message, _ = await self.run_tool(agent_tool, args)
                     self.assertEqual(message.status, "error")
-                    self.assertIn("参数", message.artifact["data"]["message"])
+                    self.assertIn("参数", message.content)
+                    self.assertIsNone(message.artifact)
                     self.assertNotIn("secret://", str(message))
             source.assert_not_called()
             fetch.assert_not_called()
@@ -109,7 +131,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             message, _ = await self.run_tool(unavailable, {})
         self.assertEqual(len(calls), 3)
         self.assertEqual(message.status, "error")
-        self.assertIn("暂不可用", message.artifact["data"]["message"])
+        self.assertIn("暂不可用", message.content)
+        self.assertIsNone(message.artifact)
         self.assertNotIn("TEST_PRIVATE", str(message))
 
     async def test_partial_site_evidence_keeps_map_and_known_facts(self):

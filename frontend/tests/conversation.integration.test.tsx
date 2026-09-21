@@ -150,6 +150,21 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
   });
 
+  it('官方 isError/result 在没有 artifact 时仍恢复工具错误终态', async () => {
+    render(
+      <ToolFallback
+        toolName="get_daily_gnss_data"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        result="未找到指定监测点，请确认站点。"
+        isError
+      />
+    );
+    expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('GNSS 数据获取失败'));
+    expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
+  });
+
   it('成功工具只从合法 v1 artifact.data 取业务展示', async () => {
     const { container } = render(
       <ToolFallback

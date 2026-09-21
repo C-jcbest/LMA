@@ -1393,9 +1393,9 @@ Context Ring
 ## R1 — 后端 Tool Middleware 收敛
 
 - [x] 复核官方 middleware 组合语义：`ToolErrorMiddleware` 必须包裹 `ToolRetryMiddleware`
-- [ ] 统一 `_on_tool_error`
-- [ ] 先迁移需要保留部分证据的错误结果，再删除 `LmaMiddleware.awrap_tool_call` 中重复 Tool 生命周期
-- [ ] ToolFailure/BeidouApiError 收敛
+- [x] 统一 `_on_tool_error`
+- [x] 先迁移需要保留部分证据的错误结果，再删除 `LmaMiddleware.awrap_tool_call` 中重复 Tool 生命周期
+- [x] ToolFailure/BeidouApiError 收敛
 - [x] 验证 retry 次数
 - [x] 验证错误脱敏
 - [x] backend tests 全绿
@@ -1711,7 +1711,6 @@ generateSessionTitle
 
 当前剩余的真正架构性工作：
 
--  R1 Tool Middleware 收敛
 -  R2 Toolkit + 删除 tools wire parser
 -  R3 Artifact 强类型
 -  R4 删除 assistant-ui patch

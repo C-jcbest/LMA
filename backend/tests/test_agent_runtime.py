@@ -11,6 +11,7 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agent import context, graph, summarization
+from app.beidou.client import BeidouApiError
 from runtime_fixtures import ScriptedModel, call
 
 
@@ -264,7 +265,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(interrupted_ai, first_input_messages)
 
     async def test_tool_error_middleware_catches_generic_tool_exception(self):
-        """测试通用异常被 ToolErrorMiddleware 捕获并由 LmaMiddleware 补充受控安全 envelope。"""
+        """测试通用异常只由 ToolErrorMiddleware 转换为受控错误消息。"""
         @tool
         def faulty_tool():
             """故障工具。"""
@@ -280,8 +281,35 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tool_messages), 1)
         self.assertEqual(tool_messages[0].status, "error")
         self.assertEqual(tool_messages[0].content, "工具执行失败，未取得可用数据，请说明这一限制。")
-        self.assertEqual(tool_messages[0].artifact["error"]["category"], "internal")
-        self.assertEqual(tool_messages[0].artifact["data"]["message"], "工具执行失败，未取得可用数据，请说明这一限制。")
+        self.assertIsNone(tool_messages[0].artifact)
+
+    async def test_platform_business_error_is_not_retried_or_exposed(self):
+        attempts = []
+
+        @tool
+        def rejected_tool():
+            """模拟监测平台业务拒绝。"""
+            attempts.append(1)
+            raise BeidouApiError("PRIVATE_CODE", "secret vendor response")
+
+        model = ScriptedModel(script=[
+            AIMessage(content="", tool_calls=[{
+                "id": "rejected_call", "name": "rejected_tool", "args": {},
+            }]),
+            AIMessage(content="说明限制"),
+        ])
+        with self.assertLogs(graph.logger, level="WARNING"):
+            result = await graph.create_lma_agent(
+                model, agent_tools=[rejected_tool], retry_delay=0,
+            ).ainvoke({"messages": [HumanMessage(content="触发业务拒绝")]})
+
+        message = next(m for m in result["messages"] if m.type == "tool")
+        self.assertEqual(attempts, [1])
+        self.assertEqual(message.status, "error")
+        self.assertIn("监测平台拒绝本次查询", message.content)
+        self.assertNotIn("PRIVATE_CODE", str(message))
+        self.assertNotIn("secret vendor response", str(message))
+        self.assertIsNone(message.artifact)
 
     async def test_parallel_tools_stream_mode_finish_independently(self):
         """测试生产链路：真实 stream_mode="tools" 下同批并行工具独立完成，tool-finished 携带 artifact。"""

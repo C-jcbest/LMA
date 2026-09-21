@@ -10,9 +10,10 @@ import logging
 from typing import Any
 
 import httpx
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
-from app.agent.tool_inputs import StationInput
-from app.agent.tool_protocol import ToolFailure, tool_result
+from app.agent.tool_inputs import SiteEnvironmentInput
+from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 
 from app.agent.tools import _build_client, _resolve_station, _station_to_dict
 from app.business_time import business_now
@@ -123,8 +124,11 @@ async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, A
         return None, "地质服务暂不可用，缺少地质证据"
 
 
-@tool(response_format="content_and_artifact", args_schema=StationInput)
-async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict[str, Any]]:
+@tool(response_format="content_and_artifact", args_schema=SiteEnvironmentInput)
+async def inspect_site_environment(
+    station_name_or_uuid: str,
+    tool_call_id: str,
+) -> tuple[str | ToolMessage, dict[str, Any]]:
     """查询监测点周边的场地环境背景。
 
     可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差）、
@@ -202,8 +206,10 @@ async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict
         "sources": sources,
     }
     if content["limitations"]:
-        raise ToolFailure(
+        return tool_error_result(
             "场地环境资料不完整：" + "；".join(content["limitations"]),
+            tool_call_id=tool_call_id,
+            tool_name="inspect_site_environment",
             kind="site_environment",
             facts=content,
             artifact={**artifact, "data": content},

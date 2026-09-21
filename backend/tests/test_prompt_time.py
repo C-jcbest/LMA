@@ -576,9 +576,14 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(site, "_fetch_terrain", AsyncMock(return_value=(terrain, None))),
             patch.object(site, "_fetch_geology", AsyncMock(return_value=(geology, None))),
         ):
-            content, artifact = await site.inspect_site_environment.coroutine("ZJ-MS10")
-        self.assertTrue(json.loads(content)["ok"])
-        environment = artifact["site_environment"]
+            message = await site.inspect_site_environment.ainvoke({
+                "type": "tool_call",
+                "id": "site-call",
+                "name": "inspect_site_environment",
+                "args": {"station_name_or_uuid": "ZJ-MS10"},
+            })
+        self.assertTrue(json.loads(message.content)["ok"])
+        environment = message.artifact["site_environment"]
         self.assertEqual(environment["version"], 1)
         self.assertEqual(environment["coordinate_system"], "WGS84")
         self.assertEqual(environment["center_station"]["station_name"], "ZJ-MS10")
@@ -614,7 +619,20 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             client.__aenter__.return_value = client
             with patch.object(module, "_build_client", return_value=client), patch.object(module, "_resolve_station", AsyncMock(return_value=SimpleNamespace(station_type=1))):
                 with self.assertRaisesRegex(ToolFailure, "基准站"):
-                    await tool.ainvoke({"station_name_or_uuid": "基准站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-14 00:00:00"})
+                    args = {
+                        "station_name_or_uuid": "基准站",
+                        "begin_time": "2026-09-01 00:00:00",
+                        "end_time": "2026-09-14 00:00:00",
+                    }
+                    if tool is vision.analyze_gnss_chart:
+                        await tool.ainvoke({
+                            "type": "tool_call",
+                            "id": "vision-call",
+                            "name": "analyze_gnss_chart",
+                            "args": args,
+                        })
+                    else:
+                        await tool.ainvoke(args)
             client.get_daily_data.assert_not_called()
 
     async def test_invalid_sampling_frequency_is_not_silently_replaced(self):

@@ -5,9 +5,7 @@ LMA middleware 维护展示元数据及推荐契约。
 官方 SummarizationMiddleware 管理历史；推荐退出主 Run 在 TODO 23 实施。
 """
 
-import json
 import logging
-import os
 from dataclasses import replace
 from functools import lru_cache
 
@@ -20,9 +18,8 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ToolCallLimitMiddleware,
 )
-from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.errors import GraphBubbleUp
 
 from pydantic import BaseModel, Field
 from app.beidou.client import BeidouApiError
@@ -86,10 +83,13 @@ def _sanitize_unanswered_tool_calls(messages: list[BaseMessage]) -> list[BaseMes
     return updates
 
 
-def _on_tool_error(exc: Exception, request) -> str | None:
-    """官方 ToolErrorMiddleware 回调：捕获通用工具异常并返回受控安全文案。"""
-    if isinstance(exc, (ToolFailure, BeidouApiError)):
-        return None
+def _on_tool_error(exc: Exception, request) -> str:
+    """官方 ToolErrorMiddleware 回调：所有最终异常统一转换为受控安全文案。"""
+    if isinstance(exc, ToolFailure):
+        return exc.content
+    if isinstance(exc, BeidouApiError):
+        logger.warning("monitoring platform rejected tool request", exc_info=True)
+        return "监测平台拒绝本次查询，未取得可用数据，请检查账号访问权限或查询条件。"
     logger.warning("tool execution failed: %s", exc, exc_info=True)
     if is_transient_error(exc):
         return "数据服务暂不可用，本次查询未取得可用数据，请稍后重试。"
@@ -169,46 +169,6 @@ class LmaMiddleware(AgentMiddleware):
 
     async def aafter_agent(self, state, runtime):
         return await generate_recommendations(state)
-
-    async def awrap_tool_call(self, request, handler):
-        try:
-            result = await handler(request)
-            if isinstance(result, ToolMessage) and result.status == "error" and not result.artifact:
-                # 官方 schema 校验错误与 ToolErrorMiddleware 产出的错误不含前端 artifact；为其统一补齐安全 envelope。
-                is_param = (result.content == VALIDATION_MESSAGE)
-                is_infra = ("暂不可用" in result.content)
-                category = "parameter" if is_param else ("infrastructure" if is_infra else "internal")
-                return result.model_copy(
-                    update={
-                        "artifact": {
-                            "data": {"message": result.content},
-                            "error": {"category": category},
-                        }
-                    }
-                )
-            return result
-        except ToolFailure as exc:
-            return ToolMessage(
-                content=exc.content,
-                artifact=exc.artifact,
-                tool_call_id=request.tool_call["id"],
-                name=request.tool_call["name"],
-                status="error",
-            )
-        except GraphBubbleUp:
-            raise
-        except BeidouApiError:
-            logger.warning("monitoring platform rejected tool request", exc_info=True)
-            message = "监测平台拒绝本次查询，未取得可用数据，请检查账号访问权限或查询条件。"
-            return ToolMessage(
-                content=message,
-                artifact={"data": {"message": message}, "error": {"category": "business"}},
-                tool_call_id=request.tool_call["id"],
-                name=request.tool_call["name"],
-                status="error",
-            )
-
-
 
 RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生成器。根据最近一轮对话（用户问题与助手回答），给出用户接下来最可能继续提出的 2~3 个后续问题。
 

@@ -661,19 +661,22 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
     ? getLiveToolArtifact(toolEvents, toolCallId)
     : undefined;
   const persistedArtifact = restProps.artifact;
+  const officialResult = restProps.result;
+  const officialIsError = restProps.isError === true;
   const rawArtifact =
     persistedArtifact !== undefined ? persistedArtifact : liveArtifact;
   const envelope = decodeToolArtifact(toolName, rawArtifact);
-  // ToolMessage.artifact 是业务结果事实源；即使上游 Message Part 在 hydrate 时
-  // 暂时保留 complete/running，error envelope 也必须恢复为错误终态。
+  // assistant-ui 的 isError/result 是普通错误事实源；artifact 仅补充部分证据错误。
   const effectiveStatus: ToolCallMessagePartStatus =
-    envelope?.status === "error" &&
+    (officialIsError || envelope?.status === "error") &&
     streamStatus.type !== "requires-action" &&
     !(streamStatus.type === "incomplete" && streamStatus.reason === "cancelled")
       ? {
           type: "incomplete",
           reason: "error",
-          error: envelope.error?.message,
+          error:
+            envelope?.error?.message ||
+            (typeof officialResult === "string" ? officialResult : undefined),
         }
       : streamStatus;
 

@@ -1,41 +1,57 @@
 """LangChain 工具内容、展示数据与受控业务异常。artifact 不属于保密通道。"""
 import json
 from typing import Any
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import ToolException
 
 
 class ToolFailure(ToolException):
-    """可公开的业务失败；只允许放入已审定的事实和展示数据。"""
-    def __init__(
-        self,
-        message: str,
-        *,
-        kind: str = "generic",
-        category: str = "business",
-        artifact: dict | None = None,
-        facts: dict | None = None,
-        retryable: bool = False,
-    ):
+    """不含部分证据的可公开业务失败，由 ToolErrorMiddleware 转为错误消息。"""
+
+    def __init__(self, message: str):
         super().__init__(message)
-        self.content = json.dumps({**facts, "message": message}, ensure_ascii=False) if facts is not None else message
-        self.category = category
-        base_artifact = dict(artifact or {})
-        base_data = dict(base_artifact.get("data", {}))
-        base_data["message"] = message
-        error_info = {
+        self.content = message
+
+
+def tool_error_result(
+    message: str,
+    *,
+    tool_call_id: str,
+    tool_name: str,
+    kind: str,
+    category: str = "business",
+    artifact: dict | None = None,
+    facts: dict | None = None,
+) -> tuple[ToolMessage, dict[str, Any]]:
+    """返回保留部分证据的官方错误 ToolMessage；仅用于工具已有可展示结果时。"""
+    content = (
+        json.dumps({**facts, "message": message}, ensure_ascii=False)
+        if facts is not None
+        else message
+    )
+    envelope = dict(artifact or {})
+    data = dict(envelope.get("data", {}))
+    data["message"] = message
+    envelope = {
+        **envelope,
+        "version": 1,
+        "kind": kind,
+        "status": "error",
+        "data": data,
+        "error": {
             "code": category,
             "category": category,
             "message": message,
-            "retryable": retryable,
-        }
-        self.artifact = {
-            "version": 1,
-            "kind": kind,
-            "status": "error",
-            **base_artifact,
-            "data": base_data,
-            "error": error_info,
-        }
+            "retryable": False,
+        },
+    }
+    return ToolMessage(
+        content=content,
+        artifact=envelope,
+        tool_call_id=tool_call_id,
+        name=tool_name,
+        status="error",
+    ), envelope
 
 
 def tool_result(

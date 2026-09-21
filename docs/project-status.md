@@ -7,8 +7,8 @@
 ### 后端
 
 - 主图 `backend/app/agent/graph.py:graph` 使用 LangChain `create_agent`，由 LangGraph Agent Server 管理 Thread、Run 与 Checkpoint。
-- 长上下文、模型/工具重试、调用限额和最终工具错误展示使用官方 Middleware；底层模型 SDK 不叠加重试。
-- 工具使用 Pydantic 参数与 `response_format="content_and_artifact"`；`content` 供模型判断，`artifact` 供客户端展示。
+- 长上下文、模型/工具重试、调用限额和最终工具错误转换使用官方 Middleware；`ToolErrorMiddleware` 在外层统一脱敏，`ToolRetryMiddleware` 在内层只重试瞬时异常，底层模型 SDK 不叠加重试。
+- 工具使用 Pydantic 参数与 `response_format="content_and_artifact"`；`content` 供模型判断，`artifact` 仅在成功或需要保留部分证据时供客户端展示。普通错误不伪造 artifact。
 - `system.md` 和 `vision.md` 分别是主业务与视觉策略的唯一编辑源；System Prompt 保持静态，当前业务时间通过 `get_current_time` 获取，时区统一为 `Asia/Shanghai`。
 - 会话标题由 assistant-ui Adapter 的 `generateTitle()` 调用独立 `session-title` 图生成并写入 `thread.metadata.name`；主图不生成标题。
 - 下一步建议当前仍在主 Run 的 `aafter_agent` 阶段生成，是否拆为独立 Run 以实测延迟为准。
@@ -28,6 +28,7 @@
 - 用户输入、外部资料、历史摘要、工具结果和模型输出都视为不可信数据。工具保持只读和最小权限，模型输出不得直接进入命令、URL、HTML 或其他副作用操作。
 - 工具异常、缺测、抽稀、坐标或数据源缺失必须显式说明。内部异常、请求 URL、堆栈和秘密只写后端日志，不进入消息或 artifact。
 - 仅明确的瞬时失败可以重试；参数、权限、业务拒绝、空数据、视觉格式错误和空观察不重试。模型与工具调用限额按每个 Run 统计逻辑调用。
+- 只有已经取得可展示证据的失败才由工具显式返回 `ToolMessage(status="error", artifact=...)`；其余业务、参数、平台与内部错误统一交给官方错误生命周期，原始供应商诊断只写日志。
 - Provider、Vendor 与 Protocol 解耦。主 Agent 按供应商能力选择 Responses 或 Chat Completions；标题、摘要、推荐和视觉复核独立配置思考行为。
 - 所有 `AIMessage` 纯文本通过 `BaseMessage.text` 读取；结构化输出使用官方 `with_structured_output` 和严格 schema。
 
