@@ -221,3 +221,72 @@ test('Tool error、空结果与 artifact 在刷新后仍由持久化 ToolMessage
     await client.threads.delete(emptyThreadId);
   }
 });
+
+test('展开和收起工具时消息列不发生横向位移', async ({ page }) => {
+  const threadId = await createThread('折叠内容布局稳定性');
+  try {
+    for (let index = 0; index < 8; index += 1) {
+      await seedThread(
+        threadId,
+        `填充滚动区域 ${index + 1}：保持消息列宽度稳定并验证折叠内容不会引起横向抖动。`,
+      );
+    }
+    await openThread(page, threadId);
+    await send(page, '查询空结果监测点的 GNSS 数据');
+
+    const viewport = page.locator('[data-slot="aui_thread-viewport"]');
+    await expect.poll(() =>
+      viewport.evaluate((element) => element.scrollHeight > element.clientHeight),
+    ).toBe(true);
+
+    const tool = page.getByRole('button', { name: /已获取 GNSS 监测数据/ });
+    await expect(tool).toBeVisible();
+    const messageColumn = page.locator('[data-slot="aui_message-group"]');
+    const x = async () => (await messageColumn.boundingBox())?.x;
+    const before = await x();
+
+    await tool.click();
+    await page.waitForTimeout(50);
+    expect(Math.abs((await x())! - before!)).toBeLessThan(0.5);
+    await page.waitForTimeout(200);
+    expect(Math.abs((await x())! - before!)).toBeLessThan(0.5);
+
+    await tool.click();
+    await page.waitForTimeout(50);
+    expect(Math.abs((await x())! - before!)).toBeLessThan(0.5);
+  } finally {
+    await client.threads.delete(threadId);
+  }
+});
+
+
+test('会话栏滚动加载下一页，整页耗尽后隐藏加载入口', async ({ page }) => {
+  // 隔离持久化的历史测试数据，只替换列表 HTTP 响应，运行真实 Runtime 与浏览器布局。
+  const rows = Array.from({ length: 40 }, (_, index) => ({
+    thread_id: `pagination-${index}`,
+    metadata: { graph_id: 'lma-agent', name: `滚动分页-${index}` },
+    created_at: '2026-09-21T00:00:00Z',
+    updated_at: '2026-09-21T00:00:00Z',
+    status: 'idle',
+  }));
+  const offsets: number[] = [];
+  await page.route('**/threads/search', async (route) => {
+    const { offset = 0, limit } = route.request().postDataJSON();
+    offsets.push(offset);
+    await route.fulfill({ json: rows.slice(offset, offset + limit) });
+  });
+  await page.setViewportSize({ width: 1280, height: 480 });
+  await page.goto('/');
+  const items = page.locator('[data-slot="aui_thread-list-item"]');
+  await expect(items).toHaveCount(20);
+  const viewport = page.locator('[data-slot="aui_thread-list-viewport"]');
+  await expect.poll(() => viewport.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  const newButton = page.getByRole('button', { name: '新建会话', exact: true });
+  const before = await newButton.boundingBox();
+  await viewport.hover();
+  await page.mouse.wheel(0, 2000);
+  await expect(items).toHaveCount(40);
+  await expect(page.getByRole('button', { name: /加载.*会话/ })).toHaveCount(0);
+  expect((await newButton.boundingBox())?.y).toBe(before?.y);
+  expect(offsets).toEqual([0, 20]);
+});

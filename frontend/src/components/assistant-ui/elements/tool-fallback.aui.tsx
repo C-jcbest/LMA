@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -11,7 +11,6 @@ import {
 import {
   toolApprovalAcceptsText,
   useAuiState,
-  useScrollLock,
   useToolCallElapsed,
   type ToolApprovalOption,
   type ToolCallMessagePart,
@@ -49,8 +48,6 @@ function ToolFallbackRoot({
   children,
   ...props
 }: ToolFallbackRootProps) {
-  const collapsibleRef = useRef<HTMLDivElement>(null);
-  const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
 
   const isControlled = controlledOpen !== undefined;
@@ -58,18 +55,16 @@ function ToolFallbackRoot({
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
-      lockScroll();
       if (!isControlled) {
         setUncontrolledOpen(open);
       }
       controlledOnOpenChange?.(open);
     },
-    [lockScroll, isControlled, controlledOnOpenChange],
+    [isControlled, controlledOnOpenChange],
   );
 
   return (
     <Collapsible
-      ref={collapsibleRef}
       data-slot="tool-fallback-root"
       open={isOpen}
       onOpenChange={handleOpenChange}

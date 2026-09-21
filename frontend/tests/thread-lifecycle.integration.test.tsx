@@ -52,7 +52,7 @@ describe('LangGraph Thread List Adapter (P3)', () => {
 
     expect(mockClient.threads.search).toHaveBeenCalledWith({
       metadata: { graph_id: 'lma-agent' },
-      limit: 20,
+      limit: 21,
       offset: 0,
       sortBy: 'updated_at',
       sortOrder: 'desc',
@@ -72,8 +72,17 @@ describe('LangGraph Thread List Adapter (P3)', () => {
     expect(result.nextCursor).toBeUndefined();
   });
 
-  it('list() 达到一页上限时返回 nextCursor 支持继续分页', async () => {
-    const mockThreads = Array.from({ length: 20 }, (_, i) => ({
+  it.each([0, 19, 20])('list() 末页有 %i 条时不再提供加载入口', async (count) => {
+    mockClient.threads.search.mockResolvedValue(Array.from({ length: count }, (_, i) => ({
+      thread_id: `last-${i}`, metadata: {},
+    })));
+    const result = await createLangGraphThreadListAdapter(mockClient).list({ after: '20' });
+    expect(result.threads).toHaveLength(count);
+    expect(result.nextCursor).toBeUndefined();
+  });
+
+  it('list() 存在下一条时返回 nextCursor 支持继续分页', async () => {
+    const mockThreads = Array.from({ length: 21 }, (_, i) => ({
       thread_id: `t-${i}`,
       metadata: { graph_id: 'lma-agent', name: `会话 ${i}` },
       created_at: '2026-09-18T10:00:00Z',

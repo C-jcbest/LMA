@@ -73,6 +73,20 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.get_stations.await_count, 1)
         client.get_daily_data.assert_not_called()
 
+    async def test_missing_group_filter_returns_successful_empty_station_list(self):
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.get_station_groups.return_value = []
+        with patch.object(tools, "_build_client", return_value=client):
+            message, _ = await self.run_tool(
+                tools.list_stations,
+                {"group_name": "不存在的分组"},
+            )
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["status"], "success")
+        self.assertEqual(message.artifact["data"]["stations"], [])
+        client.get_stations.assert_not_called()
+
     async def test_invalid_args_never_access_source(self):
         base = {"station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00",
                 "end_time": "2026-09-02 00:00:00"}
@@ -107,8 +121,37 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.status, "success")
         self.assertEqual(message.artifact["data"]["total_points"], 0)
         self.assertEqual(message.artifact["data"]["points"], [])
-        self.assertIn("没有 GNSS 数据", message.artifact["data"]["message"])
+        self.assertEqual(message.artifact["data"]["summary"]["n"]["count"], 0)
+        self.assertNotIn("message", message.artifact["data"])
         self.assertEqual(client.get_daily_data.await_count, 1)
+
+    async def test_empty_visual_data_returns_success_without_model_call(self):
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.get_daily_data.return_value = []
+        station = SimpleNamespace(
+            station_name="测试站",
+            station_type=3,
+            station_uuid="test",
+        )
+        with patch.object(vision, "_build_client", return_value=client), patch.object(
+            vision, "_resolve_station", AsyncMock(return_value=station)
+        ), patch.object(vision, "_get_vision_llm") as vision_model:
+            message, _ = await self.run_tool(
+                vision.analyze_gnss_chart,
+                {
+                    "station_name_or_uuid": "测试站",
+                    "begin_time": "2026-09-01 00:00:00",
+                    "end_time": "2026-09-02 00:00:00",
+                },
+            )
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["status"], "success")
+        self.assertEqual(message.artifact["data"]["total_points"], 0)
+        self.assertEqual(message.artifact["data"]["chart_points"], [])
+        self.assertEqual(message.artifact["data"]["images"], [])
+        self.assertNotIn("message", message.artifact["data"])
+        vision_model.assert_not_called()
 
     async def test_internal_error_is_logged_but_never_exposed(self):
         @tool
@@ -137,7 +180,7 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(message.artifact)
         self.assertNotIn("TEST_PRIVATE", str(message))
 
-    async def test_partial_site_evidence_keeps_map_and_known_facts(self):
+    async def test_empty_site_evidence_returns_standard_success(self):
         client = AsyncMock()
         client.__aenter__.return_value = client
         client.get_stations.return_value = []
@@ -145,12 +188,14 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
              patch.object(site, "_resolve_station", AsyncMock(return_value=SimpleNamespace(group_uuid="group"))), \
              patch.object(site, "_station_to_dict", return_value={"station_name": "测试站", "latitude": 30, "longitude": 120}), \
              patch.object(site, "_fetch_terrain", AsyncMock(return_value=({"slope_degrees": 12}, None))), \
-             patch.object(site, "_fetch_geology", AsyncMock(return_value=(None, "该位置未获得可用地质单元"))):
+             patch.object(site, "_fetch_geology", AsyncMock(return_value=(None, None))):
             message, _ = await self.run_tool(site.inspect_site_environment, {"station_name_or_uuid": "测试站"})
-        self.assertEqual(message.status, "error")
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["status"], "success")
         self.assertEqual(message.artifact["data"]["terrain"]["slope_degrees"], 12)
-        self.assertIn("资料不完整", message.artifact["error"]["message"])
-        self.assertIn("slope_degrees", message.content)
+        self.assertIsNone(message.artifact["data"].get("geology"))
+        self.assertNotIn("error", message.artifact)
+        self.assertEqual(message.artifact["limitations"], [])
 
     async def test_weather_forecast_days_zero_is_valid(self):
         fetch = AsyncMock(side_effect=[
@@ -163,6 +208,21 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             })
         self.assertEqual(message.status, "success")
         self.assertEqual(message.artifact["data"]["query"]["forecast_days"], 0)
+
+    async def test_empty_weather_payload_returns_success(self):
+        with patch.object(weather, "_fetch_json", AsyncMock(return_value={})):
+            message, _ = await self.run_tool(
+                weather.query_weather,
+                {"latitude": 30, "longitude": 120},
+            )
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["status"], "success")
+        self.assertIsNone(message.artifact["data"].get("current"))
+        self.assertIsNone(message.artifact["data"]["rain_summary"].get("history_total_precipitation"))
+        self.assertIsNone(message.artifact["data"]["rain_summary"].get("forecast_total_precipitation"))
+        self.assertEqual(message.artifact["data"]["history"]["daily"]["time"], [])
+        self.assertEqual(message.artifact["data"]["forecast"]["daily"]["time"], [])
+        self.assertNotIn("message", message.artifact["data"])
 
     async def test_site_evidence_isolates_external_network_failures(self):
         client = AsyncMock()
@@ -256,6 +316,67 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(bound_structured.ainvoke.await_count, 1)
                 recheck.assert_not_called()
                 self.assertEqual(len(message.artifact["data"]["chart_points"]), 5)
+
+    async def test_empty_vision_observation_returns_standard_success(self):
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.get_daily_data.return_value = [
+            SimpleNamespace(
+                data_time=f"2026-09-01 0{i}:00:00",
+                n="1",
+                e="2",
+                u="3",
+            )
+            for i in range(5)
+        ]
+        station = SimpleNamespace(
+            station_type=3,
+            station_uuid="test",
+            station_name="测试站",
+        )
+        structured_result = {
+            "raw": AIMessage(content="{}"),
+            "parsed": vision.VisionObservations(),
+            "parsing_error": None,
+        }
+        bound_structured = SimpleNamespace(
+            ainvoke=AsyncMock(return_value=structured_result)
+        )
+        model = SimpleNamespace(
+            with_structured_output=MagicMock(return_value=bound_structured)
+        )
+        settings = SimpleNamespace(
+            vision_base_url="https://test.invalid",
+            vision_api_key="INVALID",
+            vision_model="test",
+            vision_max_candidates=1,
+            vision_recheck_pad_hours=2,
+        )
+        with patch.object(vision, "_build_client", return_value=client), patch.object(
+            vision, "_resolve_station", AsyncMock(return_value=station)
+        ), patch.object(vision, "_resolve_baseline", return_value=None), patch.object(
+            vision,
+            "_render_all_charts",
+            return_value=[{"name": "cumulative_displacement", "png_base64": "TEST"}],
+        ), patch.object(vision, "get_settings", return_value=settings), patch.object(
+            vision, "_get_vision_llm", return_value=model
+        ), patch.object(
+            vision, "_recheck_candidates", new_callable=AsyncMock
+        ) as recheck:
+            message, _ = await self.run_tool(
+                vision.analyze_gnss_chart,
+                {
+                    "station_name_or_uuid": "测试站",
+                    "begin_time": "2026-09-01 00:00:00",
+                    "end_time": "2026-09-02 00:00:00",
+                },
+            )
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["status"], "success")
+        self.assertNotIn("error", message.artifact)
+        self.assertEqual(message.artifact["data"]["observations"]["candidates"], [])
+        self.assertNotIn("message", message.artifact["data"])
+        recheck.assert_awaited_once()
 
 
     async def test_get_current_time_success_in_agent_run(self):

@@ -94,7 +94,7 @@ async def _fetch_terrain(latitude: float, longitude: float) -> tuple[dict[str, A
             },
         )
         metrics = _terrain_metrics(payload.get("elevation", []), index)
-        return metrics, None if metrics else "地形服务返回的数据不完整"
+        return metrics, None
     except (httpx.HTTPError, ValueError, TypeError) as exc:
         logging.getLogger(__name__).warning("site evidence request failed", exc_info=True)
         return None, "地形服务暂不可用，缺少地形证据"
@@ -106,7 +106,7 @@ async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, A
         success = payload.get("success") if isinstance(payload.get("success"), dict) else {}
         units = success.get("data") if isinstance(success.get("data"), list) else []
         if not units:
-            return None, "该位置未获得可用地质单元"
+            return None, None
         unit = units[0] if isinstance(units[0], dict) else {}
         source_id = str(unit.get("source_id", ""))
         refs = success.get("refs") if isinstance(success.get("refs"), dict) else {}

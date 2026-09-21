@@ -193,15 +193,6 @@ async def list_station_groups() -> tuple[str, dict]:
     """
     async with _build_client() as client:
         groups = await client.get_station_groups()
-    if not groups:
-        return tool_result(
-            {
-                "total": 0,
-                "groups": [],
-                "message": "当前账号没有可访问的监测点分组。",
-            },
-            kind="station_list",
-        )
     return tool_result(
         {
             "total": len(groups),
@@ -236,29 +227,21 @@ async def list_stations(
     """
     async with _build_client() as client:
         group_uuid = None
+        stations = []
         if group_name:
             groups = await client.get_station_groups()
             matched = [g for g in groups if group_name in g.group_name]
-            if not matched:
-                raise ToolFailure(f"未找到名称包含“{group_name}”的监测点分组")
             if len(matched) > 1:
                 raise ToolFailure(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(g.group_name for g in matched[:20]))
-            group_uuid = matched[0].group_uuid
+            if matched:
+                group_uuid = matched[0].group_uuid
 
-        stations = await client.get_stations(
-            group_uuid=group_uuid,
-            station_name=station_name,
-            station_status=station_status,
-        )
-    if not stations:
-        return tool_result(
-            {
-                "total": 0,
-                "stations": [],
-                "message": "未找到符合筛选条件的监测点。",
-            },
-            kind="station_list",
-        )
+        if not group_name or group_uuid is not None:
+            stations = await client.get_stations(
+                group_uuid=group_uuid,
+                station_name=station_name,
+                station_status=station_status,
+            )
     return tool_result(
         {
             "total": len(stations),
@@ -340,27 +323,6 @@ async def get_daily_gnss_data(
             sample_times=normalized_sample_times,
         )
 
-    if not points:
-        return tool_result(
-            {
-                "station_name": getattr(station, "station_name", station_name_or_uuid),
-                "begin_time": begin_time,
-                "end_time": end_time,
-                "timezone": BUSINESS_TIMEZONE,
-                "total_points": 0,
-                "returned_points": 0,
-                "downsampled": False,
-                "points": [],
-                "summary": {
-                    "n": {"count": 0},
-                    "e": {"count": 0},
-                    "u": {"count": 0},
-                    "gaps": [],
-                },
-                "message": "查询时间范围内没有 GNSS 数据，不能据此判断形变。",
-            },
-            kind="gnss_series",
-        )
     total_points = len(points)
 
     # 固定时刻模式：按天抽稀（保留全部指定时刻，仅减少参与对比的天数）

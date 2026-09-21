@@ -55,7 +55,6 @@ class StationListArtifactData(ArtifactModel):
     total: int
     groups: list[StationGroupArtifact] | None = None
     stations: list[StationArtifact] | None = None
-    message: str | None = None
 
     @model_validator(mode="after")
     def require_one_collection(self):
@@ -116,7 +115,6 @@ class GnssArtifactData(ArtifactModel):
     points: list[GnssPointArtifact]
     summary: GnssSummaryArtifact
     sampling: GnssSamplingArtifact | None = None
-    message: str | None = None
 
 
 class WeatherLocationArtifact(ArtifactModel):
@@ -138,7 +136,7 @@ class WeatherCurrentArtifact(ArtifactModel):
     temperature_2m: float | None = None
     apparent_temperature: float | None = None
     relative_humidity_2m: float | None = None
-    condition: str
+    condition: str | None = None
     precipitation: float | None = None
     wind_speed_10m: float | None = None
     wind_gusts_10m: float | None = None
@@ -162,9 +160,9 @@ class DailyMaximumArtifact(ArtifactModel):
 class RainSummaryArtifact(ArtifactModel):
     recent_24h_precipitation: float | None = None
     recent_24h_window: WeatherWindowArtifact
-    history_total_precipitation: float
+    history_total_precipitation: float | None = None
     history_max_daily_precipitation: DailyMaximumArtifact | None = None
-    forecast_total_precipitation: float
+    forecast_total_precipitation: float | None = None
     forecast_max_daily_precipitation: DailyMaximumArtifact | None = None
     forecast_max_precipitation_probability: float | None = None
 
@@ -207,7 +205,6 @@ class WeatherArtifactData(ArtifactModel):
     ok: bool
     location: WeatherLocationArtifact
     query: WeatherQueryArtifact
-    message: str | None = None
     units: WeatherUnitsArtifact | None = None
     current: WeatherCurrentArtifact | None = None
     rain_summary: RainSummaryArtifact | None = None

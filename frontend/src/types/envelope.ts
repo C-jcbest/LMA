@@ -56,7 +56,6 @@ export interface StationListArtifactData {
   total: number;
   groups?: StationGroupArtifact[] | null;
   stations?: StationArtifact[] | null;
-  message?: string | null;
 }
 
 export interface GnssPointArtifact {
@@ -105,7 +104,6 @@ export interface GnssArtifactData {
     points_limit: number;
     note?: string | null;
   } | null;
-  message?: string | null;
 }
 
 export interface WeatherDailyArtifact {
@@ -133,7 +131,6 @@ export interface WeatherArtifactData {
     history_end_date: string;
     forecast_days: number;
   };
-  message?: string | null;
   units?: {
     temperature: 'celsius';
     wind_speed: 'km/h';
@@ -144,7 +141,7 @@ export interface WeatherArtifactData {
     temperature_2m?: number | null;
     apparent_temperature?: number | null;
     relative_humidity_2m?: number | null;
-    condition: string;
+    condition?: string | null;
     precipitation?: number | null;
     wind_speed_10m?: number | null;
     wind_gusts_10m?: number | null;
@@ -160,9 +157,9 @@ export interface WeatherArtifactData {
       precipitation?: number | null;
       note: string;
     };
-    history_total_precipitation: number;
+    history_total_precipitation?: number | null;
     history_max_daily_precipitation?: { date: string; value: number } | null;
-    forecast_total_precipitation: number;
+    forecast_total_precipitation?: number | null;
     forecast_max_daily_precipitation?: { date: string; value: number } | null;
     forecast_max_precipitation_probability?: number | null;
   } | null;

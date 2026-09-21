@@ -1,9 +1,13 @@
 import React from 'react';
 import type { StationListArtifactData } from '@/types/envelope';
+import { EmptyResultView } from './EmptyResultView';
 
 export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({ data }) => {
   // 1. 监测分组表格（展示全部数据，无截断）
   if (data?.groups && Array.isArray(data.groups)) {
+    if (data.groups.length === 0) {
+      return <EmptyResultView>暂无监测点分组</EmptyResultView>;
+    }
     return (
       <div className="space-y-1">
         <div className="text-[11px] text-neutral-400 px-0.5">
@@ -39,6 +43,9 @@ export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({
 
   // 2. 监测点列表表格（展示全部数据，支持纵向滚动）
   if (data?.stations && Array.isArray(data.stations)) {
+    if (data.stations.length === 0) {
+      return <EmptyResultView>暂无符合条件的监测点</EmptyResultView>;
+    }
     const statusStyles: Record<string, { dot: string; text: string }> = {
       正常: { dot: 'bg-emerald-500', text: '正常' },
       离线: { dot: 'bg-neutral-400', text: '离线' },

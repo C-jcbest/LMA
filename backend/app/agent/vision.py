@@ -369,16 +369,6 @@ def _validate_observations(
         valid.candidates.append(candidate)
     return valid
 
-
-
-def _is_empty_observation(obs: VisionObservations) -> bool:
-    """判断视觉模型是否实际看到了图：四类观察全部为空，
-    通常意味着模型声称“未接收到图像”或完全未处理图片。"""
-    return not (
-        obs.trends or obs.turning_points or obs.readings or obs.candidates
-    )
-
-
 def _axis_detail(pairs: list[tuple[str, float | None]]) -> dict:
     """带极值时刻的单方向数值摘要：首末值、变化量、极值及极值出现时刻。
     极值时刻用于发现落在定位区间边缘之外的异常点（视觉定位时间略偏时）。"""
@@ -619,6 +609,26 @@ async def analyze_gnss_chart(
             end_time=end_time,
         )
 
+        base_result = {
+            "station_name": station.station_name,
+            "begin_time": begin_time,
+            "end_time": end_time,
+            "timezone": BUSINESS_TIMEZONE,
+            "total_points": len(points),
+        }
+        if not points:
+            return tool_result(
+                {"ok": True, **base_result, "observations": None},
+                kind="vision",
+                display={
+                    **base_result,
+                    "ok": True,
+                    "images": [],
+                    "chart_points": [],
+                    "observations": None,
+                },
+            )
+
         if len(points) < _MIN_POINTS:
             raise ToolFailure(f"该时段数据点过少（{len(points)} 条），不足以绘图复核")
 
@@ -641,14 +651,6 @@ async def analyze_gnss_chart(
         baseline_desc = (
             "相对监测点初始坐标" if baseline is not None else "相对数据首点（站点未登记初始坐标）"
         )
-        base_result = {
-            "station_name": station.station_name,
-            "begin_time": begin_time,
-            "end_time": end_time,
-            "timezone": BUSINESS_TIMEZONE,
-            "total_points": len(points),
-        }
-
         # 图片始终渲染（前端展示用），视觉模型未配置时仅跳过识别。
         # 渲染必须放入工作线程：matplotlib 首次 import 会同步探测配置目录
         # （os.getcwd/os.path.realpath），在 langgraph dev 的 blockbuster 检测下
@@ -738,14 +740,6 @@ async def analyze_gnss_chart(
             )
 
         validated = _validate_observations(parsed, time_start, time_end)
-        if _is_empty_observation(validated):
-            return tool_error_result(
-                "视觉模型未返回有效观察，图表可供人工查看。",
-                tool_call_id=tool_call_id,
-                tool_name="analyze_gnss_chart",
-                kind="vision",
-                data=artifact_data,
-            )
         if len(validated.candidates) > settings.vision_max_candidates:
             return tool_error_result(
                 "视觉候选数量超过本次复核预算，尚未进行数值确认；请缩小查询时间范围。",

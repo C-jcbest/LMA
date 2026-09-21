@@ -1,6 +1,7 @@
 import React from 'react';
 import type { ChartPointArtifact, VisionArtifactData } from '@/types/envelope';
 import { toFiniteGnssNumber } from './gnssUtils';
+import { EmptyResultView } from './EmptyResultView';
 
 const CHART_TITLES: Record<string, string> = {
   raw_coordinates: '原始坐标时序（N/E/U）',
@@ -40,7 +41,9 @@ const buildPolyline = (
 export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data }) => {
   const visibleImages = data.images.filter((image) => CHART_TITLES[image.name]);
   const chartPoints = data.chart_points;
-  if (chartPoints.length === 0 && visibleImages.length === 0) return null;
+  if (chartPoints.length === 0 && visibleImages.length === 0) {
+    return <EmptyResultView>该时间范围内暂无可供复核的 GNSS 数据</EmptyResultView>;
+  }
 
   const obs = data.observations || {};
   const candidates = obs.candidates || [];
@@ -59,7 +62,6 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
             : ` 展示 ${chartPoints.length} 点`}
         </span>
       </div>
-
       {/* 后端渲染的分析图 PNG（原始时序 / 累计位移 / 合成位移） */}
       {visibleImages.length > 0 && (
         <div className="space-y-1.5">

@@ -1,16 +1,27 @@
 import React from 'react';
 import { CloudRain } from 'lucide-react';
 import type { WeatherArtifactData } from '@/types/envelope';
+import { EmptyResultView } from './EmptyResultView';
 
 export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ data }) => {
-  if (!data?.current || !data?.rain_summary) return null;
-
   const loc = data.location || {};
   const cur = data.current || {};
-  const rain = data.rain_summary || {};
+  const rain = data.rain_summary;
   const wind = data.wind_summary || {};
   const hist = data.history?.daily;
   const fc = data.forecast?.daily;
+  const hasWeatherData = Boolean(
+    data.current ||
+      hist?.time?.length ||
+      fc?.time?.length ||
+      rain?.recent_24h_window?.available_hours ||
+      rain?.history_total_precipitation != null ||
+      rain?.forecast_total_precipitation != null ||
+      Object.values(wind).some((value) => value != null),
+  );
+  if (!hasWeatherData) {
+    return <EmptyResultView>该位置和时间范围内暂无天气数据</EmptyResultView>;
+  }
 
   const histRain = new Map<string, number | null>();
   (hist?.time || []).forEach((d: string, i: number) =>
@@ -33,36 +44,36 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
     {
       label: '最近 24 个完整小时降雨',
       value:
-        rain.recent_24h_precipitation != null
+        rain?.recent_24h_precipitation != null
           ? `${rain.recent_24h_precipitation} mm`
-          : rain.recent_24h_window
+          : rain?.recent_24h_window
           ? `数据不足（${rain.recent_24h_window.available_hours}/24 小时）`
           : '-',
     },
     {
       label: `历史合计降雨 (${data.query?.history_start_date || ''} ~ ${data.query?.history_end_date || ''})`,
-      value: rain.history_total_precipitation != null ? `${rain.history_total_precipitation} mm` : '-',
+      value: rain?.history_total_precipitation != null ? `${rain.history_total_precipitation} mm` : '-',
     },
     {
       label: '历史最大日降雨',
-      value: rain.history_max_daily_precipitation
+      value: rain?.history_max_daily_precipitation
         ? `${rain.history_max_daily_precipitation.date}: ${rain.history_max_daily_precipitation.value} mm`
         : '-',
     },
     {
       label: '预报合计降雨',
-      value: rain.forecast_total_precipitation != null ? `${rain.forecast_total_precipitation} mm` : '-',
+      value: rain?.forecast_total_precipitation != null ? `${rain.forecast_total_precipitation} mm` : '-',
     },
     {
       label: '预报最大日降雨',
-      value: rain.forecast_max_daily_precipitation
+      value: rain?.forecast_max_daily_precipitation
         ? `${rain.forecast_max_daily_precipitation.date}: ${rain.forecast_max_daily_precipitation.value} mm`
         : '-',
     },
     {
       label: '预报最大降水概率',
       value:
-        rain.forecast_max_precipitation_probability != null
+        rain?.forecast_max_precipitation_probability != null
           ? `${rain.forecast_max_precipitation_probability}%`
           : '-',
     },
@@ -96,7 +107,7 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
         ({loc.latitude}, {loc.longitude})
         {(data.query?.timezone || loc.timezone) && ` · 时区：${data.query?.timezone || loc.timezone}`}
       </div>
-      {rain.recent_24h_window && (
+      {rain?.recent_24h_window && (
         <div className="text-[11px] text-neutral-400 px-0.5">
           降雨统计窗口：{rain.recent_24h_window.start_time} 至 {rain.recent_24h_window.end_time}
           （天气服务小时数据）

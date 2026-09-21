@@ -1,10 +1,14 @@
 import React from 'react';
 import type { GnssArtifactData } from '@/types/envelope';
 import { formatGnssValue } from './gnssUtils';
+import { EmptyResultView } from './EmptyResultView';
 
 export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) => {
   if (!data?.points || !Array.isArray(data.points)) return null;
   const allPoints = data.points;
+  if (allPoints.length === 0) {
+    return <EmptyResultView>该时间范围内暂无 GNSS 数据</EmptyResultView>;
+  }
 
   return (
     <div className="space-y-1">

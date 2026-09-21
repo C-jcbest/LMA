@@ -103,8 +103,9 @@ def _series(payload: dict, group: str, field: str) -> list:
     return values if isinstance(values, list) else []
 
 
-def _sum(values: list) -> float:
-    return round(sum(v for v in values if isinstance(v, (int, float))), 3)
+def _sum(values: list) -> float | None:
+    numeric = [v for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return round(sum(numeric), 3) if numeric else None
 
 
 def _max(values: list):
@@ -245,26 +246,6 @@ async def query_weather(
     except (httpx.TimeoutException, httpx.RequestError):
         raise
 
-    if not forecast.get("current") and not _series(forecast, "daily", "time") and not _series(history, "daily", "time"):
-        return tool_result(
-            {
-                "ok": True,
-                "location": {
-                    "station_name": station_name,
-                    "latitude": round(lat, 4),
-                    "longitude": round(lon, 4),
-                    "timezone": forecast.get("timezone", BUSINESS_TIMEZONE),
-                },
-                "query": {
-                    "timezone": BUSINESS_TIMEZONE,
-                    "history_start_date": history_start.isoformat(),
-                    "history_end_date": history_end.isoformat(),
-                    "forecast_days": forecast_days,
-                },
-                "message": "天气数据源未返回该位置和时间范围的可用数据。",
-            },
-            kind="weather",
-        )
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
     recent_24h = _recent_precipitation(forecast, now)
@@ -290,11 +271,11 @@ async def query_weather(
                 "temperature_2m": current.get("temperature_2m"),
                 "apparent_temperature": current.get("apparent_temperature"),
                 "relative_humidity_2m": current.get("relative_humidity_2m"),
-                "condition": _WMO_CODES.get(weather_code, f"weather_code={weather_code}"),
+                "condition": _WMO_CODES.get(weather_code, f"weather_code={weather_code}") if weather_code is not None else None,
                 "precipitation": current.get("precipitation"),
                 "wind_speed_10m": current.get("wind_speed_10m"),
                 "wind_gusts_10m": current.get("wind_gusts_10m"),
-            },
+            } if current else None,
             "rain_summary": {
                 "recent_24h_precipitation": recent_24h["precipitation"],
                 "recent_24h_window": recent_24h,

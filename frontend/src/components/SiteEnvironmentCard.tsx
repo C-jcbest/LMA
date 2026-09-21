@@ -370,19 +370,31 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
             <Mountain className="h-3.5 w-3.5" />地形
           </div>
-          <div className="mt-1.5 text-xs text-stone-800">
-            高程 {terrain?.dem_elevation_m ?? '—'} m · 坡度 {terrain?.slope_degrees ?? '—'}°
-          </div>
-          <div className="mt-1 text-[10px] text-stone-500">
-            坡向 {terrain?.aspect || '—'} · 500 m 起伏 {terrain?.relief_500m_m ?? '—'} m
-          </div>
+          {terrain ? (
+            <>
+              <div className="mt-1.5 text-xs text-stone-800">
+                高程 {terrain.dem_elevation_m ?? '—'} m · 坡度 {terrain.slope_degrees ?? '—'}°
+              </div>
+              <div className="mt-1 text-[10px] text-stone-500">
+                坡向 {terrain.aspect || '—'} · 500 m 起伏 {terrain.relief_500m_m ?? '—'} m
+              </div>
+            </>
+          ) : (
+            <div className="mt-1.5 text-xs text-stone-500">暂无地形数据</div>
+          )}
         </div>
         <div className="bg-[#faf8f1] p-3">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
             <Layers3 className="h-3.5 w-3.5" />地质
           </div>
-          <div className="mt-1.5 text-xs text-stone-800">{geology?.name || '公开图层未返回地层名称'}</div>
-          <div className="mt-1 text-[10px] text-stone-500">{geology?.lithology || geology?.age || '岩性/年代暂无数据'}</div>
+          {geology ? (
+            <>
+              <div className="mt-1.5 text-xs text-stone-800">{geology.name || '暂无地层名称'}</div>
+              <div className="mt-1 text-[10px] text-stone-500">{geology.lithology || geology.age || '暂无岩性或年代数据'}</div>
+            </>
+          ) : (
+            <div className="mt-1.5 text-xs text-stone-500">暂无地质数据</div>
+          )}
         </div>
         <div className="bg-[#faf8f1] p-3">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">

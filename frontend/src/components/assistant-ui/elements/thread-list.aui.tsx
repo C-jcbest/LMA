@@ -41,16 +41,55 @@ export const ThreadList: FC = () => {
       {hasThreads && (
         <ThreadListSearch value={search} onValueChange={setSearch} />
       )}
-      <ThreadListItems searchQuery={hasThreads ? search : ""} />
-      <ThreadListPrimitive.LoadMore asChild>
-        <Button
-          variant="ghost"
-          className="w-full text-xs text-neutral-500 hover:text-neutral-900 mt-1 cursor-pointer"
-        >
-          加载更多
-        </Button>
-      </ThreadListPrimitive.LoadMore>
+      <div
+        data-slot="aui_thread-list-viewport"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+      >
+        <ThreadListItems searchQuery={hasThreads ? search : ""} />
+        <ThreadListPagination autoLoad={!search.trim()} />
+      </div>
     </ThreadListRoot>
+  );
+};
+
+/** 只观察列表底部；分页游标、去重和并发保护仍由官方 Runtime 管理。 */
+const ThreadListPagination: FC<{ autoLoad: boolean }> = ({ autoLoad }) => {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const hasMore = useAuiState((s) => s.threads.hasMore);
+  const isLoading = useAuiState((s) => s.threads.isLoading);
+  const isLoadingMore = useAuiState((s) => s.threads.isLoadingMore);
+  const loadedCount = useAuiState((s) => s.threads.threadItems.length);
+
+  useEffect(() => {
+    const button = buttonRef.current;
+    if (!autoLoad || !hasMore || isLoading || !button) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting && !button.disabled) {
+          // 每批新增条目后才重新观察，失败时不自动循环重试。
+          observer.disconnect();
+          button.click();
+        }
+      },
+      { root: button.parentElement, rootMargin: "0px 0px 120px 0px" },
+    );
+    observer.observe(button);
+    return () => observer.disconnect();
+  }, [autoLoad, hasMore, isLoading, loadedCount]);
+
+  if (isLoading || !hasMore) return null;
+  return (
+    <ThreadListPrimitive.LoadMore asChild>
+      <Button
+        ref={buttonRef}
+        variant="ghost"
+        className="mt-1 w-full cursor-pointer text-xs text-neutral-500 hover:text-neutral-900"
+        aria-busy={isLoadingMore}
+      >
+        {isLoadingMore && <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />}
+        {isLoadingMore ? "正在加载会话…" : "加载更多会话"}
+      </Button>
+    </ThreadListPrimitive.LoadMore>
   );
 };
 
@@ -62,7 +101,7 @@ export const ThreadListSearch = forwardRef<
   }
 >(({ className, value, onValueChange, ...props }, ref) => {
   return (
-    <div data-slot="aui_thread-list-search" className="relative px-0.5 py-1">
+    <div data-slot="aui_thread-list-search" className="relative shrink-0 px-0.5 py-1">
       <SearchIcon
         data-slot="aui_thread-list-search-icon"
         className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2"
@@ -73,8 +112,11 @@ export const ThreadListSearch = forwardRef<
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
         aria-label="搜索会话"
-        placeholder="搜索会话"
-        className={cn("h-8 ps-8 text-sm", className)}
+        placeholder="搜索已加载会话"
+        className={cn(
+          "h-8 border-transparent bg-transparent ps-8 text-sm shadow-none hover:bg-white/70 focus-visible:bg-white",
+          className,
+        )}
         {...props}
       />
     </div>
@@ -89,7 +131,7 @@ export const ThreadListRoot: FC<
   return (
     <ThreadListPrimitive.Root
       data-slot="aui_thread-list-root"
-      className={cn("flex flex-col gap-0.5", className)}
+      className={cn("flex h-full min-h-0 flex-col gap-0.5", className)}
       {...props}
     />
   );
@@ -104,10 +146,10 @@ export const ThreadListItems: FC<
       className={cn("flex flex-col gap-0.5", className)}
       {...props}
     >
-      <AuiIf condition={(s) => s.threads.isLoading}>
+      <AuiIf condition={(s) => s.threads.isLoading && s.threads.threadIds.length === 0}>
         <ThreadListSkeleton />
       </AuiIf>
-      <AuiIf condition={(s) => !s.threads.isLoading}>
+      <AuiIf condition={(s) => !s.threads.isLoading || s.threads.threadIds.length > 0}>
         <ThreadListItemGroups searchQuery={searchQuery} />
       </AuiIf>
     </div>
@@ -192,7 +234,7 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
         data-slot="aui_thread-list-empty"
         className="text-muted-foreground px-2.5 py-4 text-sm"
       >
-        未找到相关会话
+        已加载的会话中未找到匹配项
       </div>
     );
   }
@@ -234,10 +276,10 @@ export const ThreadListNew = forwardRef<
     <ThreadListPrimitive.New asChild>
       <Button
         ref={ref}
-        variant="ghost"
+        variant="outline"
         data-slot="aui_thread-list-new"
         className={cn(
-          "hover:bg-muted data-active:bg-muted h-8 justify-start gap-2 rounded-md px-2.5 text-sm font-normal",
+          "h-8 shrink-0 justify-start gap-2 rounded-md border-neutral-200 bg-background px-2.5 text-sm font-medium text-neutral-800 shadow-xs hover:bg-neutral-50 data-active:bg-neutral-100",
           className,
         )}
         {...props}

@@ -75,6 +75,71 @@ const visionData = (fields: Record<string, unknown> = {}) => ({
 });
 
 describe('会话关键路径集成回归', () => {
+  it('领域 Renderer 将标准空结构展示为暂无数据', () => {
+    const { rerender } = render(
+      <StationResultView
+        data={stationGroupData([]) as React.ComponentProps<typeof StationResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('暂无监测点分组')).toBeInTheDocument();
+
+    rerender(
+      <StationResultView
+        data={stationListData([]) as React.ComponentProps<typeof StationResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('暂无符合条件的监测点')).toBeInTheDocument();
+
+    rerender(
+      <GnssResultView
+        data={gnssData('测试站', []) as React.ComponentProps<typeof GnssResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('该时间范围内暂无 GNSS 数据')).toBeInTheDocument();
+
+    rerender(
+      <VisionResultView
+        data={visionData() as React.ComponentProps<typeof VisionResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('该时间范围内暂无可供复核的 GNSS 数据')).toBeInTheDocument();
+
+    rerender(
+      <WeatherResultView
+        data={{
+          ok: true,
+          location: { latitude: 30, longitude: 120, timezone: 'Asia/Shanghai' },
+          query: {
+            timezone: 'Asia/Shanghai',
+            history_start_date: '2026-09-01',
+            history_end_date: '2026-09-02',
+            forecast_days: 7,
+          },
+          units: { temperature: 'celsius', wind_speed: 'km/h', precipitation: 'mm' },
+          current: null,
+          rain_summary: {
+            recent_24h_window: {
+              start_time: '2026-09-01T00:00:00+08:00',
+              end_time: '2026-09-02T00:00:00+08:00',
+              available_hours: 0,
+              expected_hours: 24,
+              complete: false,
+              precipitation: null,
+              note: '暂无数据',
+            },
+            history_total_precipitation: null,
+            forecast_total_precipitation: null,
+          },
+          wind_summary: {},
+          history: { daily: { time: [] } },
+          forecast: { daily: { time: [] } },
+          source: { provider: 'Open-Meteo' },
+        }}
+      />,
+    );
+    expect(screen.getByText('该位置和时间范围内暂无天气数据')).toBeInTheDocument();
+  });
+
   it('优先展示标准 contentBlocks reasoning，不读取耗时字段', () => {
     const firstAI = new AIMessage({
       id: 'a1',
@@ -236,7 +301,7 @@ describe('会话关键路径集成回归', () => {
       />
     );
     await userEvent.click(screen.getByText(/已查询监测点信息/));
-    expect(container.textContent).toContain('共查询到 0 个监测点详情');
+    expect(container.textContent).toContain('暂无符合条件的监测点');
     expect(container.textContent).not.toContain('MODEL_ONLY');
   });
 

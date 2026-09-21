@@ -18,6 +18,7 @@
 
 ## 实现约束
 
+- 当前阶段仅整理项目文档，不再实施代码、配置或部署改造；部署待办已移除。不得将现有 Compose、Vite 交付链路改造成生产级部署，也不得新增 healthcheck、同源代理、Helm 或 Kubernetes 配置，除非用户以后明确重新授权。
 - 业务时间统一使用 `Asia/Shanghai`；System Prompt 彻底保持静态以最大化 Prompt Cache 命中率，当前业务时间与时区由工具 `get_current_time` 获取，相对时间由模型调用工具后解析。
 - `backend/app/agent/prompts/system.md` 是主业务策略唯一可编辑来源，`vision.md` 是视觉策略唯一可编辑来源；`prompting.py` 仅导出静态提示词，`create_agent` 直接使用 `system_prompt=SYSTEM_PROMPT`。
 - LangGraph checkpoint/thread 是会话历史唯一事实来源；前端状态只保存展示态，不复制一套权威历史。
@@ -30,7 +31,7 @@
 - 工具完成条件严格以“工具结果是否已经返回”为准；业务展示采用两阶段数据源：持久化 `ToolMessage.artifact`（含 success / partial / error）永远优先，live tools channel artifact 仅在未落盘的流式阶段兜底；顶层统一通过集中解析函数处理 output，禁止在各个工具 renderer 中做 JSON 字符串猜测。
 - Retry 只处理可判定的瞬时失败，参数错误、权限错误、业务拒绝和数据为空不得盲目重试；所有工具目前均应保持只读。
 - 新增任何兼容性分支或兜底策略前，必须先向用户说明触发条件、用户可见行为和可能造成的误导。如果不设置该策略可能导致数据丢失、会话损坏、不可恢复操作或其他风险，必须等待用户明确同意后才能实现。不得用伪造数据、固定占位进度或本地假成功掩盖未配置、请求失败或状态未同步；此类情况应显式报错或保持上一个已确认状态不变。
-- 工具统一使用官方 content/artifact/status：content 供模型判断，artifact 仅含可发送客户端的展示数据；前端不解析工具 content 或展示原始 JSON。业务/参数失败必须为 error，原因可见，已有证据与缺失并列说明；内部异常、请求 URL、堆栈与秘密只写后端日志，不放入消息或 artifact。
+- 工具统一使用官方 content/artifact/status：content 供模型判断，artifact 仅含可发送客户端的展示数据；前端不解析工具 content 或展示原始 JSON。请求正常完成时统一返回该工具的标准 success 结构；空集合或空字段由前端领域 Renderer 展示“暂无数据”，不得为此新增 error、partial、兼容性分支或专用协议。业务/参数失败必须为 error，原因可见，已有证据与缺失并列说明；内部异常、请求 URL、堆栈与秘密只写后端日志，不放入消息或 artifact。
 - 重试与Run调用限额采用官方middleware；底层SDK不得叠加重试。视觉每次工具尝试只调用一次模型，格式/空结果不自动重试，候选超额必须明确拒绝回查，不静默裁剪；摘要仍遵循官方独立逻辑。限额统计逻辑调用，不能称为全HTTP或耗时预算；用户界面只显示中文受控限制。
 - 配置项必须逐项提供中文注释，并同步 Settings 与 .env.example：说明用途、默认值/必填性、单位、取值范围及生效边界；展示估算、官方压缩和调用预算不得混淆。
 - 不提交 `.env`、密钥、令牌、真实账号或隐私数据。
