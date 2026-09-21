@@ -1,971 +1,965 @@
-# LMA assistant-ui 全面重构 TODO
+# LMA 全栈“官方优先”重构审计与执行计划
 
-> 日期：2026-09-19
-> 目标分支：`main`
-> 改造原则：不兼容旧前端架构，允许删除和重写现有通用聊天层；保留 LMA 业务能力、现有基本视觉风格和 LangGraph 后端业务契约。
-
-## 1. 改造目标
-
-本轮前端改造的核心目标不是继续拆分现有组件，而是减少项目自行维护的 UI 与运行时逻辑。
-
-改造完成后：
-
-- assistant-ui 负责聊天 Thread、Message、Composer、自动滚动、消息动作、停止、重新生成、Reasoning、Tool Call 生命周期和 Thread List 等通用能力。
-- `@assistant-ui/react-langchain` 负责 assistant-ui 与现有 `@langchain/react/useStream` / LangGraph Server 的运行时适配。
-- shadcn/ui 负责 Button、Dialog、AlertDialog、DropdownMenu、Tooltip、Popover、Skeleton、Collapsible、ScrollArea、Sonner 等通用 UI。
-- LMA 仅自行维护 GNSS、天气、视觉分析、站点、场地环境、地图等具有明确业务语义的展示组件。
-- 不再自行实现聊天框架、消息状态机、滚动管理、工具生命周期、会话 UI 状态机等通用功能。
-- 不为了兼容现有组件保留旧实现或双运行时。
-- 页面继续保持当前“左侧会话栏 + 中央聊天区”的布局，不改成三栏工作台。
-- 现阶段继续允许工具消息保存大数据、图表数据和 Base64 图片，不在本轮设计对象存储或 Artifact Server。
-
-assistant-ui 官方 Primitives 已经覆盖 Thread、Composer、Message、ActionBar、ThreadList、Suggestion、Error、Tool Call、Reasoning 等聊天基础能力，并负责状态连接、键盘行为、自动滚动和 streaming，因此不得在项目中重新实现同类基础设施。
-
-------
-
-# P0：冻结旧架构，确定新的组件使用规则
-
--  停止继续扩展当前 `ChatWindow` / `MessageList` / `Composer` / `AssistantTurn` 等旧聊天组件。
--  不再为现有聊天组件增加兼容层。
--  不建立新的自定义消息类型、ToolCall 状态类型或前端 Run 状态机。
--  不自行包装一层 `useExternalStoreRuntime`。
--  新 Runtime 统一使用 `@assistant-ui/react-langchain` 的 `useStreamRuntime`。
--  全局确定以下组件优先级：
-
-```text
-assistant-ui Element
-        ↓ 不满足
-assistant-ui Primitive
-        ↓ 不满足
-shadcn/ui
-        ↓ 不满足
-现有成熟第三方组件
-        ↓ 最后
-LMA 自定义业务组件
-```
-
--  对通用 UI 禁止新增自定义 Button、Dialog、Dropdown、Toast、Tooltip、Collapsible、ScrollArea、Textarea 等实现。
--  assistant-ui / shadcn CLI 安装下来的源码视为“官方组件源码”，原则上只调整 className、tokens、slot 组合和少量 LMA 文案，不重新实现其行为逻辑。
-
-assistant-ui 官方推荐已有项目通过 CLI 初始化，并通过 shadcn registry 安装 Thread、Thread List 等 Elements。
-
-------
-
-# P1：升级前端基础技术栈
-
-## 1.1 更新依赖
-
--  React 升级到 assistant-ui 当前支持的最新稳定版本。
--  React DOM 同步升级。
--  Vite 升级到当前稳定版本。
--  TypeScript 升级到当前稳定且与 Vite/assistant-ui 兼容的版本。
--  Tailwind CSS 从 v3 升级至 v4。
--  更新 `@langchain/core`。
--  更新 `@langchain/langgraph-sdk`。
--  更新 `@langchain/react`。
--  引入：
-  - `@assistant-ui/react`
-  - `@assistant-ui/react-langchain`
-  - `@assistant-ui/react-streamdown`
--  保留 `lucide-react`。
--  保留 `sonner`。
--  保留 `maplibre-gl`。
--  删除 assistant-ui / shadcn 已经替代的直接 Radix 依赖，除非生成组件仍明确依赖。
--  删除不再需要的 `react-markdown` / `remark-gfm`。
-
-`react-langchain` 是 assistant-ui 针对现代 `@langchain/react/useStream` 提供的较薄 Runtime 层，并直接构建在 `useExternalStoreRuntime` 上；它已经支持 arbitrary LangGraph state、工具调用、重新生成、编辑和 Thread loading 等能力，因此项目不应再次自行适配。
-
-## 1.2 初始化官方组件体系
-
--  配置 `components.json`。
--  配置 `@/` TypeScript alias。
--  配置 assistant-ui registry。
--  执行 assistant-ui CLI 初始化。
--  使用 CLI 添加需要的官方 Elements。
--  assistant-ui 相关依赖暂时精确锁版本，避免 `react-langchain` 0.0.x 阶段出现自动小版本漂移。
--  后续升级统一通过 assistant-ui `update` / `upgrade` / codemod 处理，不人工长期维护 fork。
-
-------
-
-# P2：用 assistant-ui Runtime 替换当前 `App.tsx` 流式控制层
-
-## 2.1 建立唯一 Runtime Provider
-
-新增：
-
-```text
-src/app/providers/AssistantProvider.tsx
-```
-
-职责仅包括：
-
-```text
-LangGraph Client 配置
-        ↓
-useStreamRuntime(...)
-        ↓
-AssistantRuntimeProvider
-```
-
--  使用 `useStreamRuntime`。
--  配置 `assistantId: "lma-agent"`。
--  配置 `messagesKey: "messages"`。
--  开启官方 cancellation 能力。
--  接入 LangGraph Thread List Adapter。
--  不在 Provider 中复制 messages。
--  不建立本地 running 状态。
--  不建立本地 optimistic message 状态。
--  不复制 tool-call lifecycle。
--  不手写 regenerate checkpoint fork。
--  不手写 edit message checkpoint fork。
--  不重复实现 Stop。
-
-assistant-ui 当前 LangChain Runtime 已直接支持 regenerate/edit 的 checkpoint fork，并暴露 Thread loading 和 LangGraph custom state，因此这些逻辑全部从应用代码删除。
-
-## 2.2 删除 App 中聊天生命周期代码
-
-从 `App.tsx` 移除：
-
-```text
-useStream(...)
-useToolCalls(...)
-isSubmittingRef
-runError 本地状态机
-hydrationError 本地状态机
-handleSendMessage
-handleRegenerate
-handleRetryMessage
-handleStopGeneration
-消息投影
-toolCalls 投影
-大部分 thread 生命周期协调代码
-```
-
-最终 `App.tsx` 只负责：
-
-```text
-AssistantProvider
-AppLayout
-SettingsDialog
-ErrorBoundary
-```
-
-目标：
-
-```text
-App.tsx < 100~150 行
-```
-
-不是为了追求行数，而是禁止它重新承担 Runtime 职责。
-
-------
-
-# P3：彻底重做会话管理
-
-当前：
-
-```text
-useThreadNavigation
-useThreadDirectory
-useAuxiliaryRuns
-useThreadActions
-Sidebar 内大量 thread 状态逻辑
-```
-
-全部逐步删除。
-
-新增唯一适配文件：
-
-```text
-src/lib/langgraph/thread-list-adapter.ts
-```
-
-只负责把 LangGraph Thread API 映射给 assistant-ui Remote Thread List。
-
--  `client.threads.search()` → list。
--  Thread create → initialize。
--  Thread metadata title → rename。
--  Thread delete → delete。
--  title generation 继续调用现有后端实现，不在前端建立标题任务状态机。
--  将 `unstable_threadListAdapter` 的使用封装在此文件，不让 unstable API 扩散到 UI。
--  不建立另外一份 `ThreadSession[]` 作为权威状态。
--  不维护 `busyThreadIds`。
--  不通过轮询拼接当前 Thread 与后台 Thread 的运行状态。
--  不自己控制切换 Thread 时的消息恢复。
-
-assistant-ui `ThreadListPrimitive` 已负责新建、选择和 Thread 列表上下文，官方 Thread List 组件还提供 skeleton、菜单、archive/delete 等常见交互。
-
-------
-
-# P4：用官方 Thread Element 替换整个聊天壳（✅ 已完成）
-
-优先安装并使用官方 `Thread` Element。
-
-删除：
-
-```text
-components/ChatWindow.tsx
-components/chat/ThreadViewport.tsx
-components/chat/MessageList.tsx
-components/chat/UserMessage.tsx
-components/chat/AssistantTurn.tsx
-components/chat/Composer.tsx
-components/MessageActions.tsx
-components/OptimisticMessageStatus.tsx
-```
-
-assistant-ui Thread 已经包含：
-
-```text
-Message list
-Composer
-Auto-scroll
-Scroll-to-bottom
-Welcome
-History loading
-Running state
-Tool fallback
-Message actions
-```
-
-因此不要将旧组件“套”进 Thread。
-
-官方 Thread Element 本身就是完整聊天 Surface，包含消息列表、Composer、自动滚动以及 welcome/history-loading/running 状态。
-
-## 4.1 保留视觉，不保留实现
-
-只修改官方 Thread Element 的：
-
-```text
-宽度
-间距
-字号
-圆角
-neutral 色阶
-hover 状态
-avatar
-message spacing
-composer shadow
-```
-
-保持当前：
-
-```text
-白色背景
-neutral 灰色
-max-w-4xl
-轻量边框
-低阴影
-圆角输入框
-正文式 Assistant Message
-```
-
-禁止为了“保持旧视觉”复制旧组件业务逻辑。
-
-------
-
-# P5：Composer 完全回归 assistant-ui（✅ 已完成）
-
-删除现有：
-
-```text
-inputText
-textareaRef
-IME composition 手写处理
-textarea 自动高度
-Enter 发送
-Send / Stop 状态切换
-runActive disabled
-scroll / submit 组合逻辑
-```
-
-优先直接使用 Thread Element 已包含的 Composer。
-
-只有确实需要改变布局时，才使用：
-
-```text
-ComposerPrimitive.Root
-ComposerPrimitive.Input
-ComposerPrimitive.Send
-ComposerPrimitive.Cancel
-```
-
-assistant-ui 官方建议普通聊天界面优先使用 Thread 自带 Composer，只有独立或特殊布局的输入器才直接使用 Composer Primitive。
-
-LMA 自定义内容仅保留：
-
-- placeholder；
-- 左侧业务快捷动作；
-- Context Usage；
-- 样式 className。
-
-------
-
-# P6：Reasoning / Thinking 完全替换（✅ 已完成）
-
-删除：
-
-```text
-ThinkingBlock.tsx
-ThinkingIndicator.tsx
-thinking-block CSS
-expanded 状态
-active spinner 状态
-reasoning lifecycle 判断
-frontend/src/components/reasoning.tsx
-```
-
-改用 assistant-ui Reasoning / GroupedParts：
-
--  Reasoning 默认折叠（`ReasoningRoot` 保持默认折叠状态）。
--  流式过程中显示官方 running 状态（文案汉化为 `正在思考…`）。
--  完成后显示“已思考”。
--  reasoning + tool calls 可使用 `MessagePrimitive.GroupedParts` 组合成连续调查过程。
--  不展示伪造思考耗时。
--  不通过字符串推断 reasoning 状态。
--  不继续采用已经 deprecated 的旧 ChainOfThought/ReasoningGroup API。
-
-------
-
-# P7：Tool Call Shell 全部交给 assistant-ui（✅ 已完成）
-
-删除现有 `InlineToolCall.tsx` 与旧目录 `components/tools/`：
-
-```text
-InlineToolCall.tsx
-components/tools/
-├── EmptyOrGenericResultView.tsx
-├── GnssResultView.tsx
-├── SiteEnvironmentResultView.tsx
-├── StationResultView.tsx
-├── VisionResultView.tsx
-├── WeatherResultView.tsx
-├── gnssUtils.ts
-├── registry.tsx
-└── types.ts
-```
-
-彻底移除对通用工具生命周期的手写维护（isPending, isError, hasToolMessageResult, hasLiveOutput, isLiveRunning, spinner/check/error 图标生命周期、折叠 Shell、通用 Tool 错误 Shell）。
-
-## 7.1 使用 ToolFallback（两层单折叠交互）
-- 彻底移除 `ToolGroup` 与“X项监测调查操作”外层壳，Tool 与 Reasoning 处于同级 Sibling Message Part；
-- 采用官方 `ToolFallback` 架构，在 `src/components/assistant-ui/elements/tool-fallback.aui.tsx` 中实现单工具折叠：
-  - 触发器高度收敛为 ~28px（`text-xs`），与思考行排版统一度量；
-  - 运行态隐藏 Chevron 并禁用交互，完成后显示真实耗时与极淡 Chevron；
-  - 默认收起（`defaultOpen = false`，场地环境不特殊展开），仅 HITL / `requires-action` 自动展开；
-  - 展开后直接呈现完整业务数据（无第二级折叠），左侧辅以极淡轨迹线（`border-s border-border/40`）；
-  - 汉化工具状态动词并展示工具友好中文名；
-  - `ToolFallbackImpl` 接收到结果/artifact 时，若命中业务工具且数据有效，在内容区直接渲染领域结果组件；若未命中业务工具或结果非业务结构，平滑回退至通用友好纯文本说明。
-
-## 7.2 LMA 工具只保留“结果内容”
-业务展示组件全部迁移至 `src/features/monitoring/tools/`：
-- `GnssResultView.tsx`（及 `GnssResult`）
-- `WeatherResultView.tsx`（及 `WeatherResult`）
-- `VisionResultView.tsx`（及 `VisionResult`）
-- `StationResultView.tsx`（及 `StationResult`）
-- `SiteEnvironmentResultView.tsx`（及 `SiteEnvironmentResult`）
-- `gnssUtils.ts`、`types.ts`
-
-目标结构：
-```text
-assistant-ui Tool Part (ToolFallback)
-        │
-        ├── 通用状态、折叠、error、approval → assistant-ui
-        │
-        └── result/artifact
-                 ↓
-          LMA Tool Renderer (features/monitoring/tools/*)
-```
-
-## 7.3 精简 Tool Registry
-`src/features/monitoring/tools/registry.tsx` 只保留：
-- `toolName -> business renderer` 字典；
-- `decodeToolArtifact` 安全解码与校验逻辑。
-不再承担任何工具运行状态机、loading 态、折叠、JSON 猜测等职责。
+> 审计日期：2026-09-21  
+> 目标分支：`feat/frontend-refactor`  
+> 审计基线：`0b06cedffdab10b454b3f2ff1352377726f63cf4`  
+> 原则：**不兼容旧架构；允许删除/重写通用基础设施；保留 LMA 核心监测业务能力与当前“左侧会话栏 + 中央聊天区”的基本视觉风格。**
+>
+> 本文是本分支后续重构的唯一主 TODO。旧版 2026-09-19 TODO 中与当前代码不一致的“已完成”状态，以本文为准。
 
-------
+---
 
-# P8：Markdown 改用 assistant-ui Streamdown（✅ 已完成）
+## 0. 最终目标
 
-删除：
-
-```text
-MarkdownMessage.tsx
-react-markdown
-remark-gfm
-```
+最终代码只自行维护两类内容：
 
-统一改用：
+1. **LMA 领域能力**：北斗/GNSS 数据、站点与分组、天气、视觉复核、场地环境、业务时间、监测结果展示和领域提示词。
+2. **必要的产品胶水**：API 地址、URL 中的 threadId、LMA 业务 Tool UI 映射、少量品牌/视觉样式。
 
-```text
-@assistant-ui/react-streamdown
-```
-
-- 在 `frontend/src/components/markdown-text.tsx` 中基于 `StreamdownTextPrimitive` 封装，保留排版样式与 `CodeHeader`（代码复制能力）；
-- 卸载 `@assistant-ui/react-markdown`、`react-markdown` 与 `remark-gfm`；
-- 配置只保留当前真正需要的普通 Markdown、GFM、表格与代码块高亮，不引入未经审查的 Mermaid/公式重量级依赖。
-
-------
+以下通用能力必须优先交给官方框架，不再自行维护第二套实现：
 
-# P9：推荐下一步改用 Suggestion / Follow-up Element（✅ 已完成）
-
-当前 `NextActions.tsx` 删除。
-
-LangGraph state 中继续保留：
-
-```text
-recommendations
-```
-
-前端通过 `useLangChainState` 或极薄的 state bridge 读取，不重新访问原始 stream。
-
-改用 assistant-ui：
-
-```text
-SuggestionPrimitive
-或 Follow-up Suggestions Element
-```
+- Agent ReAct 循环、工具执行、工具重试、工具错误转换、调用次数限制、摘要压缩：LangChain / LangGraph。
+- Thread / Run / Checkpoint / Streaming / Persistence：LangGraph Agent Server + 官方 SDK。
+- React 流式运行时：`@assistant-ui/react-langchain` + `@langchain/react/useStream`。
+- Thread / Message / Composer / Reasoning / Tool 生命周期 / Approval / Suggestion：assistant-ui。
+- Button / Dialog / Tooltip / Collapsible / Sonner 等通用 UI：shadcn/ui。
+- 上下文用量展示：assistant-ui Context Display Element。
+- 组件安装/更新：assistant-ui / shadcn 官方 CLI；不要手工复制一套“近似官方组件”。
 
-仅最新一轮、且 Run 完成后显示。
-
-点击后直接进入 Composer/Send 流程。
-
-assistant-ui 已提供 starter/follow-up suggestions 对应的 Primitive 和 Element。
-
-------
-
-# P10：Context Usage 使用官方 Context Element（✅ 已完成）
-
-保留后端：
-
-```text
-context_usage
-```
-
-删除 `ContextUsageIndicator.tsx` 中可以被官方组件替代的：
-
-```text
-Tooltip
-Popover
-Ring/bar 基础结构
-通用 hover 行为
-```
-
-优先使用 assistant-ui Context Display Element。
-
-LMA 只负责把：
-
-```text
-used tokens
-limit
-percentage
-summary state
-```
-
-映射过去。
-
-不要在 Composer 里重新设计一套 Context UI。
-
-assistant-ui Elements 已提供 Context Display，用于 ring、bar、text 及 hover 详情。
-
-实现说明：
-1. 上下文指示器全面收敛为官方 Element 规范 `context-usage.aui.tsx`（`ContextUsageElement`）；
-2. 进度组件收敛至自定义极薄 `CircularProgress` UI primitive（`@/components/ui/circular-progress`），呈现如 ChatGPT/Codex 一样的 16px 极薄精致小圆环提示，外面零额外包裹；
-3. 悬浮提示采用定制轻量毛玻璃卡片（杜绝默认浏览器原生黄色/黑色方块），仅直观呈现使用百分比、输入用量与总上限两行精炼数据；
-4. 全量删除旧的 `ContextUsageIndicator.tsx` 文件与兼容引用，测试与业务层直接消费 `ContextUsageElement`。
-
-------
-
-# P11：Sidebar 重构为 ThreadList Element（✅ 已完成）
-
-视觉继续保持当前约 240px 左侧栏。
-
-使用：
-
-```text
-ThreadListPrimitive.Root
-ThreadListPrimitive.New
-ThreadListPrimitive.Items
-ThreadListItemPrimitive.Root
-ThreadListItemPrimitive.Trigger
-ThreadListItemPrimitive.Title
-```
-
-可直接从官方 Thread List Element 开始修改样式。
-
-保留 LMA 的：
-
-```text
-LMA Monitor Logo
-“新建监测会话”中文文案
-当前浅灰 active 状态
-底部设置入口
-折叠 Sidebar
-```
-
-删除 Sidebar 内自行维护的：
-
-```text
-editingId
-delete modal state machine
-busyThreadIds
-title pending 生命周期
-loading 拼接
-thread switch lifecycle
-手写 item skeleton
-```
+目标不是“所有文件都来自第三方”，而是**通用机制由官方维护，LMA 只维护业务差异**。
 
-Rename/Delete 使用 runtime action + shadcn Dialog/Menu。
+---
 
-------
+## 1. 审计结论
 
-# P12：通用 UI 全量收敛到 shadcn/ui
-
-统一安装并使用需要的官方组件：
-
-```text
-Button
-Textarea
-Dialog
-AlertDialog
-DropdownMenu
-Tooltip
-Popover
-Collapsible
-ScrollArea
-Skeleton
-Separator
-Badge
-Sonner
-```
+### 1.1 已经符合官方推荐方向，继续保留
 
-对应删除：
+| 区域 | 当前实现 | 结论 |
+|---|---|---|
+| Agent 主循环 | `langchain.agents.create_agent` | ✅ 保留。不要退回手写 StateGraph ReAct 循环。 |
+| Agent 通用能力 | `SummarizationMiddleware`、`ModelRetryMiddleware`、`ToolRetryMiddleware`、`ToolErrorMiddleware`、调用上限 middleware | ✅ 方向正确，但工具 middleware 顺序与自定义 wrapper 需要收敛，见 B-01/B-02。 |
+| 工具定义 | LangChain `@tool` + Pydantic args schema | ✅ 保留。 |
+| 工具双通道结果 | `response_format="content_and_artifact"` | ✅ LangChain 官方能力，可继续用于“模型事实 + UI 展示载荷”分离；不要自行发明第二套 transport。 |
+| 模型初始化 | `init_chat_model` 为主 | ✅ 保留。Provider 特例必须限制在极小 adapter 内。 |
+| Agent Server | `langgraph.json` + graph factory | ✅ 官方部署结构。 |
+| 本地/生产服务 | `langgraph dev` / `langgraph build` | ✅ 保留；不需要为了“全栈”再套一层 FastAPI 转发 Agent。 |
+| 前端运行时 | `useStreamRuntime` from `@assistant-ui/react-langchain` | ✅ 当前最合适。官方文档明确把它作为已有 `@langchain/react` 项目的轻量路径。 |
+| Thread 持久化 | `RemoteThreadListAdapter` + LangGraph Thread SDK | ✅ 这是官方扩展缝，不算重复造轮子。 |
+| UI 基础 | assistant-ui Elements + shadcn/ui | ✅ 方向正确；允许在 Elements 生成源码上改 className 保持 LMA 风格。 |
+| Markdown | Streamdown / assistant-ui Streamdown element | ✅ 保留。 |
+| 部署持久化 | Agent Server + PostgreSQL + Redis | ✅ 当前 compose 方向与 Agent Server 架构一致。 |
 
-```text
-Toast.tsx
-自定义 modal shell
-自定义 alert shell
-自定义 dropdown shell
-通用 spinner/skeleton 重复组件
-通用 tooltip
-```
-
-原则：
-
-```text
-业务组件可以组合通用 UI
-但不得重新实现通用 UI
-```
-
-例如：
-
-```text
-SiteEnvironmentResult
-  └─ shadcn Card / Badge / Collapsible
-```
-
-而不是创建：
-
-```text
-LmaCard
-LmaBadge
-LmaCollapse
-LmaModal
-```
-
-这种只包装 className 的二次组件。
-
-------
-
-# P13：设置页面简化
-
-`ConfigModal.tsx` 重构为：
-
-```text
-features/settings/ServiceSettingsDialog.tsx
-```
-
-使用：
-
-```text
-shadcn Dialog
-shadcn Input
-shadcn Button
-shadcn Alert
-sonner
-```
-
-保留：
-
-```text
-API URL
-测试连接
-开发环境可配置
-生产环境锁定
-```
-
-不要再维护自己的 modal header/footer/button 样式体系。
-
-------
-
-# P14：错误处理简化
-
-保留 React 顶层 Error Boundary，用于真正的 React render crash。
-
-除此之外：
-
--  Runtime Error 使用 assistant-ui Error Primitive。
--  Tool Error 使用 Tool Call status。
--  Thread loading error 使用 Runtime/Thread 状态。
--  Toast 使用 Sonner。
--  不维护另一套 `runError`。
--  不维护另一套 `hydrationError`。
--  不通过错误字符串判断工具状态。
--  不把后端内部异常直接显示给用户。
--  不增加“如果官方状态没回来就猜一个状态”的兜底。
-
-目标是：
-
-```text
-错误事实来源只有真正拥有该错误的层
-```
-
-------
-
-# P15：整理新的目录结构（✅ 已完成）
-
-目标：
-
-```text
-frontend/src/
-├── app/
-│   ├── App.tsx
-│   ├── AppLayout.tsx
-│   └── providers/
-│       └── AssistantProvider.tsx
-│
-├── components/
-│   ├── assistant-ui/
-│   │   └── elements/
-│   │       ├── thread.aui.tsx
-│   │       ├── thread-list.aui.tsx
-│   │       ├── reasoning.aui.tsx
-│   │       ├── tool-fallback.aui.tsx
-│   │       └── ...
-│   │
-│   └── ui/
-│       └── shadcn generated components
-│
-├── features/
-│   ├── monitoring/
-│   │   ├── tools/
-│   │   ├── map/
-│   │   └── schemas.ts
-│   │
-│   └── settings/
-│       └── ServiceSettingsDialog.tsx
-│
-├── lib/
-│   ├── langgraph/
-│   │   ├── client.ts
-│   │   └── thread-list-adapter.ts
-│   └── utils.ts
-│
-├── styles/
-│   └── globals.css
-│
-└── main.tsx
-```
-
-不要重新建立：
-
-```text
-chat/
-hooks/thread/
-runtime/
-message/
-stream/
-```
-
-等大量项目自有抽象目录，除非 assistant-ui 无法直接解决实际需求。
-
-------
-
-# P16：彻底删除旧代码
-
-完成新 Thread 后一次性删除，而不是长期保留两套实现。
-
-计划删除：
-
-```text
-components/ChatWindow.tsx
-components/MarkdownMessage.tsx
-components/MessageActions.tsx
-components/OptimisticMessageStatus.tsx
-components/ThinkingBlock.tsx
-components/ThinkingIndicator.tsx
-components/Toast.tsx
-
-components/chat/AssistantTurn.tsx
-components/chat/Composer.tsx
-components/chat/MessageList.tsx
-components/chat/NextActions.tsx
-components/chat/ThreadViewport.tsx
-components/chat/UserMessage.tsx
-```
-
-完成 Thread List 后删除：
-
-```text
-hooks/useThreadNavigation.ts
-hooks/useThreadDirectory.ts
-hooks/useAuxiliaryRuns.ts
-hooks/useThreadActions.ts
-```
-
-`RunStatusBar.tsx` 原则上删除，只允许保留 assistant-ui 没有覆盖且确实属于 LMA 业务的信息。
-
-`InlineToolCall.tsx` 删除，其业务 renderer 迁移至 `features/monitoring/tools`。
-
-旧文件不得保留：
-
-```text
-Compat
-Legacy
-FallbackV1
-OldChat
-OldComposer
-```
-
-本轮没有兼容要求，因此禁止通过这些代码降低迁移难度。
-
-------
-
-# P17：CSS 大幅清理（✅ 已完成）
-
-当前 `styles/index.css` 重构。
-
-删除：
-
-```text
-手写 Markdown 排版
-thinking-block CSS
-聊天滚动按钮 CSS
-可以由 Tailwind / official element 完成的通用 UI CSS
-```
-
-只保留：
-
-```text
-LMA design tokens
-全局字体
-scrollbar 少量统一样式
-MapLibre/地图 marker
-GNSS/业务图表确实需要的样式
-```
-
-目标不是把旧 CSS 原封不动搬到新组件，而是通过 Tailwind token 保留视觉风格。
-
-------
-
-# P18：保持当前产品边界
-
-本轮明确不做：
-
-```text
-❌ 三栏布局
-❌ Agent 工作台
-❌ Canvas
-❌ Notebook
-❌ Artifact Server
-❌ 对象存储
-❌ Base64 图片迁移
-❌ 大数据引用化
-❌ 文件系统
-❌ 多 Agent 面板
-❌ Workflow 可视化
-❌ 调试 Inspector
-❌ 前端自行保存一套会话数据库
-```
-
-仍保持：
-
-```text
-左侧 Thread List
-+
-中央聊天区
-+
-内嵌工具业务结果
-```
-
-------
-
-# P19：保留并优化现有视觉语言
-
-视觉目标不是变成 assistant-ui Demo，而是让 assistant-ui 使用 LMA 当前风格。
-
-保持：
-
-```text
-background: white
-neutral / zinc 主色
-很浅的 border
-低强度 shadow
-12~16px 圆角
-max-w-4xl 内容宽度
-较高正文可读性
-工具调用轻量化
-Reasoning 默认折叠
-用户消息与 AI 消息视觉层级清晰
-```
-
-重点调整：
-
--  Sidebar active 状态降低视觉重量。
--  Composer 与内容区保持现有悬浮感。
--  Tool Call 一行状态不做大型 Card。
--  展开后才显示 GNSS / Weather / Vision 详细结果。
--  长报告保持正文排版，不套多层卡片。
--  空会话提供 3~4 个业务 starter prompts。
--  回复完成后显示最多 3 个 follow-up suggestions。
--  切换会话时不清空整个页面再闪烁加载。
--  后台运行会话在 Sidebar 显示官方 runtime running 状态。
--  移动端 Sidebar 改 Sheet/Drawer，不设计新的移动端架构。
-
-------
-
-# P20：测试重构
-
-不要把测试继续绑定旧内部实现。
-
-删除大量测试：
-
-```text
-自己滚动到底部
-Composer textarea 高度
-自己判断 tool finished
-自己判断 optimistic status
-自己判断 thinking expanded lifecycle
-自己维护 busyThreadIds
-旧 ChatWindow props
-```
-
-保留/新增真正关键测试：
-
-```text
-Runtime 可连接 LangGraph
-历史 Thread 正确加载
-新建 Thread 正确运行
-切换 Thread 后流式状态正确恢复
-Stop 正确取消当前 Run
-Regenerate 正确产生 branch
-Tool result 正确进入业务 Renderer
-Tool error 正确展示
-空 Tool result 被视为成功
-ToolMessage.artifact 图片可正常展示
-GNSS 图表正常展示
-Weather renderer 正常展示
-Vision renderer 正常展示
-推荐下一步只作用于当前最新回合
-Context usage 正确展示
-Thread rename/delete 正确调用 LangGraph API
-设置切换 API endpoint 后 Runtime 正确重建
-```
-
-优先测试“适配边界”和“LMA 业务 renderer”，不要测试 assistant-ui 自己已经测试的内部行为。
-
-------
-
-# P21：更新项目协作规则（✅ 已完成）
-
-同步修改 `AGENTS.md`。
-
-删除旧规则中与手写 Chat Runtime 强绑定的内容，例如：
-
-```text
-前端直接 useStream
-useToolCalls 为唯一 tool lifecycle
-OptimisticMessageStatus
-自有 Tool Call shell
-旧 ChatWindow 生命周期
-```
+### 1.2 当前没有完全收敛到“官方优先”
+
+最重要的问题不是业务组件，而是仍存在一层自定义“运行时补丁 + Tool 流解析 + 状态再合并”。
+
+优先级定义：
+
+- **P0**：会继续制造运行时分叉、升级风险或状态不一致，先改。
+- **P1**：官方已有现成组件/能力，当前仍手写，第二批改。
+- **P2**：不是错误，但能继续显著删代码/依赖，最后收敛。
+
+---
+
+# 2. P0：先消灭运行时分叉
+
+## F-01：不要长期维护 `@assistant-ui/react-langchain` 的 pnpm patch
+
+### 当前证据
+
+- `frontend/package.json` 使用：
+  - `pnpm.patchedDependencies["@assistant-ui/react-langchain@0.0.32"]`
+- `frontend/patches/@assistant-ui__react-langchain@0.0.32.patch` 修改官方包：
+  1. 将 `additional_kwargs.lc_source === "summarization"` 的 human message 改映射为 system；
+  2. 给 `useStreamRuntime` 补 `threadId / initialThreadId` 受控透传。
+- `AssistantProvider.tsx` 因此可以直接传入 `threadId: urlThreadId`。
+
+### 判断
+
+这是**当前最大的升级耦合点**，但不能简单写成“升级依赖即可删除”。
+
+截至本次审计的 assistant-ui 主仓库，`@assistant-ui/react-langchain` 仍为 `0.0.32`，公开源码已经有 `onThreadIdChange`，但顶层 `useStreamRuntime` 尚未公开透传受控 `threadId`；summary 的 `lc_source=summarization` 也没有官方转换逻辑。因此该 patch 目前确实在弥补真实的上游互操作缺口。
+
+### 迁移方案
+
+**F-01A：先删除 threadId patch 部分。**
+
+不要继续修改第三方 Runtime。改成：
+
+- `useStreamRuntime(...)` 只使用官方公开 options。
+- 保留 `onThreadIdChange`：Runtime -> URL。
+- 新增一个非常薄的 `UrlThreadSync`，放在 `AssistantRuntimeProvider` 内：
+  - URL 有 `threadId`：通过 assistant-ui 公共 Thread List runtime/action 切换到该 thread。
+  - URL 无 `threadId`：切换 New Thread。
+  - `popstate` 同样走公开 thread switch action。
+- 不直接操作消息数组、不自己 hydrate、不自己恢复 stream。
+
+目标：URL 同步只是“路由胶水”，不是 Runtime fork。
+
+**F-01B：summary patch 单独隔离，不再扩展。**
+
+官方 `SummarizationMiddleware` 会在历史中放置内部 summary 消息，而当前 react-langchain converter 未识别 `lc_source=summarization`。在上游正式支持前：
+
+- 保留该 patch 的最小 summary 映射部分；
+- 在本文标记为 **UPSTREAM BLOCKED**；
+- 不在 patch 中加入任何 LMA 业务逻辑；
+- assistant-ui 新版本发布时先检查 upstream converter，再删除 patch。
+
+若后续决定不在聊天 UI 中展示“对话已压缩”提示，则可以评估完全隐藏内部 summary 的官方方案；在没有官方 seam 前，不再自建第二套 message converter。
+
+### 验收
+
+- 直接打开 `/?threadId=<existing>` 能恢复历史。
+- 浏览器前进/后退正确切换。
+- 切会话再回来，正在运行的流仍由 `useStream` 恢复/显示。
+- package patch 只剩 summary workaround；最终上游支持后 `patches/` 整目录删除。
+
+### 官方依据
+
+- https://www.assistant-ui.com/docs/runtimes/langchain
+- https://www.assistant-ui.com/docs/guides/context-api
+- https://github.com/assistant-ui/assistant-ui/tree/main/packages/react-langchain
+
+---
+
+## F-02：删除 `live-tool-results.ts`，禁止解析 `tools` channel 私有 wire envelope
+
+### 当前证据
+
+`frontend/src/lib/langgraph/live-tool-results.ts`：
+
+- 直接调用 `@langchain/react/useChannel(stream, ["tools"])`；
+- 识别 `tool-finished`；
+- 手工兼容 `value[field] / value.kwargs[field] / value.lc_kwargs[field]`；
+- 再从 `ToolMessage` wire data 中抽取 `artifact`。
+
+`tool-fallback.aui.tsx` 又把：
+
+1. assistant-ui MessagePart status；
+2. `useLangChainToolCalls()`；
+3. 自定义 tools channel live artifact；
+4. 持久化 artifact；
+
+合并成自己的“最终状态”。
+
+### 判断
+
+这是典型的重复运行时层。它依赖 wire shape，且 assistant-ui / @langchain/react 升级后容易失效。
+
+官方已经提供两条稳定路径：
+
+1. `useLangChainToolCalls()`：读取 root tool call 的实时状态；
+2. LangGraph Data UI：后端 `push_ui_message()` + 前端 `makeAssistantDataUI()`，同时覆盖 live custom channel 与 state snapshot。
+
+### 迁移方案
+
+- 删除 `frontend/src/lib/langgraph/live-tool-results.ts`。
+- `AssistantProvider` 删除 `LiveToolEventsProvider`。
+- 工具“运行中/完成/失败”状态只读 assistant-ui ToolCall part / toolkit render 的 `status`。
+- 工具最终普通 JSON 结果：使用官方 Tool UI 的 `result`。
+- 需要与模型 content 分离的富展示数据、图片、较大展示 payload：改成 LangGraph Data UI：
+  - Agent state 增加官方 `ui` reducer；
+  - 在业务工具完成后由后端按官方方式 `push_ui_message(name, data, ...)`；
+  - 前端用 `makeAssistantDataUI` 注册 LMA 业务组件。
+- state snapshot 必须能在刷新后恢复；live custom event 只负责“更早显示”，不能成为唯一事实源。
+
+### 验收
+
+- 同一批并行工具谁先返回，谁先进入 complete 并显示自己的结果，不等待整批完成。
+- 空结果仍显示“完成”，而不是永久 running。
+- 刷新后已完成工具结果仍存在。
+- 前端不再出现 `tool-finished`、`lc_kwargs`、`useChannel(["tools"])` 等 wire-level 解析代码。
+
+### 官方依据
+
+- https://www.assistant-ui.com/docs/runtimes/langchain
+- https://www.assistant-ui.com/docs/tools/tool-ui
+- https://www.assistant-ui.com/docs/api-reference/tools/rendering
+- https://docs.langchain.com/langsmith/generative-ui-react
+
+---
+
+## F-03：已知 LMA 工具改用 assistant-ui Toolkit 注册，不再让一个 24KB Fallback 承担业务渲染
+
+### 当前证据
+
+`tool-fallback.aui.tsx` 同时实现：
+
+- 官方 fallback 外观；
+- 审批交互；
+- 工具 duration；
+- LMA 工具中文文案；
+- LMA Tool registry；
+- live tool status 修正；
+- persisted/live artifact 合并；
+- error envelope -> assistant-ui status 再映射；
+- 业务组件选择。
+
+### 判断
+
+Fallback 应只处理“没有专用 renderer 的未知工具”。LMA 已知工具应该使用 assistant-ui 当前推荐的 **Toolkit** API。
+
+官方已经把旧的 `makeAssistantToolUI/useAssistantToolUI` 标为 deprecated，推荐 `defineToolkit + Tools({ toolkit })`；外部后端执行的 LangGraph tool 可以注册 render-only backend tool。
+
+### 迁移方案
+
+新建例如：
+
+`frontend/src/features/monitoring/toolkit.tsx`
+
+使用官方 plain toolkit（Vite 项目不必为了这一步引入额外 compiler）：
+
+- key 与 LangGraph tool name 完全一致；
+- `type: "backend"`；
+- 每个条目只放 `render({ args, result, status, ... })` / `renderText`；
+- 不在前端重新声明执行函数。
+
+在 `AssistantRuntimeProvider` 注册：
+
+- `AuiConfig({ tools: Tools({ toolkit }) })`
+
+然后：
+
+- 已知 LMA 工具由 toolkit renderer 展示；
+- `ToolFallback` 恢复为 assistant-ui Element 的通用 fallback，最多保留 LMA 视觉 className；
+- 删除 `getEffectiveStatus`；
+- 删除 live/persisted artifact 两阶段状态逻辑；
+- 删除 Fallback 内的 LMA registry 分支。
+- Approval 只有确实需要 HITL 时才保留官方 Tool UI / interrupt 机制；当前普通查询工具不要人为制造 requires-action。
+
+### 验收
+
+- `tool-fallback.aui.tsx` 不再 import `@langchain/react`。
+- `tool-fallback.aui.tsx` 不再 import LMA `registry`。
+- 每个 LMA 工具 renderer 可单独测试。
+- 未注册的新工具仍能由官方 fallback 正常显示。
+- UI 风格保持当前轻量文本/卡片风格，不恢复二级“监测操作”折叠层。
+
+### 官方依据
+
+- https://www.assistant-ui.com/docs/tools/defining-tools
+- https://www.assistant-ui.com/docs/migrations/toolkit-tools
+- https://www.assistant-ui.com/docs/api-reference/tools
+
+---
+
+## B-01：修正 ToolRetry / ToolError 官方 middleware 顺序
+
+### 当前证据
+
+`backend/app/agent/graph.py` 当前顺序：
+
+`... ModelRetryMiddleware -> ToolErrorMiddleware -> ToolRetryMiddleware`
+
+LangChain 官方文档明确要求组合时：
+
+`ToolRetryMiddleware(... on_failure="error"), ToolErrorMiddleware(...)`
+
+即重试层先处理瞬时失败，耗尽后再交给错误转换层生成安全 ToolMessage。
+
+### 迁移方案
 
 改成：
 
+`... ModelRetryMiddleware -> ToolRetryMiddleware -> ToolErrorMiddleware`
+
+同时保证：
+
+- transient 错误由 ToolRetry 负责；
+- 重试耗尽才进入 ToolError；
+- ToolError 只负责“转换成可给模型看的安全错误”，不做第二次 retry。
+
+### 验收
+
+新增/保留测试：
+
+1. transient Beidou/API 失败 N 次后成功：只执行预期次数；
+2. non-retryable 参数/业务失败：不重试；
+3. retry exhausted：只生成一个最终 error ToolMessage；
+4. 原始内部异常文本不泄露到模型/UI。
+
+### 官方依据
+
+- https://docs.langchain.com/oss/python/langchain/middleware/built-in
+
+---
+
+## B-02：删除 `LmaMiddleware.awrap_tool_call` 的第二套 Tool 错误状态机
+
+### 当前证据
+
+当前同时存在：
+
+- `ToolRetryMiddleware`
+- `ToolErrorMiddleware`
+- `LmaMiddleware.awrap_tool_call`
+- `ToolFailure`
+- `BeidouApiError` 手工转 `ToolMessage(status="error")`
+- 对 validation/error ToolMessage 再补 artifact envelope
+
+### 判断
+
+业务异常分类可以保留，但**执行/重试/错误状态转换应只由官方 middleware 链负责**。
+
+### 迁移方案
+
+- `_on_tool_error` 统一处理：
+  - `ToolFailure` -> 审定后的业务提示；
+  - `BeidouApiError` -> 监测平台受控提示；
+  - transient exhausted -> 服务暂不可用；
+  - 其余 -> 通用内部错误。
+- `ToolRetryMiddleware.retry_on` 决定哪些异常可重试。
+- 删除 `LmaMiddleware.awrap_tool_call` 中对成功/失败 ToolMessage 的生命周期修复。
+- Tool 的展示 error UI 读取 assistant-ui 官方 `status/result`；不要要求每个失败都再构造一份 artifact 才能显示。
+- `ToolFailure` 最终尽量收敛成一个非常薄的公开业务异常类；若 category 只用于前端着色且没有产品价值，删除 category/envelope。
+
+### 验收
+
+`LmaMiddleware` 不再手工 new `ToolMessage`。
+
+---
+
+## B-03：删除服务端 `_sanitize_unanswered_tool_calls`，让取消语义只有一个负责人
+
+### 当前证据
+
+`graph.py` 在每次 run 前会扫描完整历史并：
+
+- 改写 AIMessage.tool_calls；
+- 清空 tool_calls；
+- 或发 `RemoveMessage`。
+
+而当前前端使用的 react-langchain Runtime 本身已经处理 pending tool calls / cancel / stop；项目只服务该官方 Runtime，不需要再在服务端猜测“历史中的 tool call 为什么没回答”。
+
+### 风险
+
+直接改写旧 checkpoint 的 AIMessage 结构，可能：
+
+- 改掉真实历史；
+- 破坏 checkpoint/time-travel 语义；
+- 与客户端自动 cancel 产生两套补偿逻辑。
+
+### 迁移方案
+
+先补 E2E，再删除：
+
+1. 启动包含并行工具的 run；
+2. 工具执行中点击 Stop；
+3. 刷新；
+4. 再发送新消息；
+5. 切换 thread 再回来。
+
+若官方 runtime 能正确生成/恢复取消 ToolMessage，则删除：
+
+- `_sanitize_unanswered_tool_calls`
+- `abefore_agent` 中对应修复
+
+若确有上游 bug，先记录最小复现并只保留一处 workaround，不再“通用扫描 + 猜测”。
+
+---
+
+# 3. P1：已有官方组件，停止手写
+
+## F-04：用 assistant-ui Context Display 替换手写上下文圆环
+
+### 当前证据
+
+旧 TODO 写“上下文展示已使用官方 Context Element”，但实际：
+
+`frontend/src/components/assistant-ui/elements/context-usage.aui.tsx`
+
+仍手写：
+
+- `CircularProgress`
+- 颜色阈值
+- button
+- tooltip
+- token formatter
+- hover/focus 动画
+
+assistant-ui 已提供官方 Context Display Element，支持 ring/bar/text、hover details，而且有 props-driven standalone 用法。
+
+### 迁移方案
+
+使用官方 CLI：
+
+`pnpm dlx shadcn@latest add "@assistant-ui/context-display"`
+
+然后：
+
+- 删除 `context-usage.aui.tsx` 中自绘 UI；
+- 删除 `circular-progress.tsx`（若无其他用途）；
+- 用 standalone props 适配 LMA 的 LangChain usage；
+- 只保留必要 className 尺寸覆盖以维持现有小圆环风格。
+
+### 验收
+
+- UI 仍是 16~20px 轻量环形入口；
+- hover/focus 可访问；
+- 组件来自 assistant-ui registry；
+- 项目不再维护自绘 SVG/tooltip。
+
+### 官方依据
+
+- https://www.assistant-ui.com/elements/context-display
+
+---
+
+## B-04：上下文窗口大小优先使用 LangChain Model Profile，删除展示用的第二套 token 估算体系
+
+### 当前证据
+
+当前同时维护：
+
+- `CONTEXT_MODEL_CONTEXT`
+- `CONTEXT_OUTPUT_RESERVE_TOKENS`
+- `CONTEXT_SAFETY_MARGIN_TOKENS`
+- `CONTEXT_TOKEN_ESTIMATE_FACTOR`
+- `CONTEXT_CHARS_PER_TOKEN`
+- `count_tokens_approximately`
+- provider 实际 `usage_metadata.input_tokens`
+
+但最终 UI 的“本轮输入量”已经使用 provider reported usage。
+
+LangChain Model Profile 已有：
+
+- `max_input_tokens`
+- `tool_calling`
+- `reasoning_output`
+
+官方 `SummarizationMiddleware` 还可以直接按 model profile 的 context fraction 触发。
+
+### 迁移方案
+
+1. 模型有官方 profile：
+   - 直接读 `model.profile["max_input_tokens"]`。
+2. 自定义 endpoint / 自定义模型名没有 profile：
+   - 在 `init_chat_model(..., profile={...})` 显式补最小 profile，而不是在 context.py 再维护一套“模型上下文配置”。
+3. `context_usage` 只保留展示真正需要的字段：
+   - input tokens
+   - output tokens
+   - max input tokens
+   - ratio
+4. 删除 `build_context_budget` 的 fixed/history 近似拆分与误差字段，除非它进入论文实验指标。
+5. 摘要配置继续使用官方 `SummarizationMiddleware`；后续可由绝对 token threshold 简化为 profile fraction + 官方 keep 语义。
+
+### 不要做
+
+- 不自己实现 tokenizer。
+- 不用前端字符串长度猜上下文。
+- 不让 UI 展示估算值冒充 provider usage。
+
+### 官方依据
+
+- https://docs.langchain.com/oss/python/langchain/models
+- https://docs.langchain.com/oss/python/langchain/middleware/built-in
+
+---
+
+## B-05：OpenAI reasoning 参数使用 LangChain 标准参数，Provider adapter 只留下真正无法统一的差异
+
+### 当前证据
+
+`models.py` 已经正确以 `init_chat_model` 为主，但仍有 `thinking_options()` 对 OpenAI/DashScope/DeepSeek 手工分支。
+
+LangChain 当前已将 `reasoning_effort` 定义为跨 Provider 标准参数；OpenAI integration 版本也已满足其版本要求。
+
+### 迁移方案
+
+- OpenAI 官方模型：
+  - 优先 `init_chat_model(..., reasoning_effort=...)` / 官方 integration 参数；
+  - 不再手工拼 OpenAI reasoning body。
+- DeepSeek：
+  - 保留当前极窄 `DeepSeekThinkingChatModel`，因为它是在补 reasoning_content 多轮 tool calling 的上游缺口；
+  - 单独写测试，官方修复后直接删除 subclass。
+- DashScope OpenAI-compatible endpoint：
+  - 只有项目确实使用时才保留 vendor mapping；
+  - 如果不是当前部署需求，删除“为了未来也许会用”的兼容代码。
+- 不通过模型名猜 provider；这一点当前实现是正确的，继续保留。
+
+### 验收
+
+`models.py` 的自定义代码只描述“官方 integration 当前缺少的能力”，不重复标准参数转换。
+
+---
+
+## F-05：用 shadcn CLI 管理基础组件和依赖，清理重复 Radix 依赖
+
+### 当前证据
+
+`components.json` 已正确配置 `@assistant-ui` registry，且项目是 Tailwind 4 + React 19。
+
+但 `package.json` 同时有：
+
+- `radix-ui`
+- 多个 `@radix-ui/react-*`
+- `cn`
+- `clsx`
+- `tailwind-merge`
+
+当前部分新组件已经从 `radix-ui` 和 `cn` 导入，说明依赖集很可能混有重构前遗留。
+
+### 迁移方案
+
+不要手工猜依赖，按 CLI + 使用检查执行：
+
+1. `pnpm dlx shadcn@latest --help`
+2. 对需要更新的组件先 `--dry-run` / `--diff`。
+3. 只重新拉取通用 shadcn/assistant-ui 元素；LMA 业务 renderer 不覆盖。
+4. `pnpm why <package>` 确认后删除未使用的 scoped Radix 包、旧 cn 组合依赖或其他残留。
+5. 每批删除后 `pnpm build && pnpm test`。
+
+### 注意
+
+shadcn 组件本质是“源码分发”，项目内有组件源码是正常的；目标不是把所有组件变成 node_modules 黑盒，而是**用官方 registry/CLI 作为来源并减少手工基础设施**。
+
+### 官方依据
+
+- https://ui.shadcn.com/docs/cli
+- https://ui.shadcn.com/docs/installation/vite
+- https://ui.shadcn.com/docs/tailwind-v4
+
+---
+
+# 4. P2：进一步删代码，但不属于框架错误
+
+## F-06：会话标题图可删除，除非确认 LLM 标题确有产品价值
+
+### 当前实现
+
+为了自动标题，目前存在：
+
+- `session-title` 第二个 LangGraph graph；
+- `backend/app/agent/title.py`；
+- 前端 `generateSessionTitle()`；
+- `thread-list-adapter.generateTitle()`；
+- 直接依赖 `assistant-stream`。
+
+`RemoteThreadListAdapter.generateTitle` 本身属于官方 seam，所以当前实现不是“错误”。
+
+### 简化建议
+
+LMA 核心业务不依赖 AI 标题。若目标优先减少维护：
+
+- 删除 `session-title` graph；
+- 删除标题 LLM 调用；
+- thread 初始标题直接取首条用户消息的安全截断/首行；
+- 或保持“新会话”，用户手动 rename。
+
+这样可减少一个部署 graph、一类模型配置、一条网络调用和一个前端 stream 依赖。
+
+如果保留 AI 标题，也不要自行增加更多 fallback 状态机。
+
+---
+
+## B-06：推荐问题生成可保留，但不要继续扩张成第二个 Agent
+
+`aafter_agent -> generate_recommendations` 是明确产品功能，不属于重复造轮子。
+
+后续只做两点：
+
+- 保持为一次结构化 LLM 调用，不引入独立 planner/graph。
+- 如果它明显拖长“主 Run 已回答但仍显示运行中”的时间，再把它拆成单独可取消的后处理 run；在没有实际 UX 问题前不要预先复杂化。
+
+---
+
+## D-01：补 CI，防止“官方化”重构以后再次倒退
+
+当前分支未发现仓库级 GitHub Actions workflow。
+
+新增一个最小 `.github/workflows/ci.yml`，只做稳定门禁：
+
+### Backend
+
+- 安装 `backend/requirements.txt` + dev requirements
+- `pytest`
+- 导入 graph / 配置 smoke test
+- `langgraph build` smoke（若 CI 环境允许 Docker；否则至少在 release workflow 执行）
+
+### Frontend
+
+- `pnpm install --frozen-lockfile`
+- `pnpm test`
+- `pnpm build`
+- 关键 Playwright E2E
+
+### 架构防回归 grep
+
+可增加小型脚本检查：
+
+- 不允许重新出现 `useExternalStoreRuntime` 自建聊天 runtime；
+- 不允许新增 `useChannel(["tools"])` wire parser；
+- 不允许新增第三方包 patch（除已登记 upstream blocker）；
+- 不允许新建第二套 Tool status enum；
+- 不允许业务代码直接 fetch LangGraph REST（应使用 SDK）。
+
+---
+
+# 5. 目标架构
+
 ```text
-1. assistant-ui Runtime 是前端聊天 UI 的唯一状态入口。
-2. LangGraph Thread/Checkpoint 仍是持久历史唯一事实源。
-3. 禁止复制 assistant-ui runtime 状态。
-4. 禁止创建第二套 Message / ToolCall / Run 状态机。
-5. 通用 UI 优先 assistant-ui Element / Primitive 和 shadcn。
-6. LMA 自定义组件只处理领域数据展示。
-7. unstable assistant-ui API 必须封装在单一 adapter 文件。
-8. ToolMessage artifact 继续作为业务展示数据来源。
-9. 不为旧前端实现增加兼容代码。
-10. 新增手写通用组件前必须证明 assistant-ui/shadcn 当前无法满足。
+Browser
+  └─ AssistantRuntimeProvider
+       ├─ @assistant-ui/react-langchain useStreamRuntime
+       │    └─ @langchain/react useStream
+       │         └─ @langchain/langgraph-sdk Client
+       │              └─ LangGraph Agent Server
+       │
+       ├─ assistant-ui Thread / Message / Composer / Reasoning / Tool status
+       ├─ assistant-ui Toolkit
+       │    └─ LMA render-only backend tool UI
+       ├─ assistant-ui Data UI
+       │    └─ GNSS / weather / vision / site rich result
+       └─ assistant-ui Context Display + shadcn/ui
+
+LangGraph Agent Server
+  └─ lma-agent
+       ├─ create_agent
+       ├─ LMA system prompt
+       ├─ official middleware
+       │    ├─ SummarizationMiddleware
+       │    ├─ ModelCallLimitMiddleware
+       │    ├─ ToolCallLimitMiddleware
+       │    ├─ ModelRetryMiddleware
+       │    ├─ ToolRetryMiddleware
+       │    └─ ToolErrorMiddleware
+       ├─ LMA domain tools
+       └─ minimal LMA middleware
+            ├─ domain-only UI/data emission if needed
+            ├─ context usage projection
+            └─ optional follow-up suggestions
+
+Persistence
+  ├─ LangGraph Threads / Runs / Checkpoints
+  ├─ PostgreSQL
+  └─ Redis (Agent Server runtime infrastructure)
 ```
 
-------
-
-# P22：完成条件
-
-本轮重构只按架构与功能事实验收：
-
--  前端只有一个 assistant-ui Runtime；Thread、Message、Composer、Tool 与会话列表不再存在 legacy/compat 双实现。
--  项目代码不得访问 `STREAM_CONTROLLER`、内部 store 或其他 private runtime API，只允许使用公开的 `useLangChainStream` / `useChannel` 等边界。
--  浏览器 E2E 必须通过：生成中切换会话再返回、Stop 后继续提问、Regenerate checkpoint fork、Tool error / 空结果 / artifact 刷新恢复。
--  `pnpm run build`、前端测试与后端测试全部通过。
--  Tool 展示唯一事实源为持久化 `ToolMessage.artifact`，live tools channel artifact 只在未落盘的流式阶段兜底。
--  Thread/Checkpoint 是会话历史与生命周期的唯一事实源，前端不得复制 Runtime 状态机。
-
-`@assistant-ui/react-langchain@0.0.32` patch 仅保留到上游版本同时原生支持 controlled `threadId` 透传与摘要消息正确映射。升级时必须先删除 `patchedDependencies` 和 patch 文件，再以本节 E2E 与 build/tests 全量复验；任一条件不满足不得移除 patch。
-
-------
-
-# 最终目标
-
-重构后的前端自行维护代码应集中在三件事：
+禁止重新引入：
 
 ```text
-LangGraph 服务配置 / 极薄 Thread Adapter
-                 +
-LMA 专有业务 Tool Renderer
-                 +
-LMA 品牌与业务视觉样式
+自定义 SSE/WS 协议
+自定义前端 run 状态机
+自定义 tool-finished wire parser
+自定义 Message accumulator
+自定义 Thread store
+自定义 ReAct 图
+FastAPI 转发 LangGraph stream
+第二套 tool retry/error engine
+通用 UI 的手写 Dialog/Tooltip/Progress
 ```
 
-以下能力不再由项目自行设计和维护：
+---
+
+# 6. 可执行迁移顺序
+
+## R0 — 固化基线测试
+
+先不改架构，补/确认以下回归：
+
+- 普通文本问答。
+- 单工具调用。
+- 同轮 2~3 个并行工具，返回顺序不同。
+- 空工具结果。
+- 参数错误。
+- API transient -> retry -> success。
+- API retry exhausted。
+- Stop 正在执行的工具。
+- Stop 后继续发消息。
+- 切会话再回来恢复 stream。
+- 刷新恢复历史。
+- 直接 URL threadId。
+- 历史 summary 后继续对话。
+- GNSS 大数据结果。
+- 视觉图像结果。
+- 下一步建议。
+
+完成标准：当前行为先被测试固定，后续每阶段只改实现不改业务语义。
+
+---
+
+## R1 — Tool middleware 收敛（后端，最先改）
+
+修改：
+
+- `backend/app/agent/graph.py`
+
+步骤：
+
+1. 调整为 `ToolRetryMiddleware -> ToolErrorMiddleware`。
+2. 将 ToolFailure / BeidouApiError 映射迁到 `_on_tool_error`。
+3. 删除 `LmaMiddleware.awrap_tool_call` 中的 ToolMessage 构造/修复。
+4. 跑 backend tests。
+5. 记录 Tool retry 次数和最终消息是否与预期一致。
+
+预期删代码：约 40~80 行。
+
+---
+
+## R2 — Tool UI 官方化（前端 + 少量后端）
+
+修改/新增：
+
+- 新建 `frontend/src/features/monitoring/toolkit.tsx`
+- 简化 `frontend/src/components/assistant-ui/elements/tool-fallback.aui.tsx`
+- 删除 `frontend/src/lib/langgraph/live-tool-results.ts`
+- 简化 `AssistantProvider.tsx`
+- 如需富展示持久化：Agent state 增加官方 `ui`，使用 `push_ui_message`
+
+步骤：
+
+1. 先把一个最简单工具（例如 current time/station list）迁到 toolkit。
+2. 验证 `result/status` 的 live 行为。
+3. GNSS/weather 迁移。
+4. vision/image 使用 Data UI，验证刷新持久化。
+5. 全部成功后删除 LiveToolEventsProvider。
+6. Fallback 只负责未知工具。
+
+预期收益：这是前端最大的复杂度削减点。
+
+---
+
+## R3 — Context Display + Model Profile
+
+修改：
+
+- `context-usage.aui.tsx`
+- `context.py`
+- `models.py`
+- `config.py`
+
+步骤：
+
+1. CLI 安装官方 Context Display。
+2. 从模型 profile 取得 max input token；缺失时显式注入最小 profile。
+3. 使用 provider usage metadata。
+4. 删除 fixed/history 估算字段与手写进度环。
+5. 再决定摘要 trigger 是否切为 profile fraction。
+
+预期删除：
+
+- `CircularProgress`（若无其他引用）
+- 大部分 `context.py`
+- 多个 context-only env 配置。
+
+---
+
+## R4 — 去掉 Runtime patch 中的 threadId 修改
+
+修改：
+
+- `AssistantProvider.tsx`
+- 新增或内联 `UrlThreadSync`
+- 收窄 patch
+
+步骤：
+
+1. 使用 assistant-ui 公共 thread switch API 完成 URL -> runtime。
+2. 保留 `onThreadIdChange` 完成 runtime -> URL。
+3. 删除 patch 中 threadId/initialThreadId 修改。
+4. 跑 URL/切换/流恢复 E2E。
+
+summary patch 暂时独立保留并标记 upstream blocker。
+
+---
+
+## R5 — 依赖与生成组件清理
+
+执行：
+
+- shadcn `--dry-run` / `--diff`
+- `pnpm why`
+- 删除没有引用的 Radix scoped packages、旧工具依赖。
+- 若 R6 删除 title graph，再删除 `assistant-stream` 直接依赖（前提是无其他直接 import）。
+
+不要一次做“全包升级 + 架构重写”，每批依赖清理必须有 build/test。
+
+---
+
+## R6 — 可选极简化
+
+按价值决定：
+
+1. 删除 AI session title graph。
+2. 删除非当前部署使用的 Vendor 兼容分支。
+3. 删除不再使用的 legacy docs/tests/components。
+4. summary upstream 修复发布后删除最后一个 pnpm patch。
+
+---
+
+# 7. 文件级“保留 / 重写 / 删除”清单
+
+## 保留
+
+- `backend/app/beidou/**`
+- `backend/app/agent/tools.py`
+- `backend/app/agent/weather.py`
+- `backend/app/agent/vision.py`
+- `backend/app/agent/site.py`
+- `backend/app/agent/prompting.py`
+- `backend/langgraph.json`（R6 若删除 title graph 则只留 lma-agent）
+- `frontend/src/features/monitoring/**` 中纯业务 renderer
+- assistant-ui Elements / shadcn 组件的官方生成源码 + LMA className 风格覆盖
+- `RemoteThreadListAdapter`
+
+## 重写/显著简化
+
+- `backend/app/agent/graph.py`
+- `backend/app/agent/context.py`
+- `backend/app/agent/models.py`
+- `backend/app/agent/tool_protocol.py`
+- `frontend/src/app/providers/AssistantProvider.tsx`
+- `frontend/src/components/assistant-ui/elements/tool-fallback.aui.tsx`
+- `frontend/src/components/assistant-ui/elements/context-usage.aui.tsx`
+- `frontend/src/features/monitoring/tools/registry.tsx` -> Toolkit/Data UI 注册
+
+## 计划删除
+
+确定 R2 完成后：
+
+- `frontend/src/lib/langgraph/live-tool-results.ts`
+
+确定 R3 完成后（无其他引用）：
+
+- `frontend/src/components/ui/circular-progress.tsx`
+
+确定 R6 采用“无 AI 标题”后：
+
+- `backend/app/agent/title.py`
+- `langgraph.json` 的 `session-title`
+- `frontend/src/services/api.ts` 的 `generateSessionTitle`
+- thread adapter 中 LLM `generateTitle`
+- `assistant-stream` 直接依赖（若无其他 import）
+
+上游 summary converter 修复后：
+
+- `frontend/patches/@assistant-ui__react-langchain@0.0.32.patch`
+- `package.json.pnpm.patchedDependencies`
+
+---
+
+# 8. 最终验收标准
+
+只有同时满足以下条件，才算“官方优先重构完成”：
+
+### 架构
+
+- [ ] 主 Agent 是 `create_agent`，无手写 ReAct loop。
+- [ ] Tool retry/error/call limit 只由 LangChain middleware 管理。
+- [ ] 无服务端历史 tool-call 猜测修复器。
+- [ ] 前端只有一个 assistant Runtime。
+- [ ] 无自定义 SSE/WebSocket/run reducer。
+- [ ] 无 `tools` channel wire envelope parser。
+- [ ] 已知工具用 assistant-ui Toolkit / Data UI；Fallback 不承载业务状态机。
+- [ ] Thread 仍由 LangGraph Server 持久化。
+- [ ] URL threadId 只是一层路由同步，不是第二个 thread store。
+
+### UI
+
+- [ ] 保持当前左侧会话 + 中央聊天布局。
+- [ ] 工具与 Reasoning 同层显示，不增加“监测操作”二级容器。
+- [ ] 工具结果默认不展开大块原始 JSON。
+- [ ] Station/异常/观察等业务组件保持轻量风格。
+- [ ] Context ring 使用 assistant-ui Context Display。
+- [ ] Dialog/Tooltip/Collapsible 等来自 shadcn/ui。
+- [ ] Thinking 展开/折叠不导致页面抖动。
+
+### 流式与可靠性
+
+- [ ] 同批工具按各自返回时间完成。
+- [ ] 空结果也进入 complete。
+- [ ] Stop 能停止当前 run。
+- [ ] Stop 后继续对话不产生 tool-call protocol error。
+- [ ] 切会话后回来仍能看到当前 run。
+- [ ] 刷新后历史 Tool UI 与富结果能恢复。
+- [ ] Summary 后继续对话正常。
+- [ ] retry 不重复产生副作用或重复 ToolMessage。
+
+### 依赖与维护
+
+- [ ] `pnpm patch` 最终为 0；若 summary 上游尚未修复，只允许存在本文登记的单一 blocker。
+- [ ] 无重复 Radix 依赖。
+- [ ] 无未使用的 `zustand/@assistant-ui/core/assistant-stream` 等直接依赖（以实际 import / `pnpm why` 为准，不凭猜测删除）。
+- [ ] 通用组件通过 shadcn/assistant-ui CLI 管理。
+- [ ] CI 覆盖 backend test、frontend test/build、关键 E2E。
+
+---
+
+# 9. 后续开发规则
+
+新增任何“基础设施代码”前按以下顺序检查：
 
 ```text
-Chat Runtime
-Message lifecycle
-Composer
-Streaming UI
-Optimistic message
-Stop
-Regenerate
-Auto-scroll
-Scroll-to-bottom
-Thread loading
-Thread switching
-Message action bar
-Tool lifecycle
-Reasoning lifecycle
-Generic Tool UI
-Thread List UI
-Markdown streaming
-Suggestion UI
-Context UI
-Toast
-Dialog
-Dropdown
-Tooltip
-Skeleton
-Collapsible
+1. LangChain / LangGraph 是否已有官方 API / middleware / SDK？
+2. assistant-ui 是否已有 Runtime / Primitive / Toolkit / Element？
+3. shadcn/ui 是否已有对应组件？
+4. 官方 CLI / registry 是否可以直接安装？
+5. 只有前四项都不满足，才新增自定义实现。
+6. 若是上游缺口，必须在本文登记：
+   - 上游缺什么
+   - 当前 workaround 文件
+   - 删除条件
+   - 对应测试
 ```
 
-衡量此次改造是否成功的标准不是“新写了多少 assistant-ui 封装组件”，而是：
+禁止以“先兼容旧实现”为理由长期保留双轨代码。本项目已经允许破坏式重构，应直接迁到目标架构。
 
-**删除多少原本不应该由 LMA 自己维护的通用代码。**
+---
 
-如果某个新组件只是给 assistant-ui/shadcn 再包一层 props 和 className，而没有明确 LMA 业务语义，应优先删除这个包装层，直接使用官方组件。
+# 10. 本次审计使用的官方资料
+
+### assistant-ui
+
+- LangChain React Runtime  
+  https://www.assistant-ui.com/docs/runtimes/langchain
+- Tool UI  
+  https://www.assistant-ui.com/docs/tools/tool-ui
+- Toolkits / external backend tools  
+  https://www.assistant-ui.com/docs/tools/defining-tools
+- Toolkit migration  
+  https://www.assistant-ui.com/docs/migrations/toolkit-tools
+- Tool rendering API  
+  https://www.assistant-ui.com/docs/api-reference/tools/rendering
+- Context Display Element  
+  https://www.assistant-ui.com/elements/context-display
+- Assistant Context API  
+  https://www.assistant-ui.com/docs/guides/context-api
+- Upstream source  
+  https://github.com/assistant-ui/assistant-ui/tree/main/packages/react-langchain
+
+### LangChain / LangGraph / LangSmith
+
+- Prebuilt middleware  
+  https://docs.langchain.com/oss/python/langchain/middleware/built-in
+- Models / init_chat_model / model profiles / reasoning  
+  https://docs.langchain.com/oss/python/langchain/models
+- Tools  
+  https://docs.langchain.com/oss/python/langchain/tools
+- LangGraph Generative UI  
+  https://docs.langchain.com/langsmith/generative-ui-react
+- Agent Server application structure / langgraph.json / CLI  
+  https://docs.langchain.com/langsmith/application-structure
+
+### shadcn/ui
+
+- CLI  
+  https://ui.shadcn.com/docs/cli
+- Vite  
+  https://ui.shadcn.com/docs/installation/vite
+- Tailwind v4 + React 19  
+  https://ui.shadcn.com/docs/tailwind-v4
+
+---
+
+## 当前执行状态
+
+- [x] 2026-09-21：完成全栈官方文档对照审计。
+- [x] 2026-09-21：识别 Runtime patch、Tool live parser、Tool lifecycle 重复状态机、Context Display 手写实现、middleware 顺序等关键偏离。
+- [x] 2026-09-21：将原“前端替换 TODO”升级为全栈官方优先执行计划。
+- [ ] R0 固化基线测试。
+- [ ] R1 Tool middleware 收敛。
+- [ ] R2 Tool UI / Data UI 官方化。
+- [ ] R3 Context Display / Model Profile 收敛。
+- [ ] R4 threadId patch 收窄。
+- [ ] R5 依赖清理。
+- [ ] R6 可选极简化。
