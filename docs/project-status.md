@@ -40,6 +40,8 @@
 
 ## 验证基线
 
+- 仓库级 GitHub Actions 在 Pull Request 和 `main` 推送时分别执行后端测试/图导入，以及前端单测、构建和 Playwright 关键场景；浏览器失败时上传 7 天诊断产物。
+
 ```powershell
 cd backend
 .\.venv\Scripts\python.exe -m unittest discover -s tests -p "test*.py" -v

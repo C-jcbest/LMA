@@ -1,6 +1,6 @@
 # LMA 全栈官方优先重构 TODO
 
-> 目标分支：`feat/frontend-refactor`
+> 目标分支：`codex/official-stack-refactor`
 > 复核基线：`09ab59f9739027db22f92cb90af6e47f396933de`
 > 更新时间：2026-09-21
 >
@@ -320,9 +320,9 @@ Graph / Orchestrator 决定插入 UI
 
 # 4. P0：优先解决的架构问题
 
-## P0-01 Tool Retry / Error Middleware 顺序错误
+## P0-01 Tool Retry / Error Middleware 顺序语义与职责收敛
 
-当前：
+文档复核时的装配顺序：
 
 ```text
 ModelRetry
@@ -330,15 +330,17 @@ ToolError
 ToolRetry
 ```
 
-需要调整为：
+LangChain 的 middleware 列表按“前项包裹后项”组合，因此上述列表的实际工具执行顺序是：
 
 ```text
-ModelRetry
-ToolRetry
-ToolError
+ToolError（外层最终脱敏）
+  ↓
+ToolRetry（内层判断并重试）
+  ↓
+Tool
 ```
 
-目的：
+不得仅按名称阅读顺序交换为 `[ToolRetryMiddleware, ToolErrorMiddleware]`；那会让内层 `ToolErrorMiddleware` 在第一次失败时直接返回 `ToolMessage`，外层 Retry 无异常可重试。目标行为是：
 
 ```text
 工具异常
@@ -1377,12 +1379,12 @@ Context Ring
 
 ## R0 — 固化回归基线与 CI
 
--  后端全部测试通过
--  前端 Vitest 通过
--  Playwright 通过
--  Production build 通过
--  新增 GitHub Actions
--  固化 Stop / parallel tools / refresh / thread switching 等关键 E2E
+- [x] 后端全部测试通过（69 项，67 通过、2 项显式隔离 Server E2E）
+- [x] 前端 Vitest 通过（58 项）
+- [x] Playwright 通过（4 项关键浏览器场景）
+- [x] Production build 通过
+- [x] 新增 GitHub Actions
+- [x] 固化 Stop / parallel tools / refresh / thread switching 等关键 E2E
 
 完成 R0 前，不进行大规模删除。
 
@@ -1390,13 +1392,13 @@ Context Ring
 
 ## R1 — 后端 Tool Middleware 收敛
 
--  `ToolRetryMiddleware` 移到 `ToolErrorMiddleware` 前
--  统一 `_on_tool_error`
--  删除 `LmaMiddleware.awrap_tool_call` 中重复 Tool 生命周期
--  ToolFailure/BeidouApiError 收敛
--  验证 retry 次数
--  验证错误脱敏
--  backend tests 全绿
+- [x] 复核官方 middleware 组合语义：`ToolErrorMiddleware` 必须包裹 `ToolRetryMiddleware`
+- [ ] 统一 `_on_tool_error`
+- [ ] 先迁移需要保留部分证据的错误结果，再删除 `LmaMiddleware.awrap_tool_call` 中重复 Tool 生命周期
+- [ ] ToolFailure/BeidouApiError 收敛
+- [x] 验证 retry 次数
+- [x] 验证错误脱敏
+- [x] backend tests 全绿
 
 这是第一项实际代码重构。
 
@@ -1694,7 +1696,7 @@ generateSessionTitle
 
 # 13. 当前执行状态
 
-截至 `09ab59f9739027db22f92cb90af6e47f396933de`：
+基线 `09ab59f9739027db22f92cb90af6e47f396933de` 之后已完成：
 
 -  React / Vite / TypeScript / Tailwind 主技术栈升级
 -  assistant-ui Runtime 已进入主链
@@ -1705,10 +1707,10 @@ generateSessionTitle
 -  Tool 使用 `content_and_artifact`
 -  Streamdown 已采用
 -  shadcn/Radix 已用于大部分通用 UI
+-  R0 仓库级 GitHub Actions 与本地回归基线已建立
 
 当前剩余的真正架构性工作：
 
--  R0 CI 与回归基线
 -  R1 Tool Middleware 收敛
 -  R2 Toolkit + 删除 tools wire parser
 -  R3 Artifact 强类型
