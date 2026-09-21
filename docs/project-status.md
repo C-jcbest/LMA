@@ -13,7 +13,7 @@
 - Artifact 按 `kind` 使用严格 Pydantic 判别联合；客户端展示字段只位于 `artifact.data`，来源、限制、观测时间和错误保持 envelope 元数据。
 - `system.md` 和 `vision.md` 分别是主业务与视觉策略的唯一编辑源；System Prompt 保持静态，当前业务时间通过 `get_current_time` 获取，时区统一为 `Asia/Shanghai`。
 - 会话标题由 assistant-ui Adapter 的 `generateTitle()` 调用独立 `session-title` 图生成并写入 `thread.metadata.name`；主图不生成标题。
-- 下一步建议当前仍在主 Run 的 `aafter_agent` 阶段生成，是否拆为独立 Run 以实测延迟为准。
+- 下一步建议保留在主 Run 的 `aafter_agent` 阶段；日志记录正文完成、terminal ready 与阶段耗时，无生产延迟证据前不拆独立 Run。
 
 ### 前端
 
@@ -41,7 +41,6 @@
 
 ## 临时例外
 
-- `_sanitize_unanswered_tool_calls` 当前在新 Run 前修复 Stop 遗留的悬空 tool-call；R7 以真实 Agent Server E2E 验证官方 cancel 后决定是否删除。
 - `DeepSeekThinkingChatModel` 当前只补足 DeepSeek 多轮 tool-loop 的 `reasoning_content` 回传；上游原生支持并通过回归测试后删除。
 - 场地环境外部服务故障必须局部隔离：DEM 或地质数据源单点失败不阻断其他证据，限制写入 `limitations`。
 

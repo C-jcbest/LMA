@@ -2,12 +2,13 @@
 
 由 Agent Server 调用图工厂并注入 Thread/Checkpoint 持久化。
 LMA middleware 维护展示元数据及推荐契约。
-官方 SummarizationMiddleware 管理历史；推荐退出主 Run 在 TODO 23 实施。
+官方 SummarizationMiddleware 管理历史；推荐阶段保留在主 Run 并记录耗时。
 """
 
 import logging
 from dataclasses import replace
 from functools import lru_cache
+from time import perf_counter
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
 from langchain.agents.middleware import (
@@ -18,7 +19,7 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ToolCallLimitMiddleware,
 )
-from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from pydantic import BaseModel, Field
@@ -55,32 +56,6 @@ def _message_text(message: BaseMessage) -> str:
     if isinstance(content, str):
         return content
     return ""
-
-
-def _sanitize_unanswered_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """服务端自愈：清除或收窄历史 checkpoint 中因客户端主动中断等遗留的未配对 AI tool-call。"""
-    updates: list[BaseMessage] = []
-    for idx, msg in enumerate(messages):
-        if msg.type != "ai" or not getattr(msg, "tool_calls", None):
-            continue
-        # 统计紧随其后的连续 ToolMessage id
-        answered_ids = set()
-        for next_msg in messages[idx + 1:]:
-            if next_msg.type == "tool":
-                answered_ids.add(getattr(next_msg, "tool_call_id", None))
-            elif next_msg.type in ("human", "ai"):
-                break
-        calls = msg.tool_calls
-        if all(c.get("id") in answered_ids for c in calls):
-            continue
-        completed_calls = [c for c in calls if c.get("id") in answered_ids]
-        if completed_calls:
-            updates.append(msg.model_copy(update={"tool_calls": completed_calls}))
-        elif msg.content and (not isinstance(msg.content, str) or msg.content.strip()):
-            updates.append(msg.model_copy(update={"tool_calls": []}))
-        elif getattr(msg, "id", None):
-            updates.append(RemoveMessage(id=msg.id))
-    return updates
 
 
 def _on_tool_error(exc: Exception, request) -> str:
@@ -134,7 +109,7 @@ class LmaMiddleware(AgentMiddleware):
     async def abefore_agent(self, state, runtime):
         anchor = business_now().isoformat(timespec="seconds")
         raw_messages = state.get("messages", [])
-        updates = _sanitize_unanswered_tool_calls(raw_messages)
+        updates = []
         if raw_messages and raw_messages[-1].type == "human":
             last_human = raw_messages[-1]
             updates.append(last_human.model_copy(update={"additional_kwargs": {
@@ -185,7 +160,16 @@ class LmaMiddleware(AgentMiddleware):
         }
 
     async def aafter_agent(self, state, runtime):
-        return await generate_recommendations(state)
+        answer_completed_at = business_now().isoformat(timespec="milliseconds")
+        started = perf_counter()
+        result = await generate_recommendations(state)
+        logger.info(
+            "recommendation stage completed answer_completed_at=%s terminal_ready_at=%s latency_ms=%.1f",
+            answer_completed_at,
+            business_now().isoformat(timespec="milliseconds"),
+            (perf_counter() - started) * 1000,
+        )
+        return result
 
 RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生成器。根据最近一轮对话（用户问题与助手回答），给出用户接下来最可能继续提出的 2~3 个后续问题。
 

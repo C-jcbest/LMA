@@ -1,7 +1,9 @@
 """生产 create_agent 工厂回归；使用可控模型，不访问真实平台。"""
 
+import asyncio
 import unittest
 from datetime import datetime
+from time import perf_counter
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -81,6 +83,33 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             second = await agent.ainvoke({"messages": [HumanMessage(content="继续")]}, config)
         self.assertEqual(second["recommendations"], [])
         self.assertEqual(bound_structured.ainvoke.call_count, 1)
+
+    async def test_recommendation_latency_is_after_answer_and_before_run_terminal(self):
+        self.settings.recommend_enabled = True
+        model = ScriptedModel(script=[AIMessage(content="正文已完成")])
+        agent = graph.create_lma_agent(model, agent_tools=[])
+
+        async def delayed_recommendation(*args, **kwargs):
+            await asyncio.sleep(0.15)
+            return graph.RecommendationResult(recommendations=["查看近期趋势", "对比同组测点"])
+
+        bound_structured = SimpleNamespace(ainvoke=AsyncMock(side_effect=delayed_recommendation))
+        recommend = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
+        started = perf_counter()
+        answer_elapsed = None
+        with patch.object(graph, "_get_recommend_llm", return_value=recommend), self.assertLogs(
+            graph.logger, level="INFO",
+        ) as logs:
+            async for update in agent.astream(
+                {"messages": [HumanMessage(content="查询")]}, stream_mode="updates",
+            ):
+                if "model" in update and answer_elapsed is None:
+                    answer_elapsed = perf_counter() - started
+        terminal_elapsed = perf_counter() - started
+
+        self.assertIsNotNone(answer_elapsed)
+        self.assertGreaterEqual(terminal_elapsed - answer_elapsed, 0.12)
+        self.assertTrue(any("recommendation stage completed" in line for line in logs.output))
 
 
     async def test_parallel_tool_retry_exhaustion_preserves_success_and_reports_error(self):
@@ -238,30 +267,6 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     await agent.ainvoke({"messages": [HumanMessage(content="查询")]})
                 delays = [c.args[0] for c in sleep.await_args_list if c.args[0] > 0]
                 self.assertEqual(delays, [0.5, 1.0])
-
-    async def test_sanitize_unanswered_tool_calls_cleans_interrupted_run(self):
-        """测试服务端自愈：前轮被中断遗留的未配对 tool_calls 在新一轮开始前被清洗。"""
-        @tool
-        def station():
-            """读取站点。"""
-            return "真实证据"
-
-        interrupted_ai = AIMessage(content="", tool_calls=[{"id": "c1", "name": "station", "args": {}}])
-        model = ScriptedModel(script=[AIMessage(content="正常回答")])
-        checkpointer = InMemorySaver()
-        agent = graph.create_lma_agent(model, agent_tools=[station], checkpointer=checkpointer)
-        config = {"configurable": {"thread_id": "interrupted-thread"}}
-
-        # 向 thread 写入包含未完成 tool_calls 的历史消息（模拟客户端 stop/cancel）
-        await agent.aupdate_state(
-            config,
-            {"messages": [HumanMessage(content="查询"), interrupted_ai]},
-        )
-
-        result = await agent.ainvoke({"messages": [HumanMessage(content="下一轮提问")]}, config)
-        self.assertEqual(result["messages"][-1].content, "正常回答")
-        first_input_messages = model.inputs[0]
-        self.assertNotIn(interrupted_ai, first_input_messages)
 
     async def test_tool_error_middleware_catches_generic_tool_exception(self):
         """测试通用异常只由 ToolErrorMiddleware 转换为受控错误消息。"""

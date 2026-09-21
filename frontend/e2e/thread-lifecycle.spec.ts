@@ -45,6 +45,23 @@ function persistedText(content: unknown) {
     .join('');
 }
 
+function expectToolCallsPaired(messages: Array<Record<string, unknown>>) {
+  const toolResultIds = new Set(
+    messages
+      .filter((message) => message.type === 'tool' && typeof message.tool_call_id === 'string')
+      .map((message) => message.tool_call_id as string),
+  );
+  const toolCallIds = messages.flatMap((message) => {
+    if (message.type !== 'ai' || !Array.isArray(message.tool_calls)) return [];
+    return message.tool_calls
+      .filter((call): call is { id: string } => Boolean(
+        call && typeof call === 'object' && 'id' in call && typeof call.id === 'string',
+      ))
+      .map((call) => call.id);
+  });
+  expect(toolCallIds.every((id) => toolResultIds.has(id))).toBe(true);
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test.beforeEach(async ({ page }) => {
@@ -115,23 +132,39 @@ test('生成中切换会话再返回：后台 Run 继续且返回后恢复状态
   }
 });
 
-test('Stop 后继续提问：取消当前 Run 后直接创建正常新 Run', async ({ page }) => {
-  const threadId = await createThread('Stop 生命周期');
+test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状态仍合法', async ({ page }) => {
+  const suffix = Date.now().toString(36);
+  const threadName = `Stop 生命周期-${suffix}`;
+  const otherName = `Stop 切换目标-${suffix}`;
+  const threadId = await createThread(threadName);
+  const otherId = await createThread(otherName);
   try {
+    await seedThread(otherId, 'Stop 场景切换目标');
     await openThread(page, threadId);
-    await send(page, '请慢速生成一段可停止的回答');
+    await send(page, '执行并行工具停止验证');
+    await expect(page.getByText('正在获取辅助信息…')).toBeVisible();
+    await expect(page.getByText('正在查询监测点分组…')).toBeVisible();
     await page.getByRole('button', { name: '停止生成' }).click();
     await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
 
+    await page.reload();
+    await expect(page).toHaveURL(new RegExp(`threadId=${threadId}`));
     await send(page, '停止后继续提问');
     await expect(page.getByText('已继续处理：停止后继续提问')).toBeVisible();
 
+    await switchThread(page, otherName, otherId);
+    await expect(page.getByText('已继续处理：Stop 场景切换目标')).toBeVisible();
+    await switchThread(page, threadName, threadId);
+    await expect(page.getByText('已继续处理：停止后继续提问')).toBeVisible();
+
     const state = await client.threads.getState(threadId);
-    const messages = (state.values as { messages?: Array<{ type?: string; content?: unknown }> }).messages ?? [];
+    const messages = (state.values as { messages?: Array<Record<string, unknown>> }).messages ?? [];
     expect(messages.some((message) => message.type === 'human' && persistedText(message.content) === '停止后继续提问')).toBe(true);
     expect(messages.some((message) => message.type === 'ai' && persistedText(message.content) === '已继续处理：停止后继续提问')).toBe(true);
+    expectToolCallsPaired(messages);
   } finally {
     await client.threads.delete(threadId);
+    await client.threads.delete(otherId);
   }
 });
 

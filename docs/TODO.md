@@ -1485,20 +1485,20 @@ Context Ring
 
 ### Stop
 
--  真实 Agent Server Stop E2E
--  官方链路正常则删除 sanitizer
--  如仍失败，留下最小 workaround
+- [x] 真实 Agent Server Stop E2E
+- [x] 官方链路正常则删除 sanitizer
+- [x] 如仍失败，留下最小 workaround（未触发：官方 cancel 会回滚未完成工具批次）
 
 ### DeepSeek
 
--  reasoning_content round-trip 回归测试
--  尝试官方 integration
--  上游修复后删除 adapter
+- [x] reasoning_content round-trip 回归测试
+- [x] 尝试官方 integration
+- [x] 上游修复后删除 adapter（当前官方 integration 仍丢失回传字段，保留窄 adapter）
 
 ### Recommendation
 
--  测量主回答与 terminal latency
--  仅在延迟明显时拆独立辅助 run
+- [x] 测量主回答与 terminal latency
+- [x] 仅在延迟明显时拆独立辅助 run（已增加阶段日志；无生产延迟证据，保持主 Run）
 
 ------
 
@@ -1717,7 +1717,7 @@ generateSessionTitle
 
 当前剩余的真正架构性工作：
 
--  R7 Stop / DeepSeek 例外复核
+- [x] R7 Stop / DeepSeek / Recommendation 例外复核
 -  R8 部署与文档清理
 
 完成这些工作以后，LMA 的前后端结构应基本收敛为：
