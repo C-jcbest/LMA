@@ -54,7 +54,7 @@ services:
       DATABASE_URI: postgresql://lma:${POSTGRES_PASSWORD}@postgres:5432/lma?sslmode=disable
       REDIS_URI: redis://redis:6379
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:?请在 backend/.env 中设置 LANGSMITH_API_KEY}
-      LANGGRAPH_CLOUD_LICENSE_KEY: ${LANGGRAPH_CLOUD_LICENSE_KEY:?请在 backend/.env 中设置 LANGGRAPH_CLOUD_LICENSE_KEY}
+      # 本地运行不强制生产许可证；如配置许可证，由 env_file 注入。
     ports:
       - "2024:8000" # 容器 8000 → 宿主机 2024，前端默认地址不变
     depends_on:

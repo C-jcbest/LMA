@@ -210,12 +210,12 @@ test('Tool error、空结果与 artifact 在刷新后仍由持久化 ToolMessage
     const emptyTool = page.getByRole('button', { name: /已获取 GNSS 监测数据/ });
     await expect(emptyTool).toBeVisible();
     await emptyTool.click();
-    await expect(page.getByText(/已加载 0 条采样记录/)).toBeVisible();
+    await expect(page.getByText(/该时间范围内暂无 GNSS 数据/)).toBeVisible();
 
     await page.reload();
     await expect(emptyTool).toBeVisible();
     await emptyTool.click();
-    await expect(page.getByText(/已加载 0 条采样记录/)).toBeVisible();
+    await expect(page.getByText(/该时间范围内暂无 GNSS 数据/)).toBeVisible();
   } finally {
     await client.threads.delete(errorThreadId);
     await client.threads.delete(emptyThreadId);
@@ -290,3 +290,70 @@ test('会话栏滚动加载下一页，整页耗尽后隐藏加载入口', async
   expect((await newButton.boundingBox())?.y).toBe(before?.y);
   expect(offsets).toEqual([0, 20]);
 });
+
+
+test('最新用户消息可编辑重新生成、复制，悬停不改变消息位置', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  const threadId = await createThread('编辑与复制');
+  try {
+    await seedThread(threadId, '编辑前的问题');
+    await openThread(page, threadId);
+    await expect(page.getByText('已继续处理：编辑前的问题')).toBeVisible();
+    const user = page.locator('[data-role="user"]').last();
+    const assistant = page.locator('[data-role="assistant"]').last();
+    await page.getByPlaceholder('询问监测数据、变化趋势、降雨关联或场地环境…').hover();
+    await expect(user.getByRole('button', { name: '编辑消息' })).toHaveCount(0);
+    const before = await assistant.boundingBox();
+    await user.hover();
+    await user.getByRole('button', { name: '复制消息' }).click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('编辑前的问题');
+    await assistant.hover();
+    await expect(assistant.getByRole('button', { name: 'Copy', exact: true })).toBeVisible();
+    const after = await assistant.boundingBox();
+    expect(after?.y).toBe(before?.y);
+    expect(after?.height).toBe(before?.height);
+    await user.hover();
+    await user.getByRole('button', { name: '编辑消息' }).click();
+    await page.getByRole('textbox', { name: '编辑用户消息' }).fill('修改后的问题');
+    await page.getByRole('button', { name: '保存并重新生成' }).click();
+    await expect(page.getByText('已继续处理：修改后的问题')).toBeVisible();
+    await page.reload();
+    await expect(page.getByText('已继续处理：修改后的问题')).toBeVisible();
+    await send(page, '下一轮问题');
+    await expect(page.getByText('已继续处理：下一轮问题')).toBeVisible();
+    const oldUser = page.locator('[data-role="user"]').first();
+    await oldUser.hover();
+    await expect(oldUser.getByRole('button', { name: '编辑消息' })).toHaveCount(0);
+    await expect(oldUser.getByRole('button', { name: '复制消息' })).toBeVisible();
+    await user.hover();
+    await user.getByRole('button', { name: '编辑消息' }).click();
+    await page.getByRole('textbox', { name: '编辑用户消息' }).fill('第二轮修改');
+    await page.getByRole('button', { name: '保存并重新生成' }).click();
+    await expect(page.getByText('已继续处理：第二轮修改')).toBeVisible();
+  } finally {
+    await client.threads.delete(threadId);
+  }
+});
+
+
+for (const mode of ['数值', '视觉']) {
+  test(`基准站${mode}请求仅向模型说明，刷新后也不出现错误卡片`, async ({ page }) => {
+    const threadId = await createThread(`基准站${mode}`);
+    try {
+      await openThread(page, threadId);
+      await send(page, `查询基准站${mode}数据`);
+      await expect(page.getByText('该站仅提供差分基准，不适用形变序列分析。')).toBeVisible();
+      await expect(page.locator('[data-role="assistant"] button').filter({ hasText: /GNSS|视觉/ })).toHaveCount(0);
+      const state = await client.threads.getState(threadId);
+      const messages = (state.values as { messages: Array<Record<string, unknown>> }).messages;
+      const result = messages.find((message) => message.type === 'tool');
+      expect(result?.artifact).toBeNull();
+      expect(persistedText(result?.content)).toContain('未查询形变数据');
+      await page.reload();
+      await expect(page.getByText('该站仅提供差分基准，不适用形变序列分析。')).toBeVisible();
+      await expect(page.locator('[data-role="assistant"] button').filter({ hasText: /GNSS|视觉/ })).toHaveCount(0);
+    } finally {
+      await client.threads.delete(threadId);
+    }
+  });
+}

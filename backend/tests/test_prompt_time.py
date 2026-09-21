@@ -645,21 +645,20 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             client = AsyncMock()
             client.__aenter__.return_value = client
             with patch.object(module, "_build_client", return_value=client), patch.object(module, "_resolve_station", AsyncMock(return_value=SimpleNamespace(station_type=1))):
-                with self.assertRaisesRegex(ToolFailure, "基准站"):
-                    args = {
+                result = await tool.ainvoke({
+                    "type": "tool_call",
+                    "id": "base-station-call",
+                    "name": tool.name,
+                    "args": {
                         "station_name_or_uuid": "基准站",
                         "begin_time": "2026-09-01 00:00:00",
                         "end_time": "2026-09-14 00:00:00",
-                    }
-                    if tool is vision.analyze_gnss_chart:
-                        await tool.ainvoke({
-                            "type": "tool_call",
-                            "id": "vision-call",
-                            "name": "analyze_gnss_chart",
-                            "args": args,
-                        })
-                    else:
-                        await tool.ainvoke(args)
+                    },
+                })
+                self.assertIn("未查询形变数据", result.content)
+                self.assertIn("基准站", result.content)
+                self.assertEqual(result.status, "success")
+                self.assertIsNone(result.artifact)
             client.get_daily_data.assert_not_called()
 
     async def test_invalid_sampling_frequency_is_not_silently_replaced(self):

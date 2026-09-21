@@ -10,8 +10,8 @@
 
 1. 在 `backend/.env` 配置模型、北斗平台与视觉服务，并设置以下 standalone 基础设施变量：
 
-   - `LANGSMITH_API_KEY`：Agent Server 服务认证，必填。
-   - `LANGGRAPH_CLOUD_LICENSE_KEY`：standalone 部署许可证，必填。
+   - `LANGSMITH_API_KEY`：Docker 本地运行必填，须具备 LangSmith Deployment 访问权限。
+   - `LANGGRAPH_CLOUD_LICENSE_KEY`：生产部署许可证，本地运行不要求；可留空，配置后由 `env_file` 注入。
    - `POSTGRES_PASSWORD`：Compose PostgreSQL 密码，必填。
 
 2. 构建 Agent Server 镜像并启动整套服务：
@@ -25,6 +25,8 @@ docker compose --env-file backend/.env ps
 ```
 
 3. 访问 `http://127.0.0.1:8080`。浏览器只连接同源 `/langgraph-api`，Nginx 再转发到 Agent Server；生产构建不会读取或写入浏览器中遗留的自定义 endpoint。
+
+项目根目录的 `.\reload-backend.ps1` 使用这套 Compose 配置重建后端。本地运行不应因缺少生产许可证被 Compose 拦截，但仍需满足上述 LangSmith 密钥权限；不具备该权限时使用下文 `langgraph dev` 本地开发方式，其存储与 Compose PostgreSQL 独立，不会自动载入原有容器会话。
 
 PostgreSQL 数据保存在 `lma_pgdata` named volume。`docker compose down` 不删除会话；`docker compose down -v` 会永久删除该卷，执行前必须确认不再需要其中数据。
 

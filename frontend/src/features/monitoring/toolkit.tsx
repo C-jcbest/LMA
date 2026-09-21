@@ -277,6 +277,10 @@ export const MonitoringToolCall = ({
   definition,
   ...props
 }: ToolCallMessagePartProps & { definition: MonitoringToolDefinition }) => {
+  // 正常完成但没有展示 artifact：仅供模型使用的工具答复，不解释 content。
+  if (props.status.type === 'complete' && !props.isError && props.artifact === null) {
+    return null;
+  }
   const envelope = decodeToolArtifact(definition.kind, props.artifact);
   const status = resolveStatus(
     props.status,

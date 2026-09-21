@@ -956,3 +956,13 @@ it('所有普通工具（包括场地环境）默认折叠，仅 HITL / requires
   expect(screen.getByRole('button', { name: '允许' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument();
 });
+
+
+it('仅供模型的答复不显示工具卡片，真正错误仍然可见', async () => {
+  const { container, rerender } = render(
+    <ToolFallback toolName="get_daily_gnss_data" status={{ type: 'complete' }} argsText="{}" result="基准站不适用形变查询" artifact={null} />,
+  );
+  expect(container).toBeEmptyDOMElement();
+  rerender(<ToolFallback toolName="get_daily_gnss_data" status={{ type: 'complete' }} argsText="{}" result="没有访问权限" artifact={null} isError />);
+  expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
+});

@@ -149,7 +149,7 @@ const server = http.createServer(async (request, response) => {
       StationGroupName: 'E2E 监测组',
       StationUUID: '11111111-1111-1111-1111-111111111111',
       StationName: 'E2E空数据站',
-      StationType: 2,
+      StationType: String(body.StationName ?? '').includes('基准站') ? 1 : 2,
       StationStatus: 10,
       StationLocation: '测试场地',
       Latitude: '30.1',
@@ -187,6 +187,14 @@ const server = http.createServer(async (request, response) => {
       begin_time: '2026-09-01 00:00:00',
       end_time: '2026-09-02 00:00:00',
     });
+  } else if (userText.includes('基准站') && !hasToolResult) {
+    payload = toolResponse(userText.includes('视觉') ? 'analyze_gnss_chart' : 'get_daily_gnss_data', {
+      station_name_or_uuid: 'E2E基准站',
+      begin_time: '2026-09-01 00:00:00',
+      end_time: '2026-09-02 00:00:00',
+    });
+  } else if (userText.includes('基准站') && hasToolResult) {
+    payload = chatResponse('该站仅提供差分基准，不适用形变序列分析。');
   } else if (userText.includes('空结果监测点') && !hasToolResult) {
     payload = toolResponse('get_daily_gnss_data', {
       station_name_or_uuid: 'E2E空数据站',
