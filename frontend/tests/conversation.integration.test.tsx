@@ -2,22 +2,144 @@ import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { ToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
-import { decodeToolArtifact } from '../src/features/monitoring/tools/registry';
+import { ToolFallback as GenericToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
+import {
+  decodeToolArtifact,
+  monitoringToolkit,
+} from '../src/features/monitoring/toolkit';
 import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView';
 import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
 import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
 import { WeatherResultView } from '../src/features/monitoring/tools/WeatherResultView';
-import { ThreadSummaryMessage } from '../src/components/assistant-ui/elements/thread.aui';
+import {
+  hasSummarizationSource,
+  ThreadSummaryMessage,
+} from '../src/components/assistant-ui/elements/thread.aui';
 import { ReasoningRoot, ReasoningTrigger } from '../src/components/assistant-ui/elements/reasoning';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
-import { AIMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
 import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
 import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
+import { convertLangChainBaseMessage } from '@assistant-ui/react-langchain';
+
+const ToolFallback: typeof GenericToolFallback = (props) => {
+  const renderer = monitoringToolkit[props.toolName as keyof typeof monitoringToolkit]?.render;
+  const Renderer = renderer ?? GenericToolFallback;
+  return <Renderer {...props} />;
+};
+
+const station = (station_name: string, fields: Record<string, unknown> = {}) => ({
+  station_name,
+  coordinate_system: 'WGS84',
+  ...fields,
+});
+
+const stationListData = (stations: Array<Record<string, unknown>>) => ({
+  total: stations.length,
+  stations: stations.map((item) => station(String(item.station_name), item)),
+});
+
+const stationGroupData = (groups: Array<Record<string, unknown>>) => ({
+  total: groups.length,
+  groups,
+});
+
+const gnssData = (station_name: string, points: Array<Record<string, unknown>>) => ({
+  station_name,
+  begin_time: '2026-09-15 00:00:00',
+  end_time: '2026-09-20 00:00:00',
+  timezone: 'Asia/Shanghai',
+  total_points: points.length,
+  returned_points: points.length,
+  downsampled: false,
+  points,
+  summary: {
+    n: { count: points.length },
+    e: { count: points.length },
+    u: { count: points.length },
+    gaps: [],
+  },
+});
+
+const visionData = (fields: Record<string, unknown> = {}) => ({
+  station_name: '测试站',
+  begin_time: '2026-09-15 00:00:00',
+  end_time: '2026-09-16 00:00:00',
+  timezone: 'Asia/Shanghai',
+  total_points: 0,
+  images: [],
+  chart_points: [],
+  ...fields,
+});
 
 describe('会话关键路径集成回归', () => {
+  it('领域 Renderer 将标准空结构展示为暂无数据', () => {
+    const { rerender } = render(
+      <StationResultView
+        data={stationGroupData([]) as React.ComponentProps<typeof StationResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('暂无监测点分组')).toBeInTheDocument();
+
+    rerender(
+      <StationResultView
+        data={stationListData([]) as React.ComponentProps<typeof StationResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('暂无符合条件的监测点')).toBeInTheDocument();
+
+    rerender(
+      <GnssResultView
+        data={gnssData('测试站', []) as React.ComponentProps<typeof GnssResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('该时间范围内暂无 GNSS 数据')).toBeInTheDocument();
+
+    rerender(
+      <VisionResultView
+        data={visionData() as React.ComponentProps<typeof VisionResultView>['data']}
+      />,
+    );
+    expect(screen.getByText('该时间范围内暂无可供复核的 GNSS 数据')).toBeInTheDocument();
+
+    rerender(
+      <WeatherResultView
+        data={{
+          ok: true,
+          location: { latitude: 30, longitude: 120, timezone: 'Asia/Shanghai' },
+          query: {
+            timezone: 'Asia/Shanghai',
+            history_start_date: '2026-09-01',
+            history_end_date: '2026-09-02',
+            forecast_days: 7,
+          },
+          units: { temperature: 'celsius', wind_speed: 'km/h', precipitation: 'mm' },
+          current: null,
+          rain_summary: {
+            recent_24h_window: {
+              start_time: '2026-09-01T00:00:00+08:00',
+              end_time: '2026-09-02T00:00:00+08:00',
+              available_hours: 0,
+              expected_hours: 24,
+              complete: false,
+              precipitation: null,
+              note: '暂无数据',
+            },
+            history_total_precipitation: null,
+            forecast_total_precipitation: null,
+          },
+          wind_summary: {},
+          history: { daily: { time: [] } },
+          forecast: { daily: { time: [] } },
+          source: { provider: 'Open-Meteo' },
+        }}
+      />,
+    );
+    expect(screen.getByText('该位置和时间范围内暂无天气数据')).toBeInTheDocument();
+  });
+
   it('优先展示标准 contentBlocks reasoning，不读取耗时字段', () => {
     const firstAI = new AIMessage({
       id: 'a1',
@@ -47,14 +169,11 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'gnss_series',
           status: 'success',
-          data: {
-            station_name: '测试站',
-            points: [
+          data: gnssData('测试站', [
               { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
               { time: '2026-09-15 09:00:00', n: Number.NaN, e: Number.POSITIVE_INFINITY, u: '12.5' },
               { time: '2026-09-15 10:00:00', n: 0, e: '0', u: 0 },
-            ],
-          },
+            ]),
         }}
       />
     );
@@ -74,14 +193,17 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'vision',
           status: 'success',
-          data: { station_name: '测试站', observations: {}, total_points: 5 },
-          chart_points: [
+          data: visionData({
+            observations: {},
+            total_points: 5,
+            chart_points: [
             { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
             { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
-            { t: '2026-09-15 10:00:00', n: null, e: '', u: Number.NaN },
+            { t: '2026-09-15 10:00:00', n: null, e: null, u: null },
             { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
             { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
-          ],
+            ],
+          }),
         }}
       />
     );
@@ -101,15 +223,13 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'station_list',
           status: 'success',
-          data: {
-            stations: [
+          data: stationListData([
               { station_name: 'A', station_status: '正常', station_type: '基准站' },
               { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
               { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
               { station_name: 'D', station_status: '故障', station_type: '中继站' },
-              { station_name: 'E', station_status: 10 },
-            ],
-          },
+              { station_name: 'E', station_status: '其他' },
+            ]),
         }}
       />
     );
@@ -150,6 +270,21 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
   });
 
+  it('官方 isError/result 在没有 artifact 时仍恢复工具错误终态', async () => {
+    render(
+      <ToolFallback
+        toolName="get_daily_gnss_data"
+        status={{ type: 'complete' }}
+        argsText="{}"
+        result="未找到指定监测点，请确认站点。"
+        isError
+      />
+    );
+    expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('GNSS 数据获取失败'));
+    expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
+  });
+
   it('成功工具只从合法 v1 artifact.data 取业务展示', async () => {
     const { container } = render(
       <ToolFallback
@@ -166,7 +301,7 @@ describe('会话关键路径集成回归', () => {
       />
     );
     await userEvent.click(screen.getByText(/已查询监测点信息/));
-    expect(container.textContent).toContain('共查询到 0 个监测点详情');
+    expect(container.textContent).toContain('暂无符合条件的监测点');
     expect(container.textContent).not.toContain('MODEL_ONLY');
   });
 
@@ -180,8 +315,9 @@ describe('会话关键路径集成回归', () => {
           version: 1,
           kind: 'vision',
           status: 'success',
-          data: { station_name: '测试站' },
-          images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+          data: visionData({
+            images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+          }),
         }}
       />
     );
@@ -219,37 +355,30 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText(/已完成辅助信息查询并同步至模型上下文/)).toBeInTheDocument();
   });
 
-  it('输入框发送按钮左侧可查看上下文 token 明细', async () => {
+  it('输入框发送按钮左侧显示可访问的上下文用量入口', () => {
     render(
       <ContextUsageElement
         usage={{
           input_tokens: 250,
-          context_limit_tokens: 1000,
-          remaining_tokens: 750,
+          output_tokens: 20,
+          total_tokens: 270,
+          max_input_tokens: 1000,
           usage_ratio: 0.25,
-          estimated_history_tokens: 120,
-          estimated_fixed_input_tokens: 130,
-          accounting_difference_tokens: 0,
-          output_reserve_tokens: 100,
-          safety_margin_tokens: 20,
-          trigger_tokens: 800,
-          counter: 'provider_reported',
           model: 'deepseek-flash',
         }}
       />
     );
 
-    await userEvent.click(screen.getByLabelText('上下文预算已用 25%'));
-    expect(screen.getByText('当前请求输入')).toBeInTheDocument();
-    expect(screen.getByText('250')).toBeInTheDocument();
-    expect(screen.queryByText('75.0K')).not.toBeInTheDocument();
+    const trigger = screen.getByLabelText('上下文用量');
+    expect(trigger).toHaveTextContent('25%');
+    expect(trigger.querySelector('svg')).toBeInTheDocument();
   });
 
   it('缺少真实 usage 时不渲染上下文占比，也不显示未配置占位', () => {
     render(
-      <ContextUsageElement usage={{ context_limit_tokens: 1_048_576 }} />
+      <ContextUsageElement usage={{ max_input_tokens: 1_048_576 }} />
     );
-    expect(screen.queryByText(/上下文窗口|未配置/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('上下文用量')).not.toBeInTheDocument();
   });
 
   it('会话归属依据 graph_id，adapter.list 严格过滤 assistantId 并映射 remoteId 与 externalId', async () => {
@@ -369,7 +498,7 @@ it('合法 v1 artifact 到达后直接展示业务数据，不依赖 raw JSON', 
         version: 1,
         kind: 'station_list',
         status: 'success',
-        data: { stations: [{ station_name: '实时测点X', station_status: '正常' }] },
+        data: stationListData([{ station_name: '实时测点X', station_status: '正常' }]),
       }}
     />
   );
@@ -416,7 +545,7 @@ it('P0-2: ToolMessage.artifact 到达后自然呈现业务结果，两阶段数�
   );
   expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
   await userEvent.click(screen.getByText('已查询监测点信息'));
-  expect(screen.getByText('未查询到符合条件的业务监测数据。')).toBeInTheDocument();
+  expect(screen.getByText('未查询到符合条件的监测点。')).toBeInTheDocument();
   expect(screen.queryByText('正在同步...')).not.toBeInTheDocument();
 
   // 阶段 2：权威 ToolMessage 到达，自然渲染业务点列表
@@ -430,7 +559,7 @@ it('P0-2: ToolMessage.artifact 到达后自然呈现业务结果，两阶段数�
         version: 1,
         kind: 'station_list',
         status: 'success',
-        data: { stations: [{ station_name: '持久化确定点', station_status: '正常' }] },
+        data: stationListData([{ station_name: '持久化确定点', station_status: '正常' }]),
       }}
     />
   );
@@ -442,28 +571,40 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
     version: 1,
     kind: 'station_list',
     status: 'success',
-    data: { stations: [] },
+    data: stationListData([]),
   };
-  expect(decodeToolArtifact('list_stations', validEnvelope)).toMatchObject({
+  expect(decodeToolArtifact('station_list', validEnvelope)).toMatchObject({
     version: 1,
     kind: 'station_list',
     status: 'success',
   });
 
   // 2. kind 与注册工具不匹配时拒绝
-  expect(decodeToolArtifact('list_stations', { ...validEnvelope, kind: 'weather' })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { ...validEnvelope, kind: 'weather' })).toBeUndefined();
 
   // 3. 非 version 1 拒绝
-  expect(decodeToolArtifact('list_stations', { ...validEnvelope, version: 2 })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { ...validEnvelope, version: 2 })).toBeUndefined();
 
   // 4. 非法 status 拒绝
-  expect(decodeToolArtifact('list_stations', { ...validEnvelope, status: 'unknown' })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { ...validEnvelope, status: 'unknown' })).toBeUndefined();
 
   // 5. 传统无 envelope 结构拒绝
-  expect(decodeToolArtifact('list_stations', { stations: [] })).toBeUndefined();
-  expect(decodeToolArtifact('list_stations', 'not an object')).toBeUndefined();
-  expect(decodeToolArtifact('list_stations', null)).toBeUndefined();
-  expect(decodeToolArtifact('list_stations', undefined)).toBeUndefined();
+  expect(decodeToolArtifact('station_list', { stations: [] })).toBeUndefined();
+  expect(decodeToolArtifact('station_list', 'not an object')).toBeUndefined();
+  expect(decodeToolArtifact('station_list', null)).toBeUndefined();
+  expect(decodeToolArtifact('station_list', undefined)).toBeUndefined();
+
+  // 6. 已删除的顶层业务字段不得再被兼容读取
+  expect(
+    decodeToolArtifact('vision', {
+      version: 1,
+      kind: 'vision',
+      status: 'success',
+      data: { station_name: '旧协议' },
+      images: [{ name: 'raw_coordinates', png_base64: 'LEGACY' }],
+      chart_points: [],
+    }),
+  ).toBeUndefined();
 });
 
 it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {
@@ -486,7 +627,7 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
                 version: 1,
                 kind: 'station_list',
                 status: 'success',
-                data: { stations: [{ station_name: '测点A', station_status: '正常' }] },
+                data: stationListData([{ station_name: '测点A', station_status: '正常' }]),
               },
             },
           }));
@@ -501,7 +642,7 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
                 version: 1,
                 kind: 'station_list',
                 status: 'success',
-                data: { groups: [] },
+                data: stationGroupData([]),
               },
             },
           }));
@@ -516,7 +657,9 @@ it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的�
                 version: 1,
                 kind: 'gnss_series',
                 status: 'success',
-                data: { points: [{ time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 }] },
+                data: gnssData('GNSS', [
+                  { time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 },
+                ]),
               },
             },
           }));
@@ -639,6 +782,19 @@ it('摘要消息通过 ThreadSummaryMessage 渲染折叠卡片，绝不作为用
   expect(screen.getByText('这是之前轮次的滑坡监测背景摘要。')).toBeInTheDocument();
 });
 
+it('LangChain 摘要 HumanMessage 通过原始 metadata 识别，不依赖消息角色补丁', () => {
+  const summaryMessage = new HumanMessage({
+    id: 'summary-human-message',
+    content: '这是从 LangGraph checkpoint 恢复的历史摘要。',
+    additional_kwargs: { lc_source: 'summarization' },
+  });
+  const converted = convertLangChainBaseMessage(summaryMessage);
+
+  expect(converted.role).toBe('user');
+  expect(hasSummarizationSource([summaryMessage], 'summary-human-message')).toBe(true);
+  expect(hasSummarizationSource([summaryMessage], 'another-message')).toBe(false);
+});
+
 it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页面”，局部级提供“重新加载”与“隐藏”', () => {
   const ProblematicChild = ({ shouldThrow }: { shouldThrow: boolean }) => {
     if (shouldThrow) {
@@ -723,10 +879,9 @@ it('ReasoningTrigger 与 ToolFallbackTrigger 排版对齐：思考去图标、�
         version: 1,
         kind: 'gnss_series',
         status: 'success',
-        data: {
-          station_name: '测试站-01',
-          points: [{ time: '2026-09-19 12:00:00', n: 1.0, e: 2.0, u: 3.0 }],
-        },
+        data: gnssData('测试站-01', [
+          { time: '2026-09-19 12:00:00', n: 1.0, e: 2.0, u: 3.0 },
+        ]),
       }}
     />
   );
@@ -752,10 +907,22 @@ it('所有普通工具（包括场地环境）默认折叠，仅 HITL / requires
         kind: 'site_environment',
         status: 'success',
         data: {
-          site_environment: {
-            station: { id: 's1', name: '监测点A', latitude: 30.1, longitude: 104.2 },
-            terrain: { elevation_m: 520 },
-            geology: { unit_name: '泥质灰岩' },
+          version: 1,
+          observed_at: '2026-09-21T12:00:00+08:00',
+          coordinate_system: 'WGS84',
+          center_station: station('监测点A', {
+            station_uuid: 's1',
+            latitude: 30.1,
+            longitude: 104.2,
+          }),
+          group_stations: [],
+          terrain: { dem_elevation_m: 520 },
+          geology: { name: '泥质灰岩' },
+          faults: { available: false, note: '未取得断层距离' },
+          layer_sources: {
+            geology_tiles: 'Macrostrat',
+            geology_source_layer: 'units',
+            fault_source_layer: 'lines',
           },
         },
       }}
@@ -788,4 +955,14 @@ it('所有普通工具（包括场地环境）默认折叠，仅 HITL / requires
   expect(screen.getByText('请确认是否执行此辅助调查操作？')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '允许' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument();
+});
+
+
+it('仅供模型的答复不显示工具卡片，真正错误仍然可见', async () => {
+  const { container, rerender } = render(
+    <ToolFallback toolName="get_daily_gnss_data" status={{ type: 'complete' }} argsText="{}" result="基准站不适用形变查询" artifact={null} />,
+  );
+  expect(container).toBeEmptyDOMElement();
+  rerender(<ToolFallback toolName="get_daily_gnss_data" status={{ type: 'complete' }} argsText="{}" result="没有访问权限" artifact={null} isError />);
+  expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
 });

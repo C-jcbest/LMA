@@ -14,6 +14,7 @@ import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { cn } from "@/lib/utils";
 
+// StreamdownTextComponents 的索引签名尚未保留 CodeHeaderProps。
 const CodeHeader: FC<any> = ({ language, code }: CodeHeaderProps) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const onCopy = () => {

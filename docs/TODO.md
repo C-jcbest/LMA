@@ -1,6 +1,6 @@
 # LMA 全栈官方优先重构 TODO
 
-> 目标分支：`feat/frontend-refactor`
+> 目标分支：`codex/official-stack-refactor`
 > 复核基线：`09ab59f9739027db22f92cb90af6e47f396933de`
 > 更新时间：2026-09-21
 >
@@ -8,8 +8,11 @@
 >
 > - `docs/official-stack-refactor.md`
 > - `docs/重构 TODO.md`
+> - `docs/TODO_2026-09-15.md`
+> - `docs/TODO_2026-09-18.md`
+> - `docs/TODO_simplify.md`
 >
-> 后续重构以本文为唯一架构与 TODO 标准。旧文档仅保留审计历史，不再分别维护完成状态。
+> 后续重构以本文为唯一架构与 TODO 标准。旧文档已从活动树删除，仅保留在 Git 历史用于审计。
 >
 > 本轮允许破坏式重构，不要求兼容旧前端、旧 Tool UI 或旧消息展示结构。保留 LMA 核心监测能力与当前基本视觉风格，不为历史实现保留双轨兼容代码。
 
@@ -320,9 +323,9 @@ Graph / Orchestrator 决定插入 UI
 
 # 4. P0：优先解决的架构问题
 
-## P0-01 Tool Retry / Error Middleware 顺序错误
+## P0-01 Tool Retry / Error Middleware 顺序语义与职责收敛
 
-当前：
+文档复核时的装配顺序：
 
 ```text
 ModelRetry
@@ -330,15 +333,17 @@ ToolError
 ToolRetry
 ```
 
-需要调整为：
+LangChain 的 middleware 列表按“前项包裹后项”组合，因此上述列表的实际工具执行顺序是：
 
 ```text
-ModelRetry
-ToolRetry
-ToolError
+ToolError（外层最终脱敏）
+  ↓
+ToolRetry（内层判断并重试）
+  ↓
+Tool
 ```
 
-目的：
+不得仅按名称阅读顺序交换为 `[ToolRetryMiddleware, ToolErrorMiddleware]`；那会让内层 `ToolErrorMiddleware` 在第一次失败时直接返回 `ToolMessage`，外层 Retry 无异常可重试。目标行为是：
 
 ```text
 工具异常
@@ -1377,12 +1382,12 @@ Context Ring
 
 ## R0 — 固化回归基线与 CI
 
--  后端全部测试通过
--  前端 Vitest 通过
--  Playwright 通过
--  Production build 通过
--  新增 GitHub Actions
--  固化 Stop / parallel tools / refresh / thread switching 等关键 E2E
+- [x] 后端全部测试通过（69 项，67 通过、2 项显式隔离 Server E2E）
+- [x] 前端 Vitest 通过（58 项）
+- [x] Playwright 通过（4 项关键浏览器场景）
+- [x] Production build 通过
+- [x] 新增 GitHub Actions
+- [x] 固化 Stop / parallel tools / refresh / thread switching 等关键 E2E
 
 完成 R0 前，不进行大规模删除。
 
@@ -1390,13 +1395,13 @@ Context Ring
 
 ## R1 — 后端 Tool Middleware 收敛
 
--  `ToolRetryMiddleware` 移到 `ToolErrorMiddleware` 前
--  统一 `_on_tool_error`
--  删除 `LmaMiddleware.awrap_tool_call` 中重复 Tool 生命周期
--  ToolFailure/BeidouApiError 收敛
--  验证 retry 次数
--  验证错误脱敏
--  backend tests 全绿
+- [x] 复核官方 middleware 组合语义：`ToolErrorMiddleware` 必须包裹 `ToolRetryMiddleware`
+- [x] 统一 `_on_tool_error`
+- [x] 先迁移需要保留部分证据的错误结果，再删除 `LmaMiddleware.awrap_tool_call` 中重复 Tool 生命周期
+- [x] ToolFailure/BeidouApiError 收敛
+- [x] 验证 retry 次数
+- [x] 验证错误脱敏
+- [x] backend tests 全绿
 
 这是第一项实际代码重构。
 
@@ -1404,37 +1409,37 @@ Context Ring
 
 ## R2 — Tool UI 官方化
 
--  建立 `features/monitoring/toolkit.tsx`
--  先迁 Station Tool
--  迁 GNSS
--  迁 Weather
--  迁 Vision
--  迁 Site Environment
--  ToolFallback 恢复为 generic fallback
--  删除 Tool Registry 通用 lifecycle 逻辑
--  删除 `live-tool-results.ts`
--  删除 `LiveToolEventsProvider`
--  只读 ToolCall part 的 `status/result/artifact/isError/timing`
+- [x] 建立 `features/monitoring/toolkit.tsx`
+- [x] 迁移 Station Tool
+- [x] 迁移 GNSS
+- [x] 迁移 Weather
+- [x] 迁移 Vision
+- [x] 迁移 Site Environment
+- [x] ToolFallback 恢复为 generic fallback
+- [x] 删除 Tool Registry 通用 lifecycle 逻辑
+- [x] 删除 `live-tool-results.ts`
+- [x] 删除 `LiveToolEventsProvider`
+- [x] 只读 ToolCall part 的 `status/result/artifact/isError/timing`
 
 重点验证：
 
--  并行 Tool 分别完成
--  空结果 complete
--  error 正常
--  artifact refresh 恢复
--  image refresh 恢复
+- [x] 并行 Tool 分别完成
+- [x] 空结果 complete
+- [x] error 正常
+- [x] artifact refresh 恢复
+- [x] image refresh 恢复
 
 ------
 
 ## R3 — Tool Artifact 强类型化
 
--  后端建立明确 Pydantic Artifact Schema
--  每类字段只存在一个位置
--  前端建立对应 TS Types
--  删除 `any`
--  删除 index signature
--  删除字段位置 fallback
--  Renderer 不再猜 JSON
+- [x] 后端建立明确 Pydantic Artifact Schema
+- [x] 每类字段只存在一个位置
+- [x] 前端建立对应 TS Types
+- [x] 删除 `any`
+- [x] 删除 index signature
+- [x] 删除字段位置 fallback
+- [x] Renderer 不再猜 JSON
 
 不引入新的自定义 transport。
 
@@ -1442,13 +1447,13 @@ Context Ring
 
 ## R4 — 删除 assistant-ui patch
 
--  URL -> Runtime 使用公共 ThreadListRuntime action
--  Runtime -> URL 单向同步
--  popstate E2E
--  deep-link E2E
--  Summary 根据 metadata 自定义渲染
--  删除 patched dependency
--  删除 patch 文件
+- [x] URL -> Runtime 使用公共 ThreadListRuntime action
+- [x] Runtime -> URL 单向同步
+- [x] popstate E2E
+- [x] deep-link E2E
+- [x] Summary 根据 metadata 自定义渲染
+- [x] 删除 patched dependency
+- [x] 删除 patch 文件
 
 最终仓库不存在 package patch。
 
@@ -1456,26 +1461,26 @@ Context Ring
 
 ## R5 — Context 与前端组件收敛
 
--  安装 assistant-ui Context Display
--  替换手写 CircularProgress
--  Context 最大值改 Model Profile
--  实际用量只使用 provider usage
--  删除无价值的 fixed/history Token 估算
--  删除对应配置项
--  `shadcn migrate cn`
--  清理 `clsx` / `tailwind-merge`
--  检查重复 Radix 依赖
+- [x] 安装 assistant-ui Context Display
+- [x] 替换手写 CircularProgress
+- [x] Context 最大值改 Model Profile
+- [x] 实际用量只使用 provider usage
+- [x] 删除无价值的 fixed/history Token 估算
+- [x] 删除对应配置项
+- [x] `shadcn migrate cn`
+- [x] 清理 `clsx` / `tailwind-merge`
+- [x] 检查重复 Radix 依赖
 
 ------
 
 ## R6 — Elements / 依赖升级治理
 
--  assistant-ui Elements 与 registry 对比
--  只保留必要 LMA 样式差异
--  `pnpm why` 检查 direct dependencies
--  删除未使用依赖
--  不修改第三方 runtime internals
--  全部测试与 build 通过
+- [x] assistant-ui Elements 与 registry 对比
+- [x] 只保留必要 LMA 样式差异
+- [x] `pnpm why` 检查 direct dependencies
+- [x] 删除未使用依赖
+- [x] 不修改第三方 runtime internals
+- [x] 全部测试与 build 通过
 
 ------
 
@@ -1483,34 +1488,34 @@ Context Ring
 
 ### Stop
 
--  真实 Agent Server Stop E2E
--  官方链路正常则删除 sanitizer
--  如仍失败，留下最小 workaround
+- [x] 真实 Agent Server Stop E2E
+- [x] 官方链路正常则删除 sanitizer
+- [x] 如仍失败，留下最小 workaround（未触发：官方 cancel 会回滚未完成工具批次）
 
 ### DeepSeek
 
--  reasoning_content round-trip 回归测试
--  尝试官方 integration
--  上游修复后删除 adapter
+- [x] reasoning_content round-trip 回归测试
+- [x] 尝试官方 integration
+- [x] 上游修复后删除 adapter（当前官方 integration 仍丢失回传字段，保留窄 adapter）
 
 ### Recommendation
 
--  测量主回答与 terminal latency
--  仅在延迟明显时拆独立辅助 run
+- [x] 测量主回答与 terminal latency
+- [x] 仅在延迟明显时拆独立辅助 run（已增加阶段日志；无生产延迟证据，保持主 Run）
 
 ------
 
 ## R8 — 部署与文档清理
 
--  Compose 定位改成开发/小规模自托管
--  补 standalone Server 必要环境变量说明
--  增加 healthcheck
--  明确 Vite production static hosting
--  配置同源 Agent Server proxy
--  真正生产需求才引入官方 Helm/Kubernetes
--  更新 `project-status.md`
--  两份旧 TODO 标记 archived/superseded
--  本文成为唯一 TODO
+- [x] Compose 定位改成开发/小规模自托管
+- [x] 补 standalone Server 必要环境变量说明
+- [x] 增加 healthcheck
+- [x] 明确 Vite production static hosting
+- [x] 配置同源 Agent Server proxy
+- [x] 真正生产需求才引入官方 Helm/Kubernetes
+- [x] 更新 `project-status.md`
+- [x] 旧 TODO 从活动树删除，仅保留 Git 历史审计
+- [x] 本文成为唯一 TODO
 
 ------
 
@@ -1694,7 +1699,7 @@ generateSessionTitle
 
 # 13. 当前执行状态
 
-截至 `09ab59f9739027db22f92cb90af6e47f396933de`：
+基线 `09ab59f9739027db22f92cb90af6e47f396933de` 之后已完成：
 
 -  React / Vite / TypeScript / Tailwind 主技术栈升级
 -  assistant-ui Runtime 已进入主链
@@ -1705,18 +1710,15 @@ generateSessionTitle
 -  Tool 使用 `content_and_artifact`
 -  Streamdown 已采用
 -  shadcn/Radix 已用于大部分通用 UI
+-  R0 仓库级 GitHub Actions 与本地回归基线已建立
+-  R1 后端 Tool Middleware 与错误生命周期已收敛
+-  R2 已知监测工具已迁移 assistant-ui Toolkit，旧 tools channel/Registry 已删除
+-  R3 Artifact 已收敛为后端 Pydantic、前端判别联合与唯一 `artifact.data` 业务字段位置
+-  R4 已通过公共 Thread action 完成 URL 双向导航，摘要按 LangChain metadata 渲染，依赖 patch 已删除
+-  R5 已采用 assistant-ui Context Display；用量只投影 provider usage 与 Model Profile，并完成 `cn`、Radix 直接依赖收敛
+-  R6 已复核 assistant-ui registry，保留 Streamdown 与 LMA 产品差异，删除未使用的直接依赖
 
-当前剩余的真正架构性工作：
-
--  R0 CI 与回归基线
--  R1 Tool Middleware 收敛
--  R2 Toolkit + 删除 tools wire parser
--  R3 Artifact 强类型
--  R4 删除 assistant-ui patch
--  R5 Context Display / Model Profile / `cn`
--  R6 依赖与 Elements 收敛
--  R7 Stop / DeepSeek 例外复核
--  R8 部署与文档清理
+本轮官方优先重构 R0-R8 已完成。后续新增事项只在本文追加，不再创建并行 TODO 文件。
 
 完成这些工作以后，LMA 的前后端结构应基本收敛为：
 

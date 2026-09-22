@@ -1,7 +1,9 @@
 """生产 create_agent 工厂回归；使用可控模型，不访问真实平台。"""
 
+import asyncio
 import unittest
 from datetime import datetime
+from time import perf_counter
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +12,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.agent import context, graph, summarization
+from app.agent import graph, summarization
+from app.beidou.client import BeidouApiError
 from runtime_fixtures import ScriptedModel, call
 
 
@@ -20,11 +23,9 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
             agent_model_run_limit=20, agent_tool_run_limit=40, context_token_threshold=800_000,
             context_model_context=1_048_576,
-            context_keep_tokens=400000, context_output_reserve_tokens=100,
-            context_safety_margin_tokens=20, context_token_estimate_factor=1.0,
-            context_chars_per_token=1.6667,  context_summary_max_tokens=2000, llm_model="test",
+            context_keep_tokens=400000, context_summary_max_tokens=2000, llm_model="test",
         )
-        for module in (graph, context, summarization):
+        for module in (graph, summarization):
             patcher = patch.object(module, "get_settings", return_value=self.settings)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -39,7 +40,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             """读取站点。"""
             return "站点甲，缺测"
 
-        model = ScriptedModel(script=[call(), AIMessage(
+        model = ScriptedModel(profile={"max_input_tokens": 1_048_576}, script=[call(), AIMessage(
             content="数据缺测，不能判断",
             additional_kwargs={"reasoning_content": "核对证据"},
             usage_metadata={"input_tokens": 321, "output_tokens": 20, "total_tokens": 341},
@@ -54,7 +55,8 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["messages"][0].additional_kwargs["created_at"], first.isoformat())
         self.assertEqual(result["messages"][-1].additional_kwargs["reasoning_content"], "核对证据")
         self.assertEqual(result["context_usage"]["input_tokens"], 321)
-        self.assertEqual(result["context_usage"]["remaining_tokens"], 1_048_576 - 321 - 120)
+        self.assertEqual(result["context_usage"]["max_input_tokens"], 1_048_576)
+        self.assertAlmostEqual(result["context_usage"]["usage_ratio"], 321 / 1_048_576)
         self.assertEqual(model.inputs[0][0].content, model.inputs[1][0].content)
         with patch.object(graph, "business_now", return_value=second):
             result = await agent.ainvoke({"messages": [HumanMessage(content="昨天呢？")]}, config)
@@ -81,6 +83,33 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             second = await agent.ainvoke({"messages": [HumanMessage(content="继续")]}, config)
         self.assertEqual(second["recommendations"], [])
         self.assertEqual(bound_structured.ainvoke.call_count, 1)
+
+    async def test_recommendation_latency_is_after_answer_and_before_run_terminal(self):
+        self.settings.recommend_enabled = True
+        model = ScriptedModel(script=[AIMessage(content="正文已完成")])
+        agent = graph.create_lma_agent(model, agent_tools=[])
+
+        async def delayed_recommendation(*args, **kwargs):
+            await asyncio.sleep(0.15)
+            return graph.RecommendationResult(recommendations=["查看近期趋势", "对比同组测点"])
+
+        bound_structured = SimpleNamespace(ainvoke=AsyncMock(side_effect=delayed_recommendation))
+        recommend = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
+        started = perf_counter()
+        answer_elapsed = None
+        with patch.object(graph, "_get_recommend_llm", return_value=recommend), self.assertLogs(
+            graph.logger, level="INFO",
+        ) as logs:
+            async for update in agent.astream(
+                {"messages": [HumanMessage(content="查询")]}, stream_mode="updates",
+            ):
+                if "model" in update and answer_elapsed is None:
+                    answer_elapsed = perf_counter() - started
+        terminal_elapsed = perf_counter() - started
+
+        self.assertIsNotNone(answer_elapsed)
+        self.assertGreaterEqual(terminal_elapsed - answer_elapsed, 0.12)
+        self.assertTrue(any("recommendation stage completed" in line for line in logs.output))
 
 
     async def test_parallel_tool_retry_exhaustion_preserves_success_and_reports_error(self):
@@ -211,7 +240,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             calls.append(1)
             return "真实证据"
         request = AIMessage(content="", tool_calls=[*call("c1").tool_calls, *call("c2").tool_calls])
-        model = ScriptedModel(script=[request, AIMessage(content="说明限制",
+        model = ScriptedModel(profile={"max_input_tokens": 1_048_576}, script=[request, AIMessage(content="说明限制",
             usage_metadata={"input_tokens": 123, "output_tokens": 2, "total_tokens": 125})])
         result = await graph.create_lma_agent(model, agent_tools=[station]).ainvoke({"messages": [HumanMessage(content="查询")]})
         self.assertEqual(len(calls), 1)
@@ -239,32 +268,8 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 delays = [c.args[0] for c in sleep.await_args_list if c.args[0] > 0]
                 self.assertEqual(delays, [0.5, 1.0])
 
-    async def test_sanitize_unanswered_tool_calls_cleans_interrupted_run(self):
-        """测试服务端自愈：前轮被中断遗留的未配对 tool_calls 在新一轮开始前被清洗。"""
-        @tool
-        def station():
-            """读取站点。"""
-            return "真实证据"
-
-        interrupted_ai = AIMessage(content="", tool_calls=[{"id": "c1", "name": "station", "args": {}}])
-        model = ScriptedModel(script=[AIMessage(content="正常回答")])
-        checkpointer = InMemorySaver()
-        agent = graph.create_lma_agent(model, agent_tools=[station], checkpointer=checkpointer)
-        config = {"configurable": {"thread_id": "interrupted-thread"}}
-
-        # 向 thread 写入包含未完成 tool_calls 的历史消息（模拟客户端 stop/cancel）
-        await agent.aupdate_state(
-            config,
-            {"messages": [HumanMessage(content="查询"), interrupted_ai]},
-        )
-
-        result = await agent.ainvoke({"messages": [HumanMessage(content="下一轮提问")]}, config)
-        self.assertEqual(result["messages"][-1].content, "正常回答")
-        first_input_messages = model.inputs[0]
-        self.assertNotIn(interrupted_ai, first_input_messages)
-
     async def test_tool_error_middleware_catches_generic_tool_exception(self):
-        """测试通用异常被 ToolErrorMiddleware 捕获并由 LmaMiddleware 补充受控安全 envelope。"""
+        """测试通用异常只由 ToolErrorMiddleware 转换为受控错误消息。"""
         @tool
         def faulty_tool():
             """故障工具。"""
@@ -280,8 +285,35 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(tool_messages), 1)
         self.assertEqual(tool_messages[0].status, "error")
         self.assertEqual(tool_messages[0].content, "工具执行失败，未取得可用数据，请说明这一限制。")
-        self.assertEqual(tool_messages[0].artifact["error"]["category"], "internal")
-        self.assertEqual(tool_messages[0].artifact["data"]["message"], "工具执行失败，未取得可用数据，请说明这一限制。")
+        self.assertIsNone(tool_messages[0].artifact)
+
+    async def test_platform_business_error_is_not_retried_or_exposed(self):
+        attempts = []
+
+        @tool
+        def rejected_tool():
+            """模拟监测平台业务拒绝。"""
+            attempts.append(1)
+            raise BeidouApiError("PRIVATE_CODE", "secret vendor response")
+
+        model = ScriptedModel(script=[
+            AIMessage(content="", tool_calls=[{
+                "id": "rejected_call", "name": "rejected_tool", "args": {},
+            }]),
+            AIMessage(content="说明限制"),
+        ])
+        with self.assertLogs(graph.logger, level="WARNING"):
+            result = await graph.create_lma_agent(
+                model, agent_tools=[rejected_tool], retry_delay=0,
+            ).ainvoke({"messages": [HumanMessage(content="触发业务拒绝")]})
+
+        message = next(m for m in result["messages"] if m.type == "tool")
+        self.assertEqual(attempts, [1])
+        self.assertEqual(message.status, "error")
+        self.assertIn("监测平台拒绝本次查询", message.content)
+        self.assertNotIn("PRIVATE_CODE", str(message))
+        self.assertNotIn("secret vendor response", str(message))
+        self.assertIsNone(message.artifact)
 
     async def test_parallel_tools_stream_mode_finish_independently(self):
         """测试生产链路：真实 stream_mode="tools" 下同批并行工具独立完成，tool-finished 携带 artifact。"""

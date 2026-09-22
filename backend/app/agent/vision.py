@@ -29,10 +29,10 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-from app.agent.tool_inputs import TimeWindowInput
-from app.agent.tool_protocol import ToolFailure, tool_result
+from app.agent.tool_inputs import VisionInput
+from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.prompting import VISION_PROMPT
@@ -369,16 +369,6 @@ def _validate_observations(
         valid.candidates.append(candidate)
     return valid
 
-
-
-def _is_empty_observation(obs: VisionObservations) -> bool:
-    """判断视觉模型是否实际看到了图：四类观察全部为空，
-    通常意味着模型声称“未接收到图像”或完全未处理图片。"""
-    return not (
-        obs.trends or obs.turning_points or obs.readings or obs.candidates
-    )
-
-
 def _axis_detail(pairs: list[tuple[str, float | None]]) -> dict:
     """带极值时刻的单方向数值摘要：首末值、变化量、极值及极值出现时刻。
     极值时刻用于发现落在定位区间边缘之外的异常点（视觉定位时间略偏时）。"""
@@ -585,15 +575,18 @@ async def _recheck_candidates(
     return list(await asyncio.gather(*(_bounded(c) for c in candidates)))
 
 
-@tool(response_format="content_and_artifact", args_schema=TimeWindowInput)
+@tool(response_format="content_and_artifact", args_schema=VisionInput)
 async def analyze_gnss_chart(
     station_name_or_uuid: str,
     begin_time: str,
     end_time: str,
-) -> tuple[str, dict]:
+    tool_call_id: str,
+) -> tuple[str | ToolMessage, dict | None]:
     """渲染指定监测点在时间范围内的 GNSS 原始坐标、累计位移与合成位移图，
     并由视觉模型返回全窗口形态观察及候选区间。累计位移优先以监测点初始坐标为基准，
     未登记时回退到窗口首个有效点。
+
+    形变分析适用于移动站；已知站点为基准站时，可结合站点信息说明其差分基准用途，无需请求形变序列。
 
     Args:
         station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID。
@@ -610,7 +603,10 @@ async def analyze_gnss_chart(
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
         if station.station_type == 1:
-            raise ToolFailure("该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。", artifact={"images": []})
+            return (
+                "未查询形变数据：该监测点为基准站，仅提供差分基准，不适用移动站形变序列分析；这不表示监测异常。可根据用户目标选择移动站，或说明基准站的用途。",
+                None,
+            )
 
         points = await client.get_daily_data(
             station_uuid=station.station_uuid,
@@ -618,8 +614,28 @@ async def analyze_gnss_chart(
             end_time=end_time,
         )
 
+        base_result = {
+            "station_name": station.station_name,
+            "begin_time": begin_time,
+            "end_time": end_time,
+            "timezone": BUSINESS_TIMEZONE,
+            "total_points": len(points),
+        }
+        if not points:
+            return tool_result(
+                {"ok": True, **base_result, "observations": None},
+                kind="vision",
+                display={
+                    **base_result,
+                    "ok": True,
+                    "images": [],
+                    "chart_points": [],
+                    "observations": None,
+                },
+            )
+
         if len(points) < _MIN_POINTS:
-            raise ToolFailure(f"该时段数据点过少（{len(points)} 条），不足以绘图复核", artifact={"images": []})
+            raise ToolFailure(f"该时段数据点过少（{len(points)} 条），不足以绘图复核")
 
         # 前端展示用全量数据序列：放在 artifact 中随流转发给前端（不进入
         # LLM 上下文，避免全量数据挤占上下文；数值证据由 recheck 按区间精查提供）
@@ -640,14 +656,6 @@ async def analyze_gnss_chart(
         baseline_desc = (
             "相对监测点初始坐标" if baseline is not None else "相对数据首点（站点未登记初始坐标）"
         )
-        base_result = {
-            "station_name": station.station_name,
-            "begin_time": begin_time,
-            "end_time": end_time,
-            "timezone": BUSINESS_TIMEZONE,
-            "total_points": len(points),
-        }
-
         # 图片始终渲染（前端展示用），视觉模型未配置时仅跳过识别。
         # 渲染必须放入工作线程：matplotlib 首次 import 会同步探测配置目录
         # （os.getcwd/os.path.realpath），在 langgraph dev 的 blockbuster 检测下
@@ -655,13 +663,26 @@ async def analyze_gnss_chart(
         charts = await asyncio.to_thread(
             _render_all_charts, points, baseline, station.station_name, begin_time, end_time
         )
-        # chart_points 始终随 artifact 返回：渲染失败时前端仍可用全量序列兑底绘制
-        artifact = {"images": charts, "chart_points": chart_points, "data": base_result}
+        # 展示数据只存在 artifact.data：渲染失败时仍可用全量序列兜底绘制。
+        artifact_data = {**base_result, "images": charts, "chart_points": chart_points}
         if not charts:
-            raise ToolFailure("图表渲染失败，无法进行视觉复核", artifact=artifact)
+            return tool_error_result(
+                "图表渲染失败，无法进行视觉复核",
+                tool_call_id=tool_call_id,
+                tool_name="analyze_gnss_chart",
+                kind="vision",
+                data=artifact_data,
+            )
 
         if not (settings.vision_base_url and settings.vision_api_key and settings.vision_model):
-            raise ToolFailure("视觉模型未配置，无法进行图表形态复核；已返回图表供人工查看。", category="configuration", artifact={**artifact, "data": base_result})
+            return tool_error_result(
+                "视觉模型未配置，无法进行图表形态复核；已返回图表供人工查看。",
+                tool_call_id=tool_call_id,
+                tool_name="analyze_gnss_chart",
+                kind="vision",
+                category="configuration",
+                data=artifact_data,
+            )
 
         # 单次视觉调用（单一提示词）：送累计位移与合成位移两张图做全窗口观察。
         # 需要精确判读某子窗口时，由主智能体以更窄时间范围重复调用本工具实现"放大"。
@@ -704,19 +725,35 @@ async def analyze_gnss_chart(
             logging.getLogger(__name__).warning("vision model request failed", exc_info=True)
             if is_transient_error(e):
                 raise
-            raise ToolFailure("视觉模型调用失败，未获得形态复核结果；图表可供人工查看。", artifact=artifact) from e
+            return tool_error_result(
+                "视觉模型调用失败，未获得形态复核结果；图表可供人工查看。",
+                tool_call_id=tool_call_id,
+                tool_name="analyze_gnss_chart",
+                kind="vision",
+                data=artifact_data,
+            )
 
         parsed = response.get("parsed") if isinstance(response, dict) else None
         parsing_error = response.get("parsing_error") if isinstance(response, dict) else None
         if parsing_error is not None or not isinstance(parsed, VisionObservations):
-            raise ToolFailure("视觉复核失败：视觉模型返回的不是有效 JSON；图表可供人工查看。", artifact=artifact)
+            return tool_error_result(
+                "视觉复核失败：视觉模型返回的不是有效 JSON；图表可供人工查看。",
+                tool_call_id=tool_call_id,
+                tool_name="analyze_gnss_chart",
+                kind="vision",
+                data=artifact_data,
+            )
 
         validated = _validate_observations(parsed, time_start, time_end)
-        if _is_empty_observation(validated):
-            raise ToolFailure("视觉模型未返回有效观察，图表可供人工查看。", artifact=artifact)
         if len(validated.candidates) > settings.vision_max_candidates:
-            raise ToolFailure("视觉候选数量超过本次复核预算，尚未进行数值确认；请缩小查询时间范围。",
-                category="budget", artifact=artifact)
+            return tool_error_result(
+                "视觉候选数量超过本次复核预算，尚未进行数值确认；请缩小查询时间范围。",
+                tool_call_id=tool_call_id,
+                tool_name="analyze_gnss_chart",
+                kind="vision",
+                category="budget",
+                data=artifact_data,
+            )
 
 
         # 数值证据（纯数据接口回查，无额外视觉调用）：
@@ -752,11 +789,13 @@ async def analyze_gnss_chart(
             "极值出现时刻与候选区间不一致时，应指出实际偏离发生的时间。"
         )
         if any(not item.get("ok") for item in rechecks):
-            raise ToolFailure(
+            return tool_error_result(
                 "部分视觉候选未能完成数值复核，不能将这些候选认定为已确认变化。",
+                tool_call_id=tool_call_id,
+                tool_name="analyze_gnss_chart",
                 kind="vision",
                 facts={"ok": False, **base_result, "observations": observations_out},
-                artifact={**artifact, "data": {**base_result, "observations": validated.model_dump()}},
+                data={**artifact_data, "observations": validated.model_dump()},
             )
         return tool_result(
             {
@@ -765,6 +804,9 @@ async def analyze_gnss_chart(
                 "observations": observations_out,
             },
             kind="vision",
-            artifact=artifact,
-            display={"ok": True, **base_result, "observations": validated.model_dump()},
+            display={
+                **artifact_data,
+                "ok": True,
+                "observations": validated.model_dump(),
+            },
         )

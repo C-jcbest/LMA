@@ -1,17 +1,19 @@
 import React from 'react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import type { SiteEnvironmentArtifact } from '@/components/toolArtifacts';
+import type { SiteEnvironmentArtifactData } from '@/types/envelope';
 
 const SiteEnvironmentCard = React.lazy(() =>
   import('@/components/SiteEnvironmentCard').then((module) => ({ default: module.SiteEnvironmentCard }))
 );
 
 export interface SiteEnvironmentResultViewProps {
-  environment: SiteEnvironmentArtifact;
+  environment: SiteEnvironmentArtifactData;
+  limitations?: string[];
 }
 
 export const SiteEnvironmentResultView: React.FC<SiteEnvironmentResultViewProps> = ({
   environment,
+  limitations,
 }) => {
   return (
     <ErrorBoundary fallbackTitle="现场环境地图渲染异常">
@@ -22,7 +24,7 @@ export const SiteEnvironmentResultView: React.FC<SiteEnvironmentResultViewProps>
           </div>
         }
       >
-        <SiteEnvironmentCard environment={environment} />
+        <SiteEnvironmentCard environment={environment} limitations={limitations} />
       </React.Suspense>
     </ErrorBoundary>
   );

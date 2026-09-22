@@ -112,6 +112,30 @@ def _tool_calling_capability(model: BaseChatModel) -> bool | None:
     return capability if isinstance(capability, bool) else None
 
 
+def model_max_input_tokens(model: BaseChatModel) -> int | None:
+    """从 LangChain Model Profile 读取有效的最大输入 token 数。"""
+    profile = getattr(model, "profile", None)
+    if not isinstance(profile, dict):
+        profile = getattr(model, "model_profile", None)
+    if not isinstance(profile, dict):
+        return None
+    value = profile.get("max_input_tokens")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    return None
+
+
+def _fill_missing_profile(model: BaseChatModel, profile: dict[str, Any] | None) -> None:
+    """仅为官方 profile 缺失的字段补值，避免覆盖已知模型能力。"""
+    if profile is None:
+        return
+    current = getattr(model, "profile", None)
+    model.profile = {
+        **profile,
+        **(current if isinstance(current, dict) else {}),
+    }
+
+
 def assert_tool_calling(model: BaseChatModel) -> None:
     """主 Agent 模型的工具能力“明确否决”：profile 标记不支持才在配置阶段失败。
 
@@ -179,6 +203,7 @@ def create_chat_model(
     tool_loop: bool = False,
     temperature: float | None = None,
     max_retries: int = 0,
+    profile: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
     """按 Provider 构造官方 integration 模型，五个业务角色共用此唯一入口。
@@ -236,6 +261,7 @@ def create_chat_model(
             **options,
             **kwargs,
         )
+    _fill_missing_profile(chat_model, profile)
     if tool_loop:
         assert_tool_calling(chat_model)
     assert_requested_reasoning(chat_model, thinking)

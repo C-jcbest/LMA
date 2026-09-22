@@ -1,21 +1,13 @@
 import React, { FC } from "react";
-import { CircularProgress } from "@/components/ui/circular-progress";
+import { ContextDisplay } from "@/components/context-display";
 import { cn } from "@/lib/utils";
 
 export interface ContextUsage {
   input_tokens?: number;
   output_tokens?: number;
   total_tokens?: number;
-  context_limit_tokens?: number;
-  remaining_tokens?: number | null;
+  max_input_tokens?: number;
   usage_ratio?: number | null;
-  trigger_tokens?: number;
-  estimated_fixed_input_tokens?: number;
-  estimated_history_tokens?: number;
-  accounting_difference_tokens?: number;
-  output_reserve_tokens?: number;
-  safety_margin_tokens?: number;
-  counter?: "provider_reported";
   model?: string;
 }
 
@@ -24,87 +16,34 @@ export interface ContextUsageElementProps {
   className?: string;
 }
 
-const formatTokens = (value?: number | null) => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 100_000 ? 0 : 1)}K`;
-  return Math.round(value).toLocaleString("zh-CN");
-};
-
 export const ContextUsageElement: FC<ContextUsageElementProps> = ({
   usage,
   className,
 }) => {
-  const isComplete =
-    usage?.counter === "provider_reported" &&
-    typeof usage.input_tokens === "number" &&
-    typeof usage.context_limit_tokens === "number" &&
-    usage.context_limit_tokens > 0 &&
-    typeof usage.usage_ratio === "number";
-
-  if (!isComplete) return null;
-
-  const ratio = Math.max(0, Math.min(1, usage.usage_ratio as number));
-  const percent = Math.round(ratio * 100);
-
-  // ChatGPT 风格精细色阶：低用量时与文字同调，中用量琥珀黄，高用量玫瑰红
-  const indicatorColorClass =
-    ratio >= 0.8
-      ? "stroke-rose-500"
-      : ratio >= 0.6
-        ? "stroke-amber-500"
-        : "stroke-foreground/80 dark:stroke-foreground/90";
-
-  const dotColorClass =
-    ratio >= 0.8
-      ? "bg-rose-500"
-      : ratio >= 0.6
-        ? "bg-amber-500"
-        : "bg-emerald-500";
+  const inputTokens = usage?.input_tokens;
+  const maxInputTokens = usage?.max_input_tokens;
+  const outputTokens = usage?.output_tokens;
+  if (
+    typeof inputTokens !== "number" ||
+    !Number.isFinite(inputTokens) ||
+    inputTokens < 0 ||
+    typeof maxInputTokens !== "number" ||
+    !Number.isFinite(maxInputTokens) ||
+    maxInputTokens <= 0
+  ) {
+    return null;
+  }
 
   return (
-    <div className="group relative inline-flex items-center justify-center">
-      {/* 像 ChatGPT/Codex 一样纯净小巧的 16px 极薄圆环，外面零额外包裹 */}
-      <button
-        type="button"
-        className={cn(
-          "inline-flex size-4 items-center justify-center p-0 m-0 border-0 bg-transparent cursor-pointer rounded-full outline-hidden transition-opacity hover:opacity-75 focus-visible:ring-1 focus-visible:ring-ring",
-          className
-        )}
-        aria-label={`上下文预算已用 ${percent}%`}
-      >
-        <CircularProgress
-          value={percent}
-          size={16}
-          strokeWidth={1.75}
-          indicatorClassName={indicatorColorClass}
-          trackClassName="stroke-foreground/15 dark:stroke-foreground/20"
-        />
-      </button>
-
-      {/* ChatGPT 风格定制精致悬浮窗（非浏览器默认原生样式，悬停与聚焦平滑淡入） */}
-      <div
-        role="tooltip"
-        className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 z-50 w-max rounded-lg border border-neutral-200/80 bg-white/95 px-3 py-2 text-xs text-neutral-800 shadow-md backdrop-blur-xs transition-all duration-200 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 dark:border-neutral-800/80 dark:bg-neutral-900/95 dark:text-neutral-200"
-      >
-        <div className="flex flex-col gap-1 text-left">
-          <div className="flex items-center gap-1.5 font-medium whitespace-nowrap">
-            <span className={cn("size-1.5 rounded-full", dotColorClass)} />
-            <span>上下文已用 {percent}%</span>
-          </div>
-          <div className="flex items-center gap-1 text-[11px] text-neutral-500 whitespace-nowrap dark:text-neutral-400">
-            <span>当前请求输入</span>
-            <span className="font-mono font-medium text-neutral-700 dark:text-neutral-300">
-              {formatTokens(usage.input_tokens)}
-            </span>
-            <span>/</span>
-            <span>上限</span>
-            <span className="font-mono font-medium text-neutral-700 dark:text-neutral-300">
-              {formatTokens(usage.context_limit_tokens)}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <ContextDisplay.Ring
+      modelContextWindow={maxInputTokens}
+      usage={{
+        totalTokens: inputTokens,
+        inputTokens,
+        outputTokens,
+      }}
+      side="top"
+      className={cn("size-5 p-0 [&>span]:hidden", className)}
+    />
   );
 };

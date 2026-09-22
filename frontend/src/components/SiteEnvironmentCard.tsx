@@ -9,10 +9,11 @@ import {
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { Compass, Expand, Layers3, MapPin, Mountain, X } from 'lucide-react';
-import { SiteEnvironmentArtifact, SiteStation } from './toolArtifacts';
+import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
 
 interface SiteEnvironmentCardProps {
-  environment: SiteEnvironmentArtifact;
+  environment: SiteEnvironmentArtifactData;
+  limitations?: string[];
 }
 
 type BaseLayer = 'satellite' | 'terrain';
@@ -72,7 +73,7 @@ const BASE_STYLE: StyleSpecification = {
   ],
 };
 
-const validStations = (environment: SiteEnvironmentArtifact): SiteStation[] => {
+const validStations = (environment: SiteEnvironmentArtifactData): StationArtifact[] => {
   const candidates = [environment.center_station, ...(environment.group_stations || [])];
   const seen = new Set<string>();
   return candidates.filter((station) => {
@@ -84,7 +85,10 @@ const validStations = (environment: SiteEnvironmentArtifact): SiteStation[] => {
   });
 };
 
-export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ environment }) => {
+export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({
+  environment,
+  limitations = [],
+}) => {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
@@ -366,19 +370,31 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
             <Mountain className="h-3.5 w-3.5" />地形
           </div>
-          <div className="mt-1.5 text-xs text-stone-800">
-            高程 {terrain?.dem_elevation_m ?? '—'} m · 坡度 {terrain?.slope_degrees ?? '—'}°
-          </div>
-          <div className="mt-1 text-[10px] text-stone-500">
-            坡向 {terrain?.aspect || '—'} · 500 m 起伏 {terrain?.relief_500m_m ?? '—'} m
-          </div>
+          {terrain ? (
+            <>
+              <div className="mt-1.5 text-xs text-stone-800">
+                高程 {terrain.dem_elevation_m ?? '—'} m · 坡度 {terrain.slope_degrees ?? '—'}°
+              </div>
+              <div className="mt-1 text-[10px] text-stone-500">
+                坡向 {terrain.aspect || '—'} · 500 m 起伏 {terrain.relief_500m_m ?? '—'} m
+              </div>
+            </>
+          ) : (
+            <div className="mt-1.5 text-xs text-stone-500">暂无地形数据</div>
+          )}
         </div>
         <div className="bg-[#faf8f1] p-3">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
             <Layers3 className="h-3.5 w-3.5" />地质
           </div>
-          <div className="mt-1.5 text-xs text-stone-800">{geology?.name || '公开图层未返回地层名称'}</div>
-          <div className="mt-1 text-[10px] text-stone-500">{geology?.lithology || geology?.age || '岩性/年代暂无数据'}</div>
+          {geology ? (
+            <>
+              <div className="mt-1.5 text-xs text-stone-800">{geology.name || '暂无地层名称'}</div>
+              <div className="mt-1 text-[10px] text-stone-500">{geology.lithology || geology.age || '暂无岩性或年代数据'}</div>
+            </>
+          ) : (
+            <div className="mt-1.5 text-xs text-stone-500">暂无地质数据</div>
+          )}
         </div>
         <div className="bg-[#faf8f1] p-3">
           <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
@@ -389,11 +405,11 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
         </div>
       </div>
 
-      {(environment.limitations || []).length > 0 && (
+      {limitations.length > 0 && (
         <details className="border-t border-stone-300 bg-[#ece8dc] px-3 py-2 text-[10px] text-stone-600">
           <summary className="cursor-pointer font-medium text-stone-700">资料限制</summary>
           <ul className="mt-2 list-disc space-y-1 pl-4">
-            {environment.limitations?.map((item, index) => <li key={index}>{item}</li>)}
+            {limitations.map((item, index) => <li key={index}>{item}</li>)}
           </ul>
         </details>
       )}

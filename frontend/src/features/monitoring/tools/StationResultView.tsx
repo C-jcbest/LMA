@@ -1,9 +1,13 @@
 import React from 'react';
-import type { ToolResultProps } from './types';
+import type { StationListArtifactData } from '@/types/envelope';
+import { EmptyResultView } from './EmptyResultView';
 
-export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
+export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({ data }) => {
   // 1. 监测分组表格（展示全部数据，无截断）
   if (data?.groups && Array.isArray(data.groups)) {
+    if (data.groups.length === 0) {
+      return <EmptyResultView>暂无监测点分组</EmptyResultView>;
+    }
     return (
       <div className="space-y-1">
         <div className="text-[11px] text-neutral-400 px-0.5">
@@ -19,7 +23,7 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/40 text-neutral-800">
-              {data.groups.map((g: any, i: number) => (
+              {data.groups.map((g, i) => (
                 <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
                   <td className="py-2 px-3 font-medium text-neutral-900 whitespace-nowrap">{g.group_name}</td>
                   <td className="py-2 px-3 whitespace-nowrap">
@@ -39,6 +43,9 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
 
   // 2. 监测点列表表格（展示全部数据，支持纵向滚动）
   if (data?.stations && Array.isArray(data.stations)) {
+    if (data.stations.length === 0) {
+      return <EmptyResultView>暂无符合条件的监测点</EmptyResultView>;
+    }
     const statusStyles: Record<string, { dot: string; text: string }> = {
       正常: { dot: 'bg-emerald-500', text: '正常' },
       离线: { dot: 'bg-neutral-400', text: '离线' },
@@ -63,8 +70,11 @@ export const StationResultView: React.FC<ToolResultProps> = ({ data }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-border/40 text-neutral-800">
-              {data.stations.map((s: any, i: number) => {
-                const status = statusStyles[s.station_status] || {
+              {data.stations.map((s, i) => {
+                const status =
+                  (typeof s.station_status === 'string'
+                    ? statusStyles[s.station_status]
+                    : undefined) || {
                   dot: 'bg-neutral-300',
                   text: '未知',
                 };

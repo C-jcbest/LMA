@@ -10,9 +10,10 @@ import logging
 from typing import Any
 
 import httpx
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
-from app.agent.tool_inputs import StationInput
-from app.agent.tool_protocol import ToolFailure, tool_result
+from app.agent.tool_inputs import SiteEnvironmentInput
+from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 
 from app.agent.tools import _build_client, _resolve_station, _station_to_dict
 from app.business_time import business_now
@@ -93,7 +94,7 @@ async def _fetch_terrain(latitude: float, longitude: float) -> tuple[dict[str, A
             },
         )
         metrics = _terrain_metrics(payload.get("elevation", []), index)
-        return metrics, None if metrics else "地形服务返回的数据不完整"
+        return metrics, None
     except (httpx.HTTPError, ValueError, TypeError) as exc:
         logging.getLogger(__name__).warning("site evidence request failed", exc_info=True)
         return None, "地形服务暂不可用，缺少地形证据"
@@ -105,7 +106,7 @@ async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, A
         success = payload.get("success") if isinstance(payload.get("success"), dict) else {}
         units = success.get("data") if isinstance(success.get("data"), list) else []
         if not units:
-            return None, "该位置未获得可用地质单元"
+            return None, None
         unit = units[0] if isinstance(units[0], dict) else {}
         source_id = str(unit.get("source_id", ""))
         refs = success.get("refs") if isinstance(success.get("refs"), dict) else {}
@@ -123,8 +124,11 @@ async def _fetch_geology(latitude: float, longitude: float) -> tuple[dict[str, A
         return None, "地质服务暂不可用，缺少地质证据"
 
 
-@tool(response_format="content_and_artifact", args_schema=StationInput)
-async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict[str, Any]]:
+@tool(response_format="content_and_artifact", args_schema=SiteEnvironmentInput)
+async def inspect_site_environment(
+    station_name_or_uuid: str,
+    tool_call_id: str,
+) -> tuple[str | ToolMessage, dict[str, Any]]:
     """查询监测点周边的场地环境背景。
 
     可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差）、
@@ -168,28 +172,26 @@ async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict
             "license": "CC BY 4.0",
         },
     ]
-    artifact = {
-        "site_environment": {
-            "version": 1,
-            "observed_at": business_now().isoformat(timespec="seconds"),
-            "coordinate_system": "WGS84",
-            "center_station": center,
-            "group_stations": map_stations,
-            "terrain": terrain,
-            "geology": geology,
-            "faults": {
-                "available": True,
-                "distance_km": None,
-                "note": "断层以 Macrostrat 构造线图层展示；当前公开接口不提供可靠的最近断层距离。",
-            },
-            "layer_sources": {
-                "geology_tiles": "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt",
-                "geology_source_layer": "units",
-                "fault_source_layer": "lines",
-            },
-            "sources": sources,
-            "limitations": [message for message in (terrain_error, geology_error) if message],
-        }
+    limitations = [message for message in (terrain_error, geology_error) if message]
+    observed_at = business_now().isoformat(timespec="seconds")
+    environment = {
+        "version": 1,
+        "observed_at": observed_at,
+        "coordinate_system": "WGS84",
+        "center_station": center,
+        "group_stations": map_stations,
+        "terrain": terrain,
+        "geology": geology,
+        "faults": {
+            "available": True,
+            "distance_km": None,
+            "note": "断层以 Macrostrat 构造线图层展示；当前公开接口不提供可靠的最近断层距离。",
+        },
+        "layer_sources": {
+            "geology_tiles": "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt",
+            "geology_source_layer": "units",
+            "fault_source_layer": "lines",
+        },
     }
     content = {
         "ok": True,
@@ -197,21 +199,27 @@ async def inspect_site_environment(station_name_or_uuid: str) -> tuple[str, dict
         "same_group_station_count": len(map_stations),
         "terrain": terrain,
         "geology": geology,
-        "faults": artifact["site_environment"]["faults"],
-        "limitations": artifact["site_environment"]["limitations"],
+        "faults": environment["faults"],
+        "limitations": limitations,
         "sources": sources,
     }
-    if content["limitations"]:
-        raise ToolFailure(
-            "场地环境资料不完整：" + "；".join(content["limitations"]),
+    if limitations:
+        return tool_error_result(
+            "场地环境资料不完整：" + "；".join(limitations),
+            tool_call_id=tool_call_id,
+            tool_name="inspect_site_environment",
             kind="site_environment",
             facts=content,
-            artifact={**artifact, "data": content},
+            data=environment,
+            sources=sources,
+            limitations=limitations,
+            observed_at=observed_at,
         )
     return tool_result(
         content,
         kind="site_environment",
-        artifact=artifact,
+        display=environment,
         sources=sources,
-        limitations=content["limitations"],
+        limitations=limitations,
+        observed_at=observed_at,
     )

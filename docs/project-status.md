@@ -1,44 +1,35 @@
 # 项目状态与有效决策
 
-更新：2026-09-21。本文件只记录当前事实、持续有效决策和临时例外；实施计划与完成状态统一维护在 [TODO.md](TODO.md)。产品口径以 `prd.md` 为准，协作与安全约束以 `AGENTS.md` 为准。
+更新：2026-09-21。本文件只记录当前事实、持续决策和临时例外。实施计划与验收状态见 [TODO.md](TODO.md)，部署操作见 [deployment.md](deployment.md)，产品与协作约束分别以 `prd.md`、`AGENTS.md` 为准。
 
-## 当前架构
+## 当前事实
 
-### 后端
+- 后端主图使用 LangChain `create_agent`，由 LangGraph Agent Server 管理 Thread、Run 和 Checkpoint；历史摘要、重试、调用限额与工具错误采用官方 Middleware。
+- 工具使用 Pydantic 参数和 `content_and_artifact`；前端只展示严格判别的 `artifact.data`，不解析工具 content 或原始 JSON。
+- 上下文实际用量只来自供应商 `usage_metadata`，窗口上限只来自模型 `profile.max_input_tokens`；摘要阈值独立配置。
+- `system.md`、`vision.md` 是对应策略的唯一编辑源；业务时间统一通过 `get_current_time` 获取，时区为 `Asia/Shanghai`。
+- 会话标题由 assistant-ui Adapter 调用独立 `session-title` 图生成并持久化；下一步建议保留在主 Run，日志记录正文完成、terminal ready 和推荐阶段耗时。
+- 前端只有一条 assistant-ui -> React LangChain -> LangGraph Server 运行链路；Thread、Message、Composer、Reasoning、Tool Call 与 Thread List 使用官方 Runtime/Primitives/Elements。
+- URL 仅负责会话导航，`remoteId === externalId === thread_id`；持久化 `ToolMessage.artifact` 是刷新后工具展示的权威来源。
+- 生产前端固定使用同源 `/langgraph-api`，不读取或写入用户自定义 endpoint；Compose 只支持开发、演示和小规模自托管验证。
 
-- 主图 `backend/app/agent/graph.py:graph` 使用 LangChain `create_agent`，由 LangGraph Agent Server 管理 Thread、Run 与 Checkpoint。
-- 长上下文、模型/工具重试、调用限额和最终工具错误展示使用官方 Middleware；底层模型 SDK 不叠加重试。
-- 工具使用 Pydantic 参数与 `response_format="content_and_artifact"`；`content` 供模型判断，`artifact` 供客户端展示。
-- `system.md` 和 `vision.md` 分别是主业务与视觉策略的唯一编辑源；System Prompt 保持静态，当前业务时间通过 `get_current_time` 获取，时区统一为 `Asia/Shanghai`。
-- 会话标题由 assistant-ui Adapter 的 `generateTitle()` 调用独立 `session-title` 图生成并写入 `thread.metadata.name`；主图不生成标题。
-- 下一步建议当前仍在主 Run 的 `aafter_agent` 阶段生成，是否拆为独立 Run 以实测延迟为准。
+## 持续决策
 
-### 前端
+- 2026-09-21：用户明确要求修正本地重载的许可证限制；Compose 不再强制 `LANGGRAPH_CLOUD_LICENSE_KEY`。Docker 本地运行仍需具备 LangSmith Deployment 访问权限的 `LANGSMITH_API_KEY`；保留现有 PostgreSQL 存储，不自动切换 `langgraph dev`。操作说明见 `docs/deployment.md`。
 
-- 单向链路为 assistant-ui runtime -> `@assistant-ui/react-langchain` -> `@langchain/react useStream` -> LangGraph Server。
-- Thread、Message、Composer、Reasoning、Tool Call 和 Thread List 使用 assistant-ui 官方 Primitives/Elements；LMA 只维护领域 Renderer 和必要适配。
-- 会话 ID 满足 `remoteId === externalId === thread_id`，列表使用官方 `ThreadListPrimitive.LoadMore`；URL 仅承担当前会话导航。
-- 持久化 `ToolMessage.artifact` 是工具展示的权威数据。当前 live tools channel 与 Tool Registry 仍是待移除的临时实现，删除计划见 `docs/TODO.md` 的 R2。
-- 布局保持左侧 Thread List 与中央 Chat；前端继续使用 React、TypeScript、Vite、Tailwind CSS、assistant-ui、Streamdown 和 shadcn/ui。
-
-## 持续有效决策
-
-- Agent 根据目标、上下文、证据质量和工具描述自主编排，不在提示词中固化固定步骤或工具顺序。
-- 平台事实必须来自工具；视觉候选必须数值复核；天气只作为相关证据；滑坡结论使用不确定措辞，不生成官方预警等级或撤离命令。
-- 用户输入、外部资料、历史摘要、工具结果和模型输出都视为不可信数据。工具保持只读和最小权限，模型输出不得直接进入命令、URL、HTML 或其他副作用操作。
-- 工具异常、缺测、抽稀、坐标或数据源缺失必须显式说明。内部异常、请求 URL、堆栈和秘密只写后端日志，不进入消息或 artifact。
-- 仅明确的瞬时失败可以重试；参数、权限、业务拒绝、空数据、视觉格式错误和空观察不重试。模型与工具调用限额按每个 Run 统计逻辑调用。
-- Provider、Vendor 与 Protocol 解耦。主 Agent 按供应商能力选择 Responses 或 Chat Completions；标题、摘要、推荐和视觉复核独立配置思考行为。
-- 所有 `AIMessage` 纯文本通过 `BaseMessage.text` 读取；结构化输出使用官方 `with_structured_output` 和严格 schema。
+- Agent 自主选择工具与证据组织，不在提示词固化流程；平台事实、视觉复核、天气关联和风险措辞遵循 `AGENTS.md` 的证据边界。
+- 用户输入、历史、外部资料、工具结果与模型输出均视为不可信数据；工具保持只读、最小权限，内部诊断不进入消息或 artifact。
+- 仅重试可判定的瞬时失败；参数、权限、业务拒绝、空数据和格式错误不重试。Provider、Vendor 与 Protocol 保持解耦。
+- 不维护第二套前端状态机、传输协议、工具生命周期、消息存储、Thread 存储、重试引擎或 ReAct loop。
+- 新增基础设施前依次复核 LangChain/LangGraph、assistant-ui、shadcn/Radix 与官方 registry；workaround 必须有回归测试和删除条件。
+- 生产级集群采用官方 LangSmith/LangGraph Helm + Kubernetes 路线，仓库不维护自制 Kubernetes manifests。
 
 ## 临时例外
 
-- `frontend/patches/@assistant-ui__react-langchain@0.0.32.patch` 当前补足 controlled thread 与摘要展示缺口；R4 将改用公共 Runtime action 和本地摘要 Renderer 后删除整个 patch。
-- `_sanitize_unanswered_tool_calls` 当前在新 Run 前修复 Stop 遗留的悬空 tool-call；R7 以真实 Agent Server E2E 验证官方 cancel 后决定是否删除。
-- `DeepSeekThinkingChatModel` 当前只补足 DeepSeek 多轮 tool-loop 的 `reasoning_content` 回传；上游原生支持并通过回归测试后删除。
-- 场地环境外部服务故障必须局部隔离：DEM 或地质数据源单点失败不阻断其他证据，限制写入 `limitations`。
+- `DeepSeekThinkingChatModel` 仅补足 DeepSeek 多轮 tool-loop 的 `reasoning_content` 回传；官方 integration 原生支持并通过回归测试后删除。
+- 场地环境的 DEM 或地质外部数据源故障局部隔离，已取得证据继续展示，缺失写入 `limitations`。
 
-## 验证基线
+## 验证入口
 
 ```powershell
 cd backend
@@ -51,6 +42,16 @@ cd ..
 git diff --check
 ```
 
-- 后端 Server E2E 由 `LMA_RUN_SERVER_E2E=1` 显式启用，真实 LLM 和真实监测平台账号不进入 PR 强制门禁。
-- 前端 `test:gate` 依次执行 Vitest、Playwright 关键场景和生产构建。
-- 不提交 `.env`、密钥、令牌、真实账号、隐私数据或测试生成物。
+真实模型与真实监测平台不进入 PR 门禁；隔离 Server E2E 由 `LMA_RUN_SERVER_E2E=1` 显式启用。不得提交 `.env`、密钥、令牌、真实账号、隐私数据或测试生成物。
+
+
+## 2026-09-21 用户消息操作与基准站适用性答复
+
+- 用户明确重新授权本次工具与聊天交互代码修复，不涉及配置或部署改造。
+- GNSS 数值查询和视觉分析对基准站直接返回模型说明及 `artifact=None`，不请求序列数据、不产生图表或错误卡片。正常空数据仍返回标准展示结构，其他业务错误保持可见。
+- 前端仅在工具正常完成且 artifact 明确为 null 时省略卡片，不解析 content；尚未收到 artifact（undefined）与真实错误保持原有显示逻辑。
+- 编辑视图由官方 `ThreadPrimitive.Messages` 的 `EditComposer` 配置选择，提交与复制使用官方 Primitives；只允许最新用户消息编辑，生成期间隐藏操作。
+- 用户与 AI 工具栏悬停显示，AI 底部固定保留高度，避免出现按钮时消息移动。
+- 隔离服务已验证消息编辑、重新生成及刷新恢复；尚未使用真实账号或模型复现用户所报的编辑失败，不能据此宣称所有历史会话问题均已消除。
+- 验证：后端 unittest 共 78 项（2 项按配置跳过）、前端 Vitest 60 项、Playwright 10 项通过，生产构建与 `git diff --check` 通过；浏览器覆盖已有会话首轮编辑、多轮编辑、刷新恢复、复制、历史编辑限制、悬停位置稳定及两种基准站工具的刷新展示。
+- 用户消息工具栏位于气泡右下方，复制与编辑横向排列；气泡容器固定预留底部空间，悬停显隐不改变消息高度。

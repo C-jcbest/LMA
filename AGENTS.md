@@ -18,6 +18,10 @@
 
 ## 实现约束
 
+- 2026-09-21 用户授权修正本地重载的许可证限制：本地 Compose 不得强制生产 `LANGGRAPH_CLOUD_LICENSE_KEY`；保留现有会话存储，不据此扩展生产部署改造。
+
+- 2026-09-21 用户明确授权基准站工具答复和用户消息编辑、复制、悬停工具栏的代码修复；该授权不涉及部署改造。
+- 当前阶段仅整理项目文档，不再实施代码、配置或部署改造；部署待办已移除。不得将现有 Compose、Vite 交付链路改造成生产级部署，也不得新增 healthcheck、同源代理、Helm 或 Kubernetes 配置，除非用户以后明确重新授权。
 - 业务时间统一使用 `Asia/Shanghai`；System Prompt 彻底保持静态以最大化 Prompt Cache 命中率，当前业务时间与时区由工具 `get_current_time` 获取，相对时间由模型调用工具后解析。
 - `backend/app/agent/prompts/system.md` 是主业务策略唯一可编辑来源，`vision.md` 是视觉策略唯一可编辑来源；`prompting.py` 仅导出静态提示词，`create_agent` 直接使用 `system_prompt=SYSTEM_PROMPT`。
 - LangGraph checkpoint/thread 是会话历史唯一事实来源；前端状态只保存展示态，不复制一套权威历史。
@@ -28,9 +32,11 @@
 - 会话标题统一由 assistant-ui Adapter 的 `generateTitle()` 生命周期托管（异步调用 `session-title` 图生成并通过 rename 持久化回写到 `thread.metadata.name`），后端不再在主图 `aafter_agent` 执行自动标题逻辑。
 - Stop 完全回归官方 Stream / Thread 生命周期：由 assistant-ui 触发官方 `stream.stop({ cancel: true })`，不维护任何本地状态机或补丁。Thread/Checkpoint 的一致性由 Agent Runtime 服务端负责（在进入模型前通过 `_sanitize_unanswered_tool_calls` 自动清洗/自愈因客户端取消等遗留的悬空 AI tool-call）。下一条 HumanMessage 直接提交创建正常新 Run。
 - 工具完成条件严格以“工具结果是否已经返回”为准；业务展示采用两阶段数据源：持久化 `ToolMessage.artifact`（含 success / partial / error）永远优先，live tools channel artifact 仅在未落盘的流式阶段兜底；顶层统一通过集中解析函数处理 output，禁止在各个工具 renderer 中做 JSON 字符串猜测。
+- 基准站形变请求在工具内结束，仅返回模型可读说明及 `artifact=None`，不生成前端错误卡片；这表示工具完成适用性判断，不表示取得监测数据。其他业务失败仍遵循错误协议。
+- 用户消息仅最新一条可编辑（生成期间不可编辑），历史消息可复制；编辑、复制与悬停生命周期采用官方 Primitives，工具栏显示隐藏不得改变消息布局。
 - Retry 只处理可判定的瞬时失败，参数错误、权限错误、业务拒绝和数据为空不得盲目重试；所有工具目前均应保持只读。
 - 新增任何兼容性分支或兜底策略前，必须先向用户说明触发条件、用户可见行为和可能造成的误导。如果不设置该策略可能导致数据丢失、会话损坏、不可恢复操作或其他风险，必须等待用户明确同意后才能实现。不得用伪造数据、固定占位进度或本地假成功掩盖未配置、请求失败或状态未同步；此类情况应显式报错或保持上一个已确认状态不变。
-- 工具统一使用官方 content/artifact/status：content 供模型判断，artifact 仅含可发送客户端的展示数据；前端不解析工具 content 或展示原始 JSON。业务/参数失败必须为 error，原因可见，已有证据与缺失并列说明；内部异常、请求 URL、堆栈与秘密只写后端日志，不放入消息或 artifact。
+- 工具统一使用官方 content/artifact/status：content 供模型判断，artifact 仅含可发送客户端的展示数据；前端不解析工具 content 或展示原始 JSON。请求正常完成时统一返回该工具的标准 success 结构；空集合或空字段由前端领域 Renderer 展示“暂无数据”，不得为此新增 error、partial、兼容性分支或专用协议。业务/参数失败必须为 error，原因可见，已有证据与缺失并列说明；内部异常、请求 URL、堆栈与秘密只写后端日志，不放入消息或 artifact。
 - 重试与Run调用限额采用官方middleware；底层SDK不得叠加重试。视觉每次工具尝试只调用一次模型，格式/空结果不自动重试，候选超额必须明确拒绝回查，不静默裁剪；摘要仍遵循官方独立逻辑。限额统计逻辑调用，不能称为全HTTP或耗时预算；用户界面只显示中文受控限制。
 - 配置项必须逐项提供中文注释，并同步 Settings 与 .env.example：说明用途、默认值/必填性、单位、取值范围及生效边界；展示估算、官方压缩和调用预算不得混淆。
 - 不提交 `.env`、密钥、令牌、真实账号或隐私数据。

@@ -1,15 +1,17 @@
-# 会话历史持久化：PostgreSQL + LangGraph Server 生产部署
+# 开发、论文演示与小规模自托管验证：Nginx + LangGraph Server + PostgreSQL + Redis
+# 本文件不是高可用、弹性伸缩或完整 production-grade 部署方案；详见 docs/deployment.md。
 #
 # 部署流程（项目根目录执行）：
 #   cd backend
 #   langgraph build -t lma-agent:latest     # 生成生产镜像（自动安装 requirements.txt）
 #   cd ..
-#   docker compose --env-file backend/.env up -d   # 指定 backend/.env 供变量插值，宿主机端口 2024
+#   docker compose --env-file backend/.env up -d --build
 #
 # 注意：${POSTGRES_PASSWORD} 变量插值需要 --env-file backend/.env（compose 默认只读根目录 .env）；
 # env_file 同样指向 backend/.env，保证容器内凭据与插值密码同源。
 #
-# 开发链路不受影响：backend/ 下 langgraph dev + frontend/ 下 npm run dev。
+# 浏览器统一访问 http://127.0.0.1:8080；Nginx 将 /langgraph-api 同源代理到 Agent Server。
+# 开发链路不受影响：backend/ 下 langgraph dev + frontend/ 下 pnpm run dev。
 #
 # 数据持久：Postgres 数据落在 named volume lma_pgdata，
 # docker compose down / restart / 机器重启后会话历史（threads、checkpoints）均保留；
@@ -51,6 +53,8 @@ services:
     environment:
       DATABASE_URI: postgresql://lma:${POSTGRES_PASSWORD}@postgres:5432/lma?sslmode=disable
       REDIS_URI: redis://redis:6379
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:?请在 backend/.env 中设置 LANGSMITH_API_KEY}
+      # 本地运行不强制生产许可证；如配置许可证，由 env_file 注入。
     ports:
       - "2024:8000" # 容器 8000 → 宿主机 2024，前端默认地址不变
     depends_on:
@@ -58,6 +62,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ok', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      lma-agent:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
 volumes:
   lma_pgdata:

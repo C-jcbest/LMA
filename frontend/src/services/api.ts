@@ -2,7 +2,9 @@ import { Client } from '@langchain/langgraph-sdk';
 
 
 const STORAGE_KEY_CONFIG = 'lma_langgraph_config';
-const DEFAULT_API_URL = 'http://127.0.0.1:2024';
+const DEFAULT_API_URL = import.meta.env.PROD
+  ? `${window.location.origin}/langgraph-api`
+  : 'http://127.0.0.1:2024';
 
 // SDK HTTP 自动重试固定关闭（默认值/允许值均为 0，单位为重试次数）。
 // 作用于 Thread CRUD、Run 提交与标题 HTTP 请求，避免网络结果不确定时重发有副作用请求。
@@ -12,10 +14,12 @@ export const LMA_ASSISTANT_ID = 'lma-agent';
 const TITLE_ASSISTANT_ID = 'session-title';
 
 export const getStoredApiUrl = (): string => {
+  if (import.meta.env.PROD) return DEFAULT_API_URL;
   return localStorage.getItem(STORAGE_KEY_CONFIG) || DEFAULT_API_URL;
 };
 
 export const setStoredApiUrl = (url: string) => {
+  if (import.meta.env.PROD) return;
   localStorage.setItem(STORAGE_KEY_CONFIG, url);
 };
 

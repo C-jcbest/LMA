@@ -50,7 +50,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
           </div>
 
           {/* 会话列表 */}
-          <div className="flex-1 overflow-hidden p-2">
+          <div className="flex-1 min-h-0 overflow-hidden p-2">
             <ThreadList />
           </div>
 
@@ -71,7 +71,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
       )}
 
       {/* 中央主聊天视口 */}
-      <main className="flex-1 h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden">
+      <main className="flex-1 min-w-0 h-full flex flex-col bg-white text-neutral-800 relative overflow-hidden">
         {isSidebarCollapsed && (
           <div className="h-11 border-b border-neutral-100 flex items-center px-4 bg-white shrink-0">
             <Button
@@ -90,7 +90,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
             </span>
           </div>
         )}
-        <div className="flex-1 h-full overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-hidden">
           <Thread />
         </div>
       </main>

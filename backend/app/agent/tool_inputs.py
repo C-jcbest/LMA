@@ -1,7 +1,8 @@
 """工具参数在 Pydantic schema 层校验，不访问数据源。"""
 import re
 from datetime import datetime, date
-from typing import Literal
+from typing import Annotated, Literal
+from langchain_core.tools import InjectedToolCallId
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from app.business_time import TIME_FORMAT
 _TIME_FORMAT = TIME_FORMAT
@@ -82,6 +83,14 @@ class TimeWindowInput(StationInput):
         if self.begin_time >= self.end_time:
             raise ValueError("开始时间必须早于结束时间")
         return self
+
+
+class SiteEnvironmentInput(StationInput):
+    tool_call_id: Annotated[str, InjectedToolCallId]
+
+
+class VisionInput(TimeWindowInput):
+    tool_call_id: Annotated[str, InjectedToolCallId]
 
 
 class GnssInput(TimeWindowInput):

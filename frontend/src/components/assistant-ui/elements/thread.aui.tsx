@@ -189,7 +189,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
 
   return (
     <ThreadPrimitive.Root
-      className="aui-root aui-thread-root bg-background @container flex h-full flex-col"
+      className="aui-root aui-thread-root bg-background @container flex h-full min-h-0 min-w-0 flex-col"
       style={{
         ["--thread-max-width" as string]: "56rem",
         ["--composer-bg" as string]:
@@ -201,7 +201,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
       <ThreadPrimitive.Viewport
         turnAnchor="top"
         data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-auto overflow-y-auto [scrollbar-gutter:stable_both-edges] [overflow-anchor:none]"
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto overflow-y-auto [scrollbar-gutter:stable] [overflow-anchor:none]"
       >
         <div
           className={cn(
@@ -220,9 +220,7 @@ const ThreadRoot: FC<{ isEmpty: boolean; autoFocus: boolean }> = ({
             data-slot="aui_message-group"
             className="mb-14 flex flex-col gap-y-6 empty:hidden"
           >
-            <ThreadPrimitive.Messages>
-              {() => <ThreadMessage />}
-            </ThreadPrimitive.Messages>
+            <ThreadPrimitive.Messages components={{ Message: ThreadMessage, EditComposer }} />
           </div>
 
           <ThreadPrimitive.ViewportFooter
@@ -301,19 +299,47 @@ export const ThreadSummaryMessage: FC<{ text?: string }> = ({
   return <AuiSummaryMessageText />;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const EMPTY_LANGCHAIN_MESSAGES: readonly unknown[] = [];
+
+// 官方 converter 保持摘要 HumanMessage 的 user 角色，且不会把顶层 lc_source
+// 提升到 assistant-ui custom metadata，因此按消息 ID 从公开 LangGraph state 复核。
+export const hasSummarizationSource = (
+  messages: readonly unknown[],
+  messageId: string,
+) =>
+  messages.some((message) => {
+    if (!isRecord(message) || message.id !== messageId) return false;
+    const additionalKwargs = message.additional_kwargs;
+    if (!isRecord(additionalKwargs)) return false;
+    if (additionalKwargs.lc_source === "summarization") return true;
+    return (
+      isRecord(additionalKwargs.metadata) &&
+      additionalKwargs.metadata.lc_source === "summarization"
+    );
+  });
+
 const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
-  const isEditing = useAuiState((s) => s.message.composer.isEditing);
+  const messageId = useAuiState((s) => s.message.id);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
-  const isSummary = useAuiState(
-    (s) =>
-      s.message.role === "system" ||
-      (s.message.metadata.custom as any)?.lc_source === "summarization",
+  const hasSummaryMetadata = useAuiState((s) => {
+    const custom = s.message.metadata.custom;
+    return isRecord(custom) && custom.lc_source === "summarization";
+  });
+  const langChainMessages = useLangChainState<readonly unknown[]>(
+    "messages",
+    EMPTY_LANGCHAIN_MESSAGES,
   );
+  const isSummary =
+    role === "system" ||
+    hasSummaryMetadata ||
+    hasSummarizationSource(langChainMessages, messageId);
 
-  if (isEditing) return <EditComposer />;
   if (isSpoken) return <SpokenMessage />;
   if (isSummary) return <ThreadSummaryMessage />;
   if (role === "user") return <UserMessage />;
@@ -673,14 +699,14 @@ const AssistantMessage: FC = () => {
   const groupBy = TaskGroupComponent ? taskAwareGroupBy : messageGroupBy;
 
   const ACTION_BAR_PT = "pt-1.5";
-  // Keep the action bar inside the contained root's paint box, then cancel its reserved space in flow.
-  const ACTION_BAR_HEIGHT = `min-h-7.5 ${ACTION_BAR_PT}`;
+  // 预留固定工具栏高度，悬停显示按钮时不改变消息布局。
+  const ACTION_BAR_HEIGHT = `h-10 shrink-0 ${ACTION_BAR_PT}`;
 
   return (
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
       data-role="assistant"
-      className="fade-in slide-in-from-bottom-1 animate-in relative -mb-7.5 pb-7.5 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
+      className="fade-in slide-in-from-bottom-1 animate-in relative duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
     >
       <div
         data-slot="aui_assistant-message-content"
@@ -762,7 +788,7 @@ const AssistantActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      autohide="not-last"
+      autohide="always"
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in col-start-3 row-start-2 -ms-1 flex gap-1 duration-200"
     >
       <ActionBarPrimitive.Copy asChild>
@@ -846,13 +872,13 @@ const UserMessage: FC = () => {
     >
       <UserMessageAttachments />
 
-      <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0">
+      <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0 pb-8">
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts
             components={{ File: UserFilePart, Image: UserImagePart }}
           />
         </div>
-        <div className="aui-user-action-bar-wrapper absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
+        <div className="aui-user-action-bar-wrapper absolute end-0 bottom-0 h-8 pt-1 peer-empty:hidden">
           <UserActionBar />
         </div>
       </div>
@@ -869,14 +895,22 @@ const UserActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      autohide="not-last"
-      className="aui-user-action-bar-root flex flex-col items-end"
+      autohide="always"
+      className="aui-user-action-bar-root flex items-center justify-end gap-1"
     >
-      <ActionBarPrimitive.Edit asChild>
-        <TooltipIconButton tooltip="Edit" className="aui-user-action-edit">
-          <PencilIcon />
+      <ActionBarPrimitive.Copy asChild>
+        <TooltipIconButton tooltip="复制消息">
+          <AuiIf condition={(s) => s.message.isCopied}><CheckIcon /></AuiIf>
+          <AuiIf condition={(s) => !s.message.isCopied}><CopyIcon /></AuiIf>
         </TooltipIconButton>
-      </ActionBarPrimitive.Edit>
+      </ActionBarPrimitive.Copy>
+      <AuiIf condition={(s) => !s.thread.isRunning && !s.thread.messages.slice(s.message.index + 1).some((message) => message.role === "user")}>
+        <ActionBarPrimitive.Edit asChild>
+          <TooltipIconButton tooltip="编辑消息" className="aui-user-action-edit">
+            <PencilIcon />
+          </TooltipIconButton>
+        </ActionBarPrimitive.Edit>
+      </AuiIf>
     </ActionBarPrimitive.Root>
   );
 };
@@ -889,18 +923,19 @@ const EditComposer: FC = () => {
     >
       <ComposerPrimitive.Root className="aui-edit-composer-root border-foreground/10 focus-within:border-foreground/25 ms-auto flex w-full max-w-[85%] cursor-text flex-col rounded-(--composer-radius) border bg-(--composer-bg) transition-[border-color]">
         <ComposerPrimitive.Input
+          aria-label="编辑用户消息"
           className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"
           autoFocus
         />
         <div className="aui-edit-composer-footer mx-2.5 mb-2.5 flex items-center gap-1.5 self-end">
           <ComposerPrimitive.Cancel asChild>
             <Button variant="ghost" size="sm" className="h-8 px-3">
-              Cancel
+              取消
             </Button>
           </ComposerPrimitive.Cancel>
           <ComposerPrimitive.Send asChild>
             <Button size="sm" className="h-8 px-3">
-              Update
+              保存并重新生成
             </Button>
           </ComposerPrimitive.Send>
         </div>

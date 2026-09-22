@@ -51,6 +51,30 @@ const toolResponse = (name, args) => ({
   usage: { prompt_tokens: 80, completion_tokens: 12, total_tokens: 92 },
 });
 
+const parallelToolResponse = (calls) => {
+  const responseId = ++responseSequence;
+  return {
+    id: `e2e-${responseId}`,
+    object: 'chat.completion',
+    created: 1,
+    model: 'lma-e2e-model',
+    choices: [{
+      index: 0,
+      message: {
+        role: 'assistant',
+        content: '',
+        tool_calls: calls.map(({ name, args }, index) => ({
+          id: `call-${responseId}-${index + 1}`,
+          type: 'function',
+          function: { name, arguments: JSON.stringify(args) },
+        })),
+      },
+      finish_reason: 'tool_calls',
+    }],
+    usage: { prompt_tokens: 80, completion_tokens: 12, total_tokens: 92 },
+  };
+};
+
 const streamChat = async (response, payload, delayMs = 0) => {
   response.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -109,6 +133,7 @@ const server = http.createServer(async (request, response) => {
     return json(response, { ResponseCode: '200', SessionUUID: 'INVALID_E2E_SESSION' });
   }
   if (request.url?.endsWith('/Station/getStationGroupListInfo.php')) {
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
     return json(response, {
       ResponseCode: '200',
       StationGroupList: [{
@@ -124,7 +149,7 @@ const server = http.createServer(async (request, response) => {
       StationGroupName: 'E2E 监测组',
       StationUUID: '11111111-1111-1111-1111-111111111111',
       StationName: 'E2E空数据站',
-      StationType: 2,
+      StationType: String(body.StationName ?? '').includes('基准站') ? 1 : 2,
       StationStatus: 10,
       StationLocation: '测试场地',
       Latitude: '30.1',
@@ -151,12 +176,25 @@ const server = http.createServer(async (request, response) => {
   let delayMs = 0;
   if (firstText.startsWith('Create a concise conversation title')) {
     payload = chatResponse('E2E 生命周期验证');
+  } else if (userText.includes('并行工具停止验证') && !hasToolResult) {
+    payload = parallelToolResponse([
+      { name: 'get_current_time', args: {} },
+      { name: 'list_station_groups', args: {} },
+    ]);
   } else if (userText.includes('不存在监测点') && !hasToolResult) {
     payload = toolResponse('get_daily_gnss_data', {
       station_name_or_uuid: '不存在监测点',
       begin_time: '2026-09-01 00:00:00',
       end_time: '2026-09-02 00:00:00',
     });
+  } else if (userText.includes('基准站') && !hasToolResult) {
+    payload = toolResponse(userText.includes('视觉') ? 'analyze_gnss_chart' : 'get_daily_gnss_data', {
+      station_name_or_uuid: 'E2E基准站',
+      begin_time: '2026-09-01 00:00:00',
+      end_time: '2026-09-02 00:00:00',
+    });
+  } else if (userText.includes('基准站') && hasToolResult) {
+    payload = chatResponse('该站仅提供差分基准，不适用形变序列分析。');
   } else if (userText.includes('空结果监测点') && !hasToolResult) {
     payload = toolResponse('get_daily_gnss_data', {
       station_name_or_uuid: 'E2E空数据站',

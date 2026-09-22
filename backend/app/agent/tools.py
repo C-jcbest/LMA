@@ -154,20 +154,17 @@ async def _resolve_station(
                 return station
         raise ToolFailure(
             "未找到指定 UUID 对应的监测点，请确认站点。",
-            kind="gnss_series",
         )
 
     stations = await client.get_stations(station_name=station_name_or_uuid)
     if not stations:
         raise ToolFailure(
             f"未找到名称包含“{station_name_or_uuid}”的监测点",
-            kind="gnss_series",
         )
     if len(stations) > 1:
         names = [item.station_name for item in stations[:20]]
         raise ToolFailure(
             f"匹配到 {len(stations)} 个监测点，请确认具体站点：" + "、".join(names),
-            kind="gnss_series",
         )
     return stations[0]
 
@@ -196,15 +193,6 @@ async def list_station_groups() -> tuple[str, dict]:
     """
     async with _build_client() as client:
         groups = await client.get_station_groups()
-    if not groups:
-        return tool_result(
-            {
-                "total": 0,
-                "groups": [],
-                "message": "当前账号没有可访问的监测点分组。",
-            },
-            kind="station_list",
-        )
     return tool_result(
         {
             "total": len(groups),
@@ -239,29 +227,21 @@ async def list_stations(
     """
     async with _build_client() as client:
         group_uuid = None
+        stations = []
         if group_name:
             groups = await client.get_station_groups()
             matched = [g for g in groups if group_name in g.group_name]
-            if not matched:
-                raise ToolFailure(f"未找到名称包含“{group_name}”的监测点分组")
             if len(matched) > 1:
                 raise ToolFailure(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(g.group_name for g in matched[:20]))
-            group_uuid = matched[0].group_uuid
+            if matched:
+                group_uuid = matched[0].group_uuid
 
-        stations = await client.get_stations(
-            group_uuid=group_uuid,
-            station_name=station_name,
-            station_status=station_status,
-        )
-    if not stations:
-        return tool_result(
-            {
-                "total": 0,
-                "stations": [],
-                "message": "未找到符合筛选条件的监测点。",
-            },
-            kind="station_list",
-        )
+        if not group_name or group_uuid is not None:
+            stations = await client.get_stations(
+                group_uuid=group_uuid,
+                station_name=station_name,
+                station_status=station_status,
+            )
     return tool_result(
         {
             "total": len(stations),
@@ -278,8 +258,10 @@ async def get_daily_gnss_data(
     end_time: str,
     sampling_frequency: str | None = None,
     sample_times: list[str] | None = None,
-) -> tuple[str, dict]:
+) -> tuple[str, dict | None]:
     """查询指定监测点在时间范围内的日监测 GNSS 数据（默认每小时一条）。
+
+    形变分析适用于移动站；已知站点为基准站时，可结合站点信息说明其差分基准用途，无需请求形变序列。
 
     Args:
         station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID。
@@ -331,9 +313,9 @@ async def get_daily_gnss_data(
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
         if station.station_type == 1:
-            raise ToolFailure(
-                "该监测点为基准站，仅提供差分基准，不适用普通移动站形变序列分析；这不表示监测异常。",
-                kind="gnss_series",
+            return (
+                "未查询形变数据：该监测点为基准站，仅提供差分基准，不适用移动站形变序列分析；这不表示监测异常。可根据用户目标选择移动站，或说明基准站的用途。",
+                None,
             )
 
         points = await client.get_daily_data(
@@ -344,27 +326,6 @@ async def get_daily_gnss_data(
             sample_times=normalized_sample_times,
         )
 
-    if not points:
-        return tool_result(
-            {
-                "station_name": getattr(station, "station_name", station_name_or_uuid),
-                "begin_time": begin_time,
-                "end_time": end_time,
-                "timezone": BUSINESS_TIMEZONE,
-                "total_points": 0,
-                "returned_points": 0,
-                "downsampled": False,
-                "points": [],
-                "summary": {
-                    "n": {"count": 0},
-                    "e": {"count": 0},
-                    "u": {"count": 0},
-                    "gaps": [],
-                },
-                "message": "查询时间范围内没有 GNSS 数据，不能据此判断形变。",
-            },
-            kind="gnss_series",
-        )
     total_points = len(points)
 
     # 固定时刻模式：按天抽稀（保留全部指定时刻，仅减少参与对比的天数）

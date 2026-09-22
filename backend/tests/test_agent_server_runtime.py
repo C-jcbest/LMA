@@ -234,8 +234,8 @@ class AgentServerRuntimeTests(unittest.IsolatedAsyncioTestCase):
             "messages": [{"role": "user", "content": "查询不存在的监测点"}]})
         failed_tool = next(m for m in reversed(rejected["messages"]) if m["type"] == "tool")
         self.assertEqual(failed_tool["status"], "error")
-        self.assertIn("未找到", failed_tool["artifact"]["data"]["message"])
-        self.assertEqual(failed_tool["artifact"]["error"]["category"], "business")
+        self.assertIn("未找到", failed_tool["content"])
+        self.assertIsNone(failed_tool.get("artifact"))
         self.assertNotIn("INVALID_TEST_SESSION", str(failed_tool))
         limited_events = [event async for event in client.runs.stream(thread_id, "lma-agent",
             input={"messages": [{"role": "user", "content": "循环分组查询"}]}, stream_mode=["values", "updates"])]

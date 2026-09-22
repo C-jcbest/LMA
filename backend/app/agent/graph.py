@@ -2,14 +2,13 @@
 
 由 Agent Server 调用图工厂并注入 Thread/Checkpoint 持久化。
 LMA middleware 维护展示元数据及推荐契约。
-官方 SummarizationMiddleware 管理历史；推荐退出主 Run 在 TODO 23 实施。
+官方 SummarizationMiddleware 管理历史；推荐阶段保留在主 Run 并记录耗时。
 """
 
-import json
 import logging
-import os
 from dataclasses import replace
 from functools import lru_cache
+from time import perf_counter
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
 from langchain.agents.middleware import (
@@ -20,18 +19,17 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ToolCallLimitMiddleware,
 )
-from langchain_core.messages import BaseMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.errors import GraphBubbleUp
 
 from pydantic import BaseModel, Field
 from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
-from app.agent.context import build_context_budget
+from app.agent.context import build_context_usage
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
 from app.agent.retry import is_transient_error
-from app.agent.models import create_chat_model
+from app.agent.models import create_chat_model, model_max_input_tokens
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
 from app.agent.tools import (
@@ -60,36 +58,13 @@ def _message_text(message: BaseMessage) -> str:
     return ""
 
 
-def _sanitize_unanswered_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]:
-    """服务端自愈：清除或收窄历史 checkpoint 中因客户端主动中断等遗留的未配对 AI tool-call。"""
-    updates: list[BaseMessage] = []
-    for idx, msg in enumerate(messages):
-        if msg.type != "ai" or not getattr(msg, "tool_calls", None):
-            continue
-        # 统计紧随其后的连续 ToolMessage id
-        answered_ids = set()
-        for next_msg in messages[idx + 1:]:
-            if next_msg.type == "tool":
-                answered_ids.add(getattr(next_msg, "tool_call_id", None))
-            elif next_msg.type in ("human", "ai"):
-                break
-        calls = msg.tool_calls
-        if all(c.get("id") in answered_ids for c in calls):
-            continue
-        completed_calls = [c for c in calls if c.get("id") in answered_ids]
-        if completed_calls:
-            updates.append(msg.model_copy(update={"tool_calls": completed_calls}))
-        elif msg.content and (not isinstance(msg.content, str) or msg.content.strip()):
-            updates.append(msg.model_copy(update={"tool_calls": []}))
-        elif getattr(msg, "id", None):
-            updates.append(RemoveMessage(id=msg.id))
-    return updates
-
-
-def _on_tool_error(exc: Exception, request) -> str | None:
-    """官方 ToolErrorMiddleware 回调：捕获通用工具异常并返回受控安全文案。"""
-    if isinstance(exc, (ToolFailure, BeidouApiError)):
-        return None
+def _on_tool_error(exc: Exception, request) -> str:
+    """官方 ToolErrorMiddleware 回调：所有最终异常统一转换为受控安全文案。"""
+    if isinstance(exc, ToolFailure):
+        return exc.content
+    if isinstance(exc, BeidouApiError):
+        logger.warning("monitoring platform rejected tool request", exc_info=True)
+        return "监测平台拒绝本次查询，未取得可用数据，请检查账号访问权限或查询条件。"
     logger.warning("tool execution failed: %s", exc, exc_info=True)
     if is_transient_error(exc):
         return "数据服务暂不可用，本次查询未取得可用数据，请稍后重试。"
@@ -115,6 +90,7 @@ def _get_llm():
         protocol=protocol,
         tool_loop=True,
         temperature=0,
+        profile={"max_input_tokens": settings.context_model_context},
     )
 
 
@@ -122,13 +98,18 @@ def _get_llm():
 class LmaMiddleware(AgentMiddleware):
     state_schema = AgentState
 
-    def __init__(self, bound_tools):
-        self.bound_tools = bound_tools
+    def __init__(self, model):
+        self.max_input_tokens = model_max_input_tokens(model)
+        self.model_name = (
+            getattr(model, "model_name", None)
+            or getattr(model, "model", None)
+            or get_settings().llm_model
+        )
 
     async def abefore_agent(self, state, runtime):
         anchor = business_now().isoformat(timespec="seconds")
         raw_messages = state.get("messages", [])
-        updates = _sanitize_unanswered_tool_calls(raw_messages)
+        updates = []
         if raw_messages and raw_messages[-1].type == "human":
             last_human = raw_messages[-1]
             updates.append(last_human.model_copy(update={"additional_kwargs": {
@@ -158,57 +139,37 @@ class LmaMiddleware(AgentMiddleware):
         message = state["messages"][index]
         usage = getattr(message, "usage_metadata", None) or {}
         input_tokens = usage.get("input_tokens")
-        if isinstance(input_tokens, int) and not isinstance(input_tokens, bool) and input_tokens >= 0:
-            budget = build_context_budget(
-                state["messages"][:index],
-                system_prompt=SYSTEM_PROMPT, bound_tools=self.bound_tools,
+        if not (
+            isinstance(input_tokens, int)
+            and not isinstance(input_tokens, bool)
+            and input_tokens >= 0
+        ):
+            logger.warning("model response did not include input token usage; preserve previous context_usage")
+            return None
+        if self.max_input_tokens is None:
+            logger.warning(
+                "model profile does not include max_input_tokens; preserve previous context_usage"
             )
-            return {"context_usage": budget.usage_snapshot(usage)}
-        logger.warning("model response did not include input token usage; preserve previous context_usage")
-        return None
+            return None
+        return {
+            "context_usage": build_context_usage(
+                usage,
+                max_input_tokens=self.max_input_tokens,
+                model=self.model_name,
+            )
+        }
 
     async def aafter_agent(self, state, runtime):
-        return await generate_recommendations(state)
-
-    async def awrap_tool_call(self, request, handler):
-        try:
-            result = await handler(request)
-            if isinstance(result, ToolMessage) and result.status == "error" and not result.artifact:
-                # 官方 schema 校验错误与 ToolErrorMiddleware 产出的错误不含前端 artifact；为其统一补齐安全 envelope。
-                is_param = (result.content == VALIDATION_MESSAGE)
-                is_infra = ("暂不可用" in result.content)
-                category = "parameter" if is_param else ("infrastructure" if is_infra else "internal")
-                return result.model_copy(
-                    update={
-                        "artifact": {
-                            "data": {"message": result.content},
-                            "error": {"category": category},
-                        }
-                    }
-                )
-            return result
-        except ToolFailure as exc:
-            return ToolMessage(
-                content=exc.content,
-                artifact=exc.artifact,
-                tool_call_id=request.tool_call["id"],
-                name=request.tool_call["name"],
-                status="error",
-            )
-        except GraphBubbleUp:
-            raise
-        except BeidouApiError:
-            logger.warning("monitoring platform rejected tool request", exc_info=True)
-            message = "监测平台拒绝本次查询，未取得可用数据，请检查账号访问权限或查询条件。"
-            return ToolMessage(
-                content=message,
-                artifact={"data": {"message": message}, "error": {"category": "business"}},
-                tool_call_id=request.tool_call["id"],
-                name=request.tool_call["name"],
-                status="error",
-            )
-
-
+        answer_completed_at = business_now().isoformat(timespec="milliseconds")
+        started = perf_counter()
+        result = await generate_recommendations(state)
+        logger.info(
+            "recommendation stage completed answer_completed_at=%s terminal_ready_at=%s latency_ms=%.1f",
+            answer_completed_at,
+            business_now().isoformat(timespec="milliseconds"),
+            (perf_counter() - started) * 1000,
+        )
+        return result
 
 RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生成器。根据最近一轮对话（用户问题与助手回答），给出用户接下来最可能继续提出的 2~3 个后续问题。
 
@@ -324,7 +285,7 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
-            LmaMiddleware(bound_tools),
+            LmaMiddleware(model),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,
             ),

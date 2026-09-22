@@ -128,6 +128,36 @@ class PromptTimeTests(unittest.TestCase):
             reasoning=None,
         )
 
+    def test_configured_profile_only_fills_missing_official_fields(self):
+        official = SimpleNamespace(
+            profile={"max_input_tokens": 128_000, "tool_calling": True}
+        )
+        with patch.object(models, "init_chat_model", return_value=official):
+            result = models.create_chat_model(
+                provider="openai",
+                model="gpt-4o-mini",
+                api_key="test-key",
+                base_url="https://api.openai.com/v1",
+                thinking=False,
+                profile={"max_input_tokens": 1_048_576},
+            )
+        self.assertEqual(
+            result.profile,
+            {"max_input_tokens": 128_000, "tool_calling": True},
+        )
+
+        custom = SimpleNamespace(profile=None)
+        with patch.object(models, "init_chat_model", return_value=custom):
+            result = models.create_chat_model(
+                provider="deepseek",
+                model="custom-model",
+                api_key="test-key",
+                base_url="https://example.invalid/v1",
+                thinking=False,
+                profile={"max_input_tokens": 1_048_576},
+            )
+        self.assertEqual(result.profile, {"max_input_tokens": 1_048_576})
+
     def test_deepseek_maps_vision_output_budget_to_max_tokens(self):
         with patch.object(models, "init_chat_model") as init_model:
             init_model.return_value.profile = {}
@@ -186,6 +216,7 @@ class PromptTimeTests(unittest.TestCase):
             llm_api_key="test-key",
             llm_base_url="https://example.invalid/v1",
             llm_thinking=False,
+            context_model_context=1_048_576,
             title_thinking=True,
             recommend_enabled=True,
             recommend_thinking=True,
@@ -393,38 +424,32 @@ class PromptTimeTests(unittest.TestCase):
         self.assertTrue(retry.is_transient_error(httpx.RemoteProtocolError("server disconnected")))
         self.assertFalse(retry.is_transient_error(httpx.LocalProtocolError("invalid request")))
 
-    def test_context_budget_counts_fixed_prompt_tools_and_output_reserve(self):
-        settings = SimpleNamespace(
-            context_token_threshold=10_000,
-            context_model_context=100_000,
-
-            context_keep_tokens=400000,
-            context_output_reserve_tokens=1000,
-            context_safety_margin_tokens=200,
-            context_token_estimate_factor=1.0,
-            context_chars_per_token=1.6667,
-            llm_model="deepseek-flash",
+    def test_context_usage_uses_only_provider_usage_and_model_profile_limit(self):
+        snapshot = context.build_context_usage(
+            {"input_tokens": 321, "output_tokens": 20, "total_tokens": 341},
+            max_input_tokens=100_000,
+            model="deepseek-flash",
         )
-        with patch.object(context, "get_settings", return_value=settings):
-            budget = context.build_context_budget(
-                [HumanMessage(content="查询监测点")],
-                system_prompt="系统规则" * 100,
-                bound_tools=[tools.list_stations],
-            )
-        self.assertGreater(budget.fixed_input_tokens, 0)
-        self.assertEqual(budget.output_reserve_tokens, 1000)
-        snapshot = budget.usage_snapshot(
-            {"input_tokens": 321, "output_tokens": 20, "total_tokens": 341}
-        )
-        self.assertEqual(snapshot["counter"], "provider_reported")
         self.assertEqual(snapshot["input_tokens"], 321)
-        self.assertEqual(snapshot["remaining_tokens"], 100_000 - 321 - 1200)
+        self.assertEqual(snapshot["output_tokens"], 20)
+        self.assertEqual(snapshot["total_tokens"], 341)
+        self.assertEqual(snapshot["max_input_tokens"], 100_000)
+        self.assertEqual(snapshot["usage_ratio"], 321 / 100_000)
+        self.assertEqual(snapshot["model"], "deepseek-flash")
+
+    def test_model_profile_limit_validation(self):
         self.assertEqual(
-            snapshot["estimated_fixed_input_tokens"]
-            + snapshot["estimated_history_tokens"]
-            + snapshot["accounting_difference_tokens"],
-            snapshot["input_tokens"],
+            models.model_max_input_tokens(
+                SimpleNamespace(profile={"max_input_tokens": 128_000})
+            ),
+            128_000,
         )
+        for profile in (None, {}, {"max_input_tokens": 0}, {"max_input_tokens": True}):
+            with self.subTest(profile=profile):
+                self.assertIsNone(models.model_max_input_tokens(SimpleNamespace(profile=profile)))
+
+        with self.assertRaisesRegex(ValueError, "input_tokens"):
+            context.build_context_usage({}, max_input_tokens=100_000, model="test")
 
     def test_recommendations_require_strict_json_and_allow_model_to_decline(self):
         self.assertEqual(
@@ -576,14 +601,21 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             patch.object(site, "_fetch_terrain", AsyncMock(return_value=(terrain, None))),
             patch.object(site, "_fetch_geology", AsyncMock(return_value=(geology, None))),
         ):
-            content, artifact = await site.inspect_site_environment.coroutine("ZJ-MS10")
-        self.assertTrue(json.loads(content)["ok"])
-        environment = artifact["site_environment"]
+            message = await site.inspect_site_environment.ainvoke({
+                "type": "tool_call",
+                "id": "site-call",
+                "name": "inspect_site_environment",
+                "args": {"station_name_or_uuid": "ZJ-MS10"},
+            })
+        self.assertTrue(json.loads(message.content)["ok"])
+        environment = message.artifact["data"]
         self.assertEqual(environment["version"], 1)
         self.assertEqual(environment["coordinate_system"], "WGS84")
         self.assertEqual(environment["center_station"]["station_name"], "ZJ-MS10")
-        self.assertEqual(environment["terrain"], terrain)
-        self.assertEqual(environment["geology"], geology)
+        self.assertEqual(environment["terrain"]["dem_elevation_m"], terrain["dem_elevation_m"])
+        self.assertEqual(environment["terrain"]["slope_degrees"], terrain["slope_degrees"])
+        self.assertEqual(environment["geology"]["name"], geology["name"])
+        self.assertEqual(environment["geology"]["lithology"], geology["lithology"])
 
     async def test_invalid_title_is_reported_instead_of_fabricated(self):
         with self.assertRaises(ValueError):
@@ -613,8 +645,20 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             client = AsyncMock()
             client.__aenter__.return_value = client
             with patch.object(module, "_build_client", return_value=client), patch.object(module, "_resolve_station", AsyncMock(return_value=SimpleNamespace(station_type=1))):
-                with self.assertRaisesRegex(ToolFailure, "基准站"):
-                    await tool.ainvoke({"station_name_or_uuid": "基准站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-14 00:00:00"})
+                result = await tool.ainvoke({
+                    "type": "tool_call",
+                    "id": "base-station-call",
+                    "name": tool.name,
+                    "args": {
+                        "station_name_or_uuid": "基准站",
+                        "begin_time": "2026-09-01 00:00:00",
+                        "end_time": "2026-09-14 00:00:00",
+                    },
+                })
+                self.assertIn("未查询形变数据", result.content)
+                self.assertIn("基准站", result.content)
+                self.assertEqual(result.status, "success")
+                self.assertIsNone(result.artifact)
             client.get_daily_data.assert_not_called()
 
     async def test_invalid_sampling_frequency_is_not_silently_replaced(self):

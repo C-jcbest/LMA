@@ -1,6 +1,7 @@
 import React from 'react';
-import type { ToolResultProps } from './types';
+import type { ChartPointArtifact, VisionArtifactData } from '@/types/envelope';
 import { toFiniteGnssNumber } from './gnssUtils';
+import { EmptyResultView } from './EmptyResultView';
 
 const CHART_TITLES: Record<string, string> = {
   raw_coordinates: '原始坐标时序（N/E/U）',
@@ -10,8 +11,8 @@ const CHART_TITLES: Record<string, string> = {
 
 // 由 chart_points 生成单方向迷你 SVG 折线（归一化到 0~100 视口）
 const buildPolyline = (
-  points: any[],
-  key: string
+  points: ChartPointArtifact[],
+  key: 'n' | 'e' | 'u'
 ): { lines: string[]; min: number; max: number } | null => {
   const values = points
     .map((p) => toFiniteGnssNumber(p[key]))
@@ -37,16 +38,15 @@ const buildPolyline = (
   return lines.length > 0 ? { lines, min, max } : null;
 };
 
-export const VisionResultView: React.FC<ToolResultProps> = ({
-  data,
-  artifactImages = [],
-}) => {
-  const visibleImages = (artifactImages || []).filter((image) => CHART_TITLES[image.name]);
-  const chartPoints = Array.isArray(data?.chart_points) ? data.chart_points : [];
-  if (chartPoints.length === 0 && visibleImages.length === 0) return null;
+export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data }) => {
+  const visibleImages = data.images.filter((image) => CHART_TITLES[image.name]);
+  const chartPoints = data.chart_points;
+  if (chartPoints.length === 0 && visibleImages.length === 0) {
+    return <EmptyResultView>该时间范围内暂无可供复核的 GNSS 数据</EmptyResultView>;
+  }
 
-  const obs = data?.observations || {};
-  const candidates: any[] = obs.candidates || [];
+  const obs = data.observations || {};
+  const candidates = obs.candidates || [];
 
   return (
     <div className="space-y-1.5">
@@ -62,7 +62,6 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
             : ` 展示 ${chartPoints.length} 点`}
         </span>
       </div>
-
       {/* 后端渲染的分析图 PNG（原始时序 / 累计位移 / 合成位移） */}
       {visibleImages.length > 0 && (
         <div className="space-y-1.5">
@@ -143,7 +142,7 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
             </span>
           </div>
           <div className="space-y-2 ps-0.5">
-            {candidates.map((c: any, i: number) => (
+            {candidates.map((c, i) => (
               <div
                 key={i}
                 className="border-s border-amber-300/60 ps-3 py-0.5 text-xs"
@@ -169,7 +168,8 @@ export const VisionResultView: React.FC<ToolResultProps> = ({
           {obs.fact_text && (
             <div className="text-xs text-foreground/85 leading-relaxed">{obs.fact_text}</div>
           )}
-          {(obs.trends?.length > 0 || obs.turning_points?.length > 0) && (
+          {((obs.trends?.length ?? 0) > 0 ||
+            (obs.turning_points?.length ?? 0) > 0) && (
             <ul className="space-y-0.5 text-[11px] text-foreground/80">
               {obs.trends?.map((t: string, i: number) => (
                 <li key={`t${i}`} className="flex gap-1.5">

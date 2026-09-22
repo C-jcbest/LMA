@@ -26,14 +26,15 @@ export function createLangGraphThreadListAdapter(
 
       const threads = await client.threads.search({
         metadata: { graph_id: assistantId },
-        limit: PAGE_SIZE,
+        // 多查询一条判断末页，避免整页结束后仍显示加载入口。
+        limit: PAGE_SIZE + 1,
         offset: safeOffset,
         sortBy: 'updated_at',
         sortOrder: 'desc',
         select: ['thread_id', 'metadata', 'created_at', 'updated_at', 'status'],
       });
 
-      const remoteThreads = threads.map((thread) => ({
+      const remoteThreads = threads.slice(0, PAGE_SIZE).map((thread) => ({
         status: thread.metadata?.archived ? ('archived' as const) : ('regular' as const),
         remoteId: thread.thread_id,
         externalId: thread.thread_id,
@@ -49,7 +50,7 @@ export function createLangGraphThreadListAdapter(
       }));
 
       const nextCursor =
-        threads.length === PAGE_SIZE ? String(safeOffset + threads.length) : undefined;
+        threads.length > PAGE_SIZE ? String(safeOffset + PAGE_SIZE) : undefined;
 
       return {
         threads: remoteThreads,

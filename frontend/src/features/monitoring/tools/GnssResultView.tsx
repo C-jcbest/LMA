@@ -1,10 +1,14 @@
 import React from 'react';
-import type { ToolResultProps } from './types';
+import type { GnssArtifactData } from '@/types/envelope';
 import { formatGnssValue } from './gnssUtils';
+import { EmptyResultView } from './EmptyResultView';
 
-export const GnssResultView: React.FC<ToolResultProps> = ({ data }) => {
+export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) => {
   if (!data?.points || !Array.isArray(data.points)) return null;
   const allPoints = data.points;
+  if (allPoints.length === 0) {
+    return <EmptyResultView>该时间范围内暂无 GNSS 数据</EmptyResultView>;
+  }
 
   return (
     <div className="space-y-1">
@@ -29,7 +33,7 @@ export const GnssResultView: React.FC<ToolResultProps> = ({ data }) => {
             </tr>
           </thead>
           <tbody className="divide-y divide-border/40 text-neutral-800 font-mono text-[11px]">
-            {allPoints.map((p: any, i: number) => (
+            {allPoints.map((p, i) => (
               <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
                 <td className="py-1 px-3 text-neutral-400">{i + 1}</td>
                 <td className="py-1 px-3 text-neutral-600 whitespace-nowrap">{p.time}</td>

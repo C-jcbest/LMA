@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -11,7 +11,6 @@ import {
 import {
   toolApprovalAcceptsText,
   useAuiState,
-  useScrollLock,
   useToolCallElapsed,
   type ToolApprovalOption,
   type ToolCallMessagePart,
@@ -27,19 +26,6 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  useLangChainToolCalls,
-} from "@assistant-ui/react-langchain";
-import type { AssembledToolCall } from "@langchain/react";
-import {
-  getToolRegistryItem,
-  decodeToolArtifact,
-  FALLBACK_TOOL_LABELS,
-} from "@/features/monitoring/tools/registry";
-import {
-  useLiveToolEvents,
-  getLiveToolArtifact,
-} from "@/lib/langgraph/live-tool-results";
 
 const ANIMATION_DURATION = 200;
 
@@ -62,8 +48,6 @@ function ToolFallbackRoot({
   children,
   ...props
 }: ToolFallbackRootProps) {
-  const collapsibleRef = useRef<HTMLDivElement>(null);
-  const lockScroll = useScrollLock(collapsibleRef, ANIMATION_DURATION);
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
 
   const isControlled = controlledOpen !== undefined;
@@ -71,18 +55,16 @@ function ToolFallbackRoot({
 
   const handleOpenChange = useCallback(
     (open: boolean) => {
-      lockScroll();
       if (!isControlled) {
         setUncontrolledOpen(open);
       }
       controlledOnOpenChange?.(open);
     },
-    [lockScroll, isControlled, controlledOnOpenChange],
+    [isControlled, controlledOnOpenChange],
   );
 
   return (
     <Collapsible
-      ref={collapsibleRef}
       data-slot="tool-fallback-root"
       open={isOpen}
       onOpenChange={handleOpenChange}
@@ -103,6 +85,22 @@ function ToolFallbackRoot({
 }
 
 type ToolStatus = ToolCallMessagePartStatus["type"];
+
+export type ToolDisplayLabels = {
+  running: string;
+  complete: string;
+  error: string;
+  cancelled: string;
+  requiresAction: string;
+};
+
+const FALLBACK_TOOL_LABELS: ToolDisplayLabels = {
+  running: "正在获取辅助信息…",
+  complete: "已完成辅助查询",
+  error: "辅助查询失败",
+  cancelled: "已取消辅助查询",
+  requiresAction: "待确认辅助操作",
+};
 
 const statusIconMap: Record<ToolStatus, React.ElementType> = {
   running: LoaderIcon,
@@ -143,11 +141,13 @@ function ToolFallbackDuration({
 function ToolFallbackTrigger({
   toolName,
   status,
+  labels = FALLBACK_TOOL_LABELS,
   className,
   ...props
 }: React.ComponentProps<typeof CollapsibleTrigger> & {
   toolName: string;
   status?: ToolCallMessagePartStatus;
+  labels?: ToolDisplayLabels;
 }) {
   const statusType = status?.type ?? "complete";
   const isRunning = statusType === "running";
@@ -155,19 +155,17 @@ function ToolFallbackTrigger({
     status?.type === "incomplete" && status.reason === "cancelled";
 
   const Icon = statusIconMap[statusType];
-  const item = getToolRegistryItem(toolName);
-
   let displayLabel: string;
   if (isRunning) {
-    displayLabel = item?.runningLabel ?? FALLBACK_TOOL_LABELS.running;
+    displayLabel = labels.running;
   } else if (isCancelled) {
-    displayLabel = item?.cancelledLabel ?? FALLBACK_TOOL_LABELS.cancelled;
+    displayLabel = labels.cancelled;
   } else if (statusType === "requires-action") {
-    displayLabel = item ? `待确认: ${item.label}` : FALLBACK_TOOL_LABELS.requiresAction;
+    displayLabel = labels.requiresAction;
   } else if (statusType === "incomplete") {
-    displayLabel = item?.errorLabel ?? FALLBACK_TOOL_LABELS.error;
+    displayLabel = labels.error;
   } else {
-    displayLabel = item?.completeLabel ?? FALLBACK_TOOL_LABELS.complete;
+    displayLabel = labels.complete;
   }
 
   return (
@@ -607,32 +605,6 @@ function ToolFallbackApproval({
   );
 }
 
-function getEffectiveStatus(
-  liveToolCall: AssembledToolCall | undefined,
-  part: { status: ToolCallMessagePartStatus },
-): ToolCallMessagePartStatus {
-  // assistant-ui 已有确定终态时，永远以 Message Part 为准
-  if (part.status.type !== "running") {
-    return part.status;
-  }
-  if (!liveToolCall) {
-    return part.status;
-  }
-  switch (liveToolCall.status) {
-    case "running":
-      return { type: "running" };
-    case "finished":
-      return { type: "complete" };
-    case "error":
-      return {
-        type: "incomplete",
-        reason: "error",
-        error: liveToolCall.error,
-      };
-    default:
-      return part.status;
-  }
-}
 const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
   const {
     toolName,
@@ -642,46 +614,26 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
     interrupt,
     approval,
     respondToApproval,
-    ...restProps
+    result,
+    isError,
   } = props;
-  const { toolCallId } = props;
 
-  // 1. 读取官方 live tool call，驱动独立实时的状态更新
-  const toolCalls = useLangChainToolCalls();
-  const liveToolCall = toolCalls.find(
-    (c) => c && (c.id === toolCallId || c.callId === toolCallId),
-  );
-  const streamStatus = getEffectiveStatus(liveToolCall, { status });
-
-  // 2. 两阶段 artifact：持久化 ToolMessage.artifact 永远优先
-  // （success / partial / error 一致），仅流式阶段未落盘时才回退
-  // tools channel 的 live artifact
-  const toolEvents = useLiveToolEvents();
-  const liveArtifact = toolCallId
-    ? getLiveToolArtifact(toolEvents, toolCallId)
-    : undefined;
-  const persistedArtifact = restProps.artifact;
-  const rawArtifact =
-    persistedArtifact !== undefined ? persistedArtifact : liveArtifact;
-  const envelope = decodeToolArtifact(toolName, rawArtifact);
-  // ToolMessage.artifact 是业务结果事实源；即使上游 Message Part 在 hydrate 时
-  // 暂时保留 complete/running，error envelope 也必须恢复为错误终态。
+  // assistant-ui Message Part 是未知工具生命周期的唯一事实源。
   const effectiveStatus: ToolCallMessagePartStatus =
-    envelope?.status === "error" &&
-    streamStatus.type !== "requires-action" &&
-    !(streamStatus.type === "incomplete" && streamStatus.reason === "cancelled")
+    isError === true &&
+    status.type !== "requires-action" &&
+    !(status.type === "incomplete" && status.reason === "cancelled")
       ? {
           type: "incomplete",
           reason: "error",
-          error: envelope.error?.message,
+          error: typeof result === "string" ? result : undefined,
         }
-      : streamStatus;
+      : status;
 
   const isRequiresAction = effectiveStatus?.type === "requires-action";
   const shouldRenderApproval =
     isRequiresAction && offersInterruptAction(effectiveStatus, approval, interrupt);
 
-  const registryItem = getToolRegistryItem(toolName);
   const defaultOpen = isRequiresAction;
 
   const [open, setOpen] = useState(defaultOpen);
@@ -711,7 +663,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
       return null;
     }
 
-    // 分支 2: incomplete -> 仅错误信息
+    // 分支 2: incomplete -> 仅展示 assistant-ui 提供的受控错误信息
     if (effectiveStatus.type === "incomplete") {
       if (effectiveStatus.reason === "cancelled") {
         return (
@@ -722,42 +674,23 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = (props) => {
       }
       const statusError = effectiveStatus.error;
       const errorMessage =
-        envelope?.error?.message ||
-        (typeof statusError === "string"
+        typeof statusError === "string"
           ? statusError
           : statusError instanceof Error
             ? statusError.message
-            : null);
+            : null;
       return (
         <div className="text-xs text-destructive/90 py-1 font-medium">
-          {errorMessage || (registryItem ? registryItem.errorLabel : "工具调用异常")}
+          {errorMessage || "工具调用异常"}
         </div>
       );
     }
 
-    // 分支 3: complete -> 业务组件 / 业务提示，支持 partial 等非 error 状态
+    // 分支 3: complete -> 未知工具只给出通用完成说明，不展示原始结果。
     if (effectiveStatus.type === "complete") {
-      const isBusinessSuccess =
-        envelope && envelope.status !== "error" && envelope.data !== undefined;
-
-      if (registryItem && isBusinessSuccess) {
-        return (
-          <div className="mt-1">
-            <registryItem.render
-              envelope={envelope}
-              data={envelope.data}
-              artifactImages={envelope.images}
-              siteEnvironment={envelope.site_environment}
-            />
-          </div>
-        );
-      }
-
       return (
         <div className="text-xs text-muted-foreground/80 py-1 font-normal">
-          {registryItem
-            ? "未查询到符合条件的业务监测数据。"
-            : "已完成辅助信息查询并同步至模型上下文。"}
+          已完成辅助信息查询并同步至模型上下文。
         </div>
       );
     }
