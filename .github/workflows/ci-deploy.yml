@@ -100,3 +100,12 @@ jobs:
             -i ~/.ssh/lma_deploy -o IdentitiesOnly=yes -o BatchMode=yes \
             -o StrictHostKeyChecking=yes -o ServerAliveInterval=20 \
             "$LMA_SSH_USER@$LMA_HOST" "$GITHUB_SHA"
+      - name: Verify public HTTPS and access protection
+        env:
+          LMA_HOST: ${{ vars.LMA_HOST }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
+            --output /dev/null --write-out '%{http_code}' "https://$LMA_HOST/api/health")"
+          test "$status" = 401
