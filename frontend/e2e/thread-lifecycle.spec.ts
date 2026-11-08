@@ -180,9 +180,14 @@ test('重新生成使用 checkpoint fork，刷新后显示最新回答', async (
 
     const assistantMessage = page.locator('[data-role="assistant"]').last();
     await assistantMessage.hover();
+    const regenerationRequest = page.waitForRequest((request) =>
+      request.method() === 'POST' && request.url().endsWith(`/sessions/${threadId}/runs`),
+    );
     await assistantMessage.getByRole('button', { name: 'Refresh' }).click();
 
-    await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
+    const request = await regenerationRequest;
+    expect(request.postDataJSON().checkpoint_id).toBeTruthy();
+    expect((await request.response())?.status()).toBe(200);
     await expect(page.getByText(/分支回答版本 \d+/).last()).not.toHaveText(originalText ?? '');
     const regenerated = page.getByText(/分支回答版本 \d+/).last();
     const regeneratedText = await regenerated.textContent();
