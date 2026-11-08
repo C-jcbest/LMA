@@ -141,7 +141,7 @@ test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状�
     await seedThread(otherId, 'Stop 场景切换目标');
     await openThread(page, threadId);
     await send(page, '执行并行工具停止验证');
-    await expect(page.getByText('正在获取辅助信息…')).toBeVisible();
+    await expect(page.getByText('已完成辅助查询')).toBeVisible();
     await expect(page.getByText('正在查询监测点分组…')).toBeVisible();
     await page.getByRole('button', { name: '停止生成' }).click();
     await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
@@ -161,6 +161,8 @@ test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状�
     expect(messages.some((message) => message.type === 'human' && persistedText(message.content) === '停止后继续提问')).toBe(true);
     expect(messages.some((message) => message.type === 'ai' && persistedText(message.content) === '已继续处理：停止后继续提问')).toBe(true);
     expectToolCallsPaired(messages);
+    expect(messages.some((message) => message.type === 'tool' && message.name === 'get_current_time' && message.status === 'success')).toBe(true);
+    expect(messages.some((message) => message.type === 'tool' && message.name === 'list_station_groups' && message.status === 'error')).toBe(true);
   } finally {
     await client.deleteSession(threadId);
     await client.deleteSession(otherId);
