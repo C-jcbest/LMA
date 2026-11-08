@@ -102,7 +102,7 @@ def _get_vision_llm():
         api_key=settings.vision_api_key,
         base_url=settings.vision_base_url,
         thinking=settings.vision_thinking,
-        protocol="chat_completions",
+        protocol=settings.vision_protocol,
         temperature=0,
         # 预算必须宽裕：思考开启时视觉模型每次输出中约 2000 token 是
         # 内部思考（reasoning），正文 JSON 另需 ~1000+；预算不足时正文被
@@ -111,18 +111,6 @@ def _get_vision_llm():
         timeout=120,
     )
 
-
-
-def _downsample(points: list, limit: int) -> list:
-    """等间隔降采样（保留首末点）。现仅调试脚本使用；
-    生产渲染与 chart_points 均已改为全量数据。"""
-    if len(points) <= limit:
-        return list(points)
-    step = math.ceil(len(points) / limit)
-    sampled = points[::step]
-    if sampled[-1] is not points[-1]:
-        sampled.append(points[-1])
-    return sampled
 
 
 def _render_chart_png(

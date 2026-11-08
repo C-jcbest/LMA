@@ -1,6 +1,7 @@
 """全局配置：从 .env 读取 LLM 与北斗平台参数。"""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,9 +51,12 @@ class Settings(BaseSettings):
     # 北斗平台登录密码，默认空值；仅运行时配置，不提交版本库或转发给模型/前端。
     beidou_password: str = ""
 
-    # 视觉模型 OpenAI 兼容端点，默认空值；与视觉密钥、模型一起配置，缺任一项则复核返回 error 并保留图表。
     # 视觉模型 Provider 标识（deepseek/openai）；与主模型独立，决定官方 integration 与 thinking 参数映射。
     vision_provider: str = "openai"
+    # 视觉请求协议（responses/chat_completions），默认 chat_completions；仅视觉调用生效，不自动回退。
+    # responses 需 openai integration 与支持该协议的端点；仅支持 Chat Completions 的端点使用 chat_completions。
+    vision_protocol: Literal["responses", "chat_completions"] = "chat_completions"
+    # 视觉模型 OpenAI 兼容端点，默认空值；与视觉密钥、模型一起配置，缺任一项则复核返回 error 并保留图表。
     vision_base_url: str = ""
     # 视觉模型接口密钥，默认空值；不复用主模型密钥，不提交版本库。
     vision_api_key: str = ""
