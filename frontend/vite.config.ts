@@ -14,10 +14,10 @@ export default defineConfig({
     port: 5174,
     strictPort: false,
     proxy: {
-      '/langgraph-api': {
-        target: process.env.LMA_LANGGRAPH_PROXY_TARGET || 'http://127.0.0.1:2024',
+      '/api': {
+        target: process.env.LMA_API_PROXY_TARGET || 'http://127.0.0.1:2025',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/langgraph-api/, ''),
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
   },

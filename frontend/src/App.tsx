@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { createLangGraphClient, getStoredApiUrl } from '@/services/api';
+import { createLmaClient, getStoredApiUrl } from '@/services/api';
 import { AssistantProvider } from './app/providers/AssistantProvider';
 import { AppLayout } from './app/AppLayout';
 import { ServiceSettingsDialog } from './features/settings/ServiceSettingsDialog';
@@ -14,7 +14,7 @@ export const App: React.FC = () => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [apiUrl, setApiUrl] = useState(getStoredApiUrl);
 
-  const client = useMemo(() => createLangGraphClient(apiUrl), [apiUrl]);
+  const client = useMemo(() => createLmaClient(apiUrl), [apiUrl]);
 
   return (
     <ErrorBoundary fallbackTitle="会话界面加载异常" level="window">

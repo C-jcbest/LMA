@@ -1,3 +1,5 @@
+> 2026-11-09 部署更新：已授权 FastAPI + LangGraph OSS + PostgreSQL 与腾讯云 GitHub CI/CD。当前运行与验证入口见 [部署说明](deployment.md)，旧 Agent Server、langgraph dev 和独立 Server 测试入口已移除；下面保留迁移前计划记录。API/浏览器测试须设置隔离 lma_test 的 LMA_TEST_DATABASE_URI。用户选择重新生成后显示最新回答，不提供旧回答分支切换。
+
 # LMA 全栈官方优先重构 TODO
 
 > 目标分支：`codex/official-stack-refactor`

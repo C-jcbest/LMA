@@ -21,17 +21,18 @@
 - 2026-09-21 用户授权修正本地重载的许可证限制：本地 Compose 不得强制生产 `LANGGRAPH_CLOUD_LICENSE_KEY`；保留现有会话存储，不据此扩展生产部署改造。
 
 - 2026-09-21 用户明确授权基准站工具答复和用户消息编辑、复制、悬停工具栏的代码修复；该授权不涉及部署改造。
-- 当前阶段仅整理项目文档，不再实施代码、配置或部署改造；部署待办已移除。不得将现有 Compose、Vite 交付链路改造成生产级部署，也不得新增 healthcheck、同源代理、Helm 或 Kubernetes 配置，除非用户以后明确重新授权。
+- 2026-11-09 用户明确授权免费 OSS 自托管迁移、腾讯云部署与 GitHub CI/CD；使用 IP 访问并加 HTTPS/访问保护。云端新会话，本机原会话与数据库保留不动。服务固定单 Uvicorn worker，不引入 Agent Server 许可证、Redis 队列或 Kubernetes。
+- 2026-11-09 用户选择简化重新生成交互：显示最新回答，旧 checkpoint 保留在数据库；暂不提供旧回答分支切换。
 - 业务时间统一使用 `Asia/Shanghai`；System Prompt 彻底保持静态以最大化 Prompt Cache 命中率，当前业务时间与时区由工具 `get_current_time` 获取，相对时间由模型调用工具后解析。
 - `backend/app/agent/prompts/system.md` 是主业务策略唯一可编辑来源，`vision.md` 是视觉策略唯一可编辑来源；`prompting.py` 仅导出静态提示词，`create_agent` 直接使用 `system_prompt=SYSTEM_PROMPT`。
 - LangGraph checkpoint/thread 是会话历史唯一事实来源；前端状态只保存展示态，不复制一套权威历史。
-- 前端通用聊天与会话框架完全委托 assistant-ui 生态：统一采用 `assistant-ui runtime` ↓ `@assistant-ui/react-langchain` (`useStreamRuntime`) ↓ `@langchain/react useStream` ↓ `LangGraph Server` 的标准单向流式架构。
+- 前端通用聊天与会话框架完全委托 assistant-ui 生态：统一采用 `assistant-ui runtime` ↓ `@assistant-ui/react-langgraph useLangGraphRuntime` ↓ `LmaClient` SSE ↓ `FastAPI` ↓ `LangGraph OSS + AsyncPostgresSaver`；流式累积与会话生命周期交给官方适配器，SSE 使用 SDK 公开解码器。
 - 前端不得访问 `STREAM_CONTROLLER`、内部 store、符号键或其他未公开 Runtime API；跨层读取仅允许通过 `useLangChainStream`、`useChannel` 及 assistant-ui / LangChain 明确公开的 hooks、Primitives 与类型。
 - 前端不得聚合或复制底层运行时状态机，不得自定义聊天框架、消息状态机、滚动管理或会话列表状态；聊天 Thread、Message、Composer、ActionBar、Reasoning、Tool Call 生命周期与 Thread List 完全由 assistant-ui 官方 Primitives 与 Elements 驱动。
-- 会话选择采用 assistant-ui controlled 模式（通过 `threadId` 与 `onThreadIdChange` 与 URL searchParams `?threadId=...` 原生同步，支持刷新会话保留、前进/后退与分享链接）；会话列表由统一的 `createLangGraphThreadListAdapter` 适配，且满足 `remoteId === externalId === thread_id`；分页使用官方 `ThreadListPrimitive.LoadMore`。
-- 会话标题统一由 assistant-ui Adapter 的 `generateTitle()` 生命周期托管（异步调用 `session-title` 图生成并通过 rename 持久化回写到 `thread.metadata.name`），后端不再在主图 `aafter_agent` 执行自动标题逻辑。
-- Stop 完全回归官方 Stream / Thread 生命周期：由 assistant-ui 触发官方 `stream.stop({ cancel: true })`，不维护任何本地状态机或补丁。Thread/Checkpoint 的一致性由 Agent Runtime 服务端负责（在进入模型前通过 `_sanitize_unanswered_tool_calls` 自动清洗/自愈因客户端取消等遗留的悬空 AI tool-call）。下一条 HumanMessage 直接提交创建正常新 Run。
-- 工具完成条件严格以“工具结果是否已经返回”为准；业务展示采用两阶段数据源：持久化 `ToolMessage.artifact`（含 success / partial / error）永远优先，live tools channel artifact 仅在未落盘的流式阶段兜底；顶层统一通过集中解析函数处理 output，禁止在各个工具 renderer 中做 JSON 字符串猜测。
+- 会话选择由 assistant-ui Runtime 管理，通过 `onThreadIdChange` 和公开 Thread action 与 URL searchParams `?threadId=...` 同步，支持刷新会话保留、前进/后退与分享链接；会话列表由统一的 `createSessionListAdapter` 适配，且满足 `remoteId === externalId === thread_id`；分页使用官方 `ThreadListPrimitive.LoadMore`。
+- 会话标题统一由 assistant-ui Adapter 的 `generateTitle()` 生命周期托管（异步调用 `/title` 生成并通过 rename 持久化回写到 会话目录的 `name`），后端不再在主图 `aafter_agent` 执行自动标题逻辑。
+- Stop 使用官方 Runtime 的 abortSignal 与服务端取消接口；服务端等待取消持久化完成。下一轮官方取消 stub 只能匹配真实未完成调用，由服务端转换为受控 error ToolMessage，并通过公开 aupdate_state 保留已完成并行工具结果；禁止接收客户端工具成功结果或覆盖真实结果。不维护前端消息状态机或旧 sanitizer。
+- 工具完成条件严格以“工具结果是否已经返回”为准；业务展示使用官方 ToolCall part 的 status/result/artifact；持久化 `ToolMessage.artifact`（含 success / partial / error）是刷新恢复的权威来源，流式数据由官方适配层投影，不自建 tools channel 解析器；Toolkit 集中校验 artifact，禁止在各个工具 renderer 中做 JSON 字符串猜测。
 - 基准站形变请求在工具内结束，仅返回模型可读说明及 `artifact=None`，不生成前端错误卡片；这表示工具完成适用性判断，不表示取得监测数据。其他业务失败仍遵循错误协议。
 - 用户消息仅最新一条可编辑（生成期间不可编辑），历史消息可复制；编辑、复制与悬停生命周期采用官方 Primitives，工具栏显示隐藏不得改变消息布局。
 - Retry 只处理可判定的瞬时失败，参数错误、权限错误、业务拒绝和数据为空不得盲目重试；所有工具目前均应保持只读。

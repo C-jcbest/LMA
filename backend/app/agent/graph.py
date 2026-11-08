@@ -1,6 +1,6 @@
 """LMA 主 Agent：官方 create_agent 接管 ReAct 循环与工具执行。
 
-由 Agent Server 调用图工厂并注入 Thread/Checkpoint 持久化。
+由自托管 API 调用工厂并注入 PostgreSQL Checkpointer。
 LMA middleware 维护展示元数据及推荐契约。
 官方 SummarizationMiddleware 管理历史；推荐阶段保留在主 Run 并记录耗时。
 """
@@ -20,7 +20,6 @@ from langchain.agents.middleware import (
     ToolCallLimitMiddleware,
 )
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
 
 from pydantic import BaseModel, Field
 from app.beidou.client import BeidouApiError
@@ -300,8 +299,3 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
                 max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),
         ],
     )
-
-
-def graph(config: RunnableConfig):
-    """Agent Server 官方图工厂：模型延迟构建，不额外安装 checkpointer。"""
-    return create_lma_agent(_get_llm())

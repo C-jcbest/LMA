@@ -2,195 +2,54 @@ import React from 'react';
 import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createLangGraphThreadListAdapter } from '@/lib/langgraph/thread-list-adapter';
+import { createSessionListAdapter } from '@/lib/session-list-adapter';
 import { AssistantProvider } from '@/app/providers/AssistantProvider';
 import { App } from '@/App';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import * as api from '@/services/api';
 
-describe('LangGraph Thread List Adapter (P3)', () => {
-  let mockClient: any;
-
-  beforeEach(() => {
-    vi.restoreAllMocks();
-    mockClient = {
-      threads: {
-        search: vi.fn(),
-        create: vi.fn(),
-        get: vi.fn(),
-        update: vi.fn(),
-        delete: vi.fn(),
-      },
-      runs: {
-        wait: vi.fn(),
-      },
-    };
+describe('自托管会话目录与 assistant-ui 适配', () => {
+  const session = (id: string, name = '新会话') => ({
+    id, name, archived: false, created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T01:00:00Z',
   });
 
-  it('list() 正确按 updated_at 倒序分页查询并将数据映射为 RemoteThreadMetadata', async () => {
-    const mockThreads = [
-      {
-        thread_id: 't-1',
-        metadata: { graph_id: 'lma-agent', name: '滑坡历史监测 A' },
-        created_at: '2026-09-18T10:00:00Z',
-        updated_at: '2026-09-18T10:30:00Z',
-        status: 'idle',
-      },
-      {
-        thread_id: 't-2',
-        metadata: { graph_id: 'lma-agent', name: '' },
-        created_at: '2026-09-18T09:00:00Z',
-        updated_at: '2026-09-18T09:10:00Z',
-        status: 'idle',
-      },
-    ];
-
-    mockClient.threads.search.mockResolvedValue(mockThreads);
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-
-    const result = await adapter.list();
-
-    expect(mockClient.threads.search).toHaveBeenCalledWith({
-      metadata: { graph_id: 'lma-agent' },
-      limit: 21,
-      offset: 0,
-      sortBy: 'updated_at',
-      sortOrder: 'desc',
-      select: ['thread_id', 'metadata', 'created_at', 'updated_at', 'status'],
-    });
-
-    expect(result.threads).toHaveLength(2);
-    expect(result.threads[0]).toEqual({
-      status: 'regular',
-      remoteId: 't-1',
-      externalId: 't-1',
-      title: '滑坡历史监测 A',
-      lastMessageAt: new Date('2026-09-18T10:30:00Z'),
-    });
-    // 空标题回退为新会话
-    expect(result.threads[1].title).toBe('新会话');
-    expect(result.nextCursor).toBeUndefined();
+  it.each([0, 19, 20, 21])('分页返回 %i 条时只在存在下一条时显示加载入口', async (count) => {
+    const client = { listSessions: vi.fn().mockResolvedValue(
+      Array.from({ length: count }, (_, index) => session('session-' + index)),
+    ) } as any;
+    const result = await createSessionListAdapter(client).list({ after: '20' });
+    expect(client.listSessions).toHaveBeenCalledWith({ limit: 21, offset: 20 });
+    expect(result.threads).toHaveLength(Math.min(count, 20));
+    expect(result.nextCursor).toBe(count > 20 ? '40' : undefined);
+    if (count) {
+      expect(result.threads[0]).toMatchObject({ remoteId: 'session-0', externalId: 'session-0', title: '新会话' });
+    }
   });
 
-  it.each([0, 19, 20])('list() 末页有 %i 条时不再提供加载入口', async (count) => {
-    mockClient.threads.search.mockResolvedValue(Array.from({ length: count }, (_, i) => ({
-      thread_id: `last-${i}`, metadata: {},
-    })));
-    const result = await createLangGraphThreadListAdapter(mockClient).list({ after: '20' });
-    expect(result.threads).toHaveLength(count);
-    expect(result.nextCursor).toBeUndefined();
+  it('创建、改名、归档和删除调用业务接口', async () => {
+    const client = {
+      createSession: vi.fn().mockResolvedValue(session('new-id')),
+      getSession: vi.fn().mockResolvedValue(session('new-id', '站点分析')),
+      updateSession: vi.fn(), deleteSession: vi.fn(),
+    } as any;
+    const adapter = createSessionListAdapter(client);
+    expect(await adapter.initialize()).toEqual({ remoteId: 'new-id', externalId: 'new-id' });
+    expect(await adapter.fetch('new-id')).toMatchObject({ title: '站点分析' });
+    await adapter.rename('new-id', '监测报告');
+    await adapter.archive('new-id');
+    await adapter.unarchive('new-id');
+    await adapter.delete('new-id');
+    expect(client.updateSession.mock.calls).toEqual([
+      ['new-id', { name: '监测报告' }], ['new-id', { archived: true }], ['new-id', { archived: false }],
+    ]);
+    expect(client.deleteSession).toHaveBeenCalledWith('new-id');
   });
 
-  it('list() 存在下一条时返回 nextCursor 支持继续分页', async () => {
-    const mockThreads = Array.from({ length: 21 }, (_, i) => ({
-      thread_id: `t-${i}`,
-      metadata: { graph_id: 'lma-agent', name: `会话 ${i}` },
-      created_at: '2026-09-18T10:00:00Z',
-      updated_at: '2026-09-18T10:00:00Z',
-      status: 'idle',
-    }));
-
-    mockClient.threads.search.mockResolvedValue(mockThreads);
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-
-    const page1 = await adapter.list();
-    expect(page1.nextCursor).toBe('20');
-
-    await adapter.list({ after: '20' });
-    expect(mockClient.threads.search).toHaveBeenLastCalledWith(
-      expect.objectContaining({ offset: 20 })
-    );
-  });
-
-  it('initialize() 调用 client.threads.create 创建初始线程', async () => {
-    mockClient.threads.create.mockResolvedValue({ thread_id: 'new-thread-123' });
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-
-    const res = await adapter.initialize();
-
-    expect(mockClient.threads.create).toHaveBeenCalledWith({
-      metadata: {
-        graph_id: 'lma-agent',
-        name: '新会话',
-      },
-    });
-    expect(res).toEqual({ remoteId: 'new-thread-123', externalId: 'new-thread-123' });
-  });
-
-  it('rename() 调用 client.threads.update 更新元数据', async () => {
-    mockClient.threads.update.mockResolvedValue({});
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-
-    await adapter.rename('t-123', '监测报告总结');
-
-    expect(mockClient.threads.update).toHaveBeenCalledWith('t-123', {
-      metadata: { name: '监测报告总结' },
-    });
-  });
-
-  it('rename() 遇到空白标题时不发送请求', async () => {
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-    await adapter.rename('t-123', '   ');
-    expect(mockClient.threads.update).not.toHaveBeenCalled();
-  });
-
-  it('delete() 调用 client.threads.delete 删除线程', async () => {
-    mockClient.threads.delete.mockResolvedValue({});
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-
-    await adapter.delete('t-to-delete');
-
-    expect(mockClient.threads.delete).toHaveBeenCalledWith('t-to-delete');
-  });
-
-  it('fetch() 调用 client.threads.get 获取线程信息并映射', async () => {
-    mockClient.threads.get.mockResolvedValue({
-      thread_id: 't-fetch',
-      metadata: { name: '已知监测点' },
-      created_at: '2026-09-18T12:00:00Z',
-      updated_at: '2026-09-18T12:05:00Z',
-    });
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-
-    const thread = await adapter.fetch('t-fetch');
-
-    expect(mockClient.threads.get).toHaveBeenCalledWith('t-fetch');
-    expect(thread).toEqual({
-      status: 'regular',
-      remoteId: 't-fetch',
-      externalId: 't-fetch',
-      title: '已知监测点',
-      lastMessageAt: new Date('2026-09-18T12:05:00Z'),
-    });
-  });
-
-  it('generateTitle() 提取首条用户消息、调用后端无状态图生成并持久化回写', async () => {
-    const generateSessionTitleSpy = vi
-      .spyOn(api, 'generateSessionTitle')
-      .mockResolvedValue('黄土滑坡 GNSS 位移分析');
-    mockClient.threads.update.mockResolvedValue({});
-
-    const adapter = createLangGraphThreadListAdapter(mockClient);
-    const mockMessages: any[] = [
-      {
-        role: 'user',
-        content: [{ type: 'text', text: '分析一下近期监测点位移和降雨趋势' }],
-      },
-    ];
-
-    const stream = await adapter.generateTitle('t-title-1', mockMessages);
-    expect(stream).toBeDefined();
-
-    // 等待流内任务执行
-    await waitFor(() => {
-      expect(generateSessionTitleSpy).toHaveBeenCalledWith(
-        mockClient,
-        '分析一下近期监测点位移和降雨趋势'
-      );
-      expect(mockClient.threads.update).toHaveBeenCalledWith('t-title-1', {
-        metadata: { name: '黄土滑坡 GNSS 位移分析' },
-      });
-    });
+  it('标题由官方生命周期异步生成并回写', async () => {
+    const client = { generateTitle: vi.fn().mockResolvedValue('GNSS 位移分析'), updateSession: vi.fn() } as any;
+    const adapter = createSessionListAdapter(client);
+    await adapter.generateTitle('title-id', [{ role: 'user', content: [{ type: 'text', text: '分析近期位移' }] }] as any);
+    await waitFor(() => expect(client.updateSession).toHaveBeenCalledWith('title-id', { name: 'GNSS 位移分析' }));
   });
 });
 
@@ -201,34 +60,18 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     vi.restoreAllMocks();
     localStorage.clear();
     mockClient = {
-      threads: {
-        search: vi.fn().mockResolvedValue([]),
-        create: vi.fn().mockResolvedValue({ thread_id: 'new-thread' }),
-        get: vi.fn().mockImplementation(async (id: string) => ({
-          thread_id: id,
-          metadata: { graph_id: 'lma-agent', name: `会话 ${id}` },
-          created_at: '2026-09-18T10:00:00Z',
-          updated_at: '2026-09-18T10:00:00Z',
-        })),
-        update: vi.fn().mockResolvedValue({}),
-        delete: vi.fn().mockResolvedValue({}),
-        stream: vi.fn().mockImplementation(() => ({
-          onEvent: vi.fn().mockReturnValue(() => {}),
-          onError: vi.fn().mockReturnValue(() => {}),
-          startLifecycleWatcher: vi.fn(),
-          close: vi.fn().mockResolvedValue(undefined),
-          messages: (async function* () {})(),
-          values: (async function* () {})(),
-          toolCalls: (async function* () {})(),
-          subgraphs: (async function* () {})(),
-          subagents: (async function* () {})(),
-        })),
-      },
-      runs: {
-        stream: vi.fn().mockImplementation(() => (async function* () {})()),
-      },
+      listSessions: vi.fn().mockResolvedValue([]),
+      createSession: vi.fn().mockResolvedValue({ id: 'new-thread' }),
+      getSession: vi.fn().mockImplementation(async (id: string) => ({
+        id, name: '会话 ' + id, archived: false,
+        created_at: '2026-09-18T10:00:00Z', updated_at: '2026-09-18T10:00:00Z',
+      })),
+      getState: vi.fn().mockResolvedValue({ values: { messages: [] }, latest_run: null }),
+      updateSession: vi.fn().mockResolvedValue({}), deleteSession: vi.fn().mockResolvedValue(undefined),
+      streamRun: vi.fn().mockImplementation(() => (async function* () {})()),
+      findCheckpoint: vi.fn(), generateTitle: vi.fn(),
     };
-    vi.spyOn(api, 'createLangGraphClient').mockReturnValue(mockClient);
+    vi.spyOn(api, 'createLmaClient').mockReturnValue(mockClient);
   });
 
   it('AssistantProvider 正确挂载运行时并提供子组件渲染环境', () => {
@@ -305,24 +148,24 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     // 点击服务配置按钮
     fireEvent.click(screen.getByText('服务配置'));
 
-    expect(screen.getByText('LangGraph 服务对接配置')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('请输入 LangGraph API 地址或 /langgraph-api')).toBeInTheDocument();
+    expect(screen.getByText('LMA 服务对接配置')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('请输入 LMA API 地址或 /api')).toBeInTheDocument();
 
     // 修改地址并保存
     fireEvent.change(
-      screen.getByPlaceholderText('请输入 LangGraph API 地址或 /langgraph-api'),
+      screen.getByPlaceholderText('请输入 LMA API 地址或 /api'),
       { target: { value: 'http://new-domain:2024' } }
     );
     fireEvent.click(screen.getByText('保存并应用'));
 
     await waitFor(() => {
-      expect(localStorage.getItem('lma_langgraph_config')).toBe('http://new-domain:2024');
+      expect(localStorage.getItem('lma_api_url')).toBe('http://new-domain:2024');
     });
   });
 
   it('AssistantProvider 与浏览器 URL 保持双向同步，驱动 pushState 并通过真实 history.back 返回上一个会话', async () => {
-    mockClient.threads.search.mockResolvedValue([
-      { thread_id: 't-history-2', metadata: { graph_id: 'lma-agent', name: '会话 2' }, created_at: '2026-09-18T11:00:00Z', updated_at: '2026-09-18T11:00:00Z' },
+    mockClient.listSessions.mockResolvedValue([
+      { id: 't-history-2', name: '会话 2', archived: false, created_at: '2026-09-18T11:00:00Z', updated_at: '2026-09-18T11:00:00Z' },
     ]);
 
     // 1. 初始挂载：URL 带有 ?threadId=t-history-1
@@ -355,7 +198,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-1');
     });
     // 深链接目标不在首屏列表时，官方 switchToThread 会通过 adapter.fetch 精确加载。
-    expect(mockClient.threads.get).toHaveBeenCalledWith('t-history-1');
+    expect(mockClient.getSession).toHaveBeenCalledWith('t-history-1');
     // 初始挂载读取 URL，不应重复触发 pushState
     expect(pushStateSpy).not.toHaveBeenCalled();
 
@@ -396,28 +239,26 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
 
   it('多会话切换与创建集成：从初始未绑定到 initialize 创建、externalId 与 thread_id 对齐并在切走切回时保持一致', async () => {
     const createdThread = {
-      thread_id: 'thread-stream-test',
+      id: 'thread-stream-test',
       created_at: '2026-09-18T10:00:00Z',
       updated_at: '2026-09-18T10:00:00Z',
-      metadata: { graph_id: 'lma-agent', name: '新会话' },
+      name: '新会话', archived: false,
     };
-    mockClient.threads.create.mockResolvedValue(createdThread);
-    mockClient.threads.get.mockImplementation(async (id: string) => ({
-      thread_id: id,
+    mockClient.createSession.mockResolvedValue(createdThread);
+    mockClient.getSession.mockImplementation(async (id: string) => ({
+      id: id,
       created_at: '2026-09-18T10:00:00Z',
       updated_at: '2026-09-18T10:00:00Z',
-      metadata: { graph_id: 'lma-agent', name: `会话 ${id}` },
+      name: '会话 ' + id, archived: false,
     }));
 
-    const adapter = createLangGraphThreadListAdapter(mockClient);
+    const adapter = createSessionListAdapter(mockClient);
 
     // 1. 初始化会话
     const initialized = await adapter.initialize();
     expect(initialized.remoteId).toBe('thread-stream-test');
     expect(initialized.externalId).toBe('thread-stream-test');
-    expect(mockClient.threads.create).toHaveBeenCalledWith({
-      metadata: { graph_id: 'lma-agent', name: '新会话' },
-    });
+    expect(mockClient.createSession).toHaveBeenCalledWith();
 
     // 2. 验证 fetch
     const fetched = await adapter.fetch(initialized.remoteId);

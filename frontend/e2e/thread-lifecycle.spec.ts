@@ -1,20 +1,19 @@
 import { expect, test, type Page } from '@playwright/test';
-import { Client } from '@langchain/langgraph-sdk';
+import { LmaClient } from '../src/services/api';
 
-const apiUrl = 'http://127.0.0.1:21420';
-const client = new Client({ apiUrl, callerOptions: { maxRetries: 0 } });
+const client = new LmaClient('http://127.0.0.1:21420');
 
 async function createThread(name: string) {
-  const thread = await client.threads.create({
-    metadata: { graph_id: 'lma-agent', name },
-  });
-  return thread.thread_id;
+  const session = await client.createSession();
+  await client.updateSession(session.id, { name });
+  return session.id;
 }
 
 async function seedThread(threadId: string, message: string) {
-  await client.runs.wait(threadId, 'lma-agent', {
-    input: { messages: [{ role: 'user', content: message }] },
-  });
+  const messages = [{ type: 'human' as const, id: crypto.randomUUID(), content: message }];
+  for await (const event of client.streamRun(threadId, messages, undefined, new AbortController().signal)) {
+    if (event.event === 'error') throw new Error('隔离会话初始化失败');
+  }
 }
 
 async function openThread(page: Page, threadId: string) {
@@ -66,7 +65,7 @@ test.describe.configure({ mode: 'serial' });
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
-    window.localStorage.setItem('lma_langgraph_config', 'http://127.0.0.1:21420');
+    window.localStorage.setItem('lma_api_url', '/api');
   });
 });
 
@@ -99,8 +98,8 @@ test('深链接、浏览器前进后退与刷新保持同一 Thread', async ({ p
     await expect(page).toHaveURL(new RegExp(`threadId=${secondId}`));
     await expect(page.getByText('已继续处理：浏览器导航第二条消息')).toBeVisible();
   } finally {
-    await client.threads.delete(firstId);
-    await client.threads.delete(secondId);
+    await client.deleteSession(firstId);
+    await client.deleteSession(secondId);
   }
 });
 
@@ -127,8 +126,8 @@ test('生成中切换会话再返回：后台 Run 继续且返回后恢复状态
     });
     await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
   } finally {
-    await client.threads.delete(activeId);
-    await client.threads.delete(otherId);
+    await client.deleteSession(activeId);
+    await client.deleteSession(otherId);
   }
 });
 
@@ -157,18 +156,18 @@ test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状�
     await switchThread(page, threadName, threadId);
     await expect(page.getByText('已继续处理：停止后继续提问')).toBeVisible();
 
-    const state = await client.threads.getState(threadId);
+    const state = await client.getState(threadId);
     const messages = (state.values as { messages?: Array<Record<string, unknown>> }).messages ?? [];
     expect(messages.some((message) => message.type === 'human' && persistedText(message.content) === '停止后继续提问')).toBe(true);
     expect(messages.some((message) => message.type === 'ai' && persistedText(message.content) === '已继续处理：停止后继续提问')).toBe(true);
     expectToolCallsPaired(messages);
   } finally {
-    await client.threads.delete(threadId);
-    await client.threads.delete(otherId);
+    await client.deleteSession(threadId);
+    await client.deleteSession(otherId);
   }
 });
 
-test('Regenerate 使用 checkpoint fork，并形成可切换的回答分支', async ({ page }) => {
+test('重新生成使用 checkpoint fork，刷新后显示最新回答', async ({ page }) => {
   const threadId = await createThread('Regenerate 分支');
   try {
     await openThread(page, threadId);
@@ -183,9 +182,14 @@ test('Regenerate 使用 checkpoint fork，并形成可切换的回答分支', as
 
     await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
     await expect(page.getByText(/分支回答版本 \d+/).last()).not.toHaveText(originalText ?? '');
-    await expect(assistantMessage.getByText(/2\s*\/\s*2/)).toBeVisible();
+    const regenerated = page.getByText(/分支回答版本 \d+/).last();
+    const regeneratedText = await regenerated.textContent();
+    await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
+    await page.reload();
+    await expect(page.getByText(regeneratedText ?? '', { exact: true })).toBeVisible();
+    await expect(page.getByText(originalText ?? '', { exact: true })).toHaveCount(0);
   } finally {
-    await client.threads.delete(threadId);
+    await client.deleteSession(threadId);
   }
 });
 
@@ -217,8 +221,8 @@ test('Tool error、空结果与 artifact 在刷新后仍由持久化 ToolMessage
     await emptyTool.click();
     await expect(page.getByText(/该时间范围内暂无 GNSS 数据/)).toBeVisible();
   } finally {
-    await client.threads.delete(errorThreadId);
-    await client.threads.delete(emptyThreadId);
+    await client.deleteSession(errorThreadId);
+    await client.deleteSession(emptyThreadId);
   }
 });
 
@@ -255,7 +259,7 @@ test('展开和收起工具时消息列不发生横向位移', async ({ page }) 
     await page.waitForTimeout(50);
     expect(Math.abs((await x())! - before!)).toBeLessThan(0.5);
   } finally {
-    await client.threads.delete(threadId);
+    await client.deleteSession(threadId);
   }
 });
 
@@ -263,15 +267,17 @@ test('展开和收起工具时消息列不发生横向位移', async ({ page }) 
 test('会话栏滚动加载下一页，整页耗尽后隐藏加载入口', async ({ page }) => {
   // 隔离持久化的历史测试数据，只替换列表 HTTP 响应，运行真实 Runtime 与浏览器布局。
   const rows = Array.from({ length: 40 }, (_, index) => ({
-    thread_id: `pagination-${index}`,
-    metadata: { graph_id: 'lma-agent', name: `滚动分页-${index}` },
+    id: `pagination-${index}`,
+    name: `滚动分页-${index}`, archived: false,
     created_at: '2026-09-21T00:00:00Z',
     updated_at: '2026-09-21T00:00:00Z',
     status: 'idle',
   }));
   const offsets: number[] = [];
-  await page.route('**/threads/search', async (route) => {
-    const { offset = 0, limit } = route.request().postDataJSON();
+  await page.route('**/api/sessions?*', async (route) => {
+    const query = new URL(route.request().url()).searchParams;
+    const offset = Number(query.get('offset'));
+    const limit = Number(query.get('limit'));
     offsets.push(offset);
     await route.fulfill({ json: rows.slice(offset, offset + limit) });
   });
@@ -331,7 +337,7 @@ test('最新用户消息可编辑重新生成、复制，悬停不改变消息�
     await page.getByRole('button', { name: '保存并重新生成' }).click();
     await expect(page.getByText('已继续处理：第二轮修改')).toBeVisible();
   } finally {
-    await client.threads.delete(threadId);
+    await client.deleteSession(threadId);
   }
 });
 
@@ -344,7 +350,7 @@ for (const mode of ['数值', '视觉']) {
       await send(page, `查询基准站${mode}数据`);
       await expect(page.getByText('该站仅提供差分基准，不适用形变序列分析。')).toBeVisible();
       await expect(page.locator('[data-role="assistant"] button').filter({ hasText: /GNSS|视觉/ })).toHaveCount(0);
-      const state = await client.threads.getState(threadId);
+      const state = await client.getState(threadId);
       const messages = (state.values as { messages: Array<Record<string, unknown>> }).messages;
       const result = messages.find((message) => message.type === 'tool');
       expect(result?.artifact).toBeNull();
@@ -353,7 +359,7 @@ for (const mode of ['数值', '视觉']) {
       await expect(page.getByText('该站仅提供差分基准，不适用形变序列分析。')).toBeVisible();
       await expect(page.locator('[data-role="assistant"] button').filter({ hasText: /GNSS|视觉/ })).toHaveCount(0);
     } finally {
-      await client.threads.delete(threadId);
+      await client.deleteSession(threadId);
     }
   });
 }

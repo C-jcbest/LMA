@@ -1,6 +1,6 @@
 import { FC, useMemo } from "react";
 import { AuiIf, ThreadPrimitive } from "@assistant-ui/react";
-import { useLangChainState } from "@assistant-ui/react-langchain";
+import { useSessionMetadata } from "@/lib/session-metadata";
 import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,7 @@ export interface FollowUpSuggestionsProps {
 export const ThreadFollowupSuggestions: FC<{ className?: string }> = ({
   className,
 }) => {
-  const rawState = useLangChainState<RecommendationState>("recommendations", []);
+  const rawState = useSessionMetadata()?.recommendations;
   const recommendations = useMemo(() => normalizeRecommendations(rawState), [rawState]);
 
   if (recommendations.length === 0) {

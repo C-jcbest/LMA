@@ -1,112 +1,72 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Client } from '@langchain/langgraph-sdk';
-import { useStreamRuntime } from '@assistant-ui/react-langchain';
-import {
-  AssistantRuntimeProvider,
-  AuiConfig,
-  Tools,
-  useAui,
-  useAuiState,
-} from '@assistant-ui/react';
-import { LMA_ASSISTANT_ID } from '@/services/api';
-import { createLangGraphThreadListAdapter } from '@/lib/langgraph/thread-list-adapter';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useLangGraphRuntime } from '@assistant-ui/react-langgraph';
+import { AssistantRuntimeProvider, AuiConfig, Tools } from '@assistant-ui/react';
+import type { LmaClient } from '@/services/api';
+import { createSessionListAdapter } from '@/lib/session-list-adapter';
 import { monitoringToolkit } from '@/features/monitoring/toolkit';
 
-const MONITORING_CONFIG = AuiConfig({
-  tools: Tools({ toolkit: monitoringToolkit }),
-});
+const MONITORING_CONFIG = AuiConfig({ tools: Tools({ toolkit: monitoringToolkit }) });
+const getUrlThreadId = () => new URL(window.location.href).searchParams.get('threadId') || undefined;
 
-export interface AssistantProviderProps {
-  client: Client;
-  children: React.ReactNode;
-}
-
-const getUrlThreadId = () => {
-  if (typeof window === 'undefined') return undefined;
-  return new URL(window.location.href).searchParams.get('threadId') || undefined;
-};
-
-const UrlThreadSync: React.FC<{ threadId: string | undefined }> = ({ threadId }) => {
-  const aui = useAui();
-  const activeRemoteId = useAuiState((state) => {
-    const activeItem = state.threads.threadItems.find(
-      (item) => item.id === state.threads.mainThreadId
-    );
-    return activeItem?.remoteId;
-  });
-
+export function AssistantProvider({ client, children }: { client: LmaClient; children: ReactNode }) {
+  const [threadId, setThreadId] = useState(getUrlThreadId);
+  const [error, setError] = useState('');
   useEffect(() => {
-    if (threadId === activeRemoteId) return;
-
-    if (threadId) {
-      aui.threads.switchToThread(threadId);
-    } else {
-      aui.threads.switchToNewThread();
-    }
-  }, [activeRemoteId, aui, threadId]);
-
-  return null;
-};
-
-/**
- * 唯一 Runtime Provider：
- * 负责 LangGraph 客户端装配与 useStreamRuntime 初始化，
- * 通过薄 URL 适配层与 browser searchParams (?threadId=...) 保持原生同步，
- * 支持页面刷新、历史后退与直接复制 URL，并通过 assistant-ui 公共 Thread action 切换，
- * 不维护额外的会话切换或消息状态机。
- */
-export const AssistantProvider: React.FC<AssistantProviderProps> = ({
-  client,
-  children,
-}) => {
-  const [urlThreadId, setUrlThreadId] = useState<string | undefined>(getUrlThreadId);
-
-  const handleThreadIdChange = useCallback((newId: string | undefined) => {
-    setUrlThreadId(newId);
-    if (typeof window !== 'undefined') {
-      const url = new URL(window.location.href);
-      const currentParam = url.searchParams.get('threadId') || undefined;
-      const targetParam = newId || undefined;
-      if (currentParam !== targetParam) {
-        if (targetParam) {
-          url.searchParams.set('threadId', targetParam);
-        } else {
-          url.searchParams.delete('threadId');
-        }
-        window.history.pushState(null, '', url);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const onPopState = () => {
-      setUrlThreadId(getUrlThreadId());
-    };
-
+    const onPopState = () => setThreadId(getUrlThreadId());
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  const threadListAdapter = useMemo(
-    () => createLangGraphThreadListAdapter(client, LMA_ASSISTANT_ID),
-    [client]
-  );
+  const handleThreadIdChange = useCallback((id: string | undefined) => {
+    setThreadId(id);
+    const url = new URL(window.location.href);
+    if ((url.searchParams.get('threadId') || undefined) === id) return;
+    if (id) {
+      url.searchParams.set('threadId', id);
+    } else {
+      url.searchParams.delete('threadId');
+    }
+    window.history.pushState(null, '', url);
+  }, []);
 
-  const runtime = useStreamRuntime({
-    assistantId: LMA_ASSISTANT_ID,
-    client,
-    messagesKey: 'messages',
-    unstable_allowCancellation: true,
-    unstable_threadListAdapter: threadListAdapter,
+  const adapter = useMemo(() => createSessionListAdapter(client), [client]);
+  const runtime = useLangGraphRuntime({
+    threadId,
     onThreadIdChange: handleThreadIdChange,
+    unstable_threadListAdapter: adapter,
+    unstable_allowCancellation: true,
+    async *stream(messages, config) {
+      setError('');
+      const { externalId } = await config.initialize();
+      if (!externalId) throw new Error('会话尚未创建。');
+      try {
+        yield* client.streamRun(externalId, messages, config.checkpointId, config.abortSignal);
+      } catch (reason) {
+        if (!config.abortSignal.aborted) {
+          setError(reason instanceof Error ? reason.message : '消息发送失败，请稍后重试。');
+        }
+        throw reason;
+      }
+    },
+    async load(id, config) {
+      try {
+        const state = await client.getState(id, config?.signal);
+        return { messages: state.values.messages };
+      } catch (reason) {
+        if (!config?.signal.aborted) setError('会话历史读取失败，请刷新后重试。');
+        throw reason;
+      }
+    },
+    getCheckpointId: (id, messages) => client.findCheckpoint(id, messages),
+    eventHandlers: {
+      onError: () => setError('本轮运行失败，已保存完成的步骤，请重新载入会话后重试。'),
+    },
   });
 
   return (
     <AssistantRuntimeProvider runtime={runtime} config={MONITORING_CONFIG}>
-      <UrlThreadSync threadId={urlThreadId} />
+      {error && <div role="alert" className="fixed inset-x-4 top-2 z-50 rounded-md border bg-background p-3 text-sm text-destructive">{error}</div>}
       {children}
     </AssistantRuntimeProvider>
   );
-};
+}

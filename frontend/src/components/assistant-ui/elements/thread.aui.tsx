@@ -25,9 +25,9 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { ContextUsageElement, type ContextUsage } from "@/components/assistant-ui/elements/context-usage.aui";
+import { ContextUsageElement } from "@/components/assistant-ui/elements/context-usage.aui";
 import { cn } from "@/lib/utils";
-import { useLangChainState } from "@assistant-ui/react-langchain";
+import { useSessionMetadata } from "@/lib/session-metadata";
 import {
   ActionBarMorePrimitive,
   ActionBarPrimitive,
@@ -302,8 +302,6 @@ export const ThreadSummaryMessage: FC<{ text?: string }> = ({
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const EMPTY_LANGCHAIN_MESSAGES: readonly unknown[] = [];
-
 // 官方 converter 保持摘要 HumanMessage 的 user 角色，且不会把顶层 lc_source
 // 提升到 assistant-ui custom metadata，因此按消息 ID 从公开 LangGraph state 复核。
 export const hasSummarizationSource = (
@@ -325,20 +323,14 @@ const ThreadMessage: FC = () => {
   const { AssistantMessage: AssistantMessageComponent = AssistantMessage } =
     useContext(ThreadComponentsContext);
   const role = useAuiState((s) => s.message.role);
-  const messageId = useAuiState((s) => s.message.id);
   const isSpoken = useAuiState((s) => s.message.metadata.modality === "voice");
   const hasSummaryMetadata = useAuiState((s) => {
     const custom = s.message.metadata.custom;
     return isRecord(custom) && custom.lc_source === "summarization";
   });
-  const langChainMessages = useLangChainState<readonly unknown[]>(
-    "messages",
-    EMPTY_LANGCHAIN_MESSAGES,
-  );
   const isSummary =
     role === "system" ||
-    hasSummaryMetadata ||
-    hasSummarizationSource(langChainMessages, messageId);
+    hasSummaryMetadata;
 
   if (isSpoken) return <SpokenMessage />;
   if (isSummary) return <ThreadSummaryMessage />;
@@ -602,7 +594,7 @@ const ComposerQuickActions: FC = () => {
 };
 
 const ComposerContextUsage: FC = () => {
-  const contextUsage = useLangChainState<ContextUsage>("context_usage");
+  const contextUsage = useSessionMetadata()?.context_usage;
   return <ContextUsageElement usage={contextUsage} />;
 };
 

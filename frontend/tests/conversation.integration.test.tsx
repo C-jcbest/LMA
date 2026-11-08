@@ -20,7 +20,7 @@ import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
 import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
-import { createLangGraphThreadListAdapter } from '../src/lib/langgraph/thread-list-adapter';
+import { createSessionListAdapter } from '../src/lib/session-list-adapter';
 import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
 import { convertLangChainBaseMessage } from '@assistant-ui/react-langchain';
 
@@ -381,17 +381,17 @@ describe('会话关键路径集成回归', () => {
     expect(screen.queryByLabelText('上下文用量')).not.toBeInTheDocument();
   });
 
-  it('会话归属依据 graph_id，adapter.list 严格过滤 assistantId 并映射 remoteId 与 externalId', async () => {
+  it('会话目录映射服务端 id 到 remoteId 与 externalId', async () => {
     const searchMock = vi.fn().mockImplementation(async (query: any) => {
-      expect(query.metadata).toEqual({ graph_id: 'lma-agent' });
+      expect(query).toEqual({ limit: 21, offset: 0 });
       return [
-        { thread_id: 'real', created_at: '2026-09-14T00:00:01Z', metadata: { graph_id: 'lma-agent', name: '  站点分析  ' } },
+        { id: 'real', name: '站点分析', archived: false, updated_at: '2026-09-14T00:00:01Z' },
       ];
     });
     const mockClient = {
-      threads: { search: searchMock },
+      listSessions: searchMock,
     } as any;
-    const adapter = createLangGraphThreadListAdapter(mockClient);
+    const adapter = createSessionListAdapter(mockClient);
     const res = await adapter.list();
     expect(searchMock).toHaveBeenCalledTimes(1);
     expect(res.threads).toEqual([

@@ -1,9 +1,8 @@
+.venv
 .env
 .env.*
-!.env.example
-.venv/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-tests/
-_dbg*.py
+.langgraph_api
+__pycache__
+**/__pycache__
+tests
+*.log

@@ -1,13 +1,13 @@
 # ADR 0001：主 Agent 采用 create_agent + middleware
 
 - 日期：2026-09-15
-- 状态：已实施（TODO 4 完成）；现有服务未部署
+- 状态：主 Agent 设计保留；服务部署方式于 2026-11-09 迁移。当前运行以 docs/deployment.md 为准。
 
 主 Agent 是通用 ReAct 循环，没有多分支业务流程、并行汇合或专用多 Agent，故采用 LangChain 官方 create_agent；不能以旧代码已使用 StateGraph 为理由维护通用 plumbing。langchain==1.3.18 与当前 core==1.6.2 / langgraph==1.2.11 匹配，已加入运行依赖。
 
 ## 职责与实现
 
-生产唯一工厂是 `backend/app/agent/graph.py:create_lma_agent`，`graph(config)` 按 Agent Server 图工厂协议返回 CompiledStateGraph，不自行安装 checkpointer。模型延迟构建，工具绑定由官方 Runtime 完成。
+生产唯一工厂是 `backend/app/agent/graph.py:create_lma_agent`，由 FastAPI lifespan 构建 Agent 并注入官方 AsyncPostgresSaver，数据库初始化由一次性迁移任务负责。模型延迟构建，工具绑定由官方 Runtime 完成。
 
 | 职责 | 采用实现 |
 | --- | --- |
@@ -20,7 +20,7 @@
 | 动态 Prompt、消息时间与思考耗时 | LMA wrap_model_call，复用唯一正式 Prompt，保留标准 blocks 和 usage_metadata |
 | 实际 context_usage | LMA after_model，供应商未返回 usage 时保留上一已确认值 |
 | 完整最终回答后的推荐 | LMA after_agent；独立思考配置与失败字段保留，辅助 token 不混入主消息流 |
-| Thread/Checkpoint | Agent Server 注入，未新增数据库、迁移兜底或第二套历史 |
+| 会话/Checkpoint | FastAPI 保存会话目录与 Run，官方 PostgreSQL Checkpointer 是消息历史唯一来源 |
 
 TODO 5 直接实例化官方 SummarizationMiddleware，无自定义子类或私有方法覆写。trigger=(tokens, CONTEXT_TOKEN_THRESHOLD)、keep=(tokens, CONTEXT_KEEP_TOKENS)，分别默认800000和400000。token计数、触发、安全切点、工具配对、摘要重试及消息替换全部采用锁定版本官方逻辑。
 
@@ -44,7 +44,7 @@ TODO 7 保留官方重试算法和参数，不写本地重试循环。仅网络�
 
 前端只将锁定版本官方预算错误投影成中文说明；主Run异常不直接展示message。官方私有计数、请求地址、堆栈和供应商原始错误不进入业务UI。
 
-## 验证证据
+## 迁移前验证记录（历史）
 
 - `test_tool_protocol.py`：生产参数校验、业务错误、瞬时重试耗尽、原始异常隔离、部分场地证据及视觉未配置时图表保留。
 - `test_agent_runtime.py`：生产工厂的模型/工具循环、并行工具部分失败、单工具重试耗尽、非瞬时错误、interrupt 传播、多轮持久化、时间、usage/思考耗时与推荐开关。
@@ -66,3 +66,7 @@ TODO 7 保留官方重试算法和参数，不写本地重试循环。仅网络�
 - [Prebuilt middleware](https://docs.langchain.com/oss/python/langchain/middleware/built-in)
 
 以锁定版本本地类型、源码和实际 Agent Server 测试确认 API 行为。
+
+## 2026-11-09 自托管边界
+
+采用 FastAPI + 官方 PostgreSQL Checkpointer 替代商业 Agent Server；无需 LangSmith Deployment 许可。固定单 worker，重启后的未完成 Run 标记 interrupted，不自动重放。前端继续使用官方 Runtime，不复制会话历史；用户选择重新生成后仅显示最新回答，旧 checkpoint 留存，不提供分支切换。CI/CD、IP HTTPS、访问保护与部署限制见[部署说明](../deployment.md)。

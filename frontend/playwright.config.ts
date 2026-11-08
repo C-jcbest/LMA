@@ -21,20 +21,18 @@ export default defineConfig({
       timeout: 15_000,
     },
     {
-      command: '..\\..\\backend\\.venv\\Scripts\\langgraph.exe dev --config .\\langgraph.json --port 21420 --no-browser --no-reload --allow-blocking',
-      cwd: './e2e',
-      url: 'http://127.0.0.1:21420/ok',
+      command: 'node e2e/start-api.mjs',
+      url: 'http://127.0.0.1:21420/health',
       env: {
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
-        LANGGRAPH_API_NO_USAGE_STATS: '1',
       },
       reuseExistingServer: false,
       timeout: 60_000,
     },
     {
       command: 'pnpm dev --host 127.0.0.1 --port 25174 --strictPort',
-      env: { LMA_LANGGRAPH_PROXY_TARGET: 'http://127.0.0.1:21420' },
+      env: { LMA_API_PROXY_TARGET: 'http://127.0.0.1:21420' },
       url: 'http://127.0.0.1:25174',
       reuseExistingServer: false,
       timeout: 30_000,

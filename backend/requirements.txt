@@ -1,6 +1,5 @@
-# 运行时依赖（LangGraph 服务自身由 langgraph-cli 提供）
-# 版本固定为 2026-09-10 验证过的最新稳定版
-# 开发专用依赖（langgraph-cli、colorama）见 requirements-dev.txt
+# 运行时依赖：FastAPI 承载服务，LangGraph OSS 管理图与 checkpoint。
+# 版本固定；升级后需运行隔离数据库与浏览器回归。
 httpx==0.28.1
 pydantic==2.13.5
 pydantic-settings==2.15.0
@@ -9,6 +8,11 @@ langchain-core==1.6.2
 langchain-openai==1.6.2
 langchain-deepseek==1.1.0
 langgraph==1.2.11
+fastapi==0.141.1
+uvicorn==0.52.4
+sse-starlette==3.3.4
+langgraph-checkpoint-postgres==3.1.2
+psycopg[binary,pool]==3.3.3
 
 # GNSS 时序图表渲染（视觉复核工具用）
 matplotlib==3.11.1

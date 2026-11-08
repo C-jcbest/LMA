@@ -1,0 +1,7 @@
+[Unit]
+Description=Renew LMA IP HTTPS certificate
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/lma-certbot/bin/certbot renew --quiet --deploy-hook "systemctl reload nginx"

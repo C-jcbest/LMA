@@ -11,9 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  createLangGraphClient,
+  createLmaClient,
   getStoredApiUrl,
-  LMA_ASSISTANT_ID,
   setStoredApiUrl,
 } from '@/services/api';
 
@@ -29,11 +28,11 @@ function getPublicErrorMessage(error: unknown): string {
   if (error instanceof Error && error.name === 'AbortError') {
     return '连接超时，请检查服务是否已启动。';
   }
-  return '连接失败，请检查服务地址与目标 Assistant 配置。';
+  return '连接失败，请检查服务地址与数据库配置。';
 }
 
 /**
- * LangGraph 服务配置只承载连接设置，不参与 Runtime、Thread 或消息生命周期。
+ * LMA 服务配置只承载连接设置，不参与 Runtime、Thread 或消息生命周期。
  * 生产环境锁定同源端点；开发环境允许测试并保存地址。
  */
 export function ServiceSettingsDialog({
@@ -58,24 +57,17 @@ export function ServiceSettingsDialog({
   const testConnection = async () => {
     if (!normalizedUrl) {
       setStatus('error');
-      setStatusMessage('请输入 LangGraph API 地址。');
+      setStatusMessage('请输入 LMA API 地址。');
       return;
     }
 
     setStatus('testing');
-    setStatusMessage('正在连接 LangGraph 服务…');
+    setStatusMessage('正在连接 LMA 服务…');
     try {
-      const assistant = await createLangGraphClient(normalizedUrl).assistants.get(
-        LMA_ASSISTANT_ID,
-      );
-      if (
-        assistant.assistant_id !== LMA_ASSISTANT_ID &&
-        assistant.graph_id !== LMA_ASSISTANT_ID
-      ) {
-        throw new Error('assistant_mismatch');
-      }
+      const service = await createLmaClient(normalizedUrl).health();
+      if (!service.ok || service.service !== 'lma') throw new Error('service_mismatch');
       setStatus('success');
-      setStatusMessage('连接成功，已验证 lma-agent Assistant 可用。');
+      setStatusMessage('连接成功，LMA 服务与数据库可用。');
     } catch (error) {
       setStatus('error');
       setStatusMessage(getPublicErrorMessage(error));
@@ -86,7 +78,7 @@ export function ServiceSettingsDialog({
     if (!isProduction) {
       if (!normalizedUrl) {
         setStatus('error');
-        setStatusMessage('请输入 LangGraph API 地址。');
+        setStatusMessage('请输入 LMA API 地址。');
         return;
       }
       setStoredApiUrl(normalizedUrl);
@@ -101,7 +93,7 @@ export function ServiceSettingsDialog({
         <DialogHeader className="border-b border-neutral-100 px-5 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2 text-sm text-neutral-800">
             <Server className="size-4 text-indigo-600" />
-            LangGraph 服务对接配置
+            LMA 服务对接配置
           </DialogTitle>
           <DialogDescription>
             配置并验证滑坡监测智能体的服务连接。
@@ -111,7 +103,7 @@ export function ServiceSettingsDialog({
         <div className="space-y-4 px-5 py-5 text-xs">
           <div className="space-y-1.5">
             <label htmlFor="langgraph-api-url" className="font-medium text-neutral-700">
-              LangGraph API 地址
+              LMA API 地址
             </label>
             {isProduction ? (
               <div className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 p-2.5 text-neutral-500">
@@ -127,7 +119,7 @@ export function ServiceSettingsDialog({
                   setStatus('idle');
                   setStatusMessage('');
                 }}
-                placeholder="请输入 LangGraph API 地址或 /langgraph-api"
+                placeholder="请输入 LMA API 地址或 /api"
                 className="font-mono text-xs"
                 aria-invalid={status === 'error' && !normalizedUrl}
               />
@@ -135,7 +127,7 @@ export function ServiceSettingsDialog({
             <p className="text-[11px] leading-relaxed text-neutral-400">
               {isProduction
                 ? '生产模式锁定服务端端点与鉴权通道，避免越权修改连接。'
-                : '测试会同时验证服务连通性与 lma-agent Assistant。'}
+                : '测试会同时验证服务连通性与 LMA 服务。'}
             </p>
           </div>
 

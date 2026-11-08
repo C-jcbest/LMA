@@ -13,6 +13,15 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
+    # 自托管服务 PostgreSQL 连接串；服务启动与迁移必填，无默认数据库，不影响纯 Agent 单元测试。
+    database_uri: str = ""
+    # 服务数据库连接池上限（2–20，默认 6，单位连接）；单个 Uvicorn worker 生效。
+    database_pool_size: int = Field(default=6, ge=2, le=20)
+    # 服务同时执行的会话数（1–16，默认 2）；超额明确拒绝，同一会话始终只允许一个 Run。
+    server_max_runs: int = Field(default=2, ge=1, le=16)
+    # 允许跨源访问的前端 Origin，逗号分隔；默认空值仅同源，开发跨端口时显式配置。
+    cors_origins: str = ""
+
     # 主模型 Provider 标识（deepseek/openai）；决定官方 integration 与 thinking 参数映射，不靠模型名猜测。
     llm_provider: str = "deepseek"
     # 主模型 OpenAI 兼容接口地址；标题、推荐、摘要复用此端点，视觉模型单独配置。

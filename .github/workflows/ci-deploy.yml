@@ -1,0 +1,102 @@
+name: Test and deploy LMA
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: lma_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: INVALID_CI_DATABASE_PASSWORD
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d lma_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      CONTEXT_MODEL_CONTEXT: "1048576"
+      LMA_TEST_DATABASE_URI: postgresql://postgres:INVALID_CI_DATABASE_PASSWORD@127.0.0.1:5432/lma_test
+      LANGSMITH_TRACING: "false"
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Test backend with PostgreSQL
+        working-directory: backend
+        run: python -m unittest discover -s tests -p 'test*.py' -v
+      - name: Install frontend dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install browser
+        run: pnpm --dir frontend exec playwright install --with-deps chromium
+      - name: Test frontend
+        run: pnpm --dir frontend test
+      - name: Test conversation lifecycle in browser
+        run: pnpm --dir frontend exec playwright test
+      - name: Build frontend
+        run: pnpm --dir frontend build
+      - name: Validate patch whitespace
+        run: git diff --check
+      - name: Save browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-evidence
+          path: frontend/test-results/
+          retention-days: 7
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency:
+      group: lma-tencent-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy tested commit through restricted SSH account
+        env:
+          LMA_DEPLOY_KEY: ${{ secrets.LMA_DEPLOY_KEY }}
+          LMA_SSH_KNOWN_HOSTS: ${{ vars.LMA_SSH_KNOWN_HOSTS }}
+          LMA_HOST: ${{ vars.LMA_HOST }}
+          LMA_SSH_USER: ${{ vars.LMA_SSH_USER }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$LMA_DEPLOY_KEY"
+          test -n "$LMA_SSH_KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$LMA_DEPLOY_KEY" > ~/.ssh/lma_deploy
+          chmod 600 ~/.ssh/lma_deploy
+          printf '%s\n' "$LMA_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          git archive --format=tar HEAD | gzip | ssh \
+            -i ~/.ssh/lma_deploy -o IdentitiesOnly=yes -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes -o ServerAliveInterval=20 \
+            "$LMA_SSH_USER@$LMA_HOST" "$GITHUB_SHA"

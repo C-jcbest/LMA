@@ -1,82 +1,113 @@
-import { Client } from '@langchain/langgraph-sdk';
+import type { LangChainMessage, LangGraphMessagesEvent } from '@assistant-ui/react-langgraph';
+import { BytesLineDecoder, IterableReadableStream, SSEDecoder } from '@langchain/langgraph-sdk/utils';
 
+const STORAGE_KEY_CONFIG = 'lma_api_url';
+const DEFAULT_API_URL = '/api';
 
-const STORAGE_KEY_CONFIG = 'lma_langgraph_config';
-const DEFAULT_API_URL = import.meta.env.PROD
-  ? `${window.location.origin}/langgraph-api`
-  : 'http://127.0.0.1:2024';
+export interface Session {
+  id: string;
+  name: string;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
 
-// SDK HTTP 自动重试固定关闭（默认值/允许值均为 0，单位为重试次数）。
-// 作用于 Thread CRUD、Run 提交与标题 HTTP 请求，避免网络结果不确定时重发有副作用请求。
-// 主 Agent 模型/工具的瞬时重试仍由后端官方 middleware 管理，不受此策略影响。
-export const LANGGRAPH_CALLER_OPTIONS = Object.freeze({ maxRetries: 0 });
-export const LMA_ASSISTANT_ID = 'lma-agent';
-const TITLE_ASSISTANT_ID = 'session-title';
+export interface SessionState {
+  values: { messages: LangChainMessage[] };
+  latest_run: { status: string } | null;
+}
 
-export const getStoredApiUrl = (): string => {
+export const getStoredApiUrl = () => {
   if (import.meta.env.PROD) return DEFAULT_API_URL;
   return localStorage.getItem(STORAGE_KEY_CONFIG) || DEFAULT_API_URL;
 };
 
 export const setStoredApiUrl = (url: string) => {
-  if (import.meta.env.PROD) return;
-  localStorage.setItem(STORAGE_KEY_CONFIG, url);
+  if (!import.meta.env.PROD) localStorage.setItem(STORAGE_KEY_CONFIG, url);
 };
 
-export const createLangGraphClient = (apiUrl: string, defaultHeaders?: Record<string, string>) => {
-  return new Client({
-    apiUrl,
-    defaultHeaders,
-    callerOptions: LANGGRAPH_CALLER_OPTIONS,
-  });
-};
+export class LmaClient {
+  constructor(private readonly apiUrl: string) {}
 
-/**
- * 根据用户首条消息生成会话标题
- * 优先调用 LangGraph Server 的 session-title 无状态图（设置超时）。
- * 生成失败时抛出错误；调用方保留服务端已确认的“新会话”，不污染聊天错误。
- */
-export async function generateSessionTitle(client: Client, userMessage: string): Promise<string> {
-  const cleanInput = userMessage?.trim();
-  if (!cleanInput) throw new Error('会话标题缺少首条消息');
-
-  // 官方 SDK 接收 AbortSignal；超时取消请求，完成后清除计时器。
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3500);
-
-  const runPromise = (async () => {
-    const res = await client.runs.wait(null, TITLE_ASSISTANT_ID, {
-      input: { input_text: cleanInput },
-      signal: controller.signal,
+  private async request(path: string, options: RequestInit = {}): Promise<Response> {
+    const response = await fetch(`${this.apiUrl.replace(/\/$/, '')}${path}`, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...options.headers },
     });
-    if (res && typeof res === 'object') {
-      const title = (res as any).title;
-      if (typeof title === 'string' && title.trim()) {
-        const cleanTitle = title
-          .replace(/[\u0000-\u001f\u007f]/g, ' ')
-          .split(/\r?\n/, 1)[0]
-          .trim()
-          .replace(/^["'“”]+|["'“”]+$/g, '')
-          .trim();
-        if (cleanTitle && cleanTitle.length <= 80) return cleanTitle;
-      }
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error(typeof error?.detail === 'string' ? error.detail : `服务请求失败（HTTP ${response.status}）。`);
     }
-    throw new Error('服务端未返回有效会话标题');
-  })();
+    return response;
+  }
 
-  try {
-    return await runPromise;
-  } finally {
-    clearTimeout(timer);
+  async health(): Promise<{ ok: boolean; service: string }> {
+    const response = await this.request('/health', { signal: AbortSignal.timeout(10000) });
+    return response.json();
+  }
+
+  async listSessions(params: { limit: number; offset: number }): Promise<Session[]> {
+    const query = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+    return (await this.request(`/sessions?${query}`)).json();
+  }
+
+  async createSession(): Promise<Session> {
+    return (await this.request('/sessions', { method: 'POST', body: JSON.stringify({ name: '新会话' }) })).json();
+  }
+
+  async getSession(id: string): Promise<Session> {
+    return (await this.request(`/sessions/${encodeURIComponent(id)}`)).json();
+  }
+
+  async updateSession(id: string, fields: { name?: string; archived?: boolean }): Promise<Session> {
+    return (await this.request(`/sessions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(fields) })).json();
+  }
+
+  async deleteSession(id: string): Promise<void> {
+    await this.request(`/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async getState(id: string, signal?: AbortSignal): Promise<SessionState> {
+    return (await this.request(`/sessions/${encodeURIComponent(id)}/state`, { signal })).json();
+  }
+
+  async findCheckpoint(id: string, messages: LangChainMessage[]): Promise<string> {
+    const response = await this.request(`/sessions/${encodeURIComponent(id)}/checkpoint`, {
+      method: 'POST', body: JSON.stringify({ message_ids: messages.map((message) => message.id) }),
+    });
+    return (await response.json()).checkpoint_id;
+  }
+
+  async generateTitle(inputText: string): Promise<string> {
+    const response = await this.request('/title', {
+      method: 'POST', body: JSON.stringify({ input_text: inputText }), signal: AbortSignal.timeout(20000),
+    });
+    return (await response.json()).title;
+  }
+
+  async cancelRun(id: string): Promise<void> {
+    await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+  }
+
+  async *streamRun(
+    id: string,
+    messages: LangChainMessage[],
+    checkpointId: string | undefined,
+    signal: AbortSignal,
+  ): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
+    try {
+      const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs`, {
+        method: 'POST', body: JSON.stringify({ messages, checkpoint_id: checkpointId }), signal,
+      });
+      if (!response.body) throw new Error('服务未返回消息流。');
+      const events = response.body.pipeThrough(BytesLineDecoder()).pipeThrough(SSEDecoder());
+      for await (const event of IterableReadableStream.fromReadableStream(events)) {
+        yield { event: event.event, data: event.data };
+      }
+    } finally {
+      if (signal.aborted) await this.cancelRun(id);
+    }
   }
 }
 
-
-/**
- * 重命名会话
- */
-export async function renameSession(client: Client, threadId: string, newName: string): Promise<void> {
-  await client.threads.update(threadId, {
-    metadata: { name: newName },
-  });
-}
+export const createLmaClient = (apiUrl: string) => new LmaClient(apiUrl);

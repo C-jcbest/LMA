@@ -1,58 +1,100 @@
-# 部署边界与操作
+# 自托管与自动部署
 
-## 支持范围
+## 当前运行方式
 
-仓库根目录的 `docker-compose.yml` 用于本地持久化开发、论文演示和小规模自托管验证。它提供单实例 Nginx、LangGraph Agent Server、PostgreSQL 与 Redis，不提供高可用、弹性伸缩、滚动发布、备份编排或多租户隔离，因此不得作为完整的生产集群标准。
+后端为 FastAPI + LangChain/LangGraph OSS，使用官方 AsyncPostgresSaver 保存会话 checkpoint。前端为 React + assistant-ui，经官方 useLangGraphRuntime 接入 SSE。无需 LangSmith Deployment、Agent Server 或生产许可证；腾讯云资源和模型 API 的费用仍由对应服务计费。
 
-真正的生产级集群应采用官方 LangSmith / LangGraph Helm 路线并部署到 Kubernetes。仓库不维护第二套自制 Kubernetes manifests。
+本部署面向单台小型服务器，固定 **一个 Uvicorn worker**，默认同时运行两个会话，每会话只允许一个 Run。运行不具备分布式队列或跨进程接管能力；服务重启后，未结束 Run 显式标为 interrupted，不自动重放请求。重新生成与编辑使用官方 checkpoint fork，界面展示最新回答；用户已选择暂不提供旧回答分支切换。
 
-## Compose 启动
+云端使用独立 lma-cloud Compose 项目和 lma-cloud_oss_pgdata 卷，从新会话开始。本机原 lma 项目、lma_pgdata 和已有会话不迁移、不清除；新本地 Compose 名称为 lma-oss。本次不提供旧 Agent Server 数据格式兼容。
 
-1. 在 `backend/.env` 配置模型、北斗平台与视觉服务，并设置以下 standalone 基础设施变量：
+## 腾讯云入口与文件
 
-   - `LANGSMITH_API_KEY`：Docker 本地运行必填，须具备 LangSmith Deployment 访问权限。
-   - `LANGGRAPH_CLOUD_LICENSE_KEY`：生产部署许可证，本地运行不要求；可留空，配置后由 `env_file` 注入。
-   - `POSTGRES_PASSWORD`：Compose PostgreSQL 密码，必填。
+- 入口：https://82.157.57.59 ，HTTPS + Nginx Basic Auth；访问口令不进 Git。
+- 主机网关：/etc/nginx/sites-available/lma，模板见 ops/nginx.conf。
+- 生产配置：/opt/lma/shared/.env，权限 600，仅由服务器读取；修改后重新部署。
+- 代码版本：/opt/lma/releases/＜commit SHA＞；/opt/lma/current 指向最近成功版本。
+- 部署程序：root 所有的 /usr/local/sbin/lma-deploy，源码见 ops/deploy.sh。CI 的代码归档不自动覆盖此特权程序，修改后由管理员审阅并安装。
+- PostgreSQL、API、前端容器只映射到 127.0.0.1:55433、:2025、:8081，公网仅经网关访问。云安全组允许 TCP 80、443 和部署所需 SSH 端口，数据库端口无需开放。
 
-2. 构建 Agent Server 镜像并启动整套服务：
+IP 证书使用 Let’s Encrypt shortlived profile，证书有效期约 6 天，Certbot 安装在 /opt/lma-certbot。lma-certbot.timer 每 6 小时检查续期，成功后 reload Nginx。80 端口的 /.well-known/acme-challenge/ 必须保持公网可达。检查命令：
 
-```powershell
+~~~bash
+systemctl list-timers lma-certbot.timer
+journalctl -u lma-certbot.service --since '2 days ago'
+/opt/lma-certbot/bin/certbot certificates
+~~~
+
+## GitHub Actions
+
+仓库 C-jcbest/LMA 的 .github/workflows/ci-deploy.yml 在 PR、推送 main 和手动触发时运行：
+
+1. PostgreSQL 隔离数据库上运行后端 unittest。
+2. 前端 Vitest、Chromium 会话生命周期回归与 Vite 生产构建。
+3. 仅 main 且测试成功时，在 production environment 自动部署相同 commit。PR 不读取部署密钥、不发布。
+
+production environment 中配置：
+
+| 名称 | 类型 | 用途 |
+| --- | --- | --- |
+| LMA_DEPLOY_KEY | Secret | 专用受限 SSH 私钥，无默认值 |
+| LMA_HOST | Variable | 腾讯云公网 IP，无默认值 |
+| LMA_SSH_USER | Variable | lma-deploy，仅用于部署 |
+| LMA_SSH_KNOWN_HOSTS | Variable | 管理连接核验过的服务器 SSH host key，禁止关闭严格校验 |
+
+CI 经 git archive 发送已测试的提交，不上传 .env 或工作区未提交文件。服务器 forced-command 密钥只允许部署入口，参数必须为 40 位十六进制 SHA，不开放交互 shell、端口转发或 root SSH 密钥。发布串行执行，允许相同归档重跑；同 SHA 内容不同或解压不完整会拒绝。
+
+部署先构建镜像；已有版本在构建期间继续运行。更新容器前对现有云端数据库执行 pg_dump，随后由一次性 migrate 服务运行官方 checkpointer setup，再等待服务健康。仅在 API 与首页检查成功后更新 current。容器切换时可能短暂中断，正在运行的请求可能停止；本方案不承诺零停机。测试成功不代表外部监测平台和模型始终可用。
+
+失败时查看 Actions 日志和服务器 Compose 日志。构建失败不替换旧容器；替换容器后的失败不自动回滚数据库。备份在 /opt/lma/shared/backups/，代码与镜像保留供人工恢复，需要运维定期检查磁盘并将备份复制到独立存储。当前没有自动清理、异地备份、高可用或多租户隔离。
+
+人工恢复代码时先核对目标目录、备份及 schema 是否兼容，使用经过核验的历史 SHA：
+
+~~~bash
+export LMA_ENV_FILE=/opt/lma/shared/.env
+export LMA_RELEASE=<历史提交SHA>
+docker compose --project-name lma-cloud --env-file "$LMA_ENV_FILE" \
+  --file "/opt/lma/releases/$LMA_RELEASE/docker-compose.yml" up -d --wait
+~~~
+
+这不会恢复数据库。不要在未核对备份、目标数据库和数据损失范围时执行恢复；不要运行 down -v。
+
+## 本地开发与测试
+
+使用 Python 3.13、Node 22、pnpm 10.30.3。安装依赖：
+
+~~~powershell
+py -3.13 -m venv backend/.venv
+backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
+pnpm --dir frontend install --frozen-lockfile
+~~~
+
+复制 backend/.env.example 到 backend/.env，配置模型与监测平台参数，并设置 POSTGRES_PASSWORD；已有文件不覆盖。新数据库端口 55433，不使用原数据库。
+
+~~~powershell
+docker compose --env-file backend/.env up -d postgres
 cd backend
-langgraph build -t lma-agent:latest
-cd ..
-docker compose --env-file backend/.env up -d --build
-docker compose --env-file backend/.env ps
-```
+# DATABASE_URI 指向新数据库；首次启动或依赖升级后执行迁移。
+.\.venv\Scripts\python.exe -m app.server.storage
+.\.venv\Scripts\python.exe -m app.server
+~~~
 
-3. 访问 `http://127.0.0.1:8080`。浏览器只连接同源 `/langgraph-api`，Nginx 再转发到 Agent Server；生产构建不会读取或写入浏览器中遗留的自定义 endpoint。
+另一个终端运行 pnpm --dir frontend dev，Vite 的 /api 默认代理到 127.0.0.1:2025，可用 LMA_API_PROXY_TARGET 显式更改。生产前端固定同源 /api，不接受浏览器自定义地址。整套容器启动：
 
-项目根目录的 `.\reload-backend.ps1` 使用这套 Compose 配置重建后端。本地运行不应因缺少生产许可证被 Compose 拦截，但仍需满足上述 LangSmith 密钥权限；不具备该权限时使用下文 `langgraph dev` 本地开发方式，其存储与 Compose PostgreSQL 独立，不会自动载入原有容器会话。
+~~~powershell
+docker compose --env-file backend/.env up -d --build --wait
+~~~
 
-PostgreSQL 数据保存在 `lma_pgdata` named volume。`docker compose down` 不删除会话；`docker compose down -v` 会永久删除该卷，执行前必须确认不再需要其中数据。
+访问 http://127.0.0.1:8081 。reload-backend.ps1 只作用于新 lma-oss 项目，不接管旧容器。
 
-Compose 为 PostgreSQL、Redis、Agent Server 和前端配置了 healthcheck。`frontend` 仅在 Agent Server 健康后启动；健康检查不替代外部监控、备份与告警。
+API 集成测试和 Playwright 要求单独的 **lma_test** 数据库，通过 LMA_TEST_DATABASE_URI 指定，禁止指向业务库。CI 自动提供；本地可创建独立 PostgreSQL 容器及该数据库，先设置变量再执行：
 
-## Vite 前端交付
-
-前端保持 React + Vite。`pnpm build` 生成纯静态 `frontend/dist/`，可由仓库提供的 Nginx 镜像、Caddy 或现有网关托管。外部网关必须保持以下同源路由：
-
-```text
-/                 -> frontend/dist
-/langgraph-api/*  -> LangGraph Agent Server（转发时移除 /langgraph-api 前缀）
-```
-
-开发环境仍可在“服务配置”中修改测试 endpoint；生产构建固定使用 `/langgraph-api`，普通用户不能覆盖。
-
-## 本地开发
-
-本地开发不需要 standalone license：
-
-```powershell
+~~~powershell
 cd backend
-.\.venv\Scripts\langgraph.exe dev --config .\langgraph.json --port 2024 --no-browser
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test*.py' -v
+cd ../frontend
+pnpm exec playwright install chromium
+pnpm test:gate
+~~~
 
-cd ..\frontend
-pnpm dev
-```
-
-Vite 将 `/langgraph-api` 代理到 `LMA_LANGGRAPH_PROXY_TARGET`；未设置时目标为 `http://127.0.0.1:2024`。
+测试服务使用 21420 / 25174 / 19090 独立端口和 HTTP stub，不调用真实模型或监测账号。
