@@ -8,7 +8,8 @@ RUN apt-get update \
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 RUN useradd --uid 10001 --create-home lma
-COPY app ./app
+COPY --chown=lma:lma app ./app
 USER lma
+RUN python -c "import app.server.storage"
 EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "app.server.api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
