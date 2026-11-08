@@ -4,7 +4,9 @@
 
 后端为 FastAPI + LangChain/LangGraph OSS，使用官方 AsyncPostgresSaver 保存会话 checkpoint。前端为 React + assistant-ui，经官方 useLangGraphRuntime 接入 SSE。无需 LangSmith Deployment、Agent Server 或生产许可证；腾讯云资源和模型 API 的费用仍由对应服务计费。
 
-本部署面向单台小型服务器，固定 **一个 Uvicorn worker**，默认同时运行两个会话，每会话只允许一个 Run。运行不具备分布式队列或跨进程接管能力；服务重启后，未结束 Run 显式标为 interrupted，不自动重放请求。重新生成与编辑使用官方 checkpoint fork，界面展示最新回答；用户已选择暂不提供旧回答分支切换。
+本部署面向单台小型服务器，固定 **一个 Uvicorn worker**，采用异步方式处理并发请求；API 不设置跨会话 Run 数量上限，Uvicorn 不配置 limit_concurrency（官方默认 None）。同一会话只允许一个 Run，重复提交返回 409，避免历史冲突。运行不具备分布式队列或跨进程接管能力；服务重启后，未结束 Run 显式标为 interrupted，不自动重放请求。重新生成与编辑使用官方 checkpoint fork，界面展示最新回答；用户已选择暂不提供旧回答分支切换。
+
+不设置 Run 数量上限不代表资源无限。并发增加时，数据库连接池仍会等待可用连接，模型和监测服务仍受供应商配额约束；可能出现响应变慢、外部 429 或等待超时。后端容器内存上限仍为 768 MiB，内存耗尽可能导致进程被终止并重启，正在运行的流会中断。此变更不调整单轮模型/工具调用预算或上下文窗口；这些限制属于不同层次。
 
 云端使用独立 lma-cloud Compose 项目和 lma-cloud_oss_pgdata 卷，从新会话开始。本机原 lma 项目、lma_pgdata 和已有会话不迁移、不清除；新本地 Compose 名称为 lma-oss。本次不提供旧 Agent Server 数据格式兼容。
 

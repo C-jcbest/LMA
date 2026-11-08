@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 from uuid import uuid4
 
+import httpx
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
@@ -139,6 +140,75 @@ class SelfHostedApiTests(unittest.TestCase):
         response = self.run_message(checkpoint_id="missing")
         self.assertEqual(response.status_code, 404)
         self.assertIsNone(self.state()["latest_run"])
+
+    def test_three_sessions_run_concurrently_and_same_session_stays_exclusive(self):
+        async def exercise_concurrent_sessions():
+            all_started = asyncio.Event()
+            release_tools = asyncio.Event()
+            started_count = 0
+
+            @tool
+            async def wait_for_other_sessions() -> str:
+                """等待其他会话进入工具阶段，验证真实重叠运行。"""
+                nonlocal started_count
+                started_count += 1
+                if started_count == 3:
+                    all_started.set()
+                await release_tools.wait()
+                return "并发工具已完成"
+
+            self.model.script = [
+                AIMessage(content="", tool_calls=[{
+                    "id": str(uuid4()), "name": "wait_for_other_sessions", "args": {},
+                }]) for _ in range(3)
+            ] + [AIMessage(content="并发回答已完成") for _ in range(3)]
+            self.app.state.agent = create_lma_agent(
+                self.model, agent_tools=[wait_for_other_sessions],
+                checkpointer=self.app.state.checkpointer,
+                summary_model=ScriptedModel(script=[]), retry_delay=0,
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=self.app), base_url="http://test",
+            ) as client:
+                session_ids = []
+                requests = []
+                try:
+                    for _ in range(3):
+                        response = await client.post("/sessions", json={"name": "并发回归"})
+                        self.assertEqual(response.status_code, 201)
+                        session_ids.append(response.json()["id"])
+                    for session_id in session_ids:
+                        requests.append(asyncio.create_task(client.post(
+                            f"/sessions/{session_id}/runs", json={"messages": [{
+                                "type": "human", "id": str(uuid4()), "content": "并发测试",
+                            }]},
+                        )))
+                    await asyncio.wait_for(all_started.wait(), timeout=15)
+                    duplicate = await client.post(
+                        f"/sessions/{session_ids[0]}/runs", json={"messages": [{
+                            "type": "human", "id": str(uuid4()), "content": "重复提交",
+                        }]},
+                    )
+                    self.assertEqual(duplicate.status_code, 409)
+                    self.assertEqual((await client.get("/health")).status_code, 200)
+                    release_tools.set()
+                    responses = await asyncio.wait_for(asyncio.gather(*requests), timeout=15)
+                    for session_id, response in zip(session_ids, responses):
+                        self.assertEqual(response.status_code, 200, response.text)
+                        state = (await client.get(f"/sessions/{session_id}/state")).json()
+                        self.assertEqual(state["latest_run"]["status"], "success")
+                        self.assertEqual(
+                            state["values"]["messages"][-1]["content"],
+                            [{"type": "text", "text": "并发回答已完成"}],
+                        )
+                finally:
+                    release_tools.set()
+                    if requests:
+                        await asyncio.gather(*requests, return_exceptions=True)
+                    for session_id in session_ids:
+                        await client.delete(f"/sessions/{session_id}")
+
+        self.client.portal.call(exercise_concurrent_sessions)
 
 
 if __name__ == "__main__":

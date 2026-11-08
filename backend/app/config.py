@@ -17,8 +17,6 @@ class Settings(BaseSettings):
     database_uri: str = ""
     # 服务数据库连接池上限（2–20，默认 6，单位连接）；单个 Uvicorn worker 生效。
     database_pool_size: int = Field(default=6, ge=2, le=20)
-    # 服务同时执行的会话数（1–16，默认 2）；超额明确拒绝，同一会话始终只允许一个 Run。
-    server_max_runs: int = Field(default=2, ge=1, le=16)
     # 允许跨源访问的前端 Origin，逗号分隔；默认空值仅同源，开发跨端口时显式配置。
     cors_origins: str = ""
 

@@ -265,8 +265,6 @@ def create_app(settings: Settings | None = None, agent_factory=None) -> FastAPI:
     async def stream_run(session_id: UUID, body: RunInput):
         await require_session(session_id)
         require_idle(session_id)
-        if len(active_runs) >= settings.server_max_runs:
-            raise HTTPException(429, "服务正在处理其他会话，请稍后再试。")
         key = str(session_id)
         control = ActiveRun(id=str(uuid4()))
         active_runs[key] = control
