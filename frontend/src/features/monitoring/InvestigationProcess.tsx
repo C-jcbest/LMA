@@ -13,6 +13,7 @@ import { WeatherResultView } from './tools/WeatherResultView';
 import {
   buildSteps,
   collectStations,
+  findReport,
   type InvestigationStep,
   type StationEvidence,
   type StepState,
@@ -27,12 +28,16 @@ const SPARKLINE_HEIGHT = 14;
 const isMessageRunning = (state: AssistantState) => state.message.status?.type === 'running';
 
 /** 测点没有可绘制序列时不画趋势，用名称本身作入口。 */
-const Sparkline: FC<{ station: StationEvidence }> = ({ station }) => {
+export const StationSparkline: FC<{ station: StationEvidence }> = ({ station }) => {
   const longest = [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data))[0];
   const values = useMemo(
     () => (longest ? toDisplacement(longest.data.points).map((point) => point.h) : []),
     [longest],
   );
+  return <Sparkline values={values} />;
+};
+
+export const Sparkline: FC<{ values: readonly (number | null)[] }> = ({ values }) => {
   const validValues = values.filter((value): value is number => value !== null);
   if (validValues.length < 2) return null;
 
@@ -154,6 +159,7 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
   const [isExpanded, setIsExpanded] = useState(false);
 
   const stations = useMemo(() => collectStations(parts), [parts]);
+  const hasReport = useMemo(() => findReport(parts) !== undefined, [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
 
   const isFirstToolGroup = firstPartIndex === parts.findIndex((part) => part.type === 'tool-call');
@@ -193,7 +199,8 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
         </p>
       ))}
 
-      {!isRunning && stations.length > 0 && (
+      {/* 有简报时由简报的测点行作为入口，避免同一入口出现两次。 */}
+      {!isRunning && !hasReport && stations.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {stations.slice(0, MAX_VISIBLE_STATIONS).map((station) => {
             const isSelected = selection?.messageId === messageId && selection.stationName === station.name;
@@ -210,7 +217,7 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
                 )}
               >
                 <span className="min-w-0 truncate">{station.name}</span>
-                <Sparkline station={station} />
+                <StationSparkline station={station} />
               </button>
             );
           })}

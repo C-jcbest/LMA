@@ -80,4 +80,8 @@ API 行为以锁定版本的公共类型与实际 FastAPI + PostgreSQL 测试核
 
 对外消息统一经过 server/messages.py：流式与历史按白名单输出公开内容块和字段；checkpoint 内保留多轮工具协议需要的推理字段。不生成推荐业务提问，不注册时间查询工具。缓存验证只断言历史输入前缀稳定，不以此宣称提供方缓存命中率。
 
+调查简报是带 ToolRuntime 的普通工具，校验失败返回错误由模型修正；成功后由 LmaMiddleware 的 `jump_to: end` 结束本轮。不用官方 `return_direct`，它在工具失败时同样结束，模型无法修正。依据编号在模型调用边界由 tool_call_id 确定性派生，不写入 checkpoint 正文。
+
+批量巡检在单 worker 内以 asyncio 任务运行，上游并发固定为 4，结果写入 lma_inspections 和 lma_inspection_stations；进程重启时进行中的巡检标记为 interrupted，不自动重放。初筛规则集中在 app/inspection/screening.py，不调用模型。
+
 前端不再为工具注册逐个 Renderer：GroupedParts 把一条消息的工具调用归为一个调查过程，依据按测点从官方 tool part 的 artifact 派生，不复制到前端状态。时间轴使用按需加载的 ECharts，同轴、缺测带、联动和缩放由图表库完成，不自建绘图逻辑；颜色全部来自 CSS 变量，深色模式跟随系统。

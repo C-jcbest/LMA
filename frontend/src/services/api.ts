@@ -17,6 +17,25 @@ export interface SessionState {
   latest_run: { status: string } | null;
 }
 
+export type Screening = '建议调查' | '未见明显变化' | '数据不足' | '暂无法分析';
+
+export interface InspectionStation {
+  station_uuid: string;
+  station_name: string;
+  group_name: string;
+  screening: Screening;
+  reasons: string[];
+  trend: Array<number | null>;
+  previous_screening: Screening | null;
+  last_conclusion: { status: string; reason: string; session_id: string; created_at: string } | null;
+}
+
+export interface LatestInspection {
+  running: { total_stations: number; completed_stations: number } | null;
+  inspection: { id: string; finished_at: string } | null;
+  stations: InspectionStation[];
+}
+
 export const getStoredApiUrl = () => {
   if (import.meta.env.PROD) return DEFAULT_API_URL;
   return localStorage.getItem(STORAGE_KEY_CONFIG) || DEFAULT_API_URL;
@@ -83,6 +102,14 @@ export class LmaClient {
       method: 'POST', body: JSON.stringify({ input_text: inputText }), signal: AbortSignal.timeout(20000),
     });
     return (await response.json()).title;
+  }
+
+  async getLatestInspection(signal?: AbortSignal): Promise<LatestInspection> {
+    return (await this.request('/inspections/latest', { signal })).json();
+  }
+
+  async startInspection(): Promise<void> {
+    await this.request('/inspections', { method: 'POST' });
   }
 
   async cancelRun(id: string): Promise<void> {

@@ -277,7 +277,29 @@ class SiteEnvironmentArtifactData(ArtifactModel):
     layer_sources: LayerSourcesArtifact
 
 
+class ReportStationArtifact(ArtifactModel):
+    station_name: str
+    status: Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"]
+    reason: str
+    acceleration: Literal["未见持续加速", "疑似加速", "无法判断"]
+    data_quality: str
+
+
+class ReportFindingArtifact(ArtifactModel):
+    level: Literal["fact", "analysis", "inference"]
+    text: str
+    evidence: list[str]
+
+
+class InvestigationReportArtifactData(ArtifactModel):
+    conclusion: str
+    stations: list[ReportStationArtifact]
+    findings: list[ReportFindingArtifact]
+    next_steps: list[str]
+
+
 ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {
+    "investigation_report": InvestigationReportArtifactData,
     "station_list": StationListArtifactData,
     "gnss_series": GnssArtifactData,
     "weather": WeatherArtifactData,
@@ -336,8 +358,14 @@ class SiteEnvironmentArtifactEnvelope(ArtifactEnvelopeBase):
     data: SiteEnvironmentArtifactData
 
 
+class InvestigationReportArtifactEnvelope(ArtifactEnvelopeBase):
+    kind: Literal["investigation_report"]
+    data: InvestigationReportArtifactData
+
+
 ToolArtifactEnvelope = Annotated[
-    StationListArtifactEnvelope
+    InvestigationReportArtifactEnvelope
+    | StationListArtifactEnvelope
     | GnssArtifactEnvelope
     | WeatherArtifactEnvelope
     | VisionArtifactEnvelope

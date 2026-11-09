@@ -26,7 +26,7 @@ export interface DisplacementPoint {
 
 /**
  * 相对本窗口首个有效点的变化（mm）。这是窗口内变化，不是相对平台固定初始
- * 坐标的累计偏移；上游未提供固定基准，图上不得把二者混称。
+ * 坐标的累计偏移；序列产物不携带固定基准，图上不得把二者混称。
  * 缺测保持 null，折线在此断开，不转换为 0。
  */
 export function toDisplacement(points: readonly GnssPointArtifact[]): DisplacementPoint[] {
@@ -286,6 +286,8 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       textStyle: { color: colors.text, fontSize: 13 },
       valueFormatter: (value: unknown) => (typeof value === 'number' ? `${value.toFixed(2)} mm` : '缺测'),
     },
+    // brush 需要 toolbox 组件，拖选由图表本身触发，不显示工具栏。
+    toolbox: { show: false },
     brush: {
       xAxisIndex: axisIndexes,
       brushType: 'lineX',

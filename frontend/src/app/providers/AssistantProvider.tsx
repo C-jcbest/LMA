@@ -3,6 +3,7 @@ import { useLangGraphRuntime } from '@assistant-ui/react-langgraph';
 import { AssistantRuntimeProvider } from '@assistant-ui/react';
 import type { LmaClient } from '@/services/api';
 import { createSessionListAdapter } from '@/lib/session-list-adapter';
+import { LmaClientContext } from './LmaClientContext';
 
 const getUrlThreadId = () => new URL(window.location.href).searchParams.get('threadId') || undefined;
 
@@ -64,7 +65,7 @@ export function AssistantProvider({ client, children }: { client: LmaClient; chi
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       {error && <div role="alert" className="fixed inset-x-4 top-2 z-50 rounded-md border bg-background p-3 text-sm text-destructive">{error}</div>}
-      {children}
+      <LmaClientContext.Provider value={client}>{children}</LmaClientContext.Provider>
     </AssistantRuntimeProvider>
   );
 }

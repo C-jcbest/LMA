@@ -3,6 +3,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
+  'investigation_report',
   'station_list',
   'gnss_series',
   'weather',
@@ -78,6 +79,13 @@ const isVisionData = (value: unknown) => {
 const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
   if (!isRecord(value)) return false;
   switch (kind) {
+    case 'investigation_report':
+      return (
+        typeof value.conclusion === 'string' &&
+        Array.isArray(value.stations) &&
+        Array.isArray(value.findings) &&
+        isStringArray(value.next_steps)
+      );
     case 'station_list': {
       const groupsValid =
         value.groups === undefined ||

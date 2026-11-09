@@ -10,6 +10,7 @@ from functools import lru_cache
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
 from langchain.agents.middleware import (
+    hook_config,
     AgentMiddleware,
     ModelRetryMiddleware,
     ToolRetryMiddleware,
@@ -17,7 +18,7 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ToolCallLimitMiddleware,
 )
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
@@ -25,6 +26,7 @@ from app.agent.context import build_context_usage
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
+from app.agent.report import REPORT_TOOL_NAME, submit_investigation_report
 from app.agent.retry import is_transient_error
 from app.agent.models import create_chat_model, model_max_input_tokens
 from app.agent.site import inspect_site_environment
@@ -39,7 +41,8 @@ from app.agent.weather import query_weather
 from app.config import get_settings
 
 tools = [list_station_groups, list_stations, get_daily_gnss_data,
-         query_weather, analyze_gnss_chart, inspect_site_environment]
+         query_weather, analyze_gnss_chart, inspect_site_environment,
+         submit_investigation_report]
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +100,16 @@ class LmaMiddleware(AgentMiddleware):
         if stamped is message:
             return None
         return {"messages": [stamped]}
+
+    @hook_config(can_jump_to=["end"])
+    async def abefore_model(self, state, runtime):
+        # 官方 return_direct 在工具失败时也会结束；简报校验失败需要回到模型修正。
+        for message in reversed(state["messages"]):
+            if not isinstance(message, ToolMessage):
+                return None
+            if message.name == REPORT_TOOL_NAME and message.status != "error":
+                return {"jump_to": "end"}
+        return None
 
     async def awrap_model_call(self, request, handler):
         response = await handler(request.override(messages=model_messages(request.messages)))

@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type FC, type ReactNode } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from 'lucide-react';
-import { Dialog as DialogPrimitive, Tabs, ToggleGroup } from 'radix-ui';
+import { Dialog as DialogPrimitive, Tabs } from 'radix-ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
+import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import type { EvidenceSource, GnssArtifactData, VisionCandidateArtifact } from '@/types/envelope';
@@ -49,33 +50,6 @@ const readChartColors = (): ChartColors => {
     gap: token('--chart-gap'),
   };
 };
-
-const SEGMENT_ITEM_CLASS = 'min-h-8 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-muted data-[state=on]:text-foreground';
-
-interface SegmentedProps {
-  label: string;
-  value: string;
-  options: readonly { value: string; label: string }[];
-  onValueChange: (value: string) => void;
-}
-
-const Segmented: FC<SegmentedProps> = ({ label, value, options, onValueChange }) => (
-  <ToggleGroup.Root
-    type="single"
-    aria-label={label}
-    value={value}
-    onValueChange={(next) => {
-      if (next) onValueChange(next);
-    }}
-    className="flex flex-wrap gap-1"
-  >
-    {options.map((option) => (
-      <ToggleGroup.Item key={option.value} value={option.value} className={SEGMENT_ITEM_CLASS}>
-        {option.label}
-      </ToggleGroup.Item>
-    ))}
-  </ToggleGroup.Root>
-);
 
 const formatChange = (meters: number | null | undefined) => {
   if (meters === null || meters === undefined) return '—';
@@ -274,19 +248,23 @@ const TAB_CLASS = 'min-h-11 border-b-2 border-transparent px-1 text-sm text-mute
 
 interface InspectorBodyProps {
   station: StationEvidence;
+  focusToolCallId?: string;
   stations: readonly StationEvidence[];
   title: ReactNode;
   onSelectStation: (name: string) => void;
   onClose: () => void;
 }
 
-const InspectorBody: FC<InspectorBodyProps> = ({ station, stations, title, onSelectStation, onClose }) => {
+const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stations, title, onSelectStation, onClose }) => {
   // 默认看最长窗口：长期背景决定是否存在缓慢累积，短窗口用于放大细节。
-  const seriesList = useMemo(
-    () => station.series.map((item) => item.data).sort((a, b) => seriesDuration(b) - seriesDuration(a)),
+  const sortedSeries = useMemo(
+    () => [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data)),
     [station.series],
   );
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const seriesList = useMemo(() => sortedSeries.map((item) => item.data), [sortedSeries]);
+  const [selectedIndex, setSelectedIndex] = useState(
+    () => Math.max(0, sortedSeries.findIndex((item) => item.toolCallId === focusToolCallId)),
+  );
 
   const peers = useMemo(
     () => stations.filter((candidate) => (
@@ -302,7 +280,13 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, stations, title, onSel
   const nextStation = stations[stationIndex + 1];
   const hasTimeline = seriesList.length > 0;
   const hasSite = station.site.length > 0;
-  const defaultTab = hasTimeline ? 'timeline' : hasSite ? 'site' : 'details';
+  const isSiteFocused = station.site.some((item) => item.toolCallId === focusToolCallId);
+  let defaultTab = 'details';
+  if (isSiteFocused || (hasSite && !hasTimeline)) {
+    defaultTab = 'site';
+  } else if (hasTimeline) {
+    defaultTab = 'timeline';
+  }
 
   return (
     <>
@@ -410,6 +394,7 @@ export const StationInspector: FC = () => {
   const title = <h2 className="min-w-0 truncate text-base font-medium">{station.name}</h2>;
   const selectStation = (stationName: string) => openStation({ messageId: selection.messageId, stationName });
   const close = () => closeInspector();
+  const inspectorKey = `${station.name}:${selection.toolCallId ?? ''}`;
 
   if (isSplit) {
     return (
@@ -418,7 +403,7 @@ export const StationInspector: FC = () => {
         data-station-inspector=""
         className="flex h-full w-[56%] max-w-[56rem] min-w-0 shrink-0 flex-col border-l bg-background pt-[env(safe-area-inset-top)]"
       >
-        <InspectorBody key={station.name} station={station} stations={stations} title={title} onSelectStation={selectStation} onClose={close} />
+        <InspectorBody key={inspectorKey} station={station} focusToolCallId={selection.toolCallId} stations={stations} title={title} onSelectStation={selectStation} onClose={close} />
       </aside>
     );
   }
@@ -433,8 +418,9 @@ export const StationInspector: FC = () => {
           className="fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none"
         >
           <InspectorBody
-            key={station.name}
+            key={inspectorKey}
             station={station}
+            focusToolCallId={selection.toolCallId}
             stations={stations}
             title={<DialogPrimitive.Title asChild>{title}</DialogPrimitive.Title>}
             onSelectStation={selectStation}

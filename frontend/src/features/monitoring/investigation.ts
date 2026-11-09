@@ -1,5 +1,8 @@
 import type { PartState, ToolCallMessagePartStatus } from '@assistant-ui/react';
 import type {
+  FindingLevel,
+  InvestigationReportArtifactData,
+  InvestigationStatus,
   StationArtifact,
   ToolArtifactEnvelope,
   ToolArtifactEnvelopeFor,
@@ -18,7 +21,17 @@ interface ToolPresentation {
 
 const STATION_LIST_EMPTY = '未查询到符合条件的监测点。';
 
+export const REPORT_TOOL_NAME = 'submit_investigation_report';
+
 const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
+  [REPORT_TOOL_NAME]: {
+    kind: 'investigation_report',
+    running: '正在整理调查简报…',
+    complete: '已完成调查简报',
+    failed: '调查简报未通过校验',
+    cancelled: '已取消整理调查简报',
+    emptyNotice: '',
+  },
   list_station_groups: {
     kind: 'station_list',
     running: '正在查询监测点分组…',
@@ -80,19 +93,22 @@ const UNKNOWN_TOOL_PRESENTATION: ToolPresentation = {
 const presentationOf = (toolName: string) =>
   TOOL_PRESENTATIONS[toolName] ?? UNKNOWN_TOOL_PRESENTATION;
 
+type Located<K extends ToolArtifactKind> = ToolArtifactEnvelopeFor<K> & { toolCallId: string };
+
 export interface StationEvidence {
   name: string;
   status?: string | null;
   group?: string | null;
-  series: ToolArtifactEnvelopeFor<'gnss_series'>[];
-  weather: ToolArtifactEnvelopeFor<'weather'>[];
-  vision: ToolArtifactEnvelopeFor<'vision'>[];
-  site: ToolArtifactEnvelopeFor<'site_environment'>[];
+  series: Located<'gnss_series'>[];
+  weather: Located<'weather'>[];
+  vision: Located<'vision'>[];
+  site: Located<'site_environment'>[];
 }
 
 type ToolCallLike = {
   type: 'tool-call';
   toolName: string;
+  toolCallId: string;
   artifact?: unknown;
 };
 
@@ -124,6 +140,7 @@ const stationNameOf = (envelope: ToolArtifactEnvelope): string | null => {
     case 'site_environment':
       return envelope.data.center_station.station_name;
     case 'station_list':
+    case 'investigation_report':
       return null;
   }
 };
@@ -146,6 +163,8 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
       knownStations.push(envelope.data.center_station, ...envelope.data.group_stations);
     }
 
+    if (envelope.kind === 'investigation_report') continue;
+
     const name = stationNameOf(envelope);
     if (!name || !hasChartableData(envelope)) continue;
 
@@ -154,18 +173,19 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
       station = { name, series: [], weather: [], vision: [], site: [] };
       stations.set(name, station);
     }
+    const toolCallId = part.toolCallId;
     switch (envelope.kind) {
       case 'gnss_series':
-        station.series.push(envelope);
+        station.series.push({ ...envelope, toolCallId });
         break;
       case 'weather':
-        station.weather.push(envelope);
+        station.weather.push({ ...envelope, toolCallId });
         break;
       case 'vision':
-        station.vision.push(envelope);
+        station.vision.push({ ...envelope, toolCallId });
         break;
       case 'site_environment':
-        station.site.push(envelope);
+        station.site.push({ ...envelope, toolCallId });
         break;
     }
   }
@@ -211,6 +231,8 @@ const stepDetail = (envelope: ToolArtifactEnvelope): string | undefined => {
       return envelope.data.center_station.station_name;
     case 'station_list':
       return envelope.data.groups ? `${envelope.data.total} 个分组` : `${envelope.data.total} 个测点`;
+    case 'investigation_report':
+      return undefined;
   }
 };
 
@@ -251,6 +273,9 @@ export function buildSteps(
     const envelope = decodeToolPart(part);
     const state = stepStateOf(part, envelope);
 
+    // 简报是回答本身；校验失败由模型修正，用户只需看到正在整理。
+    if (part.toolName === REPORT_TOOL_NAME && state !== 'running') continue;
+
     // 仅供模型使用的工具答复（如基准站说明）不进入用户可见的调查过程。
     if (state === 'complete' && part.artifact === null) continue;
 
@@ -278,4 +303,54 @@ export function buildSteps(
     });
   }
   return steps;
+}
+
+/** 校验失败的提交不产生 artifact，只有通过校验的简报才会被取到。 */
+export function findReport(parts: readonly { type: string }[]): InvestigationReportArtifactData | undefined {
+  for (const part of [...parts].reverse()) {
+    if (!isToolCall(part) || part.toolName !== REPORT_TOOL_NAME) continue;
+    const envelope = decodeToolArtifact('investigation_report', part.artifact);
+    if (envelope?.kind === 'investigation_report' && envelope.status !== 'error') {
+      return envelope.data;
+    }
+  }
+  return undefined;
+}
+
+export const STATUS_PRIORITY: Record<InvestigationStatus, number> = {
+  需人工复核: 0,
+  持续关注: 1,
+  数据不足: 2,
+  暂无法分析: 3,
+  未见明显变化: 4,
+};
+
+const FINDING_HEADINGS: Record<FindingLevel, string> = {
+  fact: '观测事实',
+  analysis: '分析判断',
+  inference: '专业推断',
+};
+
+export const FINDING_LEVELS: readonly FindingLevel[] = ['fact', 'analysis', 'inference'];
+
+export const findingHeading = (level: FindingLevel) => FINDING_HEADINGS[level];
+
+/** 简报存放在工具结果里，消息没有正文可复制，这里生成可分享的文本。 */
+export function reportToMarkdown(report: InvestigationReportArtifactData): string {
+  const sections = [
+    report.conclusion,
+    report.stations
+      .map((station) => `- ${station.station_name}：${station.status}。${station.reason}（${station.acceleration}；${station.data_quality}）`)
+      .join('\n'),
+    ...FINDING_LEVELS.flatMap((level) => {
+      const findings = report.findings.filter((finding) => finding.level === level);
+      return findings.length > 0
+        ? [`## ${FINDING_HEADINGS[level]}\n\n${findings.map((finding) => `- ${finding.text}`).join('\n')}`]
+        : [];
+    }),
+    ...(report.next_steps.length > 0
+      ? [`## 建议\n\n${report.next_steps.map((step) => `- ${step}`).join('\n')}`]
+      : []),
+  ];
+  return sections.join('\n\n');
 }

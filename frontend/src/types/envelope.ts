@@ -1,6 +1,7 @@
 /** LMA 工具产物版本化协议信封（Version 1）。 */
 
 export type ToolArtifactKind =
+  | 'investigation_report'
   | 'station_list'
   | 'gnss_series'
   | 'weather'
@@ -241,7 +242,34 @@ export interface SiteEnvironmentArtifactData {
   };
 }
 
+export type InvestigationStatus = '未见明显变化' | '持续关注' | '需人工复核' | '数据不足' | '暂无法分析';
+
+export interface ReportStationArtifact {
+  station_name: string;
+  status: InvestigationStatus;
+  reason: string;
+  acceleration: '未见持续加速' | '疑似加速' | '无法判断';
+  data_quality: string;
+}
+
+export type FindingLevel = 'fact' | 'analysis' | 'inference';
+
+export interface ReportFindingArtifact {
+  level: FindingLevel;
+  text: string;
+  /** 经服务端校验、属于本轮的工具调用 ID。 */
+  evidence: string[];
+}
+
+export interface InvestigationReportArtifactData {
+  conclusion: string;
+  stations: ReportStationArtifact[];
+  findings: ReportFindingArtifact[];
+  next_steps: string[];
+}
+
 export interface ArtifactDataByKind {
+  investigation_report: InvestigationReportArtifactData;
   station_list: StationListArtifactData;
   gnss_series: GnssArtifactData;
   weather: WeatherArtifactData;

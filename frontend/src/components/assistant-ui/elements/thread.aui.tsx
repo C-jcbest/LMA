@@ -9,7 +9,10 @@ import {
   InvestigationIndicator,
   InvestigationProcess,
 } from "@/features/monitoring/InvestigationProcess";
+import { InvestigationReport, ReportActions } from "@/features/monitoring/InvestigationReport";
 import { useStationInspector } from "@/features/monitoring/StationInspectorContext";
+import { findReport } from "@/features/monitoring/investigation";
+import { TodayAttention } from "@/features/today/TodayAttention";
 import { cn } from "@/lib/utils";
 import { useSessionMetadata } from "@/lib/session-metadata";
 import {
@@ -102,7 +105,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
           )}
         >
           <AuiIf condition={isNewChatView}>
-            <ThreadWelcome />
+            <TodayAttention />
           </AuiIf>
           <AuiIf condition={isHistoryLoadingView}>
             <ThreadHistorySkeleton />
@@ -118,9 +121,10 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
           <ThreadPrimitive.ViewportFooter
             className={cn(
               "aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible px-2 pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-6",
+              "sticky bottom-0",
               // 内容滑入输入框下方时渐隐，而不是被硬切。
               !isEmpty &&
-                "before:from-background before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t sticky bottom-0 mt-auto",
+                "before:from-background before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t mt-auto",
             )}
           >
             <ThreadScrollToBottom />
@@ -230,12 +234,6 @@ const ThreadScrollToBottom: FC = () => {
   );
 };
 
-const ThreadWelcome: FC = () => (
-  <div className="aui-thread-welcome-root mb-6 px-2">
-    <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">今天要查哪个测点？</h1>
-  </div>
-);
-
 const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
   const { composerInputRef } = useStationInspector();
 
@@ -336,6 +334,7 @@ const AssistantMessage: FC = () => {
             }
           }}
         </MessagePrimitive.GroupedParts>
+        <InvestigationReport />
         <MessageError />
       </div>
 
@@ -351,32 +350,40 @@ const AssistantMessage: FC = () => {
 };
 
 const AssistantActionBar: FC = () => {
+  const hasReport = useAuiState((s) => findReport(s.message.parts) !== undefined);
+
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="not-last"
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in -ms-1 flex gap-1 duration-200"
     >
-      <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="复制">
-          <AuiIf condition={(s) => s.message.isCopied}>
-            <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-          </AuiIf>
-          <AuiIf condition={(s) => !s.message.isCopied}>
-            <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
-          </AuiIf>
-        </TooltipIconButton>
-      </ActionBarPrimitive.Copy>
+      {hasReport ? (
+        <ReportActions />
+      ) : (
+        <ActionBarPrimitive.Copy asChild>
+          <TooltipIconButton tooltip="复制">
+            <AuiIf condition={(s) => s.message.isCopied}>
+              <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
+            </AuiIf>
+            <AuiIf condition={(s) => !s.message.isCopied}>
+              <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
+            </AuiIf>
+          </TooltipIconButton>
+        </ActionBarPrimitive.Copy>
+      )}
       <ActionBarPrimitive.Reload asChild>
         <TooltipIconButton tooltip="重新生成">
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
-      <ActionBarPrimitive.ExportMarkdown asChild>
-        <TooltipIconButton tooltip="导出为 Markdown">
-          <DownloadIcon />
-        </TooltipIconButton>
-      </ActionBarPrimitive.ExportMarkdown>
+      {!hasReport && (
+        <ActionBarPrimitive.ExportMarkdown asChild>
+          <TooltipIconButton tooltip="导出为 Markdown">
+            <DownloadIcon />
+          </TooltipIconButton>
+        </ActionBarPrimitive.ExportMarkdown>
+      )}
     </ActionBarPrimitive.Root>
   );
 };

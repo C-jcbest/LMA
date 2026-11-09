@@ -2,9 +2,11 @@
 
 import asyncio
 import sys
+from collections.abc import Sequence
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import get_settings
@@ -24,6 +26,36 @@ CREATE TABLE IF NOT EXISTS lma_runs (
     created_at timestamptz NOT NULL DEFAULT now(),
     ended_at timestamptz
 );
+CREATE TABLE IF NOT EXISTS lma_inspections (
+    id uuid PRIMARY KEY,
+    status text NOT NULL CHECK (status IN ('running', 'success', 'error', 'interrupted')),
+    total_stations integer NOT NULL DEFAULT 0,
+    completed_stations integer NOT NULL DEFAULT 0,
+    started_at timestamptz NOT NULL DEFAULT now(),
+    finished_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS lma_inspection_stations (
+    inspection_id uuid NOT NULL REFERENCES lma_inspections(id) ON DELETE CASCADE,
+    station_uuid text NOT NULL,
+    station_name text NOT NULL,
+    group_name text NOT NULL,
+    screening text NOT NULL,
+    reasons jsonb NOT NULL,
+    metrics jsonb NOT NULL,
+    trend jsonb NOT NULL,
+    PRIMARY KEY (inspection_id, station_uuid)
+);
+CREATE TABLE IF NOT EXISTS lma_station_conclusions (
+    session_id uuid NOT NULL REFERENCES lma_sessions(id) ON DELETE CASCADE,
+    tool_call_id text NOT NULL,
+    station_name text NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (session_id, tool_call_id, station_name)
+);
+CREATE INDEX IF NOT EXISTS lma_inspections_recent ON lma_inspections (started_at DESC);
+CREATE INDEX IF NOT EXISTS lma_station_conclusions_recent ON lma_station_conclusions (station_name, created_at DESC);
 CREATE INDEX IF NOT EXISTS lma_sessions_recent ON lma_sessions (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS lma_runs_session ON lma_runs (session_id, created_at DESC);
 """
@@ -119,6 +151,105 @@ class SessionStorage:
             await connection.execute(
                 "UPDATE lma_runs SET status = 'interrupted', ended_at = now() WHERE status = 'running'",
             )
+            await connection.execute(
+                "UPDATE lma_inspections SET status = 'interrupted', finished_at = now() WHERE status = 'running'",
+            )
+
+    async def record_conclusions(self, session_id: str, tool_call_id: str, stations: Sequence[dict]) -> None:
+        """重新生成会产生新的调用 ID，因此同一测点可保留多次结论。"""
+        async with self.pool.connection() as connection:
+            for station in stations:
+                await connection.execute(
+                    """INSERT INTO lma_station_conclusions (session_id, tool_call_id, station_name, status, reason)
+                       VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                    (session_id, tool_call_id, station["station_name"], station["status"], station["reason"]),
+                )
+
+    async def start_inspection(self, inspection_id: str) -> None:
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                "INSERT INTO lma_inspections (id, status) VALUES (%s, 'running')", (inspection_id,),
+            )
+
+    async def set_inspection_total(self, inspection_id: str, total: int) -> None:
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                "UPDATE lma_inspections SET total_stations = %s WHERE id = %s", (total, inspection_id),
+            )
+
+    async def increment_inspection_progress(self, inspection_id: str) -> None:
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                "UPDATE lma_inspections SET completed_stations = completed_stations + 1 WHERE id = %s",
+                (inspection_id,),
+            )
+
+    async def save_inspection_stations(self, inspection_id: str, screened: Sequence[tuple]) -> None:
+        async with self.pool.connection() as connection:
+            async with connection.transaction():
+                for station, result in screened:
+                    await connection.execute(
+                        """INSERT INTO lma_inspection_stations
+                           (inspection_id, station_uuid, station_name, group_name, screening, reasons, metrics, trend)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                        (inspection_id, station.station_uuid, station.station_name, station.group_name,
+                         result.screening, Jsonb(result.reasons), Jsonb(result.metrics), Jsonb(result.trend)),
+                    )
+
+    async def finish_inspection(self, inspection_id: str, status: str) -> None:
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                "UPDATE lma_inspections SET status = %s, finished_at = now() WHERE id = %s",
+                (status, inspection_id),
+            )
+
+    async def latest_inspection(self) -> dict:
+        """最近一次成功巡检；进行中的巡检单独返回进度，旧结果在完成前保持可用。"""
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT total_stations, completed_stations FROM lma_inspections WHERE status = 'running' "
+                "ORDER BY started_at DESC LIMIT 1",
+            )
+            running = await cursor.fetchone()
+            cursor = await connection.execute(
+                "SELECT * FROM lma_inspections WHERE status = 'success' ORDER BY started_at DESC LIMIT 2",
+            )
+            finished = await cursor.fetchall()
+            if not finished:
+                return {"running": running, "inspection": None, "stations": []}
+
+            cursor = await connection.execute(
+                "SELECT * FROM lma_inspection_stations WHERE inspection_id = %s", (finished[0]["id"],),
+            )
+            stations = await cursor.fetchall()
+            previous = {}
+            if len(finished) > 1:
+                cursor = await connection.execute(
+                    "SELECT station_uuid, screening FROM lma_inspection_stations WHERE inspection_id = %s",
+                    (finished[1]["id"],),
+                )
+                previous = {row["station_uuid"]: row["screening"] for row in await cursor.fetchall()}
+            cursor = await connection.execute(
+                """SELECT DISTINCT ON (station_name) station_name, status, reason, session_id, created_at
+                   FROM lma_station_conclusions
+                   WHERE station_name = ANY(%s)
+                   ORDER BY station_name, created_at DESC""",
+                ([row["station_name"] for row in stations],),
+            )
+            conclusions = {row["station_name"]: row for row in await cursor.fetchall()}
+
+        return {
+            "running": running,
+            "inspection": finished[0],
+            "stations": [
+                {
+                    **row,
+                    "previous_screening": previous.get(row["station_uuid"]),
+                    "last_conclusion": conclusions.get(row["station_name"]),
+                }
+                for row in stations
+            ],
+        }
 
 
 if __name__ == "__main__":
