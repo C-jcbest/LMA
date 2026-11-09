@@ -108,6 +108,22 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
     mapRef.current = map;
     map.addControl(new NavigationControl({ showCompass: true }), 'bottom-right');
 
+    // MapLibre 默认只监听窗口变化；分隔线拖动只改变容器，需主动同步画布尺寸。
+    let resizeFrame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (resizeFrame !== null) {
+        return;
+      }
+      resizeFrame = requestAnimationFrame(() => {
+        resizeFrame = null;
+        const container = mapNodeRef.current;
+        if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+          map.resize();
+        }
+      });
+    });
+    observer.observe(mapNodeRef.current);
+
     // DOM Marker 不依赖底图/地质瓦片加载完成；辅助图层失败时测点仍应立即可见。
     {
       markersRef.current = stations.map((station) => {
@@ -188,6 +204,10 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
     });
 
     return () => {
+      observer.disconnect();
+      if (resizeFrame !== null) {
+        cancelAnimationFrame(resizeFrame);
+      }
       markersRef.current.forEach((marker) => marker.remove());
       markersRef.current = [];
       map.remove();

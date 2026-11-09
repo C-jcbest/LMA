@@ -20,6 +20,7 @@ export interface StationSelection {
 
 interface StationInspectorContextValue {
   selection: StationSelection | null;
+  isClosing: boolean;
   /** 宽度足够时检查器与对话并排，否则全屏覆盖。 */
   isSplit: boolean;
   composerInputRef: RefObject<HTMLTextAreaElement | null>;
@@ -32,11 +33,14 @@ const StationInspectorContext = createContext<StationInspectorContextValue | nul
 /** 只保存打开的位置；证据始终从当前消息的官方 tool part 派生。 */
 export function StationInspectorProvider({ children }: { children: ReactNode }) {
   const [selection, setSelection] = useState<StationSelection | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
   const isSplit = useMediaQuery('(min-width: 1024px)');
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const focusAfterCloseRef = useRef<HTMLElement | null>(null);
 
   const openStation = useCallback((next: StationSelection) => {
+    setIsClosing(false);
     setSelection((current) => {
       if (current === null) {
         focusAfterCloseRef.current = document.activeElement as HTMLElement | null;
@@ -49,8 +53,20 @@ export function StationInspectorProvider({ children }: { children: ReactNode }) 
     if (options?.focusComposer) {
       focusAfterCloseRef.current = composerInputRef.current;
     }
-    setSelection(null);
+    setIsClosing(true);
   }, []);
+
+  useEffect(() => {
+    if (!isClosing) {
+      return;
+    }
+    // 保留依据到退场结束，避免立即卸载截断关闭动画；新打开会取消这次退场。
+    const timer = window.setTimeout(() => {
+      setSelection(null);
+      setIsClosing(false);
+    }, reduceMotion ? 0 : 200);
+    return () => window.clearTimeout(timer);
+  }, [isClosing, reduceMotion]);
 
   useEffect(() => {
     if (selection !== null) return;
@@ -62,8 +78,8 @@ export function StationInspectorProvider({ children }: { children: ReactNode }) 
   }, [selection]);
 
   const value = useMemo(
-    () => ({ selection, isSplit, composerInputRef, openStation, closeInspector }),
-    [selection, isSplit, openStation, closeInspector],
+    () => ({ selection, isClosing, isSplit, composerInputRef, openStation, closeInspector }),
+    [selection, isClosing, isSplit, openStation, closeInspector],
   );
 
   return (

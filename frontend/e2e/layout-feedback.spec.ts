@@ -17,6 +17,110 @@ async function mockSessions(page: Page) {
   }));
 }
 
+test('主题选择覆盖系统偏好并跨刷新保留，跟随系统仍响应变化', async ({ page }) => {
+  await mockSessions(page);
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  const root = page.locator('html');
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+  await page.getByRole('radio', { name: '浅色主题', exact: true }).click();
+  await expect(root).toHaveAttribute('data-theme', 'light');
+  await page.reload();
+  await expect(root).toHaveAttribute('data-theme', 'light');
+  await expect(page.getByRole('radio', { name: '浅色主题', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.getByRole('radio', { name: '深色主题', exact: true }).click();
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+  await page.getByRole('radio', { name: '跟随系统主题' }).click();
+  await expect(root).toHaveAttribute('data-theme', 'light');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+  await page.reload();
+  await expect(root).toHaveAttribute('data-theme', 'dark');
+});
+
+test('导航拖动只在松开后保存，折叠、刷新和跨屏宽后保留尺寸与草稿', async ({ page }) => {
+  await mockSessions(page);
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.goto('/');
+  const input = page.getByRole('textbox', { name: '输入监测问题' });
+  await input.fill('调整布局时保留的草稿');
+  const handle = page.getByRole('separator', { name: '调整会话列表宽度' });
+  const box = (await handle.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, 300);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 100, 300, { steps: 20 });
+  expect(await page.evaluate(() => localStorage.getItem('lma-navigation-width'))).toBeNull();
+  await expect.poll(async () => (await page.locator('[data-navigation-docked]').boundingBox())!.width).toBe(360);
+  await page.mouse.up();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('lma-navigation-width'))).toBe('360');
+  await expect(input).toHaveValue('调整布局时保留的草稿');
+  await page.getByRole('button', { name: '折叠侧边栏' }).click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: '展开侧边栏' })).toBeVisible();
+  await page.getByRole('button', { name: '展开侧边栏' }).click();
+  await expect.poll(async () => (await page.locator('[data-navigation-docked]').boundingBox())!.width).toBe(360);
+
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.getByRole('button', { name: '打开会话列表' }).click();
+  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
+  await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(288);
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await expect.poll(async () => (await page.locator('[data-navigation-docked]').boundingBox())!.width).toBe(360);
+
+  await handle.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(handle).toHaveAttribute('aria-valuenow', '350');
+  await handle.dblclick();
+  await expect(handle).toHaveAttribute('aria-valuenow', '260');
+});
+
+test('减少动态效果时抽屉和折叠内容不播放过渡', async ({ page }) => {
+  await mockSessions(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await page.getByRole('button', { name: '打开会话列表' }).click();
+  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
+  await expect(drawer).toBeVisible();
+  expect(await drawer.evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
+  await page.keyboard.press('Escape');
+  await expect(drawer).toHaveCount(0);
+  await page.setViewportSize({ width: 1280, height: 844 });
+  expect(await page.locator('[data-navigation-docked]').evaluate((element) => getComputedStyle(element).transitionDuration)).toBe('0s');
+});
+
+test('抽屉可调整宽度并重新打开，Esc 撤销拖动且不会残留拖动状态', async ({ page }) => {
+  await mockSessions(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const navigation = page.getByRole('button', { name: '打开会话列表' });
+  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
+  await navigation.click();
+  const handle = drawer.getByRole('separator', { name: '调整会话列表宽度' });
+  await handle.focus();
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(300);
+  const box = (await handle.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, 300);
+  await page.mouse.down();
+  await page.mouse.move(385, 300, { steps: 12 });
+  await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(358);
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await expect(drawer).toBeVisible();
+  await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(300);
+  expect(await page.evaluate(() => localStorage.getItem('lma-navigation-width'))).toBe('300');
+  await expect(page.locator('html')).not.toHaveAttribute('data-panel-resizing', '');
+  await page.keyboard.press('Escape');
+  await navigation.click();
+  await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(300);
+  await expect.poll(async () => (await drawer.boundingBox())!.x).toBe(0);
+  await page.screenshot({ path: test.info().outputPath('drawer-mobile.png'), animations: 'disabled' });
+});
+
 for (const width of [320, 390, 430]) {
   test(width + 'px 首次进入可直接输入，抽屉不挤压聊天区', async ({ page }) => {
     await mockSessions(page);
@@ -33,6 +137,7 @@ for (const width of [320, 390, 430]) {
     await navigation.click();
     const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
     await expect(drawer).toBeVisible();
+    await expect.poll(async () => (await drawer.boundingBox())?.x).toBe(0);
     const drawerBox = await drawer.boundingBox();
     expect(drawerBox!.x).toBe(0);
     expect(drawerBox!.y).toBe(0);

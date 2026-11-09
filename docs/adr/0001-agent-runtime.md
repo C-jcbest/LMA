@@ -84,4 +84,4 @@ API 行为以锁定版本的公共类型与实际 FastAPI + PostgreSQL 测试核
 
 批量巡检在单 worker 内以 asyncio 任务运行，上游并发固定为 4，结果写入 lma_inspections 和 lma_inspection_stations；进程重启时进行中的巡检标记为 interrupted，不自动重放。初筛规则集中在 app/inspection/screening.py，不调用模型。
 
-前端不再为工具注册逐个 Renderer：GroupedParts 把一条消息的工具调用归为一个调查过程，依据按测点从官方 tool part 的 artifact 派生，不复制到前端状态。时间轴使用按需加载的 ECharts，同轴、缺测带、联动和缩放由图表库完成，不自建绘图逻辑；颜色全部来自 CSS 变量，深色模式跟随系统。
+前端不再为工具注册逐个 Renderer：GroupedParts 把一条消息的工具调用归为一个调查过程，依据按测点从官方 tool part 的 artifact 派生，不复制到前端状态。时间轴使用按需加载的 ECharts，同轴、缺测带、联动和缩放由图表库完成，不自建绘图逻辑；颜色全部来自 CSS 变量。主题默认跟随系统，可手动选择浅色或深色。主题、导航折叠和面板宽度只保存在当前浏览器；窄屏临时收窄或全屏显示，不覆盖桌面宽度偏好。拖动按帧修改 CSS 尺寸，操作结束才保存；不复制会话历史或滚动状态。

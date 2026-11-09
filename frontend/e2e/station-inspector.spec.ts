@@ -49,11 +49,11 @@ const messages = [
   ] },
 ];
 
-async function openInvestigation(page: Page, width: number) {
+async function openInvestigation(page: Page, width: number, history: readonly unknown[] = messages) {
   await page.route('**/api/sessions?*', (route) => route.fulfill({ json: [session] }));
   await page.route('**/api/sessions/station-inspector', (route) => route.fulfill({ json: session }));
   await page.route('**/api/sessions/station-inspector/state', (route) => route.fulfill({
-    json: { values: { messages }, latest_run: { id: 'run-1', status: 'success' } },
+    json: { values: { messages: history }, latest_run: { id: 'run-1', status: 'success' } },
   }));
   await page.setViewportSize({ width, height: 900 });
   await page.goto('/?threadId=station-inspector');
@@ -126,6 +126,14 @@ test('框选时间段后可带入追问，还原后恢复完整窗口', async ({
   await page.mouse.move(box.x + box.width * 0.7, box.y + 140, { steps: 8 });
   await page.mouse.up();
 
+  // 外观更新必须保留图表实例和用户正在核查的时间段。
+  await expect(inspector(page).getByRole('button', { name: '追问这段' })).toBeVisible();
+  const originalCanvas = await canvas.elementHandle();
+  await page.getByRole('radio', { name: '深色主题', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(inspector(page).getByRole('button', { name: '追问这段' })).toBeVisible();
+  expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);
+
   await inspector(page).getByRole('button', { name: '追问这段' }).click();
   const input = page.getByRole('textbox', { name: '输入监测问题' });
   await expect(input).toHaveValue(/^测试点 A 2026-11-\d\d \d\d:\d\d 至 2026-11-\d\d \d\d:\d\d 这段发生了什么？$/);
@@ -133,6 +141,90 @@ test('框选时间段后可带入追问，还原后恢复完整窗口', async ({
 
   await inspector(page).getByRole('button', { name: '还原' }).click();
   await expect(inspector(page).getByRole('button', { name: '追问这段' })).toHaveCount(0);
+});
+
+test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度，窄屏不覆盖桌面偏好', async ({ page }) => {
+  const chartWarnings: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().includes('[ECharts]')) {
+      chartWarnings.push(message.text());
+    }
+  });
+  await openInvestigation(page, 1920);
+  await stationEntry(page).click();
+  const handle = page.getByRole('separator', { name: '调整聊天与依据宽度' });
+  const canvas = inspector(page).locator('canvas').first();
+  await expect(canvas).toBeVisible();
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(896);
+  const box = (await handle.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, 300);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 160, 300, { steps: 16 });
+  expect(await page.evaluate(() => localStorage.getItem('lma-inspector-width'))).toBeNull();
+  await page.mouse.up();
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(736);
+  expect(await page.evaluate(() => localStorage.getItem('lma-inspector-width'))).toBe('736');
+
+  await handle.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
+  await page.getByRole('button', { name: '关闭依据' }).click();
+  await expect(inspector(page)).toHaveCount(0);
+  await stationEntry(page).click();
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
+  await page.reload();
+  await stationEntry(page).click();
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(390);
+  await page.setViewportSize({ width: 1024, height: 844 });
+  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(664);
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1024);
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
+  await expect.poll(async () => (await page.locator('[data-navigation-docked]').boundingBox())!.width).toBe(260);
+  await page.screenshot({ path: test.info().outputPath('workbench-light.png'), animations: 'disabled' });
+  await page.getByRole('radio', { name: '深色主题', exact: true }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.screenshot({ path: test.info().outputPath('workbench-dark.png'), animations: 'disabled' });
+  expect(chartWarnings).toEqual([]);
+});
+
+test('场地地图随依据宽度调整画布，不依赖窗口 resize', async ({ page }) => {
+  // 瓦片是外部服务，本用例只验证本地画布和布局，不请求真实地图数据。
+  await page.route('https://**/*', (route) => route.abort());
+  const site = {
+    type: 'tool', id: 'site-result', tool_call_id: 'site-a', name: 'inspect_site_environment',
+    content: '自动化测试场地', status: 'success',
+    artifact: {
+      version: 1, kind: 'site_environment', status: 'success',
+      data: {
+        version: 1, observed_at: '2026-11-09T00:00:00Z', coordinate_system: 'WGS84',
+        center_station: { station_uuid: 'test-a', station_name: '测试点 A', longitude: 120, latitude: 30, coordinate_system: 'WGS84' },
+        group_stations: [], faults: { available: false, note: '自动化测试数据，无真实断层结论' },
+        layer_sources: { geology_tiles: '', geology_source_layer: 'units', fault_source_layer: 'lines' },
+      },
+    },
+  };
+  const history = [
+    messages[0],
+    { ...messages[1], tool_calls: [...messages[1].tool_calls!, { id: 'site-a', name: 'inspect_site_environment', args: {} }] },
+    ...messages.slice(2, -1), site, messages.at(-1),
+  ];
+  await openInvestigation(page, 1920, history);
+  await stationEntry(page).click();
+  await inspector(page).getByRole('tab', { name: '场地', exact: true }).click();
+  const map = inspector(page).locator('.maplibregl-map');
+  const canvas = map.locator('canvas');
+  await expect(canvas).toBeVisible();
+  const originalWidth = (await canvas.boundingBox())!.width;
+  const handle = page.getByRole('separator', { name: '调整聊天与依据宽度' });
+  await handle.focus();
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect.poll(async () => (await canvas.boundingBox())!.width).toBeLessThan(originalWidth);
+  await expect.poll(async () => Math.abs((await canvas.boundingBox())!.width - await map.evaluate((element) => element.clientWidth))).toBeLessThan(1);
 });
 
 test('切换屏宽和会话时不残留依据，宽度不足时会话导航改为抽屉', async ({ page }) => {

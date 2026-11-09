@@ -42,43 +42,41 @@
   --chart-gap: hsl(240 4% 50% / 0.14);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --background: hsl(240 6% 8%);
-    --foreground: hsl(0 0% 94%);
-    --sidebar: hsl(240 6% 10.5%);
-    --muted: hsl(240 5% 16%);
-    --muted-foreground: hsl(240 5% 66%);
-    --popover: hsl(240 6% 12%);
-    --popover-foreground: hsl(0 0% 94%);
-    --card: hsl(240 6% 11%);
-    --card-foreground: hsl(0 0% 94%);
-    --border: hsl(240 5% 20%);
-    --input: hsl(240 5% 20%);
-    --primary: hsl(0 0% 94%);
-    --primary-foreground: hsl(240 6% 10%);
-    --secondary: hsl(240 5% 16%);
-    --secondary-foreground: hsl(0 0% 94%);
-    --accent: hsl(240 5% 16%);
-    --accent-foreground: hsl(0 0% 94%);
-    --destructive: hsl(2 80% 66%);
-    --destructive-foreground: hsl(240 6% 10%);
-    --ring: hsl(240 5% 46%);
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: hsl(240 6% 8%);
+  --foreground: hsl(0 0% 94%);
+  --sidebar: hsl(240 6% 10.5%);
+  --muted: hsl(240 5% 16%);
+  --muted-foreground: hsl(240 5% 66%);
+  --popover: hsl(240 6% 12%);
+  --popover-foreground: hsl(0 0% 94%);
+  --card: hsl(240 6% 11%);
+  --card-foreground: hsl(0 0% 94%);
+  --border: hsl(240 5% 20%);
+  --input: hsl(240 5% 20%);
+  --primary: hsl(0 0% 94%);
+  --primary-foreground: hsl(240 6% 10%);
+  --secondary: hsl(240 5% 16%);
+  --secondary-foreground: hsl(0 0% 94%);
+  --accent: hsl(240 5% 16%);
+  --accent-foreground: hsl(0 0% 94%);
+  --destructive: hsl(2 80% 66%);
+  --destructive-foreground: hsl(240 6% 10%);
+  --ring: hsl(240 5% 46%);
 
-    --status-normal: hsl(152 56% 50%);
-    --status-attention: hsl(38 92% 58%);
-    --status-critical: hsl(2 80% 66%);
-    --status-unknown: hsl(240 4% 50%);
+  --status-normal: hsl(152 56% 50%);
+  --status-attention: hsl(38 92% 58%);
+  --status-critical: hsl(2 80% 66%);
+  --status-unknown: hsl(240 4% 50%);
 
-    --chart-north: hsl(212 92% 68%);
-    --chart-east: hsl(168 60% 52%);
-    --chart-up: hsl(26 92% 64%);
-    --chart-rain: hsl(205 62% 48%);
-    --chart-peer: hsl(240 4% 40%);
-    --chart-candidate: hsl(38 92% 58% / 0.2);
-    --chart-gap: hsl(240 4% 70% / 0.14);
-  }
+  --chart-north: hsl(212 92% 68%);
+  --chart-east: hsl(168 60% 52%);
+  --chart-up: hsl(26 92% 64%);
+  --chart-rain: hsl(205 62% 48%);
+  --chart-peer: hsl(240 4% 40%);
+  --chart-candidate: hsl(38 92% 58% / 0.2);
+  --chart-gap: hsl(240 4% 70% / 0.14);
 }
 
 @theme inline {
@@ -116,6 +114,7 @@
 
 @custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
 @custom-variant data-closed (&:where([data-state="closed"], [data-closed]:not([data-closed="false"])));
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @layer base {
   /* Tailwind v4 的边框默认取 currentColor，这里统一为分隔线颜色。 */
@@ -166,6 +165,137 @@
   }
 }
 
+/* 布局偏好只决定面板宽度，视口不足时临时收窄，不回写用户保存的宽度。 */
+.navigation-panel {
+  width: min(var(--panel-width), calc(100vw - 360px));
+  overflow: clip;
+  transition: width 200ms ease;
+}
+
+.navigation-panel .panel-inner {
+  width: min(var(--panel-width), calc(100vw - 360px));
+}
+
+.navigation-panel[data-state="closed"] {
+  width: 0;
+}
+
+.session-drawer {
+  width: min(var(--panel-width), calc(100vw - 2rem));
+}
+
+.inspector-panel {
+  width: var(--panel-width);
+  flex-shrink: 1;
+  transition: width 200ms ease, opacity 160ms ease;
+}
+
+.inspector-panel[data-state="closed"] {
+  width: 0;
+  overflow: hidden;
+  border-left-width: 0;
+  opacity: 0;
+}
+
+@starting-style {
+  .inspector-panel[data-state="open"] {
+    width: 0;
+    opacity: 0;
+  }
+}
+
+/* 宽度跟随指针时不能再叠加缓动，否则分隔线会落后于鼠标。 */
+[data-resizing] {
+  transition: none;
+}
+
+.panel-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  width: 10px;
+  touch-action: none;
+  cursor: col-resize;
+  outline: none;
+}
+
+.panel-resize-handle[data-edge="left"] { left: 0; }
+.panel-resize-handle[data-edge="right"] { right: 0; }
+
+.panel-resize-handle::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--ring);
+  content: '';
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.panel-resize-handle[data-edge="left"]::after { left: 0; }
+.panel-resize-handle[data-edge="right"]::after { right: 0; }
+.panel-resize-handle:hover::after,
+.panel-resize-handle:focus-visible::after,
+[data-resizing] > .panel-resize-handle::after { opacity: 1; }
+
+:root[data-panel-resizing] * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* 使用 Radix 的测量高度及退场生命周期，内容关闭后才卸载。 */
+[data-slot="collapsible-content"][data-state="open"] {
+  animation: disclosure-open 180ms ease-out;
+}
+
+[data-slot="collapsible-content"][data-state="closed"] {
+  animation: disclosure-close 180ms ease-in;
+}
+
+[data-slot="collapsible-content"] { overflow: hidden; }
+
+@keyframes disclosure-open {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height); opacity: 1; }
+}
+
+@keyframes disclosure-close {
+  from { height: var(--radix-collapsible-content-height); opacity: 1; }
+  to { height: 0; opacity: 0; }
+}
+
+[data-slot="dialog-overlay"][data-state="open"] { animation: surface-fade-in 200ms ease; }
+[data-slot="dialog-overlay"][data-state="closed"] { animation: surface-fade-out 200ms ease; }
+[data-slot="dialog-content"][data-state="open"] { animation: dialog-in 200ms ease-out; }
+[data-slot="dialog-content"][data-state="closed"] { animation: dialog-out 200ms ease-in; }
+
+.session-drawer[data-state="open"] { animation: drawer-in 200ms ease-out; }
+.session-drawer[data-state="closed"] { animation: drawer-out 200ms ease-in; }
+.inspector-overlay[data-state="open"] { animation: evidence-in 200ms ease-out; }
+.inspector-overlay[data-state="closed"] { animation: evidence-out 200ms ease-in; }
+
+@keyframes surface-fade-in { from { opacity: 0; } }
+@keyframes surface-fade-out { to { opacity: 0; } }
+@keyframes dialog-in { from { opacity: 0; transform: scale(0.97); } }
+@keyframes dialog-out { to { opacity: 0; transform: scale(0.97); } }
+@keyframes drawer-in { from { transform: translateX(-100%); } }
+@keyframes drawer-out { to { transform: translateX(-100%); } }
+@keyframes evidence-in { from { opacity: 0; transform: translateX(24px); } }
+@keyframes evidence-out { to { opacity: 0; transform: translateX(24px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .navigation-panel,
+  .inspector-panel,
+  .panel-resize-handle::after { transition: none; }
+
+  [data-slot="collapsible-content"],
+  [data-slot="dialog-overlay"],
+  [data-slot="dialog-content"],
+  .inspector-overlay { animation: none !important; }
+}
+
 /* 地图测点使用 DOM Marker，不依赖远程矢量图层的加载结果；底图为影像，配色不随主题变化。 */
 .site-map-marker {
   appearance: none;
@@ -209,3 +339,17 @@
   outline: 2px solid #f2ad3a;
   outline-offset: 2px;
 }
+
+:root .maplibregl-popup-content {
+  background: var(--popover);
+  color: var(--popover-foreground);
+}
+
+:root .maplibregl-popup-anchor-top .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: var(--popover); }
+:root .maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+:root .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: var(--popover); }
+:root .maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--popover); }
+:root .maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--popover); }

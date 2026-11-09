@@ -1,12 +1,13 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type FC, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive, Tabs } from 'radix-ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { useTheme } from '@/app/providers/ThemeProvider';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useMediaQuery } from '@/hooks/use-media-query';
+import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import type { EvidenceSource, GnssArtifactData, VisionCandidateArtifact } from '@/types/envelope';
 import { collectStations, type StationEvidence } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
@@ -106,7 +107,11 @@ interface TimelineViewProps {
 const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedIndex, onSelectIndex, peers }) => {
   const aui = useAui();
   const { isSplit, composerInputRef, closeInspector } = useStationInspector();
-  const isDark = useMediaQuery('(prefers-color-scheme: dark)');
+  const { resolvedTheme } = useTheme();
+  const [chartColors, setChartColors] = useState(readChartColors);
+  useEffect(() => {
+    setChartColors(readChartColors());
+  }, [resolvedTheme]);
   const [mode, setMode] = useState<TimelineMode>('components');
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
@@ -125,10 +130,9 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
     const rainfall = dailyRainfallWithin(station.weather.map((item) => item.data), data.begin_time, data.end_time);
     return buildTimelineOption(
       { data, rainfall, candidates, peers: peerSeries, mode: peerSeries.length > 0 ? mode : 'components' },
-      readChartColors(),
+      chartColors,
     );
-    // 深色模式切换需要重新读取颜色变量。
-  }, [station.weather, data, candidates, peerSeries, mode, isDark]);
+  }, [station.weather, data, candidates, peerSeries, mode, chartColors]);
 
   const askAboutRange = () => {
     if (!range) return;
@@ -189,6 +193,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
         <ErrorBoundary fallbackTitle="时间轴渲染异常">
           <Suspense fallback={<Skeleton className="h-96 w-full" />}>
             <TimelineChart
+              viewKey={`${data.station_name}:${data.begin_time}:${data.end_time}:${mode}`}
               option={option}
               label={`${station.name} ${seriesLabel(data)} 位移时间轴`}
               resetSignal={resetSignal}
@@ -362,7 +367,20 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
 
 /** 核查对象是测点：宽屏与对话并排可继续追问，窄屏全屏查看。 */
 export const StationInspector: FC = () => {
-  const { selection, isSplit, openStation, closeInspector } = useStationInspector();
+  const { selection, isClosing, isSplit, openStation, closeInspector } = useStationInspector();
+  const panelRef = useRef<HTMLElement>(null);
+  const resize = usePanelResize({
+    storageKey: 'lma-inspector-width',
+    defaultWidth: Math.min(896, window.innerWidth * 0.56),
+    minWidth: 420,
+    maxWidth: 1000,
+    side: 'right',
+    panelRef,
+    availableWidth: () => {
+      const navigation = document.querySelector('[data-navigation-docked]');
+      return window.innerWidth - (navigation?.getBoundingClientRect().width ?? 0) - 360;
+    },
+  });
   const messageContent = useAuiState((state) => (
     selection ? state.thread.messages.find((message) => message.id === selection.messageId)?.content : undefined
   ));
@@ -378,7 +396,9 @@ export const StationInspector: FC = () => {
 
   const isOpenBesideChat = station !== undefined && isSplit;
   useEffect(() => {
-    if (!isOpenBesideChat) return;
+    if (!isOpenBesideChat) {
+      return;
+    }
     const handleKeyDown = (event: KeyboardEvent) => {
       // 菜单和弹窗处理 Esc 时会标记 defaultPrevented，此时不关闭检查器。
       if (event.key === 'Escape' && !event.defaultPrevented) {
@@ -389,7 +409,9 @@ export const StationInspector: FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpenBesideChat, closeInspector]);
 
-  if (!station || !selection) return null;
+  if (!station || !selection) {
+    return null;
+  }
 
   const title = <h2 className="min-w-0 truncate text-base font-medium">{station.name}</h2>;
   const selectStation = (stationName: string) => openStation({ messageId: selection.messageId, stationName });
@@ -399,23 +421,44 @@ export const StationInspector: FC = () => {
   if (isSplit) {
     return (
       <aside
+        id="station-evidence"
+        ref={panelRef}
         aria-label={`${station.name} 依据`}
         data-station-inspector=""
-        className="flex h-full w-[56%] max-w-[56rem] min-w-0 shrink-0 flex-col border-l bg-background pt-[env(safe-area-inset-top)]"
+        data-state={isClosing ? 'closed' : 'open'}
+        inert={isClosing}
+        style={resize.style}
+        className="inspector-panel relative flex h-full min-w-0 flex-col border-l bg-background pt-[env(safe-area-inset-top)]"
       >
-        <InspectorBody key={inspectorKey} station={station} focusToolCallId={selection.toolCallId} stations={stations} title={title} onSelectStation={selectStation} onClose={close} />
+        <PanelResizeHandle label="调整聊天与依据宽度" panelId="station-evidence" edge="left" {...resize.handleProps} />
+        <InspectorBody
+          key={inspectorKey}
+          station={station}
+          focusToolCallId={selection.toolCallId}
+          stations={stations}
+          title={title}
+          onSelectStation={selectStation}
+          onClose={close}
+        />
       </aside>
     );
   }
 
   return (
-    <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) close(); }}>
+    <DialogPrimitive.Root
+      open={!isClosing}
+      onOpenChange={(open) => {
+        if (!open) {
+          close();
+        }
+      }}
+    >
       <DialogPrimitive.Portal>
         <DialogPrimitive.Content
           data-station-inspector=""
           aria-describedby={undefined}
           onCloseAutoFocus={(event) => event.preventDefault()}
-          className="fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none"
+          className="inspector-overlay fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none"
         >
           <InspectorBody
             key={inspectorKey}

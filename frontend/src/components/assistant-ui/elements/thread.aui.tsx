@@ -4,6 +4,7 @@ import { MarkdownText } from "@/components/markdown-text";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ContextUsageElement } from "@/components/assistant-ui/elements/context-usage.aui";
 import {
   InvestigationIndicator,
@@ -142,14 +143,14 @@ const ThreadSummaryMessageView: FC<{ text: string }> = ({ text }) => {
   if (!text || !text.trim()) return null;
 
   return (
-    <div
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
       data-slot="aui_summary-message-root"
       className="w-full max-w-(--thread-max-width) mx-auto px-2"
     >
-      <button
+      <CollapsibleTrigger
         type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded(!expanded)}
         className="text-muted-foreground hover:text-foreground flex min-h-8 items-center gap-2 text-left text-sm transition-colors"
       >
         <ArchiveIcon className="size-3.5 shrink-0" />
@@ -160,11 +161,11 @@ const ThreadSummaryMessageView: FC<{ text: string }> = ({ text }) => {
             expanded && "rotate-180",
           )}
         />
-      </button>
-      {expanded && (
+      </CollapsibleTrigger>
+      <CollapsibleContent>
         <p className="text-muted-foreground border-s ps-3 mt-1 text-sm leading-relaxed">{text}</p>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 };
 
