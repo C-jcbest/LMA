@@ -5,7 +5,6 @@
   "LLM_MODEL": "deepseek-chat",
   "LLM_THINKING": "false",
   "TITLE_THINKING": "false",
-  "RECOMMEND_ENABLED": "false",
   "CONTEXT_MODEL_CONTEXT": "1048576",
   "AGENT_MODEL_RUN_LIMIT": "4",
   "AGENT_TOOL_RUN_LIMIT": "3",

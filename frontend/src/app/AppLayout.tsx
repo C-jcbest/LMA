@@ -5,6 +5,12 @@ import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/eleme
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { StationInspector } from '@/features/monitoring/StationInspector';
+import {
+  StationInspectorProvider,
+  useStationInspector,
+} from '@/features/monitoring/StationInspectorContext';
+import { useMediaQuery } from '@/hooks/use-media-query';
 
 export interface AppLayoutProps {
   onOpenSettings?: () => void;
@@ -22,23 +28,18 @@ const SessionSidebar: React.FC<SessionSidebarProps> = ({
   onNavigate,
   onOpenSettings,
 }) => (
-  <aside aria-label="会话导航" className="flex h-full min-h-0 flex-col bg-neutral-50 pt-[env(safe-area-inset-top)] text-neutral-700">
-    <div className="flex shrink-0 items-center justify-between border-b border-neutral-200/60 px-3.5 py-3">
+  <aside aria-label="会话导航" className="flex h-full min-h-0 flex-col bg-sidebar pt-[env(safe-area-inset-top)]">
+    <div className="flex shrink-0 items-center justify-between px-3.5 py-3">
       <div className="flex items-center gap-2">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-neutral-900 text-white shadow-xs">
-          <Mountain className="size-4" />
-        </div>
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold leading-tight text-neutral-800">LMA Monitor</span>
-          <span className="text-[11px] text-neutral-400">滑坡连续监测智能体</span>
-        </div>
+        <Mountain className="size-5" aria-hidden />
+        <span className="text-sm font-semibold">LMA Monitor</span>
       </div>
       <Button
         type="button"
         variant="ghost"
         size="icon"
         onClick={onClose}
-        className="text-neutral-500 hover:text-neutral-700"
+        className="text-muted-foreground hover:text-foreground"
         title={closeLabel}
         aria-label={closeLabel}
       >
@@ -49,13 +50,13 @@ const SessionSidebar: React.FC<SessionSidebarProps> = ({
       <ThreadList onNavigate={onNavigate} />
     </div>
     {onOpenSettings && (
-      <div className="shrink-0 border-t border-neutral-200/60 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <div className="shrink-0 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <Button
           variant="ghost"
-          className="w-full justify-start gap-2 text-xs text-neutral-600 hover:text-neutral-900"
+          className="w-full justify-start gap-2 text-sm text-muted-foreground hover:text-foreground"
           onClick={onOpenSettings}
         >
-          <Settings className="size-3.5" />
+          <Settings className="size-4" />
           服务配置
         </Button>
       </div>
@@ -65,35 +66,48 @@ const SessionSidebar: React.FC<SessionSidebarProps> = ({
 
 /** 只维护导航的展开状态；会话选择、消息和滚动仍由官方 Runtime 管理。 */
 export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
-  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches);
+  return (
+    <StationInspectorProvider>
+      <AppLayoutContent onOpenSettings={onOpenSettings} />
+    </StationInspectorProvider>
+  );
+};
+
+const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
+  const { selection, isSplit, closeInspector } = useStationInspector();
+  const isDesktop = useMediaQuery('(min-width: 768px)');
+  const hasRoomForThreeColumns = useMediaQuery('(min-width: 1680px)');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const navigationButtonRef = useRef<HTMLButtonElement>(null);
   const threadTitle = useAuiState((state) => (
     state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.title || '新建会话'
   ));
 
-  useEffect(() => {
-    const media = window.matchMedia('(min-width: 768px)');
-    const handleChange = () => {
-      setIsDesktop(media.matches);
-      setIsMobileSidebarOpen(false);
-    };
-    media.addEventListener('change', handleChange);
-    return () => media.removeEventListener('change', handleChange);
-  }, []);
+  // 宽度放不下三栏时，会话导航让位给依据，改由抽屉打开。
+  const canDockSidebar = isDesktop && (hasRoomForThreeColumns || !(isSplit && selection !== null));
+  const isSidebarDocked = canDockSidebar && !isSidebarCollapsed;
 
-  useAuiEvent('threads.selectionChanged', () => setIsMobileSidebarOpen(false));
+  useEffect(() => {
+    setIsDrawerOpen(false);
+  }, [canDockSidebar]);
+
+  useAuiEvent('threads.selectionChanged', () => {
+    setIsDrawerOpen(false);
+    closeInspector();
+  });
 
   const openSettings = onOpenSettings ? () => {
-    setIsMobileSidebarOpen(false);
+    setIsDrawerOpen(false);
     onOpenSettings();
   } : undefined;
 
+  const navigationLabel = canDockSidebar ? '展开侧边栏' : '打开会话列表';
+
   return (
-    <div className="flex h-dvh w-full overflow-hidden bg-white">
-      {isDesktop && !isSidebarCollapsed && (
-        <div className="h-full w-[260px] shrink-0 border-r border-neutral-200/80">
+    <div className="flex h-dvh w-full overflow-hidden bg-background">
+      {isSidebarDocked && (
+        <div className="h-full w-[260px] shrink-0 border-r">
           <SessionSidebar
             onClose={() => setIsSidebarCollapsed(true)}
             closeLabel="折叠侧边栏"
@@ -102,8 +116,8 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
         </div>
       )}
 
-      {!isDesktop && (
-        <Dialog open={isMobileSidebarOpen} onOpenChange={setIsMobileSidebarOpen}>
+      {!canDockSidebar && (
+        <Dialog open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
           <DialogContent
             showCloseButton={false}
             onCloseAutoFocus={(event) => {
@@ -116,32 +130,32 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
             <DialogDescription className="sr-only">选择已有会话，或新建监测调查。</DialogDescription>
             <ThreadListLoadError />
             <SessionSidebar
-              onClose={() => setIsMobileSidebarOpen(false)}
+              onClose={() => setIsDrawerOpen(false)}
               closeLabel="关闭会话列表"
-              onNavigate={() => setIsMobileSidebarOpen(false)}
+              onNavigate={() => setIsDrawerOpen(false)}
               onOpenSettings={openSettings}
             />
           </DialogContent>
         </Dialog>
       )}
 
-      <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-white text-neutral-800">
-        {(!isDesktop || isSidebarCollapsed) && (
-          <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-neutral-100 px-3 pt-[env(safe-area-inset-top)]">
+      <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+        {!isSidebarDocked && (
+          <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
             <Button
               ref={navigationButtonRef}
               type="button"
               variant="ghost"
               size="icon"
               onClick={() => {
-                if (isDesktop) {
+                if (canDockSidebar) {
                   setIsSidebarCollapsed(false);
                 } else {
-                  setIsMobileSidebarOpen(true);
+                  setIsDrawerOpen(true);
                 }
               }}
-              aria-label={isDesktop ? '展开侧边栏' : '打开会话列表'}
-              title={isDesktop ? '展开侧边栏' : '打开会话列表'}
+              aria-label={navigationLabel}
+              title={navigationLabel}
             >
               <PanelLeftOpen className="size-4" />
             </Button>
@@ -153,6 +167,8 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
           <Thread autoFocus={isDesktop} />
         </div>
       </main>
+
+      <StationInspector />
     </div>
   );
 };

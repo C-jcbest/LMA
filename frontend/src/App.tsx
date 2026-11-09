@@ -19,19 +19,21 @@ export const App: React.FC = () => {
   return (
     <ErrorBoundary fallbackTitle="会话界面加载异常" level="window">
       <AssistantProvider key={apiUrl} client={client}>
-        <AppLayout onOpenSettings={() => setIsConfigOpen(true)} />
+        <AppLayout onOpenSettings={import.meta.env.DEV ? () => setIsConfigOpen(true) : undefined} />
       </AssistantProvider>
 
-      <ServiceSettingsDialog
-        open={isConfigOpen}
-        onOpenChange={setIsConfigOpen}
-        onSaved={() => {
-          const nextUrl = getStoredApiUrl();
-          if (nextUrl !== apiUrl) {
-            setApiUrl(nextUrl);
-          }
-        }}
-      />
+      {import.meta.env.DEV && (
+        <ServiceSettingsDialog
+          open={isConfigOpen}
+          onOpenChange={setIsConfigOpen}
+          onSaved={() => {
+            const nextUrl = getStoredApiUrl();
+            if (nextUrl !== apiUrl) {
+              setApiUrl(nextUrl);
+            }
+          }}
+        />
+      )}
     </ErrorBoundary>
   );
 };

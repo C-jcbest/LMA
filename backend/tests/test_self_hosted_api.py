@@ -35,7 +35,7 @@ class SelfHostedApiTests(unittest.TestCase):
         self.settings = Settings(
             _env_file=None, database_uri=DATABASE_URI,
             context_model_context=100000, context_token_threshold=90000,
-            context_keep_tokens=1000, recommend_enabled=False, agent_max_retries=0,
+            context_keep_tokens=1000, agent_max_retries=0,
         )
         self.settings_patch = patch("app.agent.graph.get_settings", return_value=self.settings)
         self.settings_patch.start()
@@ -100,6 +100,23 @@ class SelfHostedApiTests(unittest.TestCase):
         response = self.client.patch(f"/sessions/{self.session_id}", json={"name": "   "})
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.client.get(f"/sessions/{self.session_id}").json()["name"], "API 回归")
+
+    def test_stream_and_history_keep_reasoning_and_message_context_private(self):
+        self.model.script = [AIMessage(
+            content=[{"type": "reasoning", "reasoning": "PRIVATE_CHAIN"},
+                     {"type": "text", "text": "公开分析"}],
+            additional_kwargs={"reasoning_content": "PRIVATE_PROVIDER"},
+        )]
+        response = self.run_message("今天如何？")
+        self.assertEqual(response.status_code, 200)
+        history = self.state()
+        for public in [response.text, json.dumps(history)]:
+            self.assertNotIn("PRIVATE_", public)
+            self.assertNotIn("lma_context", public)
+            self.assertNotIn("sent_at", public)
+            self.assertNotIn("recommendations", public)
+        self.assertEqual(history["values"]["messages"][0]["content"], "今天如何？")
+        self.assertIn("timezone: Asia/Shanghai", self.model.inputs[0][-1].content)
 
     def test_actual_tool_artifact_survives_state_load(self):
         self.model.script = [

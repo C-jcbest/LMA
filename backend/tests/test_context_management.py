@@ -19,7 +19,7 @@ def turn(index):
 
 class ContextManagementTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        settings = SimpleNamespace(recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
+        settings = SimpleNamespace(agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
             agent_model_run_limit=20, agent_tool_run_limit=40, llm_model="test", context_token_threshold=10000,
             context_model_context=100000, context_keep_tokens=1000,
             context_summary_max_tokens=2000)
@@ -53,6 +53,14 @@ class ContextManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len([m for m in next_result["messages"]
             if m.additional_kwargs.get("lc_source") == "summarization"]), 1)
         self.assertIn("站点甲", str(self.model.inputs[-1]))
+
+    async def test_summary_receives_send_time_of_compressed_messages(self):
+        history = turn(1) + turn(2) + turn(3) + [HumanMessage(id="current", content="继续")]
+        history[0] = history[0].model_copy(update={"additional_kwargs": {
+            "lma_context": {"sent_at": "2026-09-15T08:30:00+08:00", "timezone": "Asia/Shanghai"},
+        }})
+        await self.build().ainvoke({"messages": history}, self.config)
+        self.assertIn("sent_at: 2026-09-15T08:30:00+08:00", self.summary.inputs[0][0].content)
 
     async def test_below_token_threshold_does_not_summarize(self):
         result = await self.build().ainvoke({"messages": [HumanMessage(content="查询站点甲")]}, self.config)

@@ -3,16 +3,15 @@
 import asyncio
 import unittest
 from datetime import datetime
-from time import perf_counter
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.agent import graph, summarization
+from app.agent import graph, summarization, message_context
 from app.beidou.client import BeidouApiError
 from runtime_fixtures import ScriptedModel, call
 
@@ -20,7 +19,7 @@ from runtime_fixtures import ScriptedModel, call
 class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.settings = SimpleNamespace(
-            recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
+            agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
             agent_model_run_limit=20, agent_tool_run_limit=40, context_token_threshold=800_000,
             context_model_context=1_048_576,
             context_keep_tokens=400000, context_summary_max_tokens=2000, llm_model="test",
@@ -49,70 +48,35 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         config = {"configurable": {"thread_id": "production-test"}}
         first = datetime.fromisoformat("2026-09-15T10:00:00+08:00")
         second = datetime.fromisoformat("2026-09-16T11:00:00+08:00")
-        with patch.object(graph, "business_now", return_value=first):
+        with patch.object(message_context, "business_now", return_value=first):
             result = await agent.ainvoke({"messages": [HumanMessage(content="今天如何？")]}, config)
         self.assertEqual([m.type for m in result["messages"]], ["human", "ai", "tool", "ai"])
-        self.assertEqual(result["messages"][0].additional_kwargs["created_at"], first.isoformat())
+        self.assertEqual(result["messages"][0].additional_kwargs["lma_context"]["sent_at"], first.isoformat())
         self.assertEqual(result["messages"][-1].additional_kwargs["reasoning_content"], "核对证据")
         self.assertEqual(result["context_usage"]["input_tokens"], 321)
         self.assertEqual(result["context_usage"]["max_input_tokens"], 1_048_576)
         self.assertAlmostEqual(result["context_usage"]["usage_ratio"], 321 / 1_048_576)
         self.assertEqual(model.inputs[0][0].content, model.inputs[1][0].content)
-        with patch.object(graph, "business_now", return_value=second):
+        with patch.object(message_context, "business_now", return_value=second):
             result = await agent.ainvoke({"messages": [HumanMessage(content="昨天呢？")]}, config)
         self.assertEqual(len(result["messages"]), 6)
-        self.assertEqual(result["messages"][4].additional_kwargs["created_at"], second.isoformat())
-        self.assertNotIn("business_time", result)
+        self.assertEqual(result["messages"][4].additional_kwargs["lma_context"]["sent_at"], second.isoformat())
+        self.assertEqual(result["messages"][0].content, "今天如何？")
+        self.assertIn(first.isoformat(), model.inputs[0][1].content)
+        self.assertIn("timezone: Asia/Shanghai", model.inputs[0][1].content)
+        self.assertEqual(model.inputs[0][1].model_dump(), model.inputs[1][1].model_dump())
+        self.assertEqual(model.inputs[1][1].model_dump(), model.inputs[2][1].model_dump())
+        self.assertEqual(
+            [message.model_dump() for message in model.inputs[1]],
+            [message.model_dump() for message in model.inputs[2][:len(model.inputs[1])]],
+        )
+        self.assertIn(second.isoformat(), model.inputs[2][-1].content)
+        self.assertNotIn("recommendations", result)
+        self.assertEqual(len(model.inputs), 3)
+        self.assertNotIn("get_current_time", [tool.name for tool in graph.tools])
         self.assertEqual(result["context_usage"]["input_tokens"], 321)
 
-    async def test_recommendations_generated_from_final_answer_and_cleared_each_run(self):
-        self.settings.recommend_enabled = True
-        model = ScriptedModel(script=[AIMessage(content="完整最终回答"), AIMessage(content="第二轮回答")])
-        agent = graph.create_lma_agent(model, agent_tools=[], checkpointer=InMemorySaver())
-        bound_structured = SimpleNamespace(ainvoke=AsyncMock(return_value=graph.RecommendationResult(
-            recommendations=["查看近期趋势", "对比同组测点"],
-        )))
-        recommend = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
-        config = {"configurable": {"thread_id": "recommend-test"}}
-        with patch.object(graph, "_get_recommend_llm", return_value=recommend):
-            first = await agent.ainvoke({"messages": [HumanMessage(content="查询")],
-                                         "recommendations": ["旧建议"]}, config)
-            self.assertEqual(first["recommendations"], ["查看近期趋势", "对比同组测点"])
-            self.assertIn("完整最终回答", bound_structured.ainvoke.call_args.args[0][-1].content)
-            self.settings.recommend_enabled = False
-            second = await agent.ainvoke({"messages": [HumanMessage(content="继续")]}, config)
-        self.assertEqual(second["recommendations"], [])
-        self.assertEqual(bound_structured.ainvoke.call_count, 1)
 
-    async def test_recommendation_latency_is_after_answer_and_before_run_terminal(self):
-        self.settings.recommend_enabled = True
-        model = ScriptedModel(script=[AIMessage(content="正文已完成")])
-        agent = graph.create_lma_agent(model, agent_tools=[])
-
-        async def delayed_recommendation(*args, **kwargs):
-            await asyncio.sleep(0.15)
-            return graph.RecommendationResult(recommendations=["查看近期趋势", "对比同组测点"])
-
-        bound_structured = SimpleNamespace(ainvoke=AsyncMock(side_effect=delayed_recommendation))
-        recommend = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
-        started = perf_counter()
-        answer_elapsed = None
-        with patch.object(graph, "_get_recommend_llm", return_value=recommend), self.assertLogs(
-            graph.logger, level="INFO",
-        ) as logs:
-            async for update in agent.astream(
-                {"messages": [HumanMessage(content="查询")]}, stream_mode="updates",
-            ):
-                if "model" in update and answer_elapsed is None:
-                    answer_elapsed = perf_counter() - started
-        terminal_elapsed = perf_counter() - started
-
-        self.assertIsNotNone(answer_elapsed)
-        self.assertGreaterEqual(terminal_elapsed - answer_elapsed, 0.12)
-        self.assertTrue(any("recommendation stage completed" in line for line in logs.output))
-
-
-    async def test_parallel_tool_retry_exhaustion_preserves_success_and_reports_error(self):
         attempts = {"station": 0, "weather": 0}
 
         @tool
@@ -139,18 +103,6 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("secret", results["station"].content)
         self.assertNotIn("internal.invalid", results["station"].content)
 
-    async def test_recommendation_failure_does_not_replace_final_answer(self):
-        self.settings.recommend_enabled = True
-        model = ScriptedModel(script=[AIMessage(content="最终回答")])
-        agent = graph.create_lma_agent(model, agent_tools=[])
-        recommend = SimpleNamespace(ainvoke=AsyncMock(side_effect=ValueError("invalid recommendation")))
-        with patch.object(graph, "_get_recommend_llm", return_value=recommend), self.assertLogs(
-            graph.logger, level="WARNING",
-        ):
-            result = await agent.ainvoke({"messages": [HumanMessage(content="查询")]})
-        self.assertEqual(result["messages"][-1].content, "最终回答")
-        self.assertEqual(result["recommendations"], [])
-        self.assertEqual(result["recommendations_error"], "下一步建议生成失败。")
 
     async def test_nontransient_tool_error_not_retried_and_interrupt_propagates(self):
         from langgraph.errors import GraphInterrupt

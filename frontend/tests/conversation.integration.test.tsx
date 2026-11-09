@@ -2,11 +2,7 @@ import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { ToolFallback as GenericToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
-import {
-  decodeToolArtifact,
-  monitoringToolkit,
-} from '../src/features/monitoring/toolkit';
+import { decodeToolArtifact } from '../src/features/monitoring/artifacts';
 import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView';
 import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
 import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
@@ -15,19 +11,11 @@ import {
   hasSummarizationSource,
   ThreadSummaryMessage,
 } from '../src/components/assistant-ui/elements/thread.aui';
-import { ReasoningRoot, ReasoningTrigger } from '../src/components/assistant-ui/elements/reasoning';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
 import { HumanMessage } from '@langchain/core/messages';
 import { createSessionListAdapter } from '../src/lib/session-list-adapter';
-import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
 import { convertLangChainBaseMessage } from '@assistant-ui/react-langchain';
-
-const ToolFallback: typeof GenericToolFallback = (props) => {
-  const renderer = monitoringToolkit[props.toolName as keyof typeof monitoringToolkit]?.render;
-  const Renderer = renderer ?? GenericToolFallback;
-  return <Renderer {...props} />;
-};
 
 const station = (station_name: string, fields: Record<string, unknown> = {}) => ({
   station_name,
@@ -140,182 +128,107 @@ describe('会话关键路径集成回归', () => {
   });
 
 
-  it('GNSS 空值与非有限值显示为缺测，不会转换为零', async () => {
+  it('GNSS 空值与非有限值显示为缺测，不会转换为零', () => {
     render(
-      <ToolFallback
-        toolName="get_daily_gnss_data"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        artifact={{
-          version: 1,
-          kind: 'gnss_series',
-          status: 'success',
-          data: gnssData('测试站', [
-              { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
-              { time: '2026-09-15 09:00:00', n: Number.NaN, e: Number.POSITIVE_INFINITY, u: '12.5' },
-              { time: '2026-09-15 10:00:00', n: 0, e: '0', u: 0 },
-            ]),
-        }}
-      />
+      <GnssResultView
+        data={gnssData('测试站', [
+          { time: '2026-09-15 08:00:00', n: null, e: undefined, u: '' },
+          { time: '2026-09-15 09:00:00', n: Number.NaN, e: Number.POSITIVE_INFINITY, u: '12.5' },
+          { time: '2026-09-15 10:00:00', n: 0, e: '0', u: 0 },
+        ]) as React.ComponentProps<typeof GnssResultView>['data']}
+      />,
     );
-    await userEvent.click(screen.getByText(/已获取 GNSS 监测数据/));
     expect(screen.getAllByText('—')).toHaveLength(5);
     expect(screen.getAllByText('0.000')).toHaveLength(3);
     expect(screen.getByText('12.500')).toBeInTheDocument();
   });
 
-  it('GNSS 折线在缺测点处分段，不把缺测绘制为零或跨段连线', async () => {
-    const { container } = render(
-      <ToolFallback
-        toolName="analyze_gnss_chart"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        artifact={{
-          version: 1,
-          kind: 'vision',
-          status: 'success',
-          data: visionData({
-            observations: {},
-            total_points: 5,
-            chart_points: [
+  it('长序列先显示前 100 条，可按需展开全部', async () => {
+    const points = Array.from({ length: 120 }, (_, index) => ({ time: `t-${index}`, n: 1, e: 2, u: 3 }));
+    render(<GnssResultView data={gnssData('测试站', points) as React.ComponentProps<typeof GnssResultView>['data']} />);
+    expect(screen.queryByText('t-100')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '显示全部 120 条' }));
+    expect(screen.getByText('t-119')).toBeInTheDocument();
+  });
+
+  it('视觉复核无图时折线在缺测点处分段，不把缺测绘制为零或跨段连线', () => {
+    render(
+      <VisionResultView
+        data={visionData({
+          observations: {},
+          total_points: 5,
+          chart_points: [
             { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
             { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
             { t: '2026-09-15 10:00:00', n: null, e: null, u: null },
             { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
             { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
-            ],
-          }),
-        }}
-      />
+          ],
+        }) as React.ComponentProps<typeof VisionResultView>['data']}
+      />,
     );
-    await userEvent.click(screen.getByText(/已完成位移曲线复核/));
-    const polylines = Array.from(container.querySelectorAll('polyline'));
+    const polylines = Array.from(document.querySelectorAll('polyline'));
     expect(polylines).toHaveLength(6);
     expect(polylines.every((line) => !line.getAttribute('points')?.includes('50.00,'))).toBe(true);
   });
 
-  it('站点状态分别展示，旧数字状态和缺失类型均显示未知', async () => {
+  it('站点状态分别展示，旧数字状态和缺失类型均显示未知', () => {
     render(
-      <ToolFallback
-        toolName="list_stations"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        artifact={{
-          version: 1,
-          kind: 'station_list',
-          status: 'success',
-          data: stationListData([
-              { station_name: 'A', station_status: '正常', station_type: '基准站' },
-              { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
-              { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
-              { station_name: 'D', station_status: '故障', station_type: '中继站' },
-              { station_name: 'E', station_status: '其他' },
-            ]),
-        }}
-      />
+      <StationResultView
+        data={stationListData([
+          { station_name: 'A', station_status: '正常', station_type: '基准站' },
+          { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
+          { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
+          { station_name: 'D', station_status: '故障', station_type: '中继站' },
+          { station_name: 'E', station_status: '其他' },
+        ]) as React.ComponentProps<typeof StationResultView>['data']}
+      />,
     );
-    await userEvent.click(screen.getByText(/已查询监测点信息/));
     for (const label of ['正常', '离线', '告警', '故障']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getAllByText('未知')).toHaveLength(2);
-    expect(screen.queryByText('正常 (10)')).not.toBeInTheDocument();
   });
 
-  it('未注册工具以通用友好状态展示，不泄露内部名称与原始调试 JSON', async () => {
+  it('视觉复核图可放大查看', async () => {
     render(
-      <ToolFallback
-        toolName="internal_step"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        result="MODEL_ONLY"
-      />
+      <VisionResultView
+        data={visionData({
+          images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
+        }) as React.ComponentProps<typeof VisionResultView>['data']}
+      />,
     );
-    expect(screen.getByText('已完成辅助查询')).toBeInTheDocument();
-    expect(screen.queryByText(/internal_step/)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByText('已完成辅助查询'));
-    expect(screen.getByText(/已完成辅助信息查询并同步至模型上下文/)).toBeInTheDocument();
-    expect(screen.queryByText('MODEL_ONLY')).not.toBeInTheDocument();
-  });
-
-  it('工具异常状态展示友好错误信息，不显示机械已调用', async () => {
-    render(
-      <ToolFallback
-        toolName="get_daily_gnss_data"
-        status={{ type: 'incomplete', error: '未找到指定监测点，请确认站点。' }}
-        argsText="{}"
-      />
-    );
-    expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('GNSS 数据获取失败'));
-    expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
-  });
-
-
-  it('成功工具只从合法 v1 artifact.data 取业务展示', async () => {
-    const { container } = render(
-      <ToolFallback
-        toolName="list_stations"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        result="MODEL_ONLY"
-        artifact={{
-          version: 1,
-          kind: 'station_list',
-          status: 'success',
-          data: { total: 0, stations: [] },
-        }}
-      />
-    );
-    await userEvent.click(screen.getByText(/已查询监测点信息/));
-    expect(container.textContent).toContain('暂无符合条件的监测点');
-    expect(container.textContent).not.toContain('MODEL_ONLY');
-  });
-
-  it('视觉复核展示图表图片', async () => {
-    render(
-      <ToolFallback
-        toolName="analyze_gnss_chart"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        artifact={{
-          version: 1,
-          kind: 'vision',
-          status: 'success',
-          data: visionData({
-            images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
-          }),
-        }}
-      />
-    );
-    await userEvent.click(screen.getByText(/已完成位移曲线复核/));
     expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
+    const zoom = screen.getByRole('button', { name: /放大原始坐标时序/ });
+    await userEvent.click(zoom);
+    expect(screen.getByRole('button', { name: /缩小原始坐标时序/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
-
-  it('输入框发送按钮左侧显示可访问的上下文用量入口', () => {
+  it('上下文用量接近上限时才出现', () => {
     render(
       <ContextUsageElement
         usage={{
-          input_tokens: 250,
+          input_tokens: 850,
           output_tokens: 20,
-          total_tokens: 270,
+          total_tokens: 870,
           max_input_tokens: 1000,
-          usage_ratio: 0.25,
+          usage_ratio: 0.85,
           model: 'deepseek-flash',
         }}
       />
     );
 
     const trigger = screen.getByLabelText('上下文用量');
-    expect(trigger).toHaveTextContent('25%');
+    expect(trigger).toHaveTextContent('85%');
     expect(trigger.querySelector('svg')).toBeInTheDocument();
   });
 
-  it('缺少真实 usage 时不渲染上下文占比，也不显示未配置占位', () => {
-    render(
+  it('用量较低或缺少真实 usage 时不渲染上下文占比', () => {
+    const { rerender } = render(
       <ContextUsageElement usage={{ max_input_tokens: 1_048_576 }} />
     );
+    expect(screen.queryByLabelText('上下文用量')).not.toBeInTheDocument();
+    rerender(<ContextUsageElement usage={{ input_tokens: 250, max_input_tokens: 1000 }} />);
     expect(screen.queryByLabelText('上下文用量')).not.toBeInTheDocument();
   });
 
@@ -346,74 +259,6 @@ describe('会话关键路径集成回归', () => {
 
 });
 
-
-it('合法 v1 artifact 到达后直接展示业务数据，不依赖 raw JSON', async () => {
-  render(
-    <ToolFallback
-      toolName="list_stations"
-      status={{ type: 'complete' }}
-      argsText="{}"
-      artifact={{
-        version: 1,
-        kind: 'station_list',
-        status: 'success',
-        data: stationListData([{ station_name: '实时测点X', station_status: '正常' }]),
-      }}
-    />
-  );
-  await userEvent.click(screen.getByText(/已查询监测点信息/));
-  expect(screen.getByText('实时测点X')).toBeInTheDocument();
-});
-
-
-it('P0-1 & P0-3: liveToolCall 返回任意合法结果（空数组/字符串/0/false/null）均视为完成，不回退为 loading', async () => {
-  const legalOutputs = [[], '', 0, false, null];
-  for (const out of legalOutputs) {
-    const { unmount } = render(
-      <ToolFallback
-        toolName="list_stations"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        result={out}
-      />
-    );
-    expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
-    unmount();
-  }
-});
-
-it('P0-2: ToolMessage.artifact 到达后自然呈现业务结果，两阶段数据平滑衔接', async () => {
-  // 阶段 1：未收到 ToolMessage 时处于完成状态并显示通用友好说明，不输出 raw JSON
-  const { rerender } = render(
-    <ToolFallback
-      toolName="list_stations"
-      status={{ type: 'complete' }}
-      argsText="{}"
-      result="正在同步..."
-    />
-  );
-  expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
-  await userEvent.click(screen.getByText('已查询监测点信息'));
-  expect(screen.getByText('未查询到符合条件的监测点。')).toBeInTheDocument();
-  expect(screen.queryByText('正在同步...')).not.toBeInTheDocument();
-
-  // 阶段 2：权威 ToolMessage 到达，自然渲染业务点列表
-  rerender(
-    <ToolFallback
-      toolName="list_stations"
-      status={{ type: 'complete' }}
-      argsText="{}"
-      result="ok"
-      artifact={{
-        version: 1,
-        kind: 'station_list',
-        status: 'success',
-        data: stationListData([{ station_name: '持久化确定点', station_status: '正常' }]),
-      }}
-    />
-  );
-  expect(screen.getByText('持久化确定点')).toBeInTheDocument();
-});
 
 it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹配，非法/缺失产物安全返回 undefined', () => {
   const validEnvelope = {
@@ -456,47 +301,6 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
   ).toBeUndefined();
 });
 
-
-it('P6: ReasoningTrigger 根据 active 状态显示“正在思考…”或“已思考”，且 streaming 自动控制展开', async () => {
-  // 1. active 状态标签
-  const { rerender, container } = render(
-    <ReasoningRoot>
-      <ReasoningTrigger active={true} />
-    </ReasoningRoot>
-  );
-  expect(screen.getByText('正在思考…')).toBeInTheDocument();
-
-  rerender(
-    <ReasoningRoot>
-      <ReasoningTrigger active={false} />
-    </ReasoningRoot>
-  );
-  expect(screen.getByText('已思考')).toBeInTheDocument();
-
-  // 2. streaming=true 自动展开面板
-  rerender(
-    <ReasoningRoot streaming={true}>
-      <ReasoningTrigger active={true} />
-      <div data-testid="reasoning-body">正在实时思考推理中...</div>
-    </ReasoningRoot>
-  );
-  const rootEl = container.querySelector('[data-slot="reasoning-root"]');
-  expect(rootEl).toHaveAttribute('data-state', 'open');
-  expect(screen.getByTestId('reasoning-body')).toBeInTheDocument();
-
-  // 3. streaming=false 自动恢复折叠（默认 defaultOpen=false）
-  rerender(
-    <ReasoningRoot streaming={false}>
-      <ReasoningTrigger active={false} />
-      <div data-testid="reasoning-body">正在实时思考推理中...</div>
-    </ReasoningRoot>
-  );
-  expect(rootEl).toHaveAttribute('data-state', 'closed');
-
-  // 4. 用户手动点击展开
-  await userEvent.click(screen.getByRole('button'));
-  expect(rootEl).toHaveAttribute('data-state', 'open');
-});
 
 it('摘要消息通过 ThreadSummaryMessage 渲染折叠卡片，绝不作为用户气泡', async () => {
   render(<ThreadSummaryMessage text="这是之前轮次的滑坡监测背景摘要。" />);
@@ -560,133 +364,4 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
   expect(refreshBtn).toBeInTheDocument();
   fireEvent.click(refreshBtn);
   expect(reloadSpy).toHaveBeenCalled();
-});
-
-it('ReasoningTrigger 与 ToolFallbackTrigger 排版对齐：思考去图标、工具运行态隐藏 Chevron 并禁止交互', async () => {
-  // 1. ReasoningTrigger：不渲染 BrainIcon，仅文本与极淡 Chevron
-  const { container: reasoningContainer, rerender: rerenderReasoning } = render(
-    <ReasoningRoot>
-      <ReasoningTrigger active={true} />
-    </ReasoningRoot>
-  );
-  expect(screen.getByText('正在思考…')).toBeInTheDocument();
-  expect(reasoningContainer.querySelector('svg.aui-reasoning-trigger-icon')).not.toBeInTheDocument();
-  expect(reasoningContainer.querySelector('svg.aui-reasoning-trigger-chevron')).toBeInTheDocument();
-
-  rerenderReasoning(
-    <ReasoningRoot>
-      <ReasoningTrigger active={false} />
-    </ReasoningRoot>
-  );
-  expect(screen.getByText('已思考')).toBeInTheDocument();
-  expect(reasoningContainer.querySelector('svg.aui-reasoning-trigger-icon')).not.toBeInTheDocument();
-
-  // 2. ToolFallback: running 时无 chevron 且 disabled
-  const { container: toolContainer, rerender: rerenderTool } = render(
-    <ToolFallback
-      toolName="get_daily_gnss_data"
-      status={{ type: 'running' }}
-      argsText="{}"
-    />
-  );
-  expect(screen.getByText('正在获取 GNSS 监测数据…')).toBeInTheDocument();
-  expect(toolContainer.querySelector('svg.aui-tool-fallback-trigger-chevron')).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeDisabled();
-
-  // 3. ToolFallback: complete 时有 chevron，且默认折叠
-  rerenderTool(
-    <ToolFallback
-      toolName="get_daily_gnss_data"
-      status={{ type: 'complete' }}
-      argsText="{}"
-      artifact={{
-        version: 1,
-        kind: 'gnss_series',
-        status: 'success',
-        data: gnssData('测试站-01', [
-          { time: '2026-09-19 12:00:00', n: 1.0, e: 2.0, u: 3.0 },
-        ]),
-      }}
-    />
-  );
-  expect(screen.getByText('已获取 GNSS 监测数据')).toBeInTheDocument();
-  expect(toolContainer.querySelector('svg.aui-tool-fallback-trigger-chevron')).toBeInTheDocument();
-  expect(screen.queryByText('测试站-01')).not.toBeInTheDocument();
-
-  // 点击展开后，直接展示业务结果（无二级查看详细数据层级）
-  await userEvent.click(screen.getByText('已获取 GNSS 监测数据'));
-  expect(screen.getByText('测试站-01')).toBeInTheDocument();
-  expect(screen.getByText('2026-09-19 12:00:00')).toBeInTheDocument();
-});
-
-it('所有普通工具（包括场地环境）默认折叠，仅 HITL / requires-action 自动展开', async () => {
-  // 1. inspect_site_environment 默认折叠（移除 defaultExpanded）
-  render(
-    <ToolFallback
-      toolName="inspect_site_environment"
-      status={{ type: 'complete' }}
-      argsText="{}"
-      artifact={{
-        version: 1,
-        kind: 'site_environment',
-        status: 'success',
-        data: {
-          version: 1,
-          observed_at: '2026-09-21T12:00:00+08:00',
-          coordinate_system: 'WGS84',
-          center_station: station('监测点A', {
-            station_uuid: 's1',
-            latitude: 30.1,
-            longitude: 104.2,
-          }),
-          group_stations: [],
-          terrain: { dem_elevation_m: 520 },
-          geology: { name: '泥质灰岩' },
-          faults: { available: false, note: '未取得断层距离' },
-          layer_sources: {
-            geology_tiles: 'Macrostrat',
-            geology_source_layer: 'units',
-            fault_source_layer: 'lines',
-          },
-        },
-      }}
-    />
-  );
-  expect(screen.getByText('已获取场地环境信息')).toBeInTheDocument();
-  expect(screen.queryByText('监测点A')).not.toBeInTheDocument();
-
-  // 2. requires-action 工具默认展开供用户交互
-  const TestAuiWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const runtime = useLocalRuntime({});
-    return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
-  };
-
-  render(
-    <TestAuiWrapper>
-      <ToolFallback
-        toolName="dangerous_action"
-        status={{ type: 'requires-action', reason: 'approval' }}
-        argsText="{}"
-        approval={{
-          type: 'approval',
-          decision: 'pending',
-          prompt: '请确认是否执行此辅助调查操作？',
-        } as any}
-      />
-    </TestAuiWrapper>
-  );
-  expect(screen.getByText(/待确认辅助操作|待确认/)).toBeInTheDocument();
-  expect(screen.getByText('请确认是否执行此辅助调查操作？')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '允许' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: '拒绝' })).toBeInTheDocument();
-});
-
-
-it('仅供模型的答复不显示工具卡片，真正错误仍然可见', async () => {
-  const { container, rerender } = render(
-    <ToolFallback toolName="get_daily_gnss_data" status={{ type: 'complete' }} argsText="{}" result="基准站不适用形变查询" artifact={null} />,
-  );
-  expect(container).toBeEmptyDOMElement();
-  rerender(<ToolFallback toolName="get_daily_gnss_data" status={{ type: 'complete' }} argsText="{}" result="没有访问权限" artifact={null} isError />);
-  expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
 });

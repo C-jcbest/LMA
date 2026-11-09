@@ -1,0 +1,447 @@
+import { lazy, Suspense, useEffect, useMemo, useState, type FC, type ReactNode } from 'react';
+import { useAui, useAuiState } from '@assistant-ui/react';
+import { ChevronLeftIcon, ChevronRightIcon, XIcon } from 'lucide-react';
+import { Dialog as DialogPrimitive, Tabs, ToggleGroup } from 'radix-ui';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import type { EvidenceSource, GnssArtifactData, VisionCandidateArtifact } from '@/types/envelope';
+import { collectStations, type StationEvidence } from './investigation';
+import { useStationInspector } from './StationInspectorContext';
+import {
+  buildTimelineOption,
+  dailyRainfallWithin,
+  formatChartTime,
+  peerSeriesFor,
+  seriesDuration,
+  seriesLabel,
+  type ChartColors,
+  type TimelineMode,
+} from './timeline';
+import type { ChartRange } from './TimelineChart';
+import { GnssResultView } from './tools/GnssResultView';
+import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
+import { StationStatus } from './tools/StationResultView';
+import { VisionResultView } from './tools/VisionResultView';
+import { WeatherResultView } from './tools/WeatherResultView';
+
+const TimelineChart = lazy(() => import('./TimelineChart'));
+
+const MILLIMETERS_PER_METER = 1000;
+
+const readChartColors = (): ChartColors => {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string) => styles.getPropertyValue(name).trim();
+  return {
+    text: token('--foreground'),
+    mutedText: token('--muted-foreground'),
+    grid: token('--border'),
+    surface: token('--popover'),
+    border: token('--border'),
+    primary: token('--foreground'),
+    north: token('--chart-north'),
+    east: token('--chart-east'),
+    up: token('--chart-up'),
+    rain: token('--chart-rain'),
+    peer: token('--chart-peer'),
+    candidate: token('--chart-candidate'),
+    gap: token('--chart-gap'),
+  };
+};
+
+const SEGMENT_ITEM_CLASS = 'min-h-8 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-muted data-[state=on]:text-foreground';
+
+interface SegmentedProps {
+  label: string;
+  value: string;
+  options: readonly { value: string; label: string }[];
+  onValueChange: (value: string) => void;
+}
+
+const Segmented: FC<SegmentedProps> = ({ label, value, options, onValueChange }) => (
+  <ToggleGroup.Root
+    type="single"
+    aria-label={label}
+    value={value}
+    onValueChange={(next) => {
+      if (next) onValueChange(next);
+    }}
+    className="flex flex-wrap gap-1"
+  >
+    {options.map((option) => (
+      <ToggleGroup.Item key={option.value} value={option.value} className={SEGMENT_ITEM_CLASS}>
+        {option.label}
+      </ToggleGroup.Item>
+    ))}
+  </ToggleGroup.Root>
+);
+
+const formatChange = (meters: number | null | undefined) => {
+  if (meters === null || meters === undefined) return '—';
+  const millimeters = meters * MILLIMETERS_PER_METER;
+  const sign = millimeters > 0 ? '+' : '';
+  return `${sign}${millimeters.toFixed(1)}`;
+};
+
+const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
+  const metrics = [
+    { label: '北向净变化', value: formatChange(data.summary.n.change), unit: 'mm' },
+    { label: '东向净变化', value: formatChange(data.summary.e.change), unit: 'mm' },
+    { label: '垂直净变化', value: formatChange(data.summary.u.change), unit: 'mm' },
+    { label: '缺测', value: String(data.summary.gaps.length), unit: '段' },
+  ];
+  return (
+    <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+      {metrics.map((metric) => (
+        <div key={metric.label} className="min-w-0">
+          <dt className="text-sm text-muted-foreground">{metric.label}</dt>
+          <dd className="mt-0.5 text-xl font-medium tabular-nums">
+            {metric.value}<span className="ms-1 text-sm font-normal text-muted-foreground">{metric.unit}</span>
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+};
+
+const CandidateList: FC<{ candidates: readonly VisionCandidateArtifact[] }> = ({ candidates }) => (
+  <section aria-label="视觉候选区间" className="space-y-2">
+    <h3 className="text-sm font-medium">视觉候选，待数值复核</h3>
+    <ul className="space-y-2">
+      {candidates.map((candidate, index) => (
+        <li key={index} className="border-s-2 border-status-attention ps-3 text-sm">
+          <div className="text-muted-foreground tabular-nums">
+            {candidate.metric} · {candidate.start_at.slice(0, 16)} 至 {candidate.end_at.slice(5, 16)}
+          </div>
+          <div className="mt-0.5 wrap-break-word">{candidate.description || '未描述'}</div>
+        </li>
+      ))}
+    </ul>
+  </section>
+);
+
+interface TimelineViewProps {
+  station: StationEvidence;
+  seriesList: readonly GnssArtifactData[];
+  selectedIndex: number;
+  onSelectIndex: (index: number) => void;
+  peers: readonly StationEvidence[];
+}
+
+const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedIndex, onSelectIndex, peers }) => {
+  const aui = useAui();
+  const { isSplit, composerInputRef, closeInspector } = useStationInspector();
+  const isDark = useMediaQuery('(prefers-color-scheme: dark)');
+  const [mode, setMode] = useState<TimelineMode>('components');
+  const [range, setRange] = useState<ChartRange | null>(null);
+  const [resetSignal, setResetSignal] = useState(0);
+
+  const data = seriesList[selectedIndex]!;
+  const peerSeries = useMemo(
+    () => peerSeriesFor(data, peers.map((peer) => ({ name: peer.name, series: peer.series.map((item) => item.data) }))),
+    [data, peers],
+  );
+  const candidates = useMemo(() => {
+    return station.vision
+      .flatMap((item) => item.data.observations?.candidates ?? [])
+      .filter((candidate) => candidate.end_at >= data.begin_time && candidate.start_at <= data.end_time);
+  }, [station.vision, data]);
+  const option = useMemo(() => {
+    const rainfall = dailyRainfallWithin(station.weather.map((item) => item.data), data.begin_time, data.end_time);
+    return buildTimelineOption(
+      { data, rainfall, candidates, peers: peerSeries, mode: peerSeries.length > 0 ? mode : 'components' },
+      readChartColors(),
+    );
+    // 深色模式切换需要重新读取颜色变量。
+  }, [station.weather, data, candidates, peerSeries, mode, isDark]);
+
+  const askAboutRange = () => {
+    if (!range) return;
+    aui.composer().setText(`${station.name} ${formatChartTime(range.start)} 至 ${formatChartTime(range.end)} 这段发生了什么？`);
+    if (isSplit) {
+      composerInputRef.current?.focus();
+    } else {
+      closeInspector({ focusComposer: true });
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        {seriesList.length > 1 ? (
+          <Segmented
+            label="时间窗口"
+            value={String(selectedIndex)}
+            options={seriesList.map((item, index) => ({ value: String(index), label: seriesLabel(item) }))}
+            onValueChange={(value) => onSelectIndex(Number(value))}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">{seriesLabel(data)}</p>
+        )}
+        {peerSeries.length > 0 && (
+          <Segmented
+            label="曲线内容"
+            value={mode}
+            options={[
+              { value: 'components', label: '三个方向' },
+              { value: 'peers', label: '同组对比' },
+            ]}
+            onValueChange={(value) => setMode(value as TimelineMode)}
+          />
+        )}
+      </div>
+
+      <WindowMetrics data={data} />
+
+      <div>
+        <div className="flex min-h-8 items-center justify-between gap-3">
+          <p className="min-w-0 truncate text-sm text-muted-foreground tabular-nums">
+            {range
+              ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`
+              : '相对本窗口首点的变化'}
+          </p>
+          {range && (
+            <div className="flex shrink-0 items-center gap-1">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>
+                还原
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={askAboutRange}>
+                追问这段
+              </Button>
+            </div>
+          )}
+        </div>
+        <ErrorBoundary fallbackTitle="时间轴渲染异常">
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            <TimelineChart
+              option={option}
+              label={`${station.name} ${seriesLabel(data)} 位移时间轴`}
+              resetSignal={resetSignal}
+              onRangeChange={setRange}
+            />
+          </Suspense>
+        </ErrorBoundary>
+      </div>
+
+      {candidates.length > 0 && <CandidateList candidates={candidates} />}
+    </div>
+  );
+};
+
+const DetailSection: FC<{ title: string; children: ReactNode }> = ({ title, children }) => (
+  <section className="space-y-3">
+    <h3 className="text-sm font-medium">{title}</h3>
+    {children}
+  </section>
+);
+
+const EvidenceNotes: FC<{ station: StationEvidence }> = ({ station }) => {
+  const envelopes = [...station.series, ...station.weather, ...station.vision, ...station.site];
+  const limitations = [...new Set(envelopes.flatMap((envelope) => envelope.limitations ?? []))];
+  const sourcesByLabel = new Map<string, EvidenceSource>();
+  for (const source of envelopes.flatMap((envelope) => envelope.sources ?? [])) {
+    const sourceLabel = source.name || source.provider;
+    if (sourceLabel) {
+      sourcesByLabel.set(sourceLabel, source);
+    }
+  }
+  if (limitations.length === 0 && sourcesByLabel.size === 0) return null;
+
+  return (
+    <footer className="mt-8 space-y-3 border-t pt-4 text-sm text-muted-foreground">
+      {limitations.length > 0 && (
+        <ul aria-label="数据限制" className="space-y-1.5">
+          {limitations.map((limitation) => <li key={limitation} className="wrap-break-word">{limitation}</li>)}
+        </ul>
+      )}
+      {sourcesByLabel.size > 0 && (
+        <ul aria-label="来源" className="flex flex-wrap gap-x-4 gap-y-1">
+          {[...sourcesByLabel].map(([sourceLabel, source]) => (
+            <li key={sourceLabel}>
+              {source.url && /^https?:\/\//i.test(source.url)
+                ? <a href={source.url} target="_blank" rel="noreferrer" className="underline underline-offset-4">{sourceLabel}</a>
+                : sourceLabel}
+            </li>
+          ))}
+        </ul>
+      )}
+    </footer>
+  );
+};
+
+const TAB_CLASS = 'min-h-11 border-b-2 border-transparent px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-foreground data-[state=active]:text-foreground';
+
+interface InspectorBodyProps {
+  station: StationEvidence;
+  stations: readonly StationEvidence[];
+  title: ReactNode;
+  onSelectStation: (name: string) => void;
+  onClose: () => void;
+}
+
+const InspectorBody: FC<InspectorBodyProps> = ({ station, stations, title, onSelectStation, onClose }) => {
+  // 默认看最长窗口：长期背景决定是否存在缓慢累积，短窗口用于放大细节。
+  const seriesList = useMemo(
+    () => station.series.map((item) => item.data).sort((a, b) => seriesDuration(b) - seriesDuration(a)),
+    [station.series],
+  );
+  const [selectedIndex, setSelectedIndex] = useState(0);
+
+  const peers = useMemo(
+    () => stations.filter((candidate) => (
+      candidate.name !== station.name
+      && candidate.series.length > 0
+      && (!candidate.group || !station.group || candidate.group === station.group)
+    )),
+    [stations, station],
+  );
+
+  const stationIndex = stations.findIndex((item) => item.name === station.name);
+  const previousStation = stations[stationIndex - 1];
+  const nextStation = stations[stationIndex + 1];
+  const hasTimeline = seriesList.length > 0;
+  const hasSite = station.site.length > 0;
+  const defaultTab = hasTimeline ? 'timeline' : hasSite ? 'site' : 'details';
+
+  return (
+    <>
+      <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 px-4 sm:px-6">
+        <div className="flex min-w-0 items-baseline gap-3">
+          {title}
+          {station.status && <StationStatus status={station.status} />}
+        </div>
+        <div className="flex shrink-0 items-center">
+          {stations.length > 1 && (
+            <>
+              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!previousStation} aria-label="上一个测点" onClick={() => onSelectStation(previousStation!.name)}>
+                <ChevronLeftIcon className="size-4" />
+              </Button>
+              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!nextStation} aria-label="下一个测点" onClick={() => onSelectStation(nextStation!.name)}>
+                <ChevronRightIcon className="size-4" />
+              </Button>
+            </>
+          )}
+          <Button type="button" variant="ghost" size="icon" className="size-10" aria-label="关闭依据" onClick={onClose}>
+            <XIcon className="size-4" />
+          </Button>
+        </div>
+      </header>
+
+      <Tabs.Root defaultValue={defaultTab} className="flex min-h-0 flex-1 flex-col">
+        <Tabs.List aria-label="依据内容" className="flex shrink-0 gap-5 border-b px-4 sm:px-6">
+          {hasTimeline && <Tabs.Trigger value="timeline" className={TAB_CLASS}>时间轴</Tabs.Trigger>}
+          {hasSite && <Tabs.Trigger value="site" className={TAB_CLASS}>场地</Tabs.Trigger>}
+          <Tabs.Trigger value="details" className={TAB_CLASS}>明细</Tabs.Trigger>
+        </Tabs.List>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
+          {hasTimeline && (
+            <Tabs.Content value="timeline" className="focus-visible:outline-none">
+              <TimelineView
+                station={station}
+                seriesList={seriesList}
+                selectedIndex={selectedIndex}
+                onSelectIndex={setSelectedIndex}
+                peers={peers}
+              />
+            </Tabs.Content>
+          )}
+          {hasSite && (
+            <Tabs.Content value="site" className="focus-visible:outline-none">
+              <SiteEnvironmentResultView environment={station.site[station.site.length - 1]!.data} />
+            </Tabs.Content>
+          )}
+          <Tabs.Content value="details" className="space-y-8 focus-visible:outline-none">
+            {hasTimeline && (
+              <DetailSection title="GNSS 原始数据">
+                <GnssResultView data={seriesList[selectedIndex]!} />
+              </DetailSection>
+            )}
+            {station.vision.map((item, index) => (
+              <DetailSection key={index} title="位移曲线复核">
+                <VisionResultView data={item.data} />
+              </DetailSection>
+            ))}
+            {station.weather.map((item, index) => (
+              <DetailSection key={index} title="同期天气">
+                <WeatherResultView data={item.data} />
+              </DetailSection>
+            ))}
+          </Tabs.Content>
+          <EvidenceNotes station={station} />
+        </div>
+      </Tabs.Root>
+    </>
+  );
+};
+
+/** 核查对象是测点：宽屏与对话并排可继续追问，窄屏全屏查看。 */
+export const StationInspector: FC = () => {
+  const { selection, isSplit, openStation, closeInspector } = useStationInspector();
+  const messageContent = useAuiState((state) => (
+    selection ? state.thread.messages.find((message) => message.id === selection.messageId)?.content : undefined
+  ));
+  const stations = useMemo(() => (messageContent ? collectStations(messageContent) : []), [messageContent]);
+  const station = stations.find((item) => item.name === selection?.stationName);
+
+  const hasLostSelection = selection !== null && !station;
+  useEffect(() => {
+    if (hasLostSelection) {
+      closeInspector();
+    }
+  }, [hasLostSelection, closeInspector]);
+
+  const isOpenBesideChat = station !== undefined && isSplit;
+  useEffect(() => {
+    if (!isOpenBesideChat) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // 菜单和弹窗处理 Esc 时会标记 defaultPrevented，此时不关闭检查器。
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        closeInspector();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpenBesideChat, closeInspector]);
+
+  if (!station || !selection) return null;
+
+  const title = <h2 className="min-w-0 truncate text-base font-medium">{station.name}</h2>;
+  const selectStation = (stationName: string) => openStation({ messageId: selection.messageId, stationName });
+  const close = () => closeInspector();
+
+  if (isSplit) {
+    return (
+      <aside
+        aria-label={`${station.name} 依据`}
+        data-station-inspector=""
+        className="flex h-full w-[56%] max-w-[56rem] min-w-0 shrink-0 flex-col border-l bg-background pt-[env(safe-area-inset-top)]"
+      >
+        <InspectorBody key={station.name} station={station} stations={stations} title={title} onSelectStation={selectStation} onClose={close} />
+      </aside>
+    );
+  }
+
+  return (
+    <DialogPrimitive.Root open onOpenChange={(open) => { if (!open) close(); }}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Content
+          data-station-inspector=""
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+          className="fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none"
+        >
+          <InspectorBody
+            key={station.name}
+            station={station}
+            stations={stations}
+            title={<DialogPrimitive.Title asChild>{title}</DialogPrimitive.Title>}
+            onSelectStation={selectStation}
+            onClose={close}
+          />
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+};

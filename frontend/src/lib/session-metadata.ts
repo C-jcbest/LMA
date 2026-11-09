@@ -3,7 +3,6 @@ import type { ContextUsage } from '@/components/assistant-ui/elements/context-us
 
 interface SessionMetadata {
   context_usage?: ContextUsage;
-  recommendations?: string[];
 }
 
 /** 展示字段来自 checkpoint 的消息投影，不在前端维护第二份图状态。 */

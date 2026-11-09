@@ -1,50 +1,52 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
 import type { GnssArtifactData } from '@/types/envelope';
 import { formatGnssValue } from './gnssUtils';
 import { EmptyResultView } from './EmptyResultView';
 
+const INITIAL_ROW_COUNT = 100;
+
 export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) => {
-  if (!data?.points || !Array.isArray(data.points)) return null;
+  const [isShowingAll, setIsShowingAll] = useState(false);
   const allPoints = data.points;
   if (allPoints.length === 0) {
     return <EmptyResultView>该时间范围内暂无 GNSS 数据</EmptyResultView>;
   }
+  const visiblePoints = isShowingAll ? allPoints : allPoints.slice(0, INITIAL_ROW_COUNT);
 
   return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-[11px] text-neutral-400 px-0.5">
-        <span>
-          测点: <strong className="text-neutral-700">{data.station_name || 'GNSS'}</strong>
-        </span>
-        <span>
-          已加载 {allPoints.length} 条采样记录（共 {data.total_points ?? allPoints.length} 条
-          {data.downsampled ? '，超限已等间隔降采样' : ''}，支持上下滚动）
-        </span>
-      </div>
-      <div className="border border-border/60 rounded-lg bg-background/60 h-56 max-h-56 overflow-y-auto overscroll-contain">
-        <table className="w-full text-left text-xs border-collapse">
-          <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground wrap-break-word">
+        {data.begin_time} 至 {data.end_time} · {data.timezone} · {allPoints.length} / {data.total_points} 条
+        {data.downsampled ? ' · 已降采样' : ''}
+      </p>
+      <div className="min-w-0 rounded-lg border">
+        <table className="w-full table-fixed border-collapse text-left text-xs sm:text-sm">
+          <thead className="border-b bg-muted/50 text-muted-foreground">
             <tr>
-              <th className="py-2 px-3 whitespace-nowrap">#</th>
-              <th className="py-2 px-3 whitespace-nowrap">采样时刻</th>
-              <th className="py-2 px-3 whitespace-nowrap">北向坐标 N (m)</th>
-              <th className="py-2 px-3 whitespace-nowrap">东向坐标 E (m)</th>
-              <th className="py-2 px-3 whitespace-nowrap">垂直坐标 U (m)</th>
+              <th className="w-[34%] px-2 py-2 font-medium">采样时刻</th>
+              <th className="px-2 py-2 font-medium">N (m)</th>
+              <th className="px-2 py-2 font-medium">E (m)</th>
+              <th className="px-2 py-2 font-medium">U (m)</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border/40 text-neutral-800 font-mono text-[11px]">
-            {allPoints.map((p, i) => (
-              <tr key={i} className="hover:bg-neutral-50/70 transition-colors">
-                <td className="py-1 px-3 text-neutral-400">{i + 1}</td>
-                <td className="py-1 px-3 text-neutral-600 whitespace-nowrap">{p.time}</td>
-                <td className="py-1 px-3">{formatGnssValue(p.n)}</td>
-                <td className="py-1 px-3">{formatGnssValue(p.e)}</td>
-                <td className="py-1 px-3">{formatGnssValue(p.u)}</td>
+          <tbody className="divide-y tabular-nums">
+            {visiblePoints.map((point, index) => (
+              <tr key={index}>
+                <td className="px-2 py-1.5 text-muted-foreground [overflow-wrap:anywhere]">{point.time}</td>
+                <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.n)}</td>
+                <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.e)}</td>
+                <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.u)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {visiblePoints.length < allPoints.length && (
+        <Button type="button" variant="ghost" size="sm" onClick={() => setIsShowingAll(true)}>
+          显示全部 {allPoints.length} 条
+        </Button>
+      )}
     </div>
   );
 };

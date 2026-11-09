@@ -1,7 +1,6 @@
 /** LMA 工具产物版本化协议信封（Version 1）。 */
 
 export type ToolArtifactKind =
-  | 'generic'
   | 'station_list'
   | 'gnss_series'
   | 'weather'
@@ -25,11 +24,6 @@ export interface ToolArtifactError {
   category: string;
   message: string;
   retryable: boolean;
-}
-
-export interface CurrentTimeArtifactData {
-  current_time: string;
-  timezone: string;
 }
 
 export interface StationGroupArtifact {
@@ -248,7 +242,6 @@ export interface SiteEnvironmentArtifactData {
 }
 
 export interface ArtifactDataByKind {
-  generic: CurrentTimeArtifactData;
   station_list: StationListArtifactData;
   gnss_series: GnssArtifactData;
   weather: WeatherArtifactData;

@@ -1,14 +1,12 @@
 """LMA 主 Agent：官方 create_agent 接管 ReAct 循环与工具执行。
 
 由自托管 API 调用工厂并注入 PostgreSQL Checkpointer。
-LMA middleware 维护展示元数据及推荐契约。
-官方 SummarizationMiddleware 管理历史；推荐阶段保留在主 Run 并记录耗时。
+LMA middleware 维护消息上下文和用量；官方 SummarizationMiddleware 管理历史。
 """
 
 import logging
 from dataclasses import replace
 from functools import lru_cache
-from time import perf_counter
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
 from langchain.agents.middleware import (
@@ -19,12 +17,12 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ToolCallLimitMiddleware,
 )
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 
-from pydantic import BaseModel, Field
 from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
 from app.agent.context import build_context_usage
+from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
 from app.agent.retry import is_transient_error
@@ -32,7 +30,6 @@ from app.agent.models import create_chat_model, model_max_input_tokens
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
 from app.agent.tools import (
-    get_current_time,
     get_daily_gnss_data,
     list_station_groups,
     list_stations,
@@ -41,20 +38,9 @@ from app.agent.vision import analyze_gnss_chart
 from app.agent.weather import query_weather
 from app.config import get_settings
 
-tools = [get_current_time, list_station_groups, list_stations, get_daily_gnss_data,
+tools = [list_station_groups, list_stations, get_daily_gnss_data,
          query_weather, analyze_gnss_chart, inspect_site_environment]
 logger = logging.getLogger(__name__)
-
-
-def _message_text(message: BaseMessage) -> str:
-    """按 LangChain 官方 BaseMessage.text 属性提取纯文本。"""
-    text = getattr(message, "text", None)
-    if isinstance(text, str):
-        return text
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content
-    return ""
 
 
 def _on_tool_error(exc: Exception, request) -> str:
@@ -71,8 +57,6 @@ def _on_tool_error(exc: Exception, request) -> str:
 
 
 class AgentState(BaseAgentState):
-    recommendations: list[str]
-    recommendations_error: str
     context_usage: dict
 
 
@@ -93,7 +77,6 @@ def _get_llm():
     )
 
 
-
 class LmaMiddleware(AgentMiddleware):
     state_schema = AgentState
 
@@ -106,22 +89,17 @@ class LmaMiddleware(AgentMiddleware):
         )
 
     async def abefore_agent(self, state, runtime):
-        anchor = business_now().isoformat(timespec="seconds")
-        raw_messages = state.get("messages", [])
-        updates = []
-        if raw_messages and raw_messages[-1].type == "human":
-            last_human = raw_messages[-1]
-            updates.append(last_human.model_copy(update={"additional_kwargs": {
-                **last_human.additional_kwargs, "created_at": anchor,
-            }}))
-        return {
-            **({"messages": updates} if updates else {}),
-            "recommendations": [],
-            "recommendations_error": "",
-        }
+        messages = state.get("messages", [])
+        if not messages or not isinstance(messages[-1], HumanMessage):
+            return None
+        message = messages[-1]
+        stamped = stamp_user_message(message)
+        if stamped is message:
+            return None
+        return {"messages": [stamped]}
 
     async def awrap_model_call(self, request, handler):
-        response = await handler(request)
+        response = await handler(request.override(messages=model_messages(request.messages)))
         stamped = []
         for message in response.result:
             if message.type == "ai":
@@ -157,120 +135,6 @@ class LmaMiddleware(AgentMiddleware):
                 model=self.model_name,
             )
         }
-
-    async def aafter_agent(self, state, runtime):
-        answer_completed_at = business_now().isoformat(timespec="milliseconds")
-        started = perf_counter()
-        result = await generate_recommendations(state)
-        logger.info(
-            "recommendation stage completed answer_completed_at=%s terminal_ready_at=%s latency_ms=%.1f",
-            answer_completed_at,
-            business_now().isoformat(timespec="milliseconds"),
-            (perf_counter() - started) * 1000,
-        )
-        return result
-
-RECOMMEND_PROMPT = """你是滑坡监测智能助手的“下一步建议”生成器。根据最近一轮对话（用户问题与助手回答），给出用户接下来最可能继续提出的 2~3 个后续问题。
-
-要求：
-- 每条是一个可直接发送的完整中文问题，不超过 30 字；
-- 与已查询的监测点、时间范围、异常线索自然衔接（如跟进异常时段降雨、调整时间范围、对比其他监测点等）；
-- 建议必须保持证据边界，不预设降雨导致形变或已发生滑坡，不建议给出风险百分比、失稳时间、官方预警等级或撤离命令；
-- 只输出问题本身，不要编号、不要回答、不要解释；
-- 对话与监测业务无关时返回空数组 []。
-
-只输出一个 JSON 数组，例如：["查询该站点异常时段的降雨情况", "查看 9 月至今的累计位移趋势"]"""
-
-
-class RecommendationResult(BaseModel):
-    recommendations: list[str] = Field(
-        default_factory=list,
-        description="下一步建议问题列表，2到3条；对话与监测业务无关时返回空列表",
-    )
-
-
-@lru_cache
-def _get_recommend_llm():
-    """推荐动作生成用轻量 LLM：主模型 + 小输出预算。"""
-    settings = get_settings()
-    return create_chat_model(
-        provider=settings.llm_provider,
-        model=settings.llm_model,
-        api_key=settings.llm_api_key,
-        base_url=settings.llm_base_url,
-        thinking=settings.recommend_thinking,
-        protocol="chat_completions",
-        temperature=0.3,
-        max_tokens=200,
-    )
-
-
-def _validate_recommendations(items: list[str]) -> list[str]:
-    """严格业务级校验：非空时2-3条，每条不超过60字。"""
-    recommendations = [item.strip() for item in items if isinstance(item, str) and item.strip()]
-    if recommendations and not 2 <= len(recommendations) <= 3:
-        raise ValueError("recommendations must contain 2 or 3 items")
-    if any(len(item) > 60 for item in recommendations):
-        raise ValueError("recommendation exceeds 60 characters")
-    return recommendations
-
-
-async def _generate_recommendations(
-    user_text: str,
-    answer_text: str,
-) -> dict:
-    """根据完整的最终回答生成下一步建议。"""
-    if not answer_text.strip():
-        return {
-            "recommendations": [],
-            "recommendations_error": "未找到可用的助手回答，无法生成下一步建议。",
-        }
-    try:
-        structured_llm = _get_recommend_llm().with_structured_output(
-            RecommendationResult, method="json_schema", strict=True
-        )
-        result = await structured_llm.ainvoke(
-            [
-                SystemMessage(content=RECOMMEND_PROMPT),
-                HumanMessage(
-                    content=(
-                        f"用户问题：{user_text}\n\n"
-                        f"助手回答：{answer_text}"
-                    )
-                ),
-            ],
-            # 阻断辅助调用 token 被主消息流捕获，避免混入最终回答。
-            config={"callbacks": []},
-        )
-        raw_items = result.recommendations if isinstance(result, RecommendationResult) else []
-        recommendations = _validate_recommendations(raw_items)
-        return {"recommendations": recommendations, "recommendations_error": ""}
-    except Exception:
-        logger.warning("recommendation generation or validation failed", exc_info=True)
-        return {"recommendations": [], "recommendations_error": "下一步建议生成失败。"}
-
-
-
-async def generate_recommendations(state: AgentState) -> dict:
-    """最终回答完成后按开关生成下一步建议。"""
-    if not get_settings().recommend_enabled:
-        return {
-            "recommendations": [],
-            "recommendations_error": "",
-        }
-    user_text = ""
-    answer_text = ""
-    for msg in reversed(state["messages"]):
-        text = _message_text(msg)
-        if not text.strip():
-            continue
-        if msg.type == "ai" and not answer_text:
-            answer_text = text
-        elif msg.type == "human" and not user_text:
-            user_text = text
-        if user_text and answer_text:
-            break
-    return await _generate_recommendations(user_text, answer_text)
 
 
 def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None):

@@ -169,8 +169,6 @@ class PromptTimeTests(unittest.TestCase):
             llm_base_url="https://example.invalid/v1",
             llm_thinking=True,
             title_thinking=False,
-            recommend_enabled=True,
-            recommend_thinking=False,
             context_summary_max_tokens=2000,
             compress_thinking=False,
             vision_provider="deepseek",
@@ -182,7 +180,6 @@ class PromptTimeTests(unittest.TestCase):
         )
         factories = (
             (title, title._get_title_llm),
-            (graph, graph._get_recommend_llm),
             (summarization, summarization._get_summary_model),
             (vision, vision._get_vision_llm),
         )
@@ -197,7 +194,7 @@ class PromptTimeTests(unittest.TestCase):
             for _, factory in factories:
                 factory.cache_clear()
 
-    def test_all_five_roles_read_independent_thinking_settings(self):
+    def test_all_four_roles_read_independent_thinking_settings(self):
         settings = SimpleNamespace(
             llm_provider="deepseek",
             llm_model="test-model",
@@ -206,8 +203,6 @@ class PromptTimeTests(unittest.TestCase):
             llm_thinking=False,
             context_model_context=1_048_576,
             title_thinking=True,
-            recommend_enabled=True,
-            recommend_thinking=True,
             context_summary_max_tokens=2000,
             compress_thinking=True,
             vision_provider="deepseek",
@@ -220,7 +215,6 @@ class PromptTimeTests(unittest.TestCase):
         factories = (
             (graph, graph._get_llm, {"thinking": {"type": "disabled"}}),
             (title, title._get_title_llm, {"thinking": {"type": "enabled"}}),
-            (graph, graph._get_recommend_llm, {"thinking": {"type": "enabled"}}),
             (summarization, summarization._get_summary_model, {"thinking": {"type": "enabled"}}),
             (vision, vision._get_vision_llm, {"thinking": {"type": "enabled"}}),
         )
@@ -333,18 +327,6 @@ class PromptTimeTests(unittest.TestCase):
     def test_clock_is_aware(self):
         self.assertEqual(business_now().utcoffset(), timedelta(hours=8))
 
-    def test_get_current_time_returns_server_time_and_timezone(self):
-        now = datetime(2026, 9, 14, 15, 30, 0, tzinfo=BUSINESS_TZ)
-        with patch.object(tools, "business_now", return_value=now):
-            content, artifact = tools.get_current_time.func()
-            message = tools.get_current_time.invoke(
-                {"name": "get_current_time", "args": {}, "id": "call-1", "type": "tool_call"}
-            )
-        data = json.loads(content)
-        self.assertEqual(data["current_time"], "2026-09-14 15:30:00")
-        self.assertEqual(data["timezone"], "Asia/Shanghai")
-        self.assertEqual(artifact["data"], data)
-        self.assertEqual(message.artifact["data"], data)
 
     def test_recent_rain_excludes_future_and_handles_missing(self):
         now = datetime(2026, 9, 14, 0, 5, tzinfo=BUSINESS_TZ)
@@ -439,27 +421,6 @@ class PromptTimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "input_tokens"):
             context.build_context_usage({}, max_input_tokens=100_000, model="test")
 
-    def test_recommendations_require_strict_json_and_allow_model_to_decline(self):
-        self.assertEqual(
-            graph._validate_recommendations(["查看近期趋势", "对比同组测点"]),
-            ["查看近期趋势", "对比同组测点"],
-        )
-        self.assertEqual(graph._validate_recommendations([]), [])
-        with self.assertRaises(ValueError):
-            graph._validate_recommendations(["一", "二", "三", "四"])
-        with self.assertRaises(ValueError):
-            graph._validate_recommendations(["单个建议"])
-        with self.assertRaises(ValueError):
-            graph._validate_recommendations(["建议" * 31, "正常建议"])
-
-    def test_responses_api_reasoning_and_text_content_blocks_text_extraction(self):
-        """Responses API: BaseMessage.text 只取得最终文本，忽略 reasoning 块；禁止 str(content)。"""
-        msg = AIMessage(content=[
-            {"type": "reasoning", "reasoning": "思考：分析数据变化情况"},
-            {"type": "text", "text": "最终回答文本内容"}
-        ])
-        self.assertEqual(graph._message_text(msg), "最终回答文本内容")
-
 
     def test_terrain_metrics_are_derived_from_dem_samples(self):
         elevations = [100 + i for i in range(25)] + [100, 118, 104, 122]
@@ -474,18 +435,6 @@ class PromptTimeTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_disabled_recommendations_skip_model_call(self):
-        state = {
-            "messages": [HumanMessage(content="查询站点"), AIMessage(content="查询完成")],
-        }
-        settings = SimpleNamespace(recommend_enabled=False)
-        with patch.object(graph, "get_settings", return_value=settings), patch.object(
-            graph, "_get_recommend_llm"
-        ) as get_llm:
-            update = await graph.generate_recommendations(state)
-        self.assertEqual(update["recommendations"], [])
-        self.assertEqual(update["recommendations_error"], "")
-        get_llm.assert_not_called()
 
     async def test_site_environment_returns_versioned_artifact(self):
         station = SimpleNamespace(

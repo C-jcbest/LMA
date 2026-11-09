@@ -3,12 +3,28 @@
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 
 
+# 客户端只接收明确公开的字段。用白名单而不是拦截已知推理字段，
+# 供应商新增内部字段时默认不外发。
+_PUBLIC_CONTENT_BLOCKS = {"text", "tool_call", "tool_call_chunk", "invalid_tool_call"}
+_PUBLIC_ADDITIONAL_KWARGS = {"metadata", "lc_source", "created_at"}
+_PUBLIC_RESPONSE_METADATA = {"finish_reason", "model_name", "model_provider"}
+
+
+def _pick(source: dict, allowed: set[str]) -> dict:
+    return {key: value for key, value in source.items() if key in allowed}
+
+
 def project_message(message: BaseMessage) -> dict:
     result = message.model_dump(mode="json")
     if isinstance(message, (AIMessage, AIMessageChunk)):
-        # 使用 LangChain 标准 content_blocks，统一 DeepSeek/OpenAI 的 reasoning。
-        result["content"] = message.content_blocks
-    kwargs = result.get("additional_kwargs", {})
+        # checkpoint 保留供应商工具协议所需的推理字段，客户端只接收公开内容。
+        result["content"] = [
+            block for block in message.content_blocks
+            if block.get("type") in _PUBLIC_CONTENT_BLOCKS
+        ]
+        result["response_metadata"] = _pick(result.get("response_metadata", {}), _PUBLIC_RESPONSE_METADATA)
+    kwargs = _pick(result.get("additional_kwargs", {}), _PUBLIC_ADDITIONAL_KWARGS)
+    result["additional_kwargs"] = kwargs
     if kwargs.get("lc_source"):
         kwargs.setdefault("metadata", {})["lc_source"] = kwargs["lc_source"]
     return result
@@ -23,8 +39,6 @@ def project_state(values: dict) -> dict:
         metadata = kwargs.setdefault("metadata", {})
         metadata["lma"] = {
             "context_usage": values.get("context_usage"),
-            "recommendations": values.get("recommendations", []),
-            "recommendations_error": values.get("recommendations_error", ""),
         }
         break
     return {"messages": messages}

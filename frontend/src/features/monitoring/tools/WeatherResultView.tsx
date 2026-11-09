@@ -102,36 +102,36 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
 
   return (
     <div className="space-y-1.5">
-      <div className="text-[11px] text-neutral-400 px-0.5">
+      <div className="text-sm text-muted-foreground wrap-break-word">
         位置: {loc.station_name ? `${loc.station_name} · ` : ''}
         ({loc.latitude}, {loc.longitude})
         {(data.query?.timezone || loc.timezone) && ` · 时区：${data.query?.timezone || loc.timezone}`}
       </div>
       {rain?.recent_24h_window && (
-        <div className="text-[11px] text-neutral-400 px-0.5">
+        <div className="text-sm text-muted-foreground wrap-break-word">
           降雨统计窗口：{rain.recent_24h_window.start_time} 至 {rain.recent_24h_window.end_time}
           （天气服务小时数据）
         </div>
       )}
-      <div className="flex items-center gap-2 text-sm text-neutral-800 dark:text-neutral-200 font-medium pt-1">
-        <CloudRain className="w-4 h-4 text-neutral-500 shrink-0" />
+      <div className="flex flex-wrap items-center gap-2 text-sm text-foreground font-medium pt-1">
+        <CloudRain className="w-4 h-4 text-muted-foreground shrink-0" />
         <span>{cur.condition ?? '-'}</span>
         <span className="text-muted-foreground font-normal text-xs">
           {cur.temperature_2m ?? '-'}℃（体感 {cur.apparent_temperature ?? '-'}℃，湿度{' '}
           {cur.relative_humidity_2m ?? '-'}%）
         </span>
       </div>
-      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-3">
+      <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 min-[480px]:grid-cols-2">
         {cells.map((c, i) => (
           <div key={i} className="flex flex-col gap-0.5 min-w-0">
-            <dt className="text-[11px] text-muted-foreground truncate">{c.label}</dt>
-            <dd className="font-mono text-foreground/90 font-medium text-xs truncate">{c.value}</dd>
+            <dt className="text-sm text-muted-foreground wrap-break-word">{c.label}</dt>
+            <dd className="text-foreground text-sm wrap-break-word">{c.value}</dd>
           </div>
         ))}
       </dl>
       {dates.length > 0 && (
-        <div className="border border-border/60 rounded-lg bg-background/60 max-h-64 overflow-auto overscroll-contain">
-          <table className="w-full text-left text-xs border-collapse">
+        <div className="border border-border/60 rounded-lg bg-background/60 overflow-x-auto">
+          <table className="min-w-[34rem] w-full text-left text-xs border-collapse">
             <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
               <tr>
                 <th className="py-2 px-3 whitespace-nowrap">日期</th>
@@ -141,10 +141,10 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
                 <th className="py-2 px-3 whitespace-nowrap">最大风速 (km/h)</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border/40 text-neutral-800 font-mono text-[11px]">
+            <tbody className="divide-y divide-border/40 text-foreground text-xs">
               {dates.map((d: string) => (
-                <tr key={d} className="hover:bg-neutral-50/70 transition-colors">
-                  <td className="py-1 px-3 text-neutral-600 whitespace-nowrap">{d}</td>
+                <tr key={d} className="hover:bg-muted/50 transition-colors">
+                  <td className="py-1 px-3 text-muted-foreground whitespace-nowrap">{d}</td>
                   <td className="py-1 px-3">{histRain.get(d) ?? '-'}</td>
                   <td className="py-1 px-3">{fcByDate.get(d)?.rain ?? '-'}</td>
                   <td className="py-1 px-3">{fcByDate.get(d)?.prob ?? '-'}</td>

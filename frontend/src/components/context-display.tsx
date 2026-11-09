@@ -21,7 +21,6 @@ export type TokenUsage = {
   inputTokens?: number | undefined;
   cachedInputTokens?: number | undefined;
   outputTokens?: number | undefined;
-  reasoningTokens?: number | undefined;
 };
 
 const formatTokenCount = (tokens: number): string => {
@@ -207,7 +206,6 @@ const getContextSegments = (
     { label: "输入", tokens: usage.inputTokens ?? 0 },
     { label: "缓存输入", tokens: usage.cachedInputTokens ?? 0 },
     { label: "输出", tokens: usage.outputTokens ?? 0 },
-    { label: "推理", tokens: usage.reasoningTokens ?? 0 },
   ].filter((segment) => segment.tokens > 0);
 };
 

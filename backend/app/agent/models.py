@@ -1,6 +1,6 @@
 """统一模型构造入口：官方 init_chat_model 按 Provider 选择 integration。
 
-五个业务角色（主 Agent / 标题 / 推荐 / 摘要 / 视觉）只调用本工厂，各自传入独立
+四个业务角色（主 Agent / 标题 / 摘要 / 视觉）只调用本工厂，各自传入独立
 thinking 开关与调用参数；Provider 层把布尔思考开关显式映射为供应商官方参数，不靠
 模型名猜测 Provider，也不为每个角色维护独立 Provider/Endpoint 配置。
 

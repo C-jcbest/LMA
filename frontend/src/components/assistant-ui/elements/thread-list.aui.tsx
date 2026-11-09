@@ -120,7 +120,7 @@ const ThreadListPagination: FC<{ autoLoad: boolean }> = ({ autoLoad }) => {
       <Button
         ref={buttonRef}
         variant="ghost"
-        className="mt-1 w-full cursor-pointer text-xs text-neutral-500 hover:text-neutral-900"
+        className="mt-1 w-full cursor-pointer text-xs text-muted-foreground hover:text-foreground"
         aria-busy={isLoadingMore}
       >
         {isLoadingMore && <Loader2Icon className="size-3.5 animate-spin" aria-hidden="true" />}
@@ -151,7 +151,7 @@ export const ThreadListSearch = forwardRef<
         aria-label="搜索会话"
         placeholder="搜索已加载会话"
         className={cn(
-          "h-8 border-transparent bg-transparent ps-8 text-sm shadow-none hover:bg-white/70 focus-visible:bg-white",
+          "h-8 border-transparent bg-transparent ps-8 text-sm shadow-none hover:bg-muted focus-visible:bg-background",
           className,
         )}
         {...props}
@@ -316,7 +316,7 @@ export const ThreadListNew = forwardRef<
         variant="outline"
         data-slot="aui_thread-list-new"
         className={cn(
-          "h-8 shrink-0 justify-start gap-2 rounded-md border-neutral-200 bg-background px-2.5 text-sm font-medium text-neutral-800 shadow-xs hover:bg-neutral-50 data-active:bg-neutral-100",
+          "h-8 shrink-0 justify-start gap-2 rounded-md bg-background px-2.5 text-sm font-medium text-foreground shadow-xs hover:bg-muted/50",
           className,
         )}
         {...props}

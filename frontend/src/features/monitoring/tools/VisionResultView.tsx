@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 import type { ChartPointArtifact, VisionArtifactData } from '@/types/envelope';
 import { toFiniteGnssNumber } from './gnssUtils';
 import { EmptyResultView } from './EmptyResultView';
@@ -39,6 +40,7 @@ const buildPolyline = (
 };
 
 export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data }) => {
+  const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const visibleImages = data.images.filter((image) => CHART_TITLES[image.name]);
   const chartPoints = data.chart_points;
   if (chartPoints.length === 0 && visibleImages.length === 0) {
@@ -49,10 +51,10 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
   const candidates = obs.candidates || [];
 
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-[11px] text-neutral-400 px-0.5">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm text-muted-foreground">
         <span>
-          测点: <strong className="text-neutral-700">{data?.station_name || 'GNSS'}</strong>
+          测点: <strong className="text-foreground">{data?.station_name || 'GNSS'}</strong>
           {data?.begin_time && data?.end_time && `（${data.begin_time.slice(0, 10)} ~ ${data.end_time.slice(0, 10)}）`}
         </span>
         <span>
@@ -65,22 +67,34 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
       {/* 后端渲染的分析图 PNG（原始时序 / 累计位移 / 合成位移） */}
       {visibleImages.length > 0 && (
         <div className="space-y-1.5">
-          {visibleImages.map((img, i) => {
+          {visibleImages.map((img) => {
             const title = img.title || CHART_TITLES[img.name] || img.name;
+            const expanded = expandedImage === img.name;
             return (
               <figure
                 key={img.name}
                 className="border border-border/60 rounded-lg bg-background/60 overflow-hidden max-w-3xl"
               >
-                <figcaption className="px-3 py-1.5 text-[11px] font-medium text-muted-foreground border-b border-border/60 bg-muted/40">
-                  图{i + 1} · {title}
+                <figcaption className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-2 text-sm font-medium">
+                  <span>{title}</span>
+                  <button
+                    type="button"
+                    className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    aria-label={`${expanded ? '缩小' : '放大'}${title}`}
+                    aria-pressed={expanded}
+                    onClick={() => setExpandedImage(expanded ? null : img.name)}
+                  >
+                    {expanded ? <ZoomOut className="size-4" /> : <ZoomIn className="size-4" />}
+                  </button>
                 </figcaption>
+                <div className="overflow-x-auto" tabIndex={expanded ? 0 : undefined} aria-label={expanded ? title : undefined}>
                 <img
                   src={`data:image/png;base64,${img.png_base64}`}
                   alt={title}
-                  className="w-full h-auto block"
+                  className={`block h-auto w-full ${expanded ? 'min-w-[48rem]' : ''}`}
                   loading="lazy"
                 />
+                </div>
               </figure>
             );
           })}
@@ -96,7 +110,7 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
             const chart = buildPolyline(data.chart_points, key);
             return (
               <div key={key}>
-                <div className="flex items-center justify-between text-[10px] text-neutral-400 mb-0.5">
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-0.5">
                   <span>{label}</span>
                   {chart && (
                     <span className="font-mono">
@@ -108,21 +122,21 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
                   <svg
                     viewBox="0 0 100 100"
                     preserveAspectRatio="none"
-                    className="w-full h-14 bg-neutral-50/80 border border-neutral-100 rounded"
+                    className="w-full h-14 bg-muted/40 border border-border rounded"
                   >
                     {chart.lines.map((line, index) => (
                       <polyline
                         key={index}
                         points={line}
                         fill="none"
-                        stroke="#2563eb"
+                        stroke="var(--chart-north)"
                         strokeWidth="1.2"
                         vectorEffect="non-scaling-stroke"
                       />
                     ))}
                   </svg>
                 ) : (
-                  <div className="h-14 flex items-center justify-center text-[10px] text-neutral-300 bg-neutral-50/80 border border-neutral-100 rounded">
+                  <div className="h-14 flex items-center justify-center text-xs text-muted-foreground bg-muted/40 border border-border rounded">
                     无有效数据
                   </div>
                 )}
@@ -135,9 +149,9 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
       {/* 形态异常候选（轻量文本导引线，去外层黄色卡片与内层卡片） */}
       {candidates.length > 0 && (
         <div className="space-y-2 pt-1 max-w-3xl">
-          <div className="text-[11px] font-medium text-foreground/80 flex items-center gap-1.5">
+          <div className="text-xs font-medium text-foreground flex items-center gap-1.5">
             <span>形态异常候选</span>
-            <span className="font-mono text-xs text-amber-600 dark:text-amber-400 font-semibold">
+            <span className="text-xs text-status-attention  font-semibold">
               {candidates.length}
             </span>
           </div>
@@ -145,12 +159,12 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
             {candidates.map((c, i) => (
               <div
                 key={i}
-                className="border-s border-amber-300/60 ps-3 py-0.5 text-xs"
+                className="border-s border-status-attention/60 ps-3 py-0.5 text-xs"
               >
-                <div className="text-[11px] font-mono text-muted-foreground">
+                <div className="text-xs text-muted-foreground">
                   {c.metric} · {String(c.start_at).slice(0, 16)} — {String(c.end_at).slice(5, 16)}
                 </div>
-                <div className="mt-0.5 text-foreground/85 leading-relaxed">
+                <div className="mt-0.5 text-foreground leading-relaxed">
                   {c.description || '（未描述）'}
                 </div>
               </div>
@@ -164,29 +178,29 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
         (obs.trends && obs.trends.length > 0) ||
         (obs.turning_points && obs.turning_points.length > 0)) && (
         <div className="space-y-1.5 pt-1 max-w-3xl border-s border-border/60 ps-3">
-          <div className="text-[11px] font-medium text-muted-foreground">观察结果</div>
+          <div className="text-xs font-medium text-muted-foreground">观察结果</div>
           {obs.fact_text && (
-            <div className="text-xs text-foreground/85 leading-relaxed">{obs.fact_text}</div>
+            <div className="text-xs text-foreground leading-relaxed">{obs.fact_text}</div>
           )}
           {((obs.trends?.length ?? 0) > 0 ||
             (obs.turning_points?.length ?? 0) > 0) && (
-            <ul className="space-y-0.5 text-[11px] text-foreground/80">
+            <ul className="space-y-0.5 text-xs text-foreground">
               {obs.trends?.map((t: string, i: number) => (
                 <li key={`t${i}`} className="flex gap-1.5">
-                  <span className="text-muted-foreground/60">•</span>
+                  <span className="text-muted-foreground">•</span>
                   <span>趋势：{t}</span>
                 </li>
               ))}
               {obs.turning_points?.map((t: string, i: number) => (
                 <li key={`p${i}`} className="flex gap-1.5">
-                  <span className="text-muted-foreground/60">•</span>
+                  <span className="text-muted-foreground">•</span>
                   <span>拐点：{t}</span>
                 </li>
               ))}
             </ul>
           )}
           {obs.image_quality && (
-            <div className="text-[10px] text-muted-foreground/70">图像质量：{obs.image_quality}</div>
+            <div className="text-xs text-muted-foreground">图像质量：{obs.image_quality}</div>
           )}
         </div>
       )}

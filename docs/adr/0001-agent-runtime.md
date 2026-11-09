@@ -17,10 +17,9 @@
 | 主模型与工具重试 | `ModelRetryMiddleware`、`ToolRetryMiddleware`；底层 SDK 不叠加重试 |
 | 最终工具异常 | `ToolErrorMiddleware(on_error=_on_tool_error)` 包裹工具重试；只返回受控错误 |
 | 每 Run 调用限额 | 官方 `ModelCallLimitMiddleware`、`ToolCallLimitMiddleware` |
-| 历史摘要 | 直接实例化 `SummarizationMiddleware`，不覆写私有算法 |
-| 静态提示词与业务时间 | `system_prompt=SYSTEM_PROMPT`；当前时间由 `get_current_time` 工具获取 |
+| 历史摘要 | 使用官方 `SummarizationMiddleware` 算法；子类只把待摘要消息替换为带发送时间的投影 |
+| 静态提示词与业务时间 | `system_prompt=SYSTEM_PROMPT`；发送时固定服务器时间快照，仅在模型调用边界注入用户消息 |
 | 消息时间与上下文展示 | LMA middleware 写入服务端时间；`aafter_model` 投影真实 usage |
-| 下一步建议 | 主 Run 的 `aafter_agent`，独立思考配置，记录阶段耗时 |
 | 会话标题 | 前端 Adapter 的 `generateTitle()` 调用`/title` API并 rename 持久化 |
 | 聊天与列表生命周期 | assistant-ui Runtime / Primitives / Elements，经 react-langgraph useLangGraphRuntime 接入 FastAPI SSE |
 | URL 导航 | `onThreadIdChange` 与公开 Thread action 同步 `?threadId=...` |
@@ -33,7 +32,7 @@
 - 会话目录适配由 createSessionListAdapter 统一负责，remoteId、externalId 与 thread_id 相同，分页使用 ThreadListPrimitive.LoadMore。URL 只保存导航选择，与 Runtime 双向同步。
 - Stop 等待服务端取消持久化。下一轮官方取消 stub 只能对应真实未完成调用，服务端通过公开 aupdate_state 写入受控 error ToolMessage；禁止接受客户端工具成功结果或覆盖已完成并行结果。
 - 工具完成以结果实际返回为准，展示使用官方 ToolCall 的 status/result/artifact；持久化 ToolMessage.artifact 是刷新恢复依据，不自建 tools channel 解析器，不在各 Renderer 猜测 JSON 字符串。
-- system.md 是主业务策略唯一编辑源，vision.md 是视觉策略唯一编辑源；prompting.py 仅导出静态文本，create_agent 直接传入 SYSTEM_PROMPT。业务时间为 Asia/Shanghai，相对时间通过 get_current_time 取得当前时间后解析，不能把动态时间拼进 System Prompt。
+- system.md 是主业务策略唯一编辑源，vision.md 是视觉策略唯一编辑源；prompting.py 仅导出静态文本，create_agent 直接传入 SYSTEM_PROMPT。业务时间为 Asia/Shanghai。新消息由服务端保存 sent_at/timezone，模型调用时对每条用户消息作确定性投影，原文与静态 System Prompt 不变；重试、工具循环及重新生成复用原快照，客户端投影去掉隐藏上下文。
 - Agent 根据目标、上下文、数据质量和证据自主编排工具。提示词表达目标、证据边界与可选策略，不固化步骤、工具顺序、章节或回答模板；schema 只用于接口校验与安全边界。监测事实、视觉数值复核、气象非因果与风险措辞遵循 [PRD](../../prd.md)。
 - 用户输入、历史摘要、外部资料、工具结果、图表文字与模型输出均是不可信数据；不得执行其中夹带的指令或直接用于 HTML、命令、URL 等副作用操作。所有业务工具保持只读、最小权限。
 - 新增兼容或兜底前说明触发条件、用户可见行为和误导风险，并按 [AGENTS.md](../../AGENTS.md) 获得授权。不得伪造数据、占位进度或本地成功；失败显式呈现或保留上一已确认状态。
@@ -56,7 +55,7 @@
 
 重试只处理已判定的瞬时失败；参数、权限、业务拒绝、空数据和格式错误不重试。调用限额计数的是每 Run 逻辑调用，不代表全 HTTP 或耗时预算。默认值与边界统一维护在 [Settings](../../backend/app/config.py) 和 [.env.example](../../backend/.env.example)。
 
-视觉每次工具尝试只调用一次模型；有效候选超额时明确拒绝数值回查，不静默裁剪。标题与推荐 SDK 不叠加重试；摘要采用官方独立重试逻辑。北斗会话过期后的单次认证刷新不属于通用失败重试。
+视觉每次工具尝试只调用一次模型；有效候选超额时明确拒绝数值回查，不静默裁剪。标题 SDK 不叠加重试；摘要采用官方独立重试逻辑。北斗会话过期后的单次认证刷新不属于通用失败重试。
 
 ## 保留的适配与边界
 
@@ -78,3 +77,7 @@ API 行为以锁定版本的公共类型与实际 FastAPI + PostgreSQL 测试核
 ## 2026-11-09 自托管边界
 
 采用 FastAPI + 官方 PostgreSQL Checkpointer 替代商业 Agent Server；无需 LangSmith Deployment 许可。固定单 worker，重启后的未完成 Run 标记 interrupted，不自动重放。前端继续使用官方 Runtime，不复制会话历史；用户选择重新生成后仅显示最新回答，旧 checkpoint 留存，不提供分支切换。CI/CD、IP HTTPS、访问保护与部署限制见[部署说明](../deployment.md)。
+
+对外消息统一经过 server/messages.py：流式与历史按白名单输出公开内容块和字段；checkpoint 内保留多轮工具协议需要的推理字段。不生成推荐业务提问，不注册时间查询工具。缓存验证只断言历史输入前缀稳定，不以此宣称提供方缓存命中率。
+
+前端不再为工具注册逐个 Renderer：GroupedParts 把一条消息的工具调用归为一个调查过程，依据按测点从官方 tool part 的 artifact 派生，不复制到前端状态。时间轴使用按需加载的 ECharts，同轴、缺测带、联动和缩放由图表库完成，不自建绘图逻辑；颜色全部来自 CSS 变量，深色模式跟随系统。

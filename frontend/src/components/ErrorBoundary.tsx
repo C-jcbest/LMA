@@ -59,25 +59,25 @@ export class ErrorBoundary extends Component<Props, State> {
 
       if (isWindow) {
         return (
-          <div className="flex-1 h-full flex flex-col items-center justify-center p-6 bg-white text-neutral-800">
+          <div className="flex-1 h-full flex flex-col items-center justify-center p-6 bg-background text-foreground">
             <div className="max-w-md w-full rounded-2xl border border-red-200/80 bg-red-50/50 p-6 text-center shadow-sm space-y-4">
               <div className="w-10 h-10 mx-auto rounded-xl bg-red-100/80 flex items-center justify-center text-red-600">
                 <AlertCircle className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-neutral-900">
+                <h3 className="text-sm font-semibold text-foreground">
                   {this.props.fallbackTitle || '会话界面加载异常'}
                 </h3>
-                <p className="mt-1 text-xs text-neutral-500">
+                <p className="mt-1 text-xs text-muted-foreground">
                   界面渲染发生不可恢复的错误，请尝试刷新页面。
                 </p>
               </div>
               <button
                 type="button"
                 onClick={this.handleReload}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-neutral-200 text-xs font-medium text-neutral-800 hover:bg-neutral-50 shadow-xs transition-all active:scale-95"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-background border border-border text-xs font-medium text-foreground hover:bg-muted/50 shadow-xs transition-all active:scale-95"
               >
-                <RefreshCw className="w-3.5 h-3.5 text-neutral-500" />
+                <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
                 <span>刷新页面</span>
               </button>
             </div>
@@ -86,25 +86,25 @@ export class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div className="my-2 rounded-xl border border-neutral-200 bg-neutral-50 p-3 text-xs text-neutral-700 shadow-xs">
+        <div className="my-2 rounded-xl border border-border bg-muted/50 p-3 text-xs text-foreground shadow-xs">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-neutral-400 shrink-0" />
+              <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0" />
               <span>{this.props.fallbackTitle || '该内容暂时无法显示'}</span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={this.handleReload}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white border border-neutral-200 text-[11px] font-medium text-neutral-700 hover:bg-neutral-100 transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-background border border-border text-xs font-medium text-foreground hover:bg-muted transition-colors"
               >
-                <RotateCcw className="w-3 h-3 text-neutral-500" />
+                <RotateCcw className="w-3 h-3 text-muted-foreground" />
                 <span>重新加载</span>
               </button>
               <button
                 type="button"
                 onClick={this.handleHide}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-neutral-400 hover:text-neutral-700 transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors"
               >
                 <EyeOff className="w-3 h-3" />
                 <span>隐藏</span>

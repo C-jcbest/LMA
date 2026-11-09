@@ -4,7 +4,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-
 import httpx
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.messages.utils import convert_to_openai_messages
@@ -16,7 +15,7 @@ from runtime_fixtures import ScriptedModel
 
 class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        settings = SimpleNamespace(recommend_enabled=False, agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
+        settings = SimpleNamespace(agent_max_retries=2, agent_retry_initial_delay=0.5, agent_retry_max_delay=4.0,
             agent_model_run_limit=20, agent_tool_run_limit=40, llm_model="test", context_token_threshold=800000,
             context_model_context=1048576, context_keep_tokens=400000, context_summary_max_tokens=2000)
         for module in (graph, summarization):
@@ -46,16 +45,15 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             "仅取得部分证据",
             tool_call_id="call-partial",
             tool_name="partial_tool",
-            kind="generic",
+            kind="station_list",
             data={
-                "current_time": "2026-09-21 12:00:00",
-                "timezone": "Asia/Shanghai",
+                "total": 0, "stations": [],
             },
         )
         self.assertEqual(message.status, "error")
         self.assertIs(message.artifact, artifact)
         self.assertEqual(artifact["version"], 1)
-        self.assertEqual(artifact["kind"], "generic")
+        self.assertEqual(artifact["kind"], "station_list")
         self.assertEqual(artifact["status"], "error")
         self.assertEqual(artifact["error"]["message"], "仅取得部分证据")
 
@@ -377,10 +375,3 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.artifact["data"]["observations"]["candidates"], [])
         self.assertNotIn("message", message.artifact["data"])
         recheck.assert_awaited_once()
-
-
-    async def test_get_current_time_success_in_agent_run(self):
-        message, _ = await self.run_tool(tools.get_current_time, {})
-        self.assertEqual(message.status, "success")
-        self.assertIn("current_time", message.artifact["data"])
-        self.assertEqual(message.artifact["data"]["timezone"], "Asia/Shanghai")

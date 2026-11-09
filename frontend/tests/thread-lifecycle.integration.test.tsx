@@ -125,54 +125,15 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     expect(mockClient.listSessions).toHaveBeenCalledTimes(3);
   });
 
-  it('P5: Composer 与 ThreadWelcome 完整集成业务快捷提问与中文提示', async () => {
+  it('新会话保留直接输入入口，不再提供推荐问题或快捷提问菜单', async () => {
     render(<App />);
-
-    // 1. 欢迎区文案与快捷推荐按钮
-    expect(screen.getByText('您好，我是滑坡连续监测智能体')).toBeInTheDocument();
-    expect(
-      screen.getByText('可以向我咨询监测点状态、形变位移、气象分析或现场多源环境证据。')
-    ).toBeInTheDocument();
-
-    const welcomePromptBtn = screen.getByText('ZJ-MS10 2025年10月监测数据稳定性如何');
-    expect(welcomePromptBtn).toBeInTheDocument();
-
-    // 2. 输入框 placeholder 与推荐提问快捷入口
-    const input = screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境…');
-    expect(input).toBeInTheDocument();
-    expect(screen.getByLabelText('推荐业务提问')).toBeInTheDocument();
-
-    // 3. 点击推荐问题，输入框被自动填充
-    await act(async () => {
-      fireEvent.click(welcomePromptBtn);
-    });
-
-    await waitFor(() => {
-      expect(input).toHaveValue('ZJ-MS10 2025年10月监测数据稳定性如何');
-    });
-  });
-
-  it('P5: ComposerQuickActions 快捷菜单点击呼出浮层并选择业务问题', async () => {
-    render(<App />);
-
-    const quickActionBtn = screen.getByLabelText('推荐业务提问');
-    expect(quickActionBtn).toBeInTheDocument();
-
-    // 点击呼出 popover
-    await userEvent.click(quickActionBtn);
-
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('推荐监测业务提问')).toBeInTheDocument();
-    const promptItem = within(dialog).getByText('查询 ZJ-MS04 站点周边近期的天气与降雨情况');
-    expect(promptItem).toBeInTheDocument();
-
-    // 点击第二个 prompt
-    await userEvent.click(promptItem);
-
-    const input = screen.getByPlaceholderText('询问监测数据、变化趋势、降雨关联或场地环境…');
-    await waitFor(() => {
-      expect(input).toHaveValue('查询 ZJ-MS04 站点周边近期的天气与降雨情况');
-    });
+    expect(screen.getByRole('heading', { name: '今天要查哪个测点？' })).toBeInTheDocument();
+    const input = screen.getByRole('textbox', { name: '输入监测问题' });
+    expect(input).toHaveAttribute('placeholder', '询问监测数据、变化趋势、降雨关联或场地环境…');
+    expect(screen.queryByLabelText('推荐业务提问')).not.toBeInTheDocument();
+    expect(screen.queryByText('ZJ-MS10 2025年10月监测数据稳定性如何')).not.toBeInTheDocument();
+    await userEvent.type(input, '查看这个测点近期的变化');
+    expect(input).toHaveValue('查看这个测点近期的变化');
   });
 
   it('点击服务配置能正常呼出 ServiceSettingsDialog，修改 API URL 后更新客户端', async () => {

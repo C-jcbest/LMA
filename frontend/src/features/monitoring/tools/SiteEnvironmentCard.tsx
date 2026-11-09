@@ -8,12 +8,11 @@ import {
   StyleSpecification,
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Compass, Expand, Layers3, MapPin, Mountain, X } from 'lucide-react';
+import { ToggleGroup } from 'radix-ui';
 import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
 
 interface SiteEnvironmentCardProps {
   environment: SiteEnvironmentArtifactData;
-  limitations?: string[];
 }
 
 type BaseLayer = 'satellite' | 'terrain';
@@ -85,17 +84,13 @@ const validStations = (environment: SiteEnvironmentArtifactData): StationArtifac
   });
 };
 
-export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({
-  environment,
-  limitations = [],
-}) => {
+export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ environment }) => {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
   const [baseLayer, setBaseLayer] = useState<BaseLayer>('satellite');
   const [geologyVisible, setGeologyVisible] = useState(true);
   const [faultsVisible, setFaultsVisible] = useState(true);
-  const [expanded, setExpanded] = useState(false);
   const [mapError, setMapError] = useState('');
   const stations = validStations(environment);
   const center = stations[0];
@@ -244,176 +239,63 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({
     setFaultsVisible((prev) => !prev);
   };
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      try {
-        mapRef.current?.resize();
-      } catch (err) {
-        console.warn('Map resize error:', err);
-      }
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [expanded]);
-
-  useEffect(() => {
-    if (!expanded) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setExpanded(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [expanded]);
-
   if (!center) {
-    return (
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-        站点缺少有效的 WGS84 经纬度，无法绘制地图。
-      </div>
-    );
+    return <p className="text-sm text-muted-foreground">站点缺少有效的 WGS84 经纬度，无法绘制地图。</p>;
   }
 
   const terrain = environment.terrain;
   const geology = environment.geology;
+  const faults = environment.faults;
+  const layerToggleClass = 'min-h-8 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-muted data-[state=on]:text-foreground aria-pressed:bg-muted aria-pressed:text-foreground';
 
   return (
-    <>
-      {expanded && (
-        <button
-          key="map-backdrop"
-          type="button"
-          className="fixed inset-0 z-[70] bg-black/45 backdrop-blur-[2px]"
-          onClick={() => setExpanded(false)}
-          aria-label="关闭展开地图"
-        />
-      )}
-      {expanded && (
-        <div key="map-placeholder" className="h-80 rounded-xl border border-transparent" aria-hidden="true" />
-      )}
-      <section
-        key="map-section"
-        className={`overflow-hidden rounded-xl border border-stone-300 bg-[#f4f1e8] shadow-sm ${
-          expanded ? 'fixed inset-4 z-[80] flex flex-col shadow-2xl sm:inset-8' : ''
-        }`}
-      >
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-300 bg-[#252a24] px-4 py-3 text-stone-100">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <ToggleGroup.Root
+          type="single"
+          aria-label="底图"
+          value={baseLayer}
+          onValueChange={(next) => {
+            if (next) handleToggleBaseLayer(next as BaseLayer);
+          }}
+          className="flex gap-1"
+        >
+          <ToggleGroup.Item value="satellite" className={layerToggleClass}>卫星</ToggleGroup.Item>
+          <ToggleGroup.Item value="terrain" className={layerToggleClass}>地形</ToggleGroup.Item>
+        </ToggleGroup.Root>
+        <div className="flex gap-1">
+          <button type="button" onClick={handleToggleGeology} aria-pressed={geologyVisible} className={layerToggleClass}>地层</button>
+          <button type="button" onClick={handleToggleFaults} aria-pressed={faultsVisible} className={layerToggleClass}>构造线</button>
+        </div>
+      </div>
+
+      <div className="relative isolate overflow-hidden rounded-lg border">
+        <div ref={mapNodeRef} className="h-[min(60dvh,32rem)] w-full" />
+      </div>
+      {mapError && <p className="text-sm text-muted-foreground">{mapError}</p>}
+
+      <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div>
-          <div className="flex items-center gap-2 text-sm font-semibold tracking-wide">
-            <MapPin className="h-4 w-4 text-amber-400" />
-            {center.station_name} · 现场环境底图
-          </div>
-          <div className="mt-1 font-mono text-[10px] text-stone-400">
-            WGS84 {Number(center.latitude).toFixed(6)}, {Number(center.longitude).toFixed(6)}
-          </div>
+          <dt className="text-muted-foreground">坐标（WGS84）</dt>
+          <dd className="tabular-nums">{Number(center.latitude).toFixed(6)}, {Number(center.longitude).toFixed(6)}</dd>
         </div>
-        <div className="flex items-center gap-1 rounded-lg border border-white/15 bg-black/20 p-1">
-          {(['satellite', 'terrain'] as BaseLayer[]).map((layer) => (
-            <button
-              key={layer}
-              type="button"
-              onClick={() => handleToggleBaseLayer(layer)}
-              className={`rounded-md px-2.5 py-1 text-[11px] transition-colors ${
-                baseLayer === layer ? 'bg-amber-400 text-stone-950' : 'text-stone-300 hover:bg-white/10'
-              }`}
-            >
-              {layer === 'satellite' ? '卫星' : '地形'}
-            </button>
-          ))}
-          <button
-            type="button"
-            onClick={handleToggleGeology}
-            className={`rounded-md px-2 py-1 text-[11px] ${
-              geologyVisible ? 'bg-stone-100/20 text-white' : 'text-stone-400'
-            }`}
-            aria-pressed={geologyVisible}
-          >
-            地层
-          </button>
-          <button
-            type="button"
-            onClick={handleToggleFaults}
-            className={`rounded-md px-2 py-1 text-[11px] ${
-              faultsVisible ? 'bg-red-500/25 text-red-100' : 'text-stone-400'
-            }`}
-            aria-pressed={faultsVisible}
-          >
-            构造线
-          </button>
-          <button
-            type="button"
-            onClick={() => setExpanded((value) => !value)}
-            className="ml-1 rounded-md p-1.5 text-stone-300 hover:bg-white/10"
-            aria-label={expanded ? '收起地图' : '展开地图'}
-            title={expanded ? '收起地图' : '展开地图'}
-          >
-            {expanded ? <X className="h-4 w-4" /> : <Expand className="h-3.5 w-3.5" />}
-          </button>
+        <div>
+          <dt className="text-muted-foreground">地形</dt>
+          <dd>
+            {terrain
+              ? `高程 ${terrain.dem_elevation_m ?? '—'} m · 坡度 ${terrain.slope_degrees ?? '—'}° · 坡向 ${terrain.aspect || '—'} · 500 m 起伏 ${terrain.relief_500m_m ?? '—'} m`
+              : '暂无地形数据'}
+          </dd>
         </div>
-      </header>
-
-      <div className={`relative isolate overflow-hidden ${expanded ? 'min-h-0 flex-1' : ''}`}>
-        <div ref={mapNodeRef} className={`w-full ${expanded ? 'h-full' : 'h-80'}`} />
-        <div className="pointer-events-none absolute left-3 top-3 max-w-[15rem] rounded-lg border border-white/40 bg-stone-950/80 px-3 py-2 text-[10px] text-stone-100 shadow-lg backdrop-blur-sm">
-          <div className="font-semibold text-amber-300">当前关注：{center.station_name}</div>
-          <div className="mt-1 text-stone-200">{stations.length > 1 ? `同组另有 ${stations.length - 1} 个有效测点，可点击标记查看` : '当前仅有该站点具备有效坐标'}</div>
-          {center.station_status && <div className="mt-1 text-stone-300">设备状态：{center.station_status}</div>}
+        <div>
+          <dt className="text-muted-foreground">地质</dt>
+          <dd>{geology ? [geology.name, geology.lithology || geology.age].filter(Boolean).join(' · ') || '暂无地层名称' : '暂无地质数据'}</dd>
         </div>
-      </div>
-      {mapError && <div className="border-t border-amber-200 bg-amber-50 px-3 py-2 text-[10px] text-amber-800">{mapError}</div>}
-
-      <div className="grid gap-px border-t border-stone-300 bg-stone-300 sm:grid-cols-3">
-        <div className="bg-[#faf8f1] p-3">
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
-            <Mountain className="h-3.5 w-3.5" />地形
-          </div>
-          {terrain ? (
-            <>
-              <div className="mt-1.5 text-xs text-stone-800">
-                高程 {terrain.dem_elevation_m ?? '—'} m · 坡度 {terrain.slope_degrees ?? '—'}°
-              </div>
-              <div className="mt-1 text-[10px] text-stone-500">
-                坡向 {terrain.aspect || '—'} · 500 m 起伏 {terrain.relief_500m_m ?? '—'} m
-              </div>
-            </>
-          ) : (
-            <div className="mt-1.5 text-xs text-stone-500">暂无地形数据</div>
-          )}
+        <div>
+          <dt className="text-muted-foreground">构造</dt>
+          <dd className="wrap-break-word">{faults.note}</dd>
         </div>
-        <div className="bg-[#faf8f1] p-3">
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
-            <Layers3 className="h-3.5 w-3.5" />地质
-          </div>
-          {geology ? (
-            <>
-              <div className="mt-1.5 text-xs text-stone-800">{geology.name || '暂无地层名称'}</div>
-              <div className="mt-1 text-[10px] text-stone-500">{geology.lithology || geology.age || '暂无岩性或年代数据'}</div>
-            </>
-          ) : (
-            <div className="mt-1.5 text-xs text-stone-500">暂无地质数据</div>
-          )}
-        </div>
-        <div className="bg-[#faf8f1] p-3">
-          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">
-            <Compass className="h-3.5 w-3.5" />图层与测点
-          </div>
-          <div className="mt-1.5 text-xs text-stone-800">同组 {stations.length} 个有效坐标测点</div>
-          <div className="mt-1 text-[10px] text-stone-500">金色为当前站点 · 浅色为同组站点</div>
-        </div>
-      </div>
-
-      {limitations.length > 0 && (
-        <details className="border-t border-stone-300 bg-[#ece8dc] px-3 py-2 text-[10px] text-stone-600">
-          <summary className="cursor-pointer font-medium text-stone-700">资料限制</summary>
-          <ul className="mt-2 list-disc space-y-1 pl-4">
-            {limitations.map((item, index) => <li key={index}>{item}</li>)}
-          </ul>
-        </details>
-      )}
-    </section>
-    </>
+      </dl>
+    </div>
   );
 };

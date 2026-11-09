@@ -22,22 +22,17 @@ class Settings(BaseSettings):
 
     # 主模型 Provider 标识（deepseek/openai）；决定官方 integration 与 thinking 参数映射，不靠模型名猜测。
     llm_provider: str = "deepseek"
-    # 主模型 OpenAI 兼容接口地址；标题、推荐、摘要复用此端点，视觉模型单独配置。
+    # 主模型 OpenAI 兼容接口地址；标题、摘要复用此端点，视觉模型单独配置。
     llm_base_url: str = "https://api.deepseek.com"
-    # 主模型接口密钥；标题、推荐、摘要复用。默认空值，实际调用前需配置，不提交版本库。
+    # 主模型接口密钥；标题、摘要复用。默认空值，实际调用前需配置，不提交版本库。
     llm_api_key: str = ""
-    # 主模型标识，必须为配置端点支持的模型；标题、推荐、摘要复用此模型。
+    # 主模型标识，必须为配置端点支持的模型；标题、摘要复用此模型。
     llm_model: str = "deepseek-flash"
     # 主模型独立思考开关（true/false，默认 true）；Provider 层显式映射为供应商官方参数：DeepSeek 发送 thinking.type=enabled/disabled，OpenAI 官方 integration 使用 Responses API 与 reasoning 参数控制。
     llm_thinking: bool = True
 
     # 会话标题的独立思考开关（默认 false）；开关语义同 LLM_THINKING，不继承主模型开关。
     title_thinking: bool = False
-    # 是否生成下一步问题建议（默认 true）；false 时跳过推荐模型调用并清空上一轮建议。
-    recommend_enabled: bool = True
-    # 下一步问题建议的独立思考开关（默认 false）；开关语义同 LLM_THINKING，不继承主模型开关。
-    recommend_thinking: bool = False
-
     # 主模型/单工具瞬时失败的额外重试次数（0–5，默认 2）；含首次最多 3 次尝试，0 表示不重试。
     agent_max_retries: int = Field(default=2, ge=0, le=5)
     # 官方指数退避的初始基础延时，单位秒（0–10，默认 0.5）；倍率固定 2，0 表示不等待。

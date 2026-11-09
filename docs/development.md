@@ -40,7 +40,7 @@ pnpm --dir frontend dev
 
 | 改动范围 | 入口 |
 | --- | --- |
-| Agent 编排、middleware、推荐 | [graph.py](../backend/app/agent/graph.py) |
+| Agent 编排、middleware、隐藏消息上下文 | [graph.py](../backend/app/agent/graph.py)、[message_context.py](../backend/app/agent/message_context.py) |
 | 主业务与视觉策略 | [system.md](../backend/app/agent/prompts/system.md)、[vision.md](../backend/app/agent/prompts/vision.md) |
 | 监测、视觉、天气与场地工具 | [tools.py](../backend/app/agent/tools.py)、[vision.py](../backend/app/agent/vision.py)、[weather.py](../backend/app/agent/weather.py)、[site.py](../backend/app/agent/site.py) |
 | 平台请求与字段 | [beidou](../backend/app/beidou/)、[接口参考](reference/beidou-platform-api.md) |

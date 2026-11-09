@@ -18,11 +18,11 @@ async function seedThread(threadId: string, message: string) {
 
 async function openThread(page: Page, threadId: string) {
   await page.goto(`/?threadId=${encodeURIComponent(threadId)}`);
-  await expect(page.getByPlaceholder('询问监测数据、变化趋势、降雨关联或场地环境…')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeVisible();
 }
 
 async function send(page: Page, message: string) {
-  const composer = page.getByPlaceholder('询问监测数据、变化趋势、降雨关联或场地环境…');
+  const composer = page.getByRole('textbox', { name: '输入监测问题' });
   await composer.fill(message);
   await page.getByRole('button', { name: '发送消息' }).click();
 }
@@ -141,8 +141,7 @@ test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状�
     await seedThread(otherId, 'Stop 场景切换目标');
     await openThread(page, threadId);
     await send(page, '执行并行工具停止验证');
-    await expect(page.getByText('已完成辅助查询')).toBeVisible();
-    await expect(page.getByText('正在查询监测点分组…')).toBeVisible();
+    await expect(page.getByText(/正在查询监测点分组….*已完成 1 项/)).toBeVisible();
     await page.getByRole('button', { name: '停止生成' }).click();
     await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
 
@@ -161,7 +160,7 @@ test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状�
     expect(messages.some((message) => message.type === 'human' && persistedText(message.content) === '停止后继续提问')).toBe(true);
     expect(messages.some((message) => message.type === 'ai' && persistedText(message.content) === '已继续处理：停止后继续提问')).toBe(true);
     expectToolCallsPaired(messages);
-    expect(messages.some((message) => message.type === 'tool' && message.name === 'get_current_time' && message.status === 'success')).toBe(true);
+    expect(messages.some((message) => message.type === 'tool' && message.name === 'list_stations' && message.status === 'success')).toBe(true);
     expect(messages.some((message) => message.type === 'tool' && message.name === 'list_station_groups' && message.status === 'error')).toBe(true);
   } finally {
     await client.deleteSession(threadId);
@@ -183,7 +182,7 @@ test('重新生成使用 checkpoint fork，刷新后显示最新回答', async (
     const regenerationRequest = page.waitForRequest((request) =>
       request.method() === 'POST' && request.url().endsWith(`/sessions/${threadId}/runs`),
     );
-    await assistantMessage.getByRole('button', { name: 'Refresh' }).click();
+    await assistantMessage.getByRole('button', { name: '重新生成' }).click();
 
     const request = await regenerationRequest;
     expect(request.postDataJSON().checkpoint_id).toBeTruthy();
@@ -200,76 +199,34 @@ test('重新生成使用 checkpoint fork，刷新后显示最新回答', async (
   }
 });
 
-test('Tool error、空结果与 artifact 在刷新后仍由持久化 ToolMessage 恢复', async ({ page }) => {
+test('工具失败原因直接可见，空结果在调查过程内说明，刷新后由持久化 ToolMessage 恢复', async ({ page }) => {
   const errorThreadId = await createThread('工具错误');
   const emptyThreadId = await createThread('工具空结果');
   try {
     await openThread(page, errorThreadId);
     await send(page, '查询不存在监测点的 GNSS 数据');
-    const errorTool = page.getByRole('button', { name: /GNSS 数据获取失败/ });
-    await expect(errorTool).toBeVisible();
-    await errorTool.click();
-    await expect(page.getByText(/未找到名称包含“不存在监测点”的监测点/)).toBeVisible();
+    const failure = page.getByRole('alert').filter({ hasText: /GNSS 数据获取失败.*未找到名称包含“不存在监测点”的监测点/ });
+    await expect(failure).toBeVisible();
 
     await page.reload();
-    await expect(errorTool).toBeVisible();
-    await errorTool.click();
-    await expect(page.getByText(/未找到名称包含“不存在监测点”的监测点/)).toBeVisible();
+    await expect(failure).toBeVisible();
 
     await openThread(page, emptyThreadId);
     await send(page, '查询空结果监测点的 GNSS 数据');
-    const emptyTool = page.getByRole('button', { name: /已获取 GNSS 监测数据/ });
-    await expect(emptyTool).toBeVisible();
-    await emptyTool.click();
+    const process = page.getByRole('button', { name: /已完成 1 项查询/ });
+    await expect(process).toBeVisible();
+    await process.click();
     await expect(page.getByText(/该时间范围内暂无 GNSS 数据/)).toBeVisible();
 
     await page.reload();
-    await expect(emptyTool).toBeVisible();
-    await emptyTool.click();
+    await expect(process).toBeVisible();
+    await process.click();
     await expect(page.getByText(/该时间范围内暂无 GNSS 数据/)).toBeVisible();
   } finally {
     await client.deleteSession(errorThreadId);
     await client.deleteSession(emptyThreadId);
   }
 });
-
-test('展开和收起工具时消息列不发生横向位移', async ({ page }) => {
-  const threadId = await createThread('折叠内容布局稳定性');
-  try {
-    for (let index = 0; index < 8; index += 1) {
-      await seedThread(
-        threadId,
-        `填充滚动区域 ${index + 1}：保持消息列宽度稳定并验证折叠内容不会引起横向抖动。`,
-      );
-    }
-    await openThread(page, threadId);
-    await send(page, '查询空结果监测点的 GNSS 数据');
-
-    const viewport = page.locator('[data-slot="aui_thread-viewport"]');
-    await expect.poll(() =>
-      viewport.evaluate((element) => element.scrollHeight > element.clientHeight),
-    ).toBe(true);
-
-    const tool = page.getByRole('button', { name: /已获取 GNSS 监测数据/ });
-    await expect(tool).toBeVisible();
-    const messageColumn = page.locator('[data-slot="aui_message-group"]');
-    const x = async () => (await messageColumn.boundingBox())?.x;
-    const before = await x();
-
-    await tool.click();
-    await page.waitForTimeout(50);
-    expect(Math.abs((await x())! - before!)).toBeLessThan(0.5);
-    await page.waitForTimeout(200);
-    expect(Math.abs((await x())! - before!)).toBeLessThan(0.5);
-
-    await tool.click();
-    await page.waitForTimeout(50);
-    expect(Math.abs((await x())! - before!)).toBeLessThan(0.5);
-  } finally {
-    await client.deleteSession(threadId);
-  }
-});
-
 
 test('会话栏滚动加载下一页，整页耗尽后隐藏加载入口', async ({ page }) => {
   // 隔离持久化的历史测试数据，只替换列表 HTTP 响应，运行真实 Runtime 与浏览器布局。
@@ -314,14 +271,14 @@ test('最新用户消息可编辑重新生成、复制，悬停不改变消息�
     await expect(page.getByText('已继续处理：编辑前的问题')).toBeVisible();
     const user = page.locator('[data-role="user"]').last();
     const assistant = page.locator('[data-role="assistant"]').last();
-    await page.getByPlaceholder('询问监测数据、变化趋势、降雨关联或场地环境…').hover();
+    await page.getByRole('textbox', { name: '输入监测问题' }).hover();
     await expect(user.getByRole('button', { name: '编辑消息' })).toHaveCount(0);
     const before = await assistant.boundingBox();
     await user.hover();
     await user.getByRole('button', { name: '复制消息' }).click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('编辑前的问题');
     await assistant.hover();
-    await expect(assistant.getByRole('button', { name: 'Copy', exact: true })).toBeVisible();
+    await expect(assistant.getByRole('button', { name: '复制', exact: true })).toBeVisible();
     const after = await assistant.boundingBox();
     expect(after?.y).toBe(before?.y);
     expect(after?.height).toBe(before?.height);
@@ -343,6 +300,8 @@ test('最新用户消息可编辑重新生成、复制，悬停不改变消息�
     await page.getByRole('textbox', { name: '编辑用户消息' }).fill('第二轮修改');
     await page.getByRole('button', { name: '保存并重新生成' }).click();
     await expect(page.getByText('已继续处理：第二轮修改')).toBeVisible();
+    // 文字出现时 Run 可能仍在收尾，结束后才允许删除会话。
+    await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
   } finally {
     await client.deleteSession(threadId);
   }

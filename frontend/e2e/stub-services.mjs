@@ -169,7 +169,10 @@ const server = http.createServer(async (request, response) => {
   const messages = body.messages ?? [];
   const firstText = messageText(messages[0]);
   const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user');
-  const userText = lastUserIndex >= 0 ? messageText(messages[lastUserIndex]) : '';
+  // stub 按静态提示词约定只回答用户正文；服务器上下文仍进入真实模型请求。
+  const userText = lastUserIndex >= 0
+    ? messageText(messages[lastUserIndex]).replace(/^<lma_message_context>[\s\S]*?<\/lma_message_context>\s*/, '')
+    : '';
   const hasToolResult = messages.slice(lastUserIndex + 1).some((message) => message.role === 'tool');
 
   let payload;
@@ -178,7 +181,7 @@ const server = http.createServer(async (request, response) => {
     payload = chatResponse('E2E 生命周期验证');
   } else if (userText.includes('并行工具停止验证') && !hasToolResult) {
     payload = parallelToolResponse([
-      { name: 'get_current_time', args: {} },
+      { name: 'list_stations', args: {} },
       { name: 'list_station_groups', args: {} },
     ]);
   } else if (userText.includes('不存在监测点') && !hasToolResult) {

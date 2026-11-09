@@ -26,11 +26,6 @@ class ToolArtifactError(ArtifactModel):
     retryable: bool = False
 
 
-class CurrentTimeArtifactData(ArtifactModel):
-    current_time: str
-    timezone: str
-
-
 class StationGroupArtifact(ArtifactModel):
     group_name: str
     station_count: int = 0
@@ -283,7 +278,6 @@ class SiteEnvironmentArtifactData(ArtifactModel):
 
 
 ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {
-    "generic": CurrentTimeArtifactData,
     "station_list": StationListArtifactData,
     "gnss_series": GnssArtifactData,
     "weather": WeatherArtifactData,
@@ -317,11 +311,6 @@ class ArtifactEnvelopeBase(ArtifactModel):
         return self
 
 
-class GenericArtifactEnvelope(ArtifactEnvelopeBase):
-    kind: Literal["generic"]
-    data: CurrentTimeArtifactData
-
-
 class StationListArtifactEnvelope(ArtifactEnvelopeBase):
     kind: Literal["station_list"]
     data: StationListArtifactData
@@ -348,8 +337,7 @@ class SiteEnvironmentArtifactEnvelope(ArtifactEnvelopeBase):
 
 
 ToolArtifactEnvelope = Annotated[
-    GenericArtifactEnvelope
-    | StationListArtifactEnvelope
+    StationListArtifactEnvelope
     | GnssArtifactEnvelope
     | WeatherArtifactEnvelope
     | VisionArtifactEnvelope

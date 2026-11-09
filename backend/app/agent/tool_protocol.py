@@ -64,7 +64,7 @@ def tool_error_result(
 def tool_result(
     facts: dict,
     *,
-    kind: str = "generic",
+    kind: str,
     status: str = "success",
     display: dict | None = None,
     sources: list[dict[str, Any]] | None = None,

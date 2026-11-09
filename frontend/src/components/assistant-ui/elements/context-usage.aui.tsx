@@ -2,6 +2,8 @@ import type { FC } from "react";
 import { ContextDisplay } from "@/components/context-display";
 import { cn } from "@/lib/utils";
 
+const VISIBLE_USAGE_RATIO = 0.8;
+
 export interface ContextUsage {
   input_tokens?: number;
   output_tokens?: number;
@@ -31,6 +33,11 @@ export const ContextUsageElement: FC<ContextUsageElementProps> = ({
     !Number.isFinite(maxInputTokens) ||
     maxInputTokens <= 0
   ) {
+    return null;
+  }
+
+  // 历史压缩是自动的，用量只在接近上限、值得用户留意时出现。
+  if (inputTokens / maxInputTokens < VISIBLE_USAGE_RATIO) {
     return null;
   }
 
