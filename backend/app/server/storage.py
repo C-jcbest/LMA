@@ -204,19 +204,30 @@ class SessionStorage:
             )
 
     async def latest_inspection(self) -> dict:
-        """最近一次成功巡检；进行中的巡检单独返回进度，旧结果在完成前保持可用。"""
+        """最近一次尝试及最近成功结果；失败和中断不覆盖已完成的结果。"""
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
-                "SELECT total_stations, completed_stations FROM lma_inspections WHERE status = 'running' "
+                "SELECT id, status, finished_at, total_stations, completed_stations FROM lma_inspections "
                 "ORDER BY started_at DESC LIMIT 1",
             )
-            running = await cursor.fetchone()
+            latest_attempt = await cursor.fetchone()
+            running = None
+            if latest_attempt and latest_attempt["status"] == "running":
+                running = {
+                    "total_stations": latest_attempt["total_stations"],
+                    "completed_stations": latest_attempt["completed_stations"],
+                }
             cursor = await connection.execute(
                 "SELECT * FROM lma_inspections WHERE status = 'success' ORDER BY started_at DESC LIMIT 2",
             )
             finished = await cursor.fetchall()
             if not finished:
-                return {"running": running, "inspection": None, "stations": []}
+                return {
+                    "running": running,
+                    "latest_attempt": latest_attempt,
+                    "inspection": None,
+                    "stations": [],
+                }
 
             cursor = await connection.execute(
                 "SELECT * FROM lma_inspection_stations WHERE inspection_id = %s", (finished[0]["id"],),
@@ -240,6 +251,7 @@ class SessionStorage:
 
         return {
             "running": running,
+            "latest_attempt": latest_attempt,
             "inspection": finished[0],
             "stations": [
                 {

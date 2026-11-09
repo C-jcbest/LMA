@@ -143,12 +143,20 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('12.500')).toBeInTheDocument();
   });
 
-  it('长序列先显示前 100 条，可按需展开全部', async () => {
+  it('长序列分页展示，每页最多 100 条且能返回上一页', async () => {
     const points = Array.from({ length: 120 }, (_, index) => ({ time: `t-${index}`, n: 1, e: 2, u: 3 }));
     render(<GnssResultView data={gnssData('测试站', points) as React.ComponentProps<typeof GnssResultView>['data']} />);
     expect(screen.queryByText('t-100')).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: '显示全部 120 条' }));
+    expect(screen.getAllByRole('row')).toHaveLength(101);
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: '下一页' }));
     expect(screen.getByText('t-119')).toBeInTheDocument();
+    expect(screen.queryByText('t-0')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('row')).toHaveLength(21);
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: '上一页' }));
+    expect(screen.getByText('t-0')).toBeInTheDocument();
+    expect(screen.getAllByRole('row')).toHaveLength(101);
   });
 
   it('视觉复核无图时折线在缺测点处分段，不把缺测绘制为零或跨段连线', () => {

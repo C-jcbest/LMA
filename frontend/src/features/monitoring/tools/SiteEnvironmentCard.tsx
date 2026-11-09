@@ -5,9 +5,11 @@ import {
   Marker,
   NavigationControl,
   Popup,
+  setWorkerUrl,
   StyleSpecification,
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { ToggleGroup } from 'radix-ui';
 import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
 
@@ -18,6 +20,9 @@ interface SiteEnvironmentCardProps {
 type BaseLayer = 'satellite' | 'terrain';
 
 const GEOLOGY_TILES = 'https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt';
+
+// 交给 Vite 打包 Worker 及其共享模块，避免从预构建目录或页面地址猜相对路径。
+setWorkerUrl(mapWorkerUrl);
 
 const BASE_STYLE: StyleSpecification = {
   version: 8,

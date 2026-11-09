@@ -32,6 +32,13 @@ export interface InspectionStation {
 
 export interface LatestInspection {
   running: { total_stations: number; completed_stations: number } | null;
+  latest_attempt: {
+    id: string;
+    status: 'running' | 'success' | 'error' | 'interrupted';
+    finished_at: string | null;
+    total_stations: number;
+    completed_stations: number;
+  } | null;
   inspection: { id: string; finished_at: string } | null;
   stations: InspectionStation[];
 }

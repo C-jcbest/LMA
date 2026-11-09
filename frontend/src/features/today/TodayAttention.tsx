@@ -100,6 +100,7 @@ export const TodayAttention: FC = () => {
   const client = useLmaClient();
   const [latest, setLatest] = useState<LatestInspection | null>(null);
   const [hasLoadError, setHasLoadError] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
   const [startError, setStartError] = useState(false);
   const [search, setSearch] = useState('');
@@ -107,30 +108,49 @@ export const TodayAttention: FC = () => {
   const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
-    abortRef.current?.abort();
+    if (abortRef.current) {
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
+    setIsLoading(true);
     try {
-      setLatest(await client.getLatestInspection(controller.signal));
+      const result = await client.getLatestInspection(controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+      setLatest(result);
       setHasLoadError(false);
     } catch {
       if (!controller.signal.aborted) {
         setHasLoadError(true);
       }
+    } finally {
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setIsLoading(false);
+      }
     }
   }, [client]);
 
   useEffect(() => {
+    setLatest(null);
     void load();
-    return () => abortRef.current?.abort();
+    return () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
   }, [load]);
 
   const isRunning = latest?.running != null;
   useEffect(() => {
-    if (!isRunning) return;
-    const timer = window.setInterval(() => void load(), POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [isRunning, load]);
+    if (!isRunning || isLoading) {
+      return;
+    }
+    // 请求结束后才开始计时，慢接口不会被下一轮取消，也不累积并发请求。
+    const timer = window.setTimeout(() => void load(), POLL_INTERVAL_MS);
+    return () => window.clearTimeout(timer);
+  }, [isRunning, isLoading, load]);
 
   const start = async () => {
     setIsStarting(true);
@@ -150,13 +170,14 @@ export const TodayAttention: FC = () => {
     () => [...new Set((allStations ?? []).map((station) => station.group_name))].sort(),
     [allStations],
   );
+  const selectedGroup = groupOptions.includes(group) ? group : ALL_GROUPS;
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (allStations ?? []).filter((station) => (
-      (group === ALL_GROUPS || station.group_name === group)
+      (selectedGroup === ALL_GROUPS || station.group_name === selectedGroup)
       && (!query || station.station_name.toLowerCase().includes(query))
     ));
-  }, [allStations, group, search]);
+  }, [allStations, selectedGroup, search]);
 
   const hasResults = (allStations?.length ?? 0) > 0;
   const needsLook = visible.filter((station) => station.screening === '建议调查');
@@ -178,7 +199,7 @@ export const TodayAttention: FC = () => {
           {latest?.inspection && (
             <span className="text-muted-foreground text-sm tabular-nums">{formatFinishedAt(latest.inspection.finished_at)} 巡检</span>
           )}
-          <Button type="button" variant="outline" size="sm" disabled={isRunning || isStarting} onClick={() => void start()}>
+          <Button type="button" variant="outline" size="sm" disabled={isRunning || isStarting || isLoading} onClick={() => void start()}>
             {startLabel}
           </Button>
         </div>
@@ -187,10 +208,20 @@ export const TodayAttention: FC = () => {
       {hasLoadError && (
         <p role="alert" className="text-muted-foreground mt-3 text-sm">
           巡检结果暂时无法读取。
-          <button type="button" className="ms-1 underline underline-offset-4" onClick={() => void load()}>重试</button>
+          <button type="button" disabled={isLoading || isStarting} className="ms-1 underline underline-offset-4 disabled:opacity-50" onClick={() => void load()}>重试</button>
         </p>
       )}
       {startError && <p role="alert" className="text-destructive mt-3 text-sm">巡检未能启动，请稍后重试。</p>}
+      {latest?.latest_attempt?.status === 'error' && (
+        <p role="alert" className="text-destructive mt-3 text-sm">
+          最近一次巡检失败，请重新巡检。{latest.inspection ? '下方保留上次成功结果。' : '你仍可直接提问。'}
+        </p>
+      )}
+      {latest?.latest_attempt?.status === 'interrupted' && (
+        <p role="alert" className="text-destructive mt-3 text-sm">
+          最近一次巡检已中断，请重新巡检。{latest.inspection ? '下方保留上次成功结果。' : '你仍可直接提问。'}
+        </p>
+      )}
 
       {hasResults && (
         <div className="mt-4 space-y-2">
@@ -199,10 +230,20 @@ export const TodayAttention: FC = () => {
               {groupOptions.length > 1 && groupOptions.length <= MAX_GROUP_OPTIONS && (
                 <Segmented
                   label="分组"
-                  value={group}
+                  value={selectedGroup}
                   options={[ALL_GROUPS, ...groupOptions].map((name) => ({ value: name, label: name }))}
                   onValueChange={setGroup}
                 />
+              )}
+              {groupOptions.length > MAX_GROUP_OPTIONS && (
+                <select
+                  aria-label="分组"
+                  value={selectedGroup}
+                  onChange={(event) => setGroup(event.target.value)}
+                  className="h-8 max-w-full rounded-md border bg-background px-2 text-sm"
+                >
+                  {[ALL_GROUPS, ...groupOptions].map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
               )}
               {(allStations?.length ?? 0) >= SEARCH_VISIBLE_FROM && (
                 <Input

@@ -39,6 +39,7 @@ class FakeBeidou:
 
     def __init__(self, unavailable=False):
         self.unavailable = unavailable
+        self.station_list_unavailable = False
 
     async def __aenter__(self):
         return self
@@ -47,6 +48,8 @@ class FakeBeidou:
         return None
 
     async def get_stations(self):
+        if self.station_list_unavailable:
+            raise BeidouApiError("500", "PRIVATE_UPSTREAM")
         return [station("测试点 A"), station("测试点 B"), station("基准站 R", station_type=1)]
 
     async def get_daily_data(self, station_uuid, begin_time, end_time, sampling_frequency=None, sample_times=None):
@@ -138,3 +141,36 @@ class InspectionApiTests(unittest.TestCase):
         self.assertEqual(rows["测试点 A"]["last_conclusion"]["status"], "需人工复核")
         self.assertEqual(rows["测试点 A"]["last_conclusion"]["session_id"], session_id)
         self.assertIsNone(rows["测试点 B"]["last_conclusion"])
+
+    def test_failed_attempt_preserves_success_and_next_success_clears_failure(self):
+        successful = self.inspect()
+        self.beidou.station_list_unavailable = True
+        failed = self.inspect()
+        self.assertEqual(failed["latest_attempt"]["status"], "error")
+        self.assertIsNotNone(failed["latest_attempt"]["finished_at"])
+        self.assertEqual(failed["inspection"]["id"], successful["inspection"]["id"])
+        self.assertEqual(failed["stations"], successful["stations"])
+        self.assertNotIn("PRIVATE_UPSTREAM", json.dumps(failed, ensure_ascii=False))
+
+        self.beidou.station_list_unavailable = False
+        recovered = self.inspect()
+        self.assertEqual(recovered["latest_attempt"]["status"], "success")
+        self.assertEqual(recovered["latest_attempt"]["id"], recovered["inspection"]["id"])
+
+    def test_interrupted_attempt_preserves_success_and_exposes_terminal_status(self):
+        successful = self.inspect()
+        storage = self.client.app.state.storage
+        inspection_id = str(uuid4())
+        self.client.portal.call(storage.start_inspection, inspection_id)
+        self.client.portal.call(storage.set_inspection_total, inspection_id, 3)
+        running = self.client.get("/inspections/latest").json()
+        self.assertEqual(running["running"], {"total_stations": 3, "completed_stations": 0})
+
+        self.client.portal.call(storage.interrupt_previous_runs)
+        interrupted = self.client.get("/inspections/latest").json()
+        self.assertIsNone(interrupted["running"])
+        self.assertEqual(interrupted["latest_attempt"]["id"], inspection_id)
+        self.assertEqual(interrupted["latest_attempt"]["status"], "interrupted")
+        self.assertIsNotNone(interrupted["latest_attempt"]["finished_at"])
+        self.assertEqual(interrupted["inspection"]["id"], successful["inspection"]["id"])
+        self.assertEqual(interrupted["stations"], successful["stations"])

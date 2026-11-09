@@ -57,6 +57,10 @@ const inspectionRow = (name: string, screening: string, fields: Record<string, u
 
 const inspection = {
   running: null,
+  latest_attempt: {
+    id: 'inspection-1', status: 'success', finished_at: '2026-11-09T08:30:00+08:00',
+    total_stations: 3, completed_stations: 3,
+  },
   inspection: { id: 'inspection-1', finished_at: '2026-11-09T08:30:00+08:00' },
   stations: [
     inspectionRow('测试点 A', '建议调查', {
@@ -140,12 +144,16 @@ test('今日关注把需要看的测点放在最前，点击只填入输入框',
 
 test('巡检进行中显示进度，完成后展示结果，失败不影响直接提问', async ({ page }) => {
   await mockApi(page);
-  let state: Record<string, unknown> = { running: null, inspection: null, stations: [] };
+  let state: Record<string, unknown> = { running: null, latest_attempt: null, inspection: null, stations: [] };
   let startCount = 0;
   await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: state }));
   await page.route('**/api/inspections', (route) => {
     startCount += 1;
-    state = { running: { total_stations: 3, completed_stations: 1 }, inspection: null, stations: [] };
+    state = {
+      running: { total_stations: 3, completed_stations: 1 },
+      latest_attempt: { id: 'inspection-2', status: 'running', finished_at: null, total_stations: 3, completed_stations: 1 },
+      inspection: null, stations: [],
+    };
     return route.fulfill({ status: 202, json: { id: 'inspection-2' } });
   });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -161,4 +169,94 @@ test('巡检进行中显示进度，完成后展示结果，失败不影响直�
   await expect(page.getByRole('button', { name: '重新巡检' })).toBeEnabled();
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
+test('巡检慢请求可完成且不并发，后台失败保留上次结果并停止轮询', async ({ page }) => {
+  await mockApi(page);
+  let reads = 0;
+  let activeRequests = 0;
+  let maximumRequests = 0;
+  let failNextRead = false;
+  const abortedRequests: string[] = [];
+  page.on('requestfailed', (request) => {
+    if (request.url().endsWith('/inspections/latest')) {
+      abortedRequests.push(request.failure()?.errorText ?? 'failed');
+    }
+  });
+  await page.route('**/api/inspections/latest', async (route) => {
+    reads += 1;
+    let state;
+    if (failNextRead) {
+      state = { ...inspection, latest_attempt: { ...inspection.latest_attempt, id: 'slow-run', status: 'error' } };
+    } else {
+      state = {
+        ...inspection,
+        running: { total_stations: 3, completed_stations: 1 },
+        latest_attempt: { ...inspection.latest_attempt, id: 'slow-run', status: 'running', finished_at: null, completed_stations: 1 },
+      };
+    }
+    if (failNextRead) {
+      activeRequests += 1;
+      maximumRequests = Math.max(maximumRequests, activeRequests);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await route.fulfill({ json: state });
+      activeRequests -= 1;
+      return;
+    }
+    await route.fulfill({ json: state });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '巡检中 1/3' })).toBeDisabled();
+  const initialReads = reads;
+  // 开发模式首次挂载可能取消一次读取；这里只检查随后运行中的慢轮询。
+  abortedRequests.length = 0;
+  failNextRead = true;
+  await expect(page.getByRole('alert')).toContainText('最近一次巡检失败', { timeout: 10000 });
+  await expect(page.getByRole('alert')).toContainText('下方保留上次成功结果');
+  await expect(page.getByRole('button', { name: '调查 测试点 A' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '重新巡检' })).toBeEnabled();
+  await page.waitForTimeout(2500);
+  expect(reads).toBe(initialReads + 1);
+  expect(maximumRequests).toBe(1);
+  expect(abortedRequests).toEqual([]);
+});
+
+test('首次巡检中断明确提示，输入框和重新启动仍可用', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: {
+    running: null, inspection: null, stations: [],
+    latest_attempt: { id: 'interrupted-run', status: 'interrupted', finished_at: '2026-11-09T08:30:00+08:00', total_stations: 3, completed_stations: 1 },
+  } }));
+  await page.goto('/');
+  await expect(page.getByRole('alert')).toContainText('最近一次巡检已中断');
+  await expect(page.getByRole('alert')).toContainText('你仍可直接提问');
+  await expect(page.getByRole('button', { name: '开始巡检' })).toBeEnabled();
+  await page.getByRole('textbox', { name: '输入监测问题' }).fill('保留我的调查问题');
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('保留我的调查问题');
+});
+
+test('多分组选单可筛选，重新巡检移除所选分组后恢复全部', async ({ page }) => {
+  await mockApi(page);
+  let state = {
+    ...inspection,
+    stations: Array.from({ length: 7 }, (_, index) => (
+      inspectionRow(`测点 ${index + 1}`, '建议调查', { group_name: `分组 ${index + 1}` })
+    )),
+  };
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: state }));
+  await page.route('**/api/inspections', (route) => {
+    state = { ...inspection, stations: inspection.stations.map((station) => ({ ...station, group_name: '新分组' })) };
+    return route.fulfill({ status: 202, json: { id: 'new-groups' } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  const groupSelect = page.getByRole('combobox', { name: '分组' });
+  await groupSelect.selectOption('分组 7');
+  const stations = page.getByRole('list', { name: '建议调查的测点' });
+  await expect(stations.getByRole('listitem')).toHaveCount(1);
+  await expect(stations.getByRole('button', { name: '调查 测点 7' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.getByRole('button', { name: '重新巡检' }).click();
+  await expect(groupSelect).toHaveCount(0);
+  await expect(stations.getByRole('button', { name: '调查 测试点 A' })).toBeVisible();
 });

@@ -292,6 +292,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
   } else if (hasTimeline) {
     defaultTab = 'timeline';
   }
+  const [activeTab, setActiveTab] = useState(defaultTab);
 
   return (
     <>
@@ -317,7 +318,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
         </div>
       </header>
 
-      <Tabs.Root defaultValue={defaultTab} className="flex min-h-0 flex-1 flex-col">
+      <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
         <Tabs.List aria-label="依据内容" className="flex shrink-0 gap-5 border-b px-4 sm:px-6">
           {hasTimeline && <Tabs.Trigger value="timeline" className={TAB_CLASS}>时间轴</Tabs.Trigger>}
           {hasSite && <Tabs.Trigger value="site" className={TAB_CLASS}>场地</Tabs.Trigger>}
@@ -325,8 +326,9 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
         </Tabs.List>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
+          {/* 只保留当前测点的时间轴，切页签保留缩放与图例；换测点或关闭时释放。 */}
           {hasTimeline && (
-            <Tabs.Content value="timeline" className="focus-visible:outline-none">
+            <Tabs.Content value="timeline" forceMount hidden={activeTab !== 'timeline'} className="focus-visible:outline-none">
               <TimelineView
                 station={station}
                 seriesList={seriesList}

@@ -133,6 +133,12 @@ test('框选时间段后可带入追问，还原后恢复完整窗口', async ({
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(inspector(page).getByRole('button', { name: '追问这段' })).toBeVisible();
   expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);
+  await inspector(page).getByRole('tab', { name: '明细', exact: true }).click();
+  await expect(canvas).toBeHidden();
+  await inspector(page).getByRole('tab', { name: '时间轴', exact: true }).click();
+  await expect(canvas).toBeVisible();
+  await expect(inspector(page).getByRole('button', { name: '追问这段' })).toBeVisible();
+  expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);
 
   await inspector(page).getByRole('button', { name: '追问这段' }).click();
   const input = page.getByRole('textbox', { name: '输入监测问题' });
@@ -215,7 +221,16 @@ test('场地地图随依据宽度调整画布，不依赖窗口 resize', async (
   ];
   await openInvestigation(page, 1920, history);
   await stationEntry(page).click();
+  const timelineCanvas = inspector(page).locator('canvas').first();
+  await expect(timelineCanvas).toBeVisible();
+  const originalTimelineCanvas = await timelineCanvas.elementHandle();
+  const workerCreated = page.waitForEvent('worker', { predicate: (worker) => worker.url().includes('maplibre-gl-worker') });
   await inspector(page).getByRole('tab', { name: '场地', exact: true }).click();
+  const worker = await workerCreated;
+  const workerResponse = await page.request.get(worker.url());
+  expect(workerResponse.ok()).toBe(true);
+  expect(workerResponse.headers()['content-type']).toMatch(/javascript/);
+  expect(await worker.evaluate(() => self.location.href)).toContain('maplibre-gl-worker');
   const map = inspector(page).locator('.maplibregl-map');
   const canvas = map.locator('canvas');
   await expect(canvas).toBeVisible();
@@ -225,6 +240,8 @@ test('场地地图随依据宽度调整画布，不依赖窗口 resize', async (
   await page.keyboard.press('Shift+ArrowRight');
   await expect.poll(async () => (await canvas.boundingBox())!.width).toBeLessThan(originalWidth);
   await expect.poll(async () => Math.abs((await canvas.boundingBox())!.width - await map.evaluate((element) => element.clientWidth))).toBeLessThan(1);
+  await inspector(page).getByRole('tab', { name: '时间轴', exact: true }).click();
+  expect(await timelineCanvas.evaluate((element, original) => element === original, originalTimelineCanvas)).toBe(true);
 });
 
 test('切换屏宽和会话时不残留依据，宽度不足时会话导航改为抽屉', async ({ page }) => {

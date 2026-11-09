@@ -4,15 +4,18 @@ import type { GnssArtifactData } from '@/types/envelope';
 import { formatGnssValue } from './gnssUtils';
 import { EmptyResultView } from './EmptyResultView';
 
-const INITIAL_ROW_COUNT = 100;
+const PAGE_SIZE = 100;
 
 export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) => {
-  const [isShowingAll, setIsShowingAll] = useState(false);
+  const [pageIndex, setPageIndex] = useState(0);
   const allPoints = data.points;
   if (allPoints.length === 0) {
     return <EmptyResultView>该时间范围内暂无 GNSS 数据</EmptyResultView>;
   }
-  const visiblePoints = isShowingAll ? allPoints : allPoints.slice(0, INITIAL_ROW_COUNT);
+  const pageCount = Math.ceil(allPoints.length / PAGE_SIZE);
+  const currentPage = Math.min(pageIndex, pageCount - 1);
+  const firstRow = currentPage * PAGE_SIZE;
+  const visiblePoints = allPoints.slice(firstRow, firstRow + PAGE_SIZE);
 
   return (
     <div className="space-y-3">
@@ -32,7 +35,7 @@ export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) =
           </thead>
           <tbody className="divide-y tabular-nums">
             {visiblePoints.map((point, index) => (
-              <tr key={index}>
+              <tr key={firstRow + index}>
                 <td className="px-2 py-1.5 text-muted-foreground [overflow-wrap:anywhere]">{point.time}</td>
                 <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.n)}</td>
                 <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.e)}</td>
@@ -42,10 +45,18 @@ export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) =
           </tbody>
         </table>
       </div>
-      {visiblePoints.length < allPoints.length && (
-        <Button type="button" variant="ghost" size="sm" onClick={() => setIsShowingAll(true)}>
-          显示全部 {allPoints.length} 条
-        </Button>
+      {pageCount > 1 && (
+        <nav aria-label="GNSS 数据分页" className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPageIndex(currentPage - 1)}>
+            上一页
+          </Button>
+          <span role="status" className="text-sm text-muted-foreground tabular-nums">
+            第 {currentPage + 1} / {pageCount} 页 · {firstRow + 1}–{firstRow + visiblePoints.length} 条
+          </span>
+          <Button type="button" variant="outline" size="sm" disabled={currentPage === pageCount - 1} onClick={() => setPageIndex(currentPage + 1)}>
+            下一页
+          </Button>
+        </nav>
       )}
     </div>
   );
