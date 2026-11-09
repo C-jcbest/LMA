@@ -48,5 +48,3 @@ export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) =
     </div>
   );
 };
-
-export const GnssResult = GnssResultView;

@@ -61,42 +61,12 @@ docker compose --project-name lma-cloud --env-file "$LMA_ENV_FILE" \
 
 这不会恢复数据库。不要在未核对备份、目标数据库和数据损失范围时执行恢复；不要运行 down -v。
 
-## 本地开发与测试
+## 本地容器
 
-使用 Python 3.13、Node 22、pnpm 10.30.3。安装依赖：
-
-~~~powershell
-py -3.13 -m venv backend/.venv
-backend/.venv/Scripts/python.exe -m pip install -r backend/requirements.txt
-pnpm --dir frontend install --frozen-lockfile
-~~~
-
-复制 backend/.env.example 到 backend/.env，配置模型与监测平台参数，并设置 POSTGRES_PASSWORD；已有文件不覆盖。新数据库端口 55433，不使用原数据库。
-
-~~~powershell
-docker compose --env-file backend/.env up -d postgres
-cd backend
-# DATABASE_URI 指向新数据库；首次启动或依赖升级后执行迁移。
-.\.venv\Scripts\python.exe -m app.server.storage
-.\.venv\Scripts\python.exe -m app.server
-~~~
-
-另一个终端运行 pnpm --dir frontend dev，Vite 的 /api 默认代理到 127.0.0.1:2025，可用 LMA_API_PROXY_TARGET 显式更改。生产前端固定同源 /api，不接受浏览器自定义地址。整套容器启动：
+依赖安装、开发服务器和测试命令统一见 [开发指南](development.md)。配置 backend/.env 后，在根目录启动完整服务：
 
 ~~~powershell
 docker compose --env-file backend/.env up -d --build --wait
 ~~~
 
-访问 http://127.0.0.1:8081 。reload-backend.ps1 只作用于新 lma-oss 项目，不接管旧容器。
-
-API 集成测试和 Playwright 要求单独的 **lma_test** 数据库，通过 LMA_TEST_DATABASE_URI 指定，禁止指向业务库。CI 自动提供；本地可创建独立 PostgreSQL 容器及该数据库，先设置变量再执行：
-
-~~~powershell
-cd backend
-.\.venv\Scripts\python.exe -m unittest discover -s tests -p 'test*.py' -v
-cd ../frontend
-pnpm exec playwright install chromium
-pnpm test:gate
-~~~
-
-测试服务使用 21420 / 25174 / 19090 独立端口和 HTTP stub，不调用真实模型或监测账号。
+访问 http://127.0.0.1:8081 。reload-backend.ps1 只作用于新 lma-oss 项目，不接管旧容器。数据库使用新卷和 55433 端口，不要执行 down -v 或清理原 lma_pgdata。

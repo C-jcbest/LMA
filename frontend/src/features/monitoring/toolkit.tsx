@@ -296,19 +296,23 @@ export const MonitoringToolCall = ({
         status={status}
         labels={definition.labels}
       />
+      {status.type === 'incomplete' && (
+        <div
+          role={status.reason === 'cancelled' ? 'status' : 'alert'}
+          className={status.reason === 'cancelled'
+            ? 'py-1 text-xs text-muted-foreground wrap-break-word'
+            : 'py-1 text-xs font-medium text-destructive/90 wrap-break-word'}
+        >
+          {status.reason === 'cancelled'
+            ? '操作已取消'
+            : errorText(status) || definition.labels.error}
+        </div>
+      )}
       <ToolFallbackContent>
         {status.type === 'incomplete' ? (
-          <>
-            <div className="py-1 text-xs font-medium text-destructive/90">
-              {status.reason === 'cancelled'
-                ? '操作已取消'
-                : errorText(status) || definition.labels.error}
-            </div>
-            {status.reason !== 'cancelled' &&
-              envelope?.data !== undefined && (
-                <div className="mt-1">{definition.render(envelope)}</div>
-              )}
-          </>
+          status.reason !== 'cancelled' && envelope?.data !== undefined && (
+            <div className="mt-1">{definition.render(envelope)}</div>
+          )
         ) : status.type === 'complete' ? (
           envelope && envelope.status !== 'error' && envelope.data !== undefined ? (
             <div className="mt-1">{definition.render(envelope)}</div>

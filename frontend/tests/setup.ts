@@ -165,6 +165,18 @@ Object.defineProperty(Element.prototype, 'scrollIntoView', {
 });
 
 if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(min-width: 768px)',
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => true,
+    })),
+  });
+
   class ResizeObserverMock {
     observe() {}
     unobserve() {}

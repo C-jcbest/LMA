@@ -13,6 +13,7 @@ import {
   useAuiState,
 } from "@assistant-ui/react";
 import {
+  AlertCircleIcon,
   Loader2Icon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -21,8 +22,10 @@ import {
   TrashIcon,
 } from "lucide-react";
 import {
+  createContext,
   forwardRef,
   Fragment,
+  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -31,24 +34,58 @@ import {
   type FC,
 } from "react";
 
-export const ThreadList: FC = () => {
+/** 直接投影官方列表错误；重试不重建 Runtime，也不清空已确认的会话。 */
+export const ThreadListLoadError: FC = () => {
+  const aui = useAui();
+  const hasLoadError = useAuiState((state) => state.threads.loadError != null);
+  const isLoading = useAuiState((state) => state.threads.isLoading);
+
+  if (!hasLoadError) return null;
+
+  return (
+    <div role="alert" className="flex shrink-0 items-start gap-2 border-b border-destructive/20 bg-destructive/5 px-4 py-3 text-sm">
+      <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-destructive">会话列表加载失败</p>
+        <p className="mt-1 text-xs text-muted-foreground">请检查服务连接后重试，已有会话不会因此被删除。</p>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={isLoading}
+        onClick={() => {
+          void aui.threads().reload();
+        }}
+      >
+        重试
+      </Button>
+    </div>
+  );
+};
+
+const ThreadListNavigationContext = createContext<(() => void) | undefined>(undefined);
+
+export const ThreadList: FC<{ onNavigate?: () => void }> = ({ onNavigate }) => {
   const [search, setSearch] = useState("");
   const hasThreads = useAuiState((s) => s.threads.threadIds.length > 0);
 
   return (
-    <ThreadListRoot>
-      <ThreadListNew />
-      {hasThreads && (
-        <ThreadListSearch value={search} onValueChange={setSearch} />
-      )}
-      <div
-        data-slot="aui_thread-list-viewport"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
-      >
-        <ThreadListItems searchQuery={hasThreads ? search : ""} />
-        <ThreadListPagination autoLoad={!search.trim()} />
-      </div>
-    </ThreadListRoot>
+    <ThreadListNavigationContext.Provider value={onNavigate}>
+      <ThreadListRoot>
+        <ThreadListNew onClick={onNavigate} />
+        {hasThreads && (
+          <ThreadListSearch value={search} onValueChange={setSearch} />
+        )}
+        <div
+          data-slot="aui_thread-list-viewport"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+        >
+          <ThreadListItems searchQuery={hasThreads ? search : ""} />
+          <ThreadListPagination autoLoad={!search.trim()} />
+        </div>
+      </ThreadListRoot>
+    </ThreadListNavigationContext.Provider>
   );
 };
 
@@ -327,6 +364,7 @@ const ThreadListSkeleton: FC = () => {
 };
 
 export const ThreadListItem: FC = () => {
+  const onNavigate = useContext(ThreadListNavigationContext);
   const isRunning = useAuiState((s) => s.threadListItem.isRunning);
   const [isRenaming, setIsRenaming] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -353,6 +391,7 @@ export const ThreadListItem: FC = () => {
       ) : (
         <ThreadListItemPrimitive.Trigger
           ref={triggerRef}
+          onClick={onNavigate}
           data-slot="aui_thread-list-item-trigger"
           className="focus-visible:ring-ring/50 flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
         >

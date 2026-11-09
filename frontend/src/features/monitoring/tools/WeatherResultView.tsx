@@ -158,5 +158,3 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
     </div>
   );
 };
-
-export const WeatherResult = WeatherResultView;

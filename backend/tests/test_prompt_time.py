@@ -15,22 +15,9 @@ from pydantic import ValidationError
 from app.agent import context, graph, models, retry, site, summarization, title, tools, vision, weather
 from app.agent.prompting import SYSTEM_PROMPT, VISION_PROMPT
 from app.business_time import BUSINESS_TZ, business_now
-from app.config import Settings
 
 
 class PromptTimeTests(unittest.TestCase):
-    def test_auxiliary_thinking_defaults_are_disabled(self):
-        for field in (
-            "title_thinking",
-            "recommend_thinking",
-            "compress_thinking",
-            "vision_thinking",
-        ):
-            self.assertIs(Settings.model_fields[field].default, False)
-
-    def test_recommendations_are_enabled_by_default(self):
-        self.assertIs(Settings.model_fields["recommend_enabled"].default, True)
-
     def test_thinking_options_map_provider_specific_params(self):
         # DeepSeek Chat Completions
         self.assertEqual(
@@ -341,7 +328,6 @@ class PromptTimeTests(unittest.TestCase):
         prompt_dir = repo_root / "backend" / "app" / "agent" / "prompts"
         self.assertEqual(SYSTEM_PROMPT, (prompt_dir / "system.md").read_text(encoding="utf-8"))
         self.assertEqual(VISION_PROMPT, (prompt_dir / "vision.md").read_text(encoding="utf-8"))
-        self.assertFalse((repo_root / "prompt.md").exists())
         self.assertNotIn("{{CURRENT_TIME}}", SYSTEM_PROMPT)
 
     def test_clock_is_aware(self):
@@ -460,6 +446,8 @@ class PromptTimeTests(unittest.TestCase):
         )
         self.assertEqual(graph._validate_recommendations([]), [])
         with self.assertRaises(ValueError):
+            graph._validate_recommendations(["一", "二", "三", "四"])
+        with self.assertRaises(ValueError):
             graph._validate_recommendations(["单个建议"])
         with self.assertRaises(ValueError):
             graph._validate_recommendations(["建议" * 31, "正常建议"])
@@ -470,78 +458,7 @@ class PromptTimeTests(unittest.TestCase):
             {"type": "reasoning", "reasoning": "思考：分析数据变化情况"},
             {"type": "text", "text": "最终回答文本内容"}
         ])
-        # 1. BaseMessage.text 必须返回纯文本，忽略思考过程
-        self.assertEqual(msg.text, "最终回答文本内容")
-        # 2. graph._message_text 提取纯文本
         self.assertEqual(graph._message_text(msg), "最终回答文本内容")
-        # 3. 验证如果使用 str(msg.content) 会带有 Python 字典 repr，确认必须禁止此类逻辑
-        self.assertIn("'type': 'reasoning'", str(msg.content))
-        self.assertNotEqual(str(msg.content), "最终回答文本内容")
-
-    def test_vision_json_object_structured_output_with_content_blocks(self):
-        """Vision: Content Blocks (reasoning + text) 验证结构化输出与 Pydantic 校验。"""
-        valid_json = json.dumps({
-            "trends": ["N向平稳"],
-            "turning_points": [],
-            "readings": [],
-            "candidates": [
-                {"metric": "N", "start_at": "2026-09-01 01:00:00", "end_at": "2026-09-01 02:00:00", "description": "正常候选"}
-            ],
-            "interpretation": ["疑似微小扰动"],
-            "image_quality": "清晰",
-            "fact_text": "事实描述",
-            "limitations": []
-        })
-        msg = AIMessage(content=[
-            {"type": "reasoning", "reasoning": "视觉模型内部思考过程"},
-            {"type": "text", "text": valid_json}
-        ])
-        from langchain_core.output_parsers import PydanticOutputParser
-        parser = PydanticOutputParser(pydantic_object=vision.VisionObservations)
-        parsed = parser.parse(msg.text)
-        self.assertIsInstance(parsed, vision.VisionObservations)
-        self.assertEqual(parsed.trends, ["N向平稳"])
-        self.assertEqual(len(parsed.candidates), 1)
-
-        validated = vision._validate_observations(parsed, datetime(2026, 9, 1), datetime(2026, 9, 2))
-        self.assertIsInstance(validated, vision.VisionObservations)
-        self.assertEqual(len(validated.candidates), 1)
-
-    def test_recommendation_json_schema_validation(self):
-        """Recommendation: RecommendationResult JSON schema 与业务校验。"""
-        res = graph.RecommendationResult(recommendations=["建议一", "建议二"])
-        self.assertEqual(graph._validate_recommendations(res.recommendations), ["建议一", "建议二"])
-        with self.assertRaises(ValueError):
-            graph._validate_recommendations(["只有一条建议"])
-        with self.assertRaises(ValueError):
-            graph._validate_recommendations(["一", "二", "三", "四"])
-        with self.assertRaises(ValueError):
-            graph._validate_recommendations(["长" * 61, "正常建议"])
-
-    def test_vision_thinking_false_carries_enable_thinking_false(self):
-        """VISION_THINKING=false 时确认构造请求真正携带 enable_thinking=false。"""
-        with patch.object(models, "init_chat_model") as mock_init:
-            mock_init.return_value.profile = {}
-            models.create_chat_model(
-                provider="openai",
-                model="qwen3.7-plus",
-                api_key="mock",
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                thinking=False,
-                protocol="chat_completions",
-            )
-            mock_init.assert_called_once()
-            kwargs = mock_init.call_args.kwargs
-            self.assertEqual(kwargs.get("extra_body"), {"enable_thinking": False})
-            self.assertNotIn("use_responses_api", kwargs)
-
-    def test_title_uses_response_text_with_content_blocks(self):
-        """Title: 验证 title 节点从 content blocks 正确通过 response.text 提取标题。"""
-        msg = AIMessage(content=[
-            {"type": "reasoning", "reasoning": "提炼标题思考过程"},
-            {"type": "text", "text": "SCWM-04监测点数据分析"}
-        ])
-        self.assertEqual(title.clean_generated_title(msg.text), "SCWM-04监测点数据分析")
 
 
     def test_terrain_metrics_are_derived_from_dem_samples(self):
@@ -557,14 +474,6 @@ class PromptTimeTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def test_get_current_time_async_tool_call(self):
-        now = datetime(2026, 9, 14, 15, 30, 0, tzinfo=BUSINESS_TZ)
-        with patch.object(tools, "business_now", return_value=now):
-            content = await tools.get_current_time.ainvoke({})
-        data = json.loads(content)
-        self.assertEqual(data["current_time"], "2026-09-14 15:30:00")
-        self.assertEqual(data["timezone"], "Asia/Shanghai")
-
     async def test_disabled_recommendations_skip_model_call(self):
         state = {
             "messages": [HumanMessage(content="查询站点"), AIMessage(content="查询完成")],

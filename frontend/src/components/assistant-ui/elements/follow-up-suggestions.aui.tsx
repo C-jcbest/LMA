@@ -23,11 +23,6 @@ const normalizeRecommendations = (state: RecommendationState): string[] => {
   return [];
 };
 
-export interface FollowUpSuggestionsProps {
-  className?: string;
-  onSelect?: (suggestion: string) => void;
-}
-
 export const ThreadFollowupSuggestions: FC<{ className?: string }> = ({
   className,
 }) => {
@@ -61,8 +56,3 @@ export const ThreadFollowupSuggestions: FC<{ className?: string }> = ({
     </AuiIf>
   );
 };
-
-// 保持薄兼容导出
-export const FollowUpSuggestions: FC<FollowUpSuggestionsProps> = ({
-  className,
-}) => <ThreadFollowupSuggestions className={className} />;

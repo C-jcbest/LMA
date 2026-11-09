@@ -193,5 +193,3 @@ export const VisionResultView: React.FC<{ data: VisionArtifactData }> = ({ data 
     </div>
   );
 };
-
-export const VisionResult = VisionResultView;

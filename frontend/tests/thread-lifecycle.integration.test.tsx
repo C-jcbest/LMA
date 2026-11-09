@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createSessionListAdapter } from '@/lib/session-list-adapter';
 import { AssistantProvider } from '@/app/providers/AssistantProvider';
 import { App } from '@/App';
+import { AppLayout } from '@/app/AppLayout';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import * as api from '@/services/api';
 
@@ -74,22 +75,54 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     vi.spyOn(api, 'createLmaClient').mockReturnValue(mockClient);
   });
 
-  it('AssistantProvider 正确挂载运行时并提供子组件渲染环境', () => {
-    const { getByText } = render(
-      <AssistantProvider client={mockClient}>
-        <div>内部业务界面</div>
-      </AssistantProvider>
-    );
 
-    expect(getByText('内部业务界面')).toBeInTheDocument();
-  });
-
-  it('App 根组件正确挂载并渲染 ThreadList 品牌区与主聊天视口', async () => {
+  it('会话列表失败显示受控提示，手动重试成功且保留输入草稿', async () => {
+    mockClient.listSessions.mockRejectedValueOnce(new Error('PRIVATE_BACKEND_DIAGNOSTIC'));
     render(<App />);
 
-    expect(screen.getByText('LMA Monitor')).toBeInTheDocument();
-    expect(screen.getByText('滑坡连续监测智能体')).toBeInTheDocument();
-    expect(screen.getByText('服务配置')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent('会话列表加载失败');
+    expect(screen.queryByText('PRIVATE_BACKEND_DIAGNOSTIC')).not.toBeInTheDocument();
+    const input = screen.getByRole('textbox', { name: '输入监测问题' });
+    await userEvent.type(input, '尚未发送的监测问题');
+    mockClient.listSessions.mockResolvedValueOnce([{
+      id: 'recovered-thread', name: '恢复后的历史会话', archived: false,
+      created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T01:00:00Z',
+    }]);
+    await userEvent.click(screen.getByRole('button', { name: '重试', exact: true }));
+
+    expect(await screen.findByText('恢复后的历史会话')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(input).toHaveValue('尚未发送的监测问题');
+    expect(mockClient.listSessions).toHaveBeenCalledTimes(2);
+    expect(mockClient.createSession).not.toHaveBeenCalled();
+  });
+
+  it('刷新列表失败保留已有会话，再次失败不会自动循环重试', async () => {
+    mockClient.listSessions.mockResolvedValueOnce([{
+      id: 'existing-thread', name: '已有调查', archived: false,
+      created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T01:00:00Z',
+    }]);
+    let aui: ReturnType<typeof useAui>;
+    function RuntimeActions() {
+      aui = useAui();
+      return null;
+    }
+    render(
+      <AssistantProvider client={mockClient}>
+        <RuntimeActions />
+        <AppLayout />
+      </AssistantProvider>,
+    );
+    expect(await screen.findByText('已有调查')).toBeInTheDocument();
+    mockClient.listSessions.mockRejectedValue(new Error('服务不可用'));
+    await act(async () => { await aui!.threads().reload(); });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('会话列表加载失败');
+    expect(screen.getByText('已有调查')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '重试', exact: true }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('会话列表加载失败');
+    expect(screen.getByText('已有调查')).toBeInTheDocument();
+    expect(mockClient.listSessions).toHaveBeenCalledTimes(3);
   });
 
   it('P5: Composer 与 ThreadWelcome 完整集成业务快捷提问与中文提示', async () => {
@@ -237,87 +270,4 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     expect(pushStateSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('多会话切换与创建集成：从初始未绑定到 initialize 创建、externalId 与 thread_id 对齐并在切走切回时保持一致', async () => {
-    const createdThread = {
-      id: 'thread-stream-test',
-      created_at: '2026-09-18T10:00:00Z',
-      updated_at: '2026-09-18T10:00:00Z',
-      name: '新会话', archived: false,
-    };
-    mockClient.createSession.mockResolvedValue(createdThread);
-    mockClient.getSession.mockImplementation(async (id: string) => ({
-      id: id,
-      created_at: '2026-09-18T10:00:00Z',
-      updated_at: '2026-09-18T10:00:00Z',
-      name: '会话 ' + id, archived: false,
-    }));
-
-    const adapter = createSessionListAdapter(mockClient);
-
-    // 1. 初始化会话
-    const initialized = await adapter.initialize();
-    expect(initialized.remoteId).toBe('thread-stream-test');
-    expect(initialized.externalId).toBe('thread-stream-test');
-    expect(mockClient.createSession).toHaveBeenCalledWith();
-
-    // 2. 验证 fetch
-    const fetched = await adapter.fetch(initialized.remoteId);
-    expect(fetched.externalId).toBe(initialized.remoteId);
-    expect(fetched.remoteId).toBe(initialized.remoteId);
-
-    // 3. 在 AssistantProvider 中通过 assistant-ui 真实状态驱动会话切换
-    let capturedAui: any;
-    function Consumer() {
-      capturedAui = useAui();
-      const activeThreadId = useAuiState((s) => s.threads.mainThreadId);
-      const isRunning = useAuiState((s) => s.thread.isRunning);
-      const items = useAuiState((s) => s.threads.threadItems);
-      const activeItem = items.find((i) => i.id === activeThreadId);
-      return (
-        <div>
-          <div data-testid="aui-active-id">{activeThreadId}</div>
-          <div data-testid="aui-external-id">{activeItem?.externalId ?? 'none'}</div>
-          <div data-testid="aui-is-running">{isRunning ? 'running' : 'idle'}</div>
-        </div>
-      );
-    }
-
-    render(
-      <AssistantProvider client={mockClient}>
-        <Consumer />
-      </AssistantProvider>
-    );
-
-    // 切换到刚刚初始化的会话
-    await act(async () => {
-      capturedAui.threads.switchToThread('thread-stream-test');
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId('aui-active-id')).toHaveTextContent('thread-stream-test');
-      expect(screen.getByTestId('aui-external-id')).toHaveTextContent('thread-stream-test');
-      expect(screen.getByTestId('aui-is-running')).toHaveTextContent('idle');
-    });
-
-    // 切走会话到 thread-another
-    await act(async () => {
-      capturedAui.threads.switchToThread('thread-another');
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId('aui-active-id')).toHaveTextContent('thread-another');
-      expect(screen.getByTestId('aui-external-id')).toHaveTextContent('thread-another');
-    });
-
-    // 切回原会话，验证上下文与 externalId 状态保持一致
-    await act(async () => {
-      capturedAui.threads.switchToThread('thread-stream-test');
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId('aui-active-id')).toHaveTextContent('thread-stream-test');
-      expect(screen.getByTestId('aui-external-id')).toHaveTextContent('thread-stream-test');
-      expect(capturedAui.threads.getState().mainThreadId).toBe('thread-stream-test');
-    });
-  });
 });

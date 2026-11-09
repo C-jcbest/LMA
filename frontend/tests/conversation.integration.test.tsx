@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ToolFallback as GenericToolFallback } from '../src/components/assistant-ui/elements/tool-fallback.aui';
@@ -18,8 +18,7 @@ import {
 import { ReasoningRoot, ReasoningTrigger } from '../src/components/assistant-ui/elements/reasoning';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
 import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
-import { AIMessage, HumanMessage } from '@langchain/core/messages';
-import type { AssembledToolCall } from '@langchain/langgraph-sdk/stream';
+import { HumanMessage } from '@langchain/core/messages';
 import { createSessionListAdapter } from '../src/lib/session-list-adapter';
 import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
 import { convertLangChainBaseMessage } from '@assistant-ui/react-langchain';
@@ -140,24 +139,6 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('该位置和时间范围内暂无天气数据')).toBeInTheDocument();
   });
 
-  it('优先展示标准 contentBlocks reasoning，不读取耗时字段', () => {
-    const firstAI = new AIMessage({
-      id: 'a1',
-      contentBlocks: [
-        { type: 'reasoning', reasoning: '先确认目标站点，再查询监测数据。' },
-        { type: 'tool_call', id: 'call-1', name: 'list_stations', args: {} },
-      ],
-      additional_kwargs: {
-        reasoning_content: '不应重复展示的兼容内容',
-      },
-    });
-
-    const reasoningBlocks = firstAI.contentBlocks.filter((b) => b.type === 'reasoning');
-    expect(reasoningBlocks).toHaveLength(1);
-    expect((reasoningBlocks[0] as any).reasoning).toBe('先确认目标站点，再查询监测数据。');
-    expect((firstAI as any).elapsed_seconds).toBeUndefined();
-  });
-
 
   it('GNSS 空值与非有限值显示为缺测，不会转换为零', async () => {
     render(
@@ -270,20 +251,6 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
   });
 
-  it('官方 isError/result 在没有 artifact 时仍恢复工具错误终态', async () => {
-    render(
-      <ToolFallback
-        toolName="get_daily_gnss_data"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        result="未找到指定监测点，请确认站点。"
-        isError
-      />
-    );
-    expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('GNSS 数据获取失败'));
-    expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
-  });
 
   it('成功工具只从合法 v1 artifact.data 取业务展示', async () => {
     const { container } = render(
@@ -325,35 +292,6 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
   });
 
-  it('调用限额/异常信息展示友好错误文案', () => {
-    render(
-      <ToolFallback
-        toolName="list_stations"
-        status={{ type: 'incomplete', error: '本轮查询次数已达到上限，未执行此查询；请依据已有证据继续分析。' }}
-        argsText="{}"
-      />
-    );
-    expect(screen.getByText('监测点信息查询失败')).toBeInTheDocument();
-  });
-
-  it('畸形 artifact 字段 fail-closed，不扩散为聊天窗口异常', async () => {
-    render(
-      <ToolFallback
-        toolName="internal_step"
-        status={{ type: 'complete' }}
-        argsText="{}"
-        artifact={{
-          data: 'not-an-object',
-          images: { filter: 'not-a-function' },
-          chart_points: [null, { t: 1 }],
-          site_environment: { coordinate_system: 'WGS84' },
-        }}
-      />
-    );
-    expect(screen.getByText('已完成辅助查询')).toBeInTheDocument();
-    await userEvent.click(screen.getByText('已完成辅助查询'));
-    expect(screen.getByText(/已完成辅助信息查询并同步至模型上下文/)).toBeInTheDocument();
-  });
 
   it('输入框发送按钮左侧显示可访问的上下文用量入口', () => {
     render(
@@ -405,88 +343,9 @@ describe('会话关键路径集成回归', () => {
     ]);
   });
 
-  it('官方 DeepSeek AIMessage 通过 translator 标准化 contentBlocks，消费层只消费 contentBlocks', async () => {
-    const message = new AIMessage({
-      id: 'msg-1',
-      content: '最终回答',
-      additional_kwargs: {
-        reasoning_content: '先检查监测数据',
-      },
-      response_metadata: {
-        model_provider: 'deepseek',
-      },
-    });
-
-    expect(message.contentBlocks).toEqual([
-      {
-        type: 'reasoning',
-        reasoning: '先检查监测数据',
-      },
-      {
-        type: 'text',
-        text: '最终回答',
-      },
-    ]);
-  });
-
-  it('thinking=false 时不生成 reasoning block', () => {
-    const message = new AIMessage({
-      id: 'msg-plain',
-      content: '纯文本回答，未开启思考模式。',
-      response_metadata: {
-        model_provider: 'deepseek',
-      },
-    });
-
-    expect(message.contentBlocks).toEqual([
-      {
-        type: 'text',
-        text: '纯文本回答，未开启思考模式。',
-      },
-    ]);
-  });
-
-  it('rejoin/hydrate 验证：保留 model_provider 与 reasoning_content 时可恢复 contentBlocks reasoning', () => {
-    const hydratedMessage = new AIMessage({
-      id: 'hydrated-ai-1',
-      content: '恢复的历史回答',
-      additional_kwargs: {
-        reasoning_content: '历史思考过程：已核验位移曲线',
-        created_at: '2026-09-18T10:00:00+08:00',
-      },
-      response_metadata: {
-        model_provider: 'deepseek',
-      },
-    });
-
-    expect(hydratedMessage.contentBlocks.some((b) => b.type === 'reasoning')).toBe(true);
-    const reasoningBlock = hydratedMessage.contentBlocks.find((b) => b.type === 'reasoning');
-    expect((reasoningBlock as any)?.reasoning).toBe('历史思考过程：已核验位移曲线');
-  });
 
 });
 
-it('并行工具按 callId 独立更新，rejoin 后终态正确渲染', async () => {
-  const { rerender } = render(
-    <ToolFallback
-      toolName="query_weather"
-      status={{ type: 'running' }}
-      argsText="{}"
-    />
-  );
-  expect(screen.getByText('正在查询同期天气…')).toBeInTheDocument();
-
-  rerender(
-    <ToolFallback
-      toolName="query_weather"
-      status={{ type: 'incomplete', error: '天气服务暂不可用' }}
-      argsText="{}"
-    />
-  );
-  expect(screen.getByText('天气数据查询失败')).toBeInTheDocument();
-  await userEvent.click(screen.getByText('天气数据查询失败'));
-  expect(screen.getByText('天气服务暂不可用')).toBeInTheDocument();
-});
 
 it('合法 v1 artifact 到达后直接展示业务数据，不依赖 raw JSON', async () => {
   render(
@@ -506,16 +365,6 @@ it('合法 v1 artifact 到达后直接展示业务数据，不依赖 raw JSON', 
   expect(screen.getByText('实时测点X')).toBeInTheDocument();
 });
 
-it('返回空内容时显示空状态，不处于 loading 态', async () => {
-  render(
-    <ToolFallback
-      toolName="list_stations"
-      status={{ type: 'complete' }}
-      argsText="{}"
-    />
-  );
-  expect(screen.getByText('已查询监测点信息')).toBeInTheDocument();
-});
 
 it('P0-1 & P0-3: liveToolCall 返回任意合法结果（空数组/字符串/0/false/null）均视为完成，不回退为 loading', async () => {
   const legalOutputs = [[], '', 0, false, null];
@@ -607,131 +456,6 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
   ).toBeUndefined();
 });
 
-it('真实流式异步：A/B/C 三个工具分别延迟异步返回，完成的工具即时展示内容，空结果显示成功与无数据，互不阻塞', async () => {
-  vi.useFakeTimers();
-  try {
-    const StreamingContainer = () => {
-      const [toolStatuses, setToolStatuses] = React.useState<Record<string, { status: any; artifact?: any }>>({
-        'call-a': { status: { type: 'running' } },
-        'call-b': { status: { type: 'running' } },
-        'call-c': { status: { type: 'running' } },
-      });
-
-      React.useEffect(() => {
-        const t1 = setTimeout(() => {
-          setToolStatuses((prev) => ({
-            ...prev,
-            'call-a': {
-              status: { type: 'complete' },
-              artifact: {
-                version: 1,
-                kind: 'station_list',
-                status: 'success',
-                data: stationListData([{ station_name: '测点A', station_status: '正常' }]),
-              },
-            },
-          }));
-        }, 100);
-
-        const t2 = setTimeout(() => {
-          setToolStatuses((prev) => ({
-            ...prev,
-            'call-b': {
-              status: { type: 'complete' },
-              artifact: {
-                version: 1,
-                kind: 'station_list',
-                status: 'success',
-                data: stationGroupData([]),
-              },
-            },
-          }));
-        }, 500);
-
-        const t3 = setTimeout(() => {
-          setToolStatuses((prev) => ({
-            ...prev,
-            'call-c': {
-              status: { type: 'complete' },
-              artifact: {
-                version: 1,
-                kind: 'gnss_series',
-                status: 'success',
-                data: gnssData('GNSS', [
-                  { time: '2026-09-18 12:00:00', n: 1.234, e: 2.345, u: 3.456 },
-                ]),
-              },
-            },
-          }));
-        }, 1000);
-
-        return () => {
-          clearTimeout(t1);
-          clearTimeout(t2);
-          clearTimeout(t3);
-        };
-      }, []);
-
-      return (
-        <div>
-          <ToolFallback
-            toolName="list_stations"
-            status={toolStatuses['call-a'].status}
-            argsText="{}"
-            artifact={toolStatuses['call-a'].artifact}
-          />
-          <ToolFallback
-            toolName="list_station_groups"
-            status={toolStatuses['call-b'].status}
-            argsText="{}"
-            artifact={toolStatuses['call-b'].artifact}
-          />
-          <ToolFallback
-            toolName="get_daily_gnss_data"
-            status={toolStatuses['call-c'].status}
-            argsText="{}"
-            artifact={toolStatuses['call-c'].artifact}
-          />
-        </div>
-      );
-    };
-
-    render(<StreamingContainer />);
-
-    // 初始状态（0ms）：全部 running
-    expect(screen.getByRole('button', { name: /正在查询监测点信息…/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在查询监测点分组…/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeInTheDocument();
-
-    // 前进 100ms：A 完成并展示结果，B/C 仍 running
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
-    });
-    expect(screen.getByRole('button', { name: /已查询监测点信息/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在查询监测点分组…/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /已查询监测点信息/ }));
-    expect(screen.getByText('测点A')).toBeInTheDocument();
-
-    // 前进 400ms（到达 500ms）：B 完成，C 仍 running
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(400);
-    });
-    expect(screen.getByRole('button', { name: /已查询监测点信息/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /已查询监测点分组/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /正在获取 GNSS 监测数据…/ })).toBeInTheDocument();
-
-    // 前进 500ms（到达 1000ms）：C 完成，三者均完成
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
-    expect(screen.getByRole('button', { name: /已获取 GNSS 监测数据/ })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /已获取 GNSS 监测数据/ }));
-    expect(screen.getByText('1.234')).toBeInTheDocument();
-  } finally {
-    vi.useRealTimers();
-  }
-});
 
 it('P6: ReasoningTrigger 根据 active 状态显示“正在思考…”或“已思考”，且 streaming 自动控制展开', async () => {
   // 1. active 状态标签

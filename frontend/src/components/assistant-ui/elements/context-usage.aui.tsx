@@ -1,4 +1,4 @@
-import React, { FC } from "react";
+import type { FC } from "react";
 import { ContextDisplay } from "@/components/context-display";
 import { cn } from "@/lib/utils";
 

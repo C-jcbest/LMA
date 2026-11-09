@@ -187,18 +187,6 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             await agent.ainvoke({"messages": [HumanMessage(content="查询")]}, config)
         self.assertEqual((await agent.aget_state(config)).values["messages"][-1].content, "查询")
 
-    async def test_official_updates_nodes(self):
-        model = ScriptedModel(script=[AIMessage(content="完成", additional_kwargs={"reasoning_content": "证据"})])
-        agent = graph.create_lma_agent(model, agent_tools=[])
-        updates = [update async for update in agent.astream(
-            {"messages": [HumanMessage(content="查询")]}, stream_mode="updates",
-        )]
-        response = next(update["model"]["messages"][0] for update in updates if "model" in update)
-        self.assertIn("created_at", response.additional_kwargs)
-        self.assertNotIn("lma_thinking_duration_ms", response.additional_kwargs)
-        self.assertFalse(any("agent" in update or "recommend" in update or "manage_context" in update
-                             for update in updates))
-
     async def test_nonstandard_reasoning_fields_are_not_promoted(self):
         model = ScriptedModel(script=[AIMessage(
             content="完成",

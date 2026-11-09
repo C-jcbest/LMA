@@ -110,5 +110,3 @@ export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({
 
   return null;
 };
-
-export const StationResult = StationResultView;

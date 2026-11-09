@@ -40,6 +40,7 @@ describe('assistant-ui monitoring toolkit', () => {
     );
 
     expect(screen.getByText('GNSS 数据获取失败')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('未找到指定监测点，请确认站点。');
     await userEvent.click(screen.getByText('GNSS 数据获取失败'));
     expect(screen.getByText('未找到指定监测点，请确认站点。')).toBeInTheDocument();
   });
@@ -79,10 +80,44 @@ describe('assistant-ui monitoring toolkit', () => {
     );
 
     expect(screen.getByText('位移曲线复核失败')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('视觉模型未配置，已返回图表供人工查看。');
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
     await userEvent.click(screen.getByText('位移曲线复核失败'));
     expect(
       screen.getByText('视觉模型未配置，已返回图表供人工查看。'),
     ).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByText('位移曲线复核失败'));
+    expect(screen.getByRole('alert')).toHaveTextContent('视觉模型未配置，已返回图表供人工查看。');
+  });
+
+  it('取消与正常空数据不呈现失败告警', async () => {
+    const Renderer = monitoringToolRenderers.get_daily_gnss_data;
+    const { rerender } = render(
+      <Renderer
+        toolName="get_daily_gnss_data"
+        toolCallId="call-cancelled"
+        args={{}}
+        argsText="{}"
+        status={{ type: 'incomplete', reason: 'cancelled' }}
+      />,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent('操作已取消');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    const StationRenderer = monitoringToolRenderers.list_stations;
+    rerender(
+      <StationRenderer
+        toolName="list_stations"
+        toolCallId="call-empty"
+        args={{}}
+        argsText="{}"
+        status={{ type: 'complete' }}
+        artifact={{ version: 1, kind: 'station_list', status: 'success', data: { total: 0, stations: [] } }}
+      />,
+    );
+    await userEvent.click(screen.getByText('已查询监测点信息'));
+    expect(screen.getByText('暂无符合条件的监测点')).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });
