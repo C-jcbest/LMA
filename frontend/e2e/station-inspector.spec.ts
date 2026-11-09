@@ -248,6 +248,9 @@ test('切换屏宽和会话时不残留依据，宽度不足时会话导航改�
   await page.getByRole('button', { name: '关闭依据' }).click();
   await page.getByRole('button', { name: '打开会话列表' }).click();
   await page.getByRole('button', { name: '新建会话', exact: true }).click();
-  await expect(page.getByRole('heading', { name: '今天要查哪个测点？' })).toBeVisible();
+  // 首页可展示已有巡检结果；切换成功取决于旧消息清空和新输入区可用。
+  await expect(page.getByText('测试点 A 需要优先复核')).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('');
   await expect(inspector(page)).toHaveCount(0);
 });
