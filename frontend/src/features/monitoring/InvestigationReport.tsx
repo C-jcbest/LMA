@@ -44,7 +44,7 @@ const FindingRow: FC<{
   onOpen: (toolCallId: string) => void;
   canOpen: (toolCallId: string) => boolean;
 }> = ({ finding, citationNumbers, describe, onOpen, canOpen }) => (
-  <li className="wrap-break-word">
+  <li className="wrap-anywhere">
     {finding.text}
     {finding.evidence.map((toolCallId) => {
       const number = citationNumbers.get(toolCallId);
@@ -99,23 +99,26 @@ export const InvestigationReport: FC = () => {
   const orderedStations = [...report.stations].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
 
   return (
-    <section data-slot="investigation-report" aria-label="调查简报" className="space-y-5">
-      <p className="text-lg leading-snug font-medium wrap-break-word">{report.conclusion}</p>
+    <section data-slot="investigation-report" aria-label="调查简报" className="investigation-report">
+      <header className="report-summary">
+        <p className="mb-2 text-xs font-medium tracking-widest text-muted-foreground">调查简报 · {report.stations.length} 个测点</p>
+        <h2 className="text-lg leading-relaxed font-semibold wrap-anywhere sm:text-xl">{report.conclusion}</h2>
+      </header>
 
-      <ul className="divide-y rounded-lg border">
+      <ul className="report-stations divide-y overflow-hidden rounded-xl border">
         {orderedStations.map((item) => {
           const evidence = stations.find((station) => station.name === item.station_name);
           const isSelected = selection?.messageId === messageId && selection.stationName === item.station_name;
           const content = (
             <>
-              <span className="flex items-center gap-2">
+              <span className="flex flex-wrap items-center gap-2">
                 <span className={cn('size-2 shrink-0 rounded-full', STATUS_DOT_CLASS[item.status])} aria-hidden />
-                <span className="min-w-0 truncate font-medium">{item.station_name}</span>
-                <span className="text-muted-foreground shrink-0 text-sm">{item.status}</span>
+                <span className="min-w-0 wrap-anywhere font-semibold">{item.station_name}</span>
+                <span className="rounded-md bg-muted px-2 py-0.5 text-xs">{item.status}</span>
                 {evidence && <span className="ms-auto"><StationSparkline station={evidence} /></span>}
               </span>
-              <span className="mt-1 block text-sm wrap-break-word">{item.reason}</span>
-              <span className="text-muted-foreground mt-0.5 block text-sm wrap-break-word">
+              <span className="mt-2 block text-sm leading-relaxed wrap-anywhere">{item.reason}</span>
+              <span className="text-muted-foreground mt-1 block text-xs leading-relaxed wrap-anywhere">
                 {item.acceleration} · {item.data_quality}
               </span>
             </>
@@ -129,14 +132,14 @@ export const InvestigationReport: FC = () => {
                   aria-pressed={isSelected}
                   onClick={() => openStation({ messageId, stationName: item.station_name })}
                   className={cn(
-                    'focus-visible:ring-ring block w-full px-3.5 py-2.5 text-start transition-colors first:rounded-t-lg last:rounded-b-lg hover:bg-muted/60 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset',
+                    'focus-visible:ring-ring block w-full p-4 text-start transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset',
                     isSelected && 'bg-muted',
                   )}
                 >
                   {content}
                 </button>
               ) : (
-                <div className="px-3.5 py-2.5">{content}</div>
+                <div className="p-4">{content}</div>
               )}
             </li>
           );
@@ -147,9 +150,9 @@ export const InvestigationReport: FC = () => {
         const findings = report.findings.filter((finding) => finding.level === level);
         if (findings.length === 0) return null;
         return (
-          <div key={level}>
-            <h3 className="text-muted-foreground mb-1.5 text-sm font-medium">{findingHeading(level)}</h3>
-            <ul className={cn('space-y-1.5', level === 'inference' && 'border-status-attention border-s-2 ps-3')}>
+          <div key={level} className="report-section">
+            <h3>{findingHeading(level)}</h3>
+            <ul className="report-findings">
               {findings.map((finding, index) => (
                 <FindingRow
                   key={index}
@@ -166,11 +169,11 @@ export const InvestigationReport: FC = () => {
       })}
 
       {report.next_steps.length > 0 && (
-        <div>
-          <h3 className="text-muted-foreground mb-1.5 text-sm font-medium">建议</h3>
-          <ul className="space-y-1.5">
-            {report.next_steps.map((step, index) => <li key={index} className="wrap-break-word">{step}</li>)}
-          </ul>
+        <div className="report-section report-next-steps">
+          <h3>建议</h3>
+          <ol className="report-findings list-decimal">
+            {report.next_steps.map((step, index) => <li key={index} className="wrap-anywhere">{step}</li>)}
+          </ol>
         </div>
       )}
     </section>

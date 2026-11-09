@@ -90,7 +90,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full min-h-0 min-w-0 flex-col font-sans"
       style={{
-        ["--thread-max-width" as string]: "48rem",
+        ["--thread-max-width" as string]: "52rem",
         ["--composer-radius" as string]: "1.25rem",
       }}
     >
@@ -101,7 +101,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
       >
         <div
           className={cn(
-            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-4",
+            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-6 sm:px-6 sm:pt-8",
             isEmpty && "justify-center",
           )}
         >
@@ -114,7 +114,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
 
           <div
             data-slot="aui_message-group"
-            className="mb-14 flex flex-col gap-y-6 empty:hidden"
+            className="mb-10 flex flex-col gap-y-8 empty:hidden"
           >
             <ThreadPrimitive.Messages components={{ Message: ThreadMessage, EditComposer }} />
           </div>
@@ -317,7 +317,7 @@ const AssistantMessage: FC = () => {
     >
       <div
         data-slot="aui_assistant-message-content"
-        className="text-foreground px-2 leading-relaxed wrap-break-word"
+        className="assistant-answer text-foreground min-w-0 px-1 text-[15px] leading-7 wrap-anywhere sm:px-2"
       >
         <MessagePrimitive.GroupedParts groupBy={messageGroupBy}>
           {({ part }) => {

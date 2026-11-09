@@ -12,8 +12,7 @@ from app.agent.tool_protocol import ToolFailure, tool_result
 
 REPORT_TOOL_NAME = "submit_investigation_report"
 
-# PRD 第 3、12 节：推断必须使用审慎表达，且不得越过系统的证据能力。
-_HEDGING_PATTERN = re.compile(r"可能|疑似|不排除|需要进一步核查|需进一步核查|证据不足|尚不能确认|无法确认")
+# PRD 第 12 节：结论不得越过系统的证据能力。
 _FORBIDDEN_PATTERN = re.compile(r"已(经)?发生滑坡|即将发生滑坡|必须立即撤离")
 
 
@@ -29,7 +28,7 @@ class ReportFinding(BaseModel):
     level: Literal["fact", "analysis", "inference"] = Field(
         description=(
             "fact 为观测事实；analysis 为由多个事实形成的判断；inference 为地质意义或诱因的专业推断，"
-            "正文必须含“可能”“疑似”“不排除”“需要进一步核查”之一"
+            "可以自然表达推测，不要求固定措辞或重复免责声明"
         )
     )
     text: str = Field(min_length=1, max_length=300)
@@ -91,8 +90,6 @@ def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessag
             raise ToolFailure(f"依据编号 {'、'.join(unknown)} 不存在，只能引用本轮工具结果中的 lma_evidence 编号。")
         if finding.level in {"fact", "analysis"} and not finding.evidence_ids:
             raise ToolFailure(f"观测事实和分析判断必须引用依据编号：{finding.text}")
-        if finding.level == "inference" and not _HEDGING_PATTERN.search(finding.text):
-            raise ToolFailure(f"专业推断必须使用“可能”“疑似”“需要进一步核查”等审慎表达：{finding.text}")
     return tool_call_ids
 
 

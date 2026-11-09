@@ -73,6 +73,9 @@ const inspection = {
 };
 
 async function mockApi(page: Page) {
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({
+    json: { running: null, latest_attempt: null, inspection: null, stations: [] },
+  }));
   await page.route('**/api/sessions?*', (route) => route.fulfill({ json: [session] }));
   await page.route('**/api/sessions/report-session', (route) => route.fulfill({ json: session }));
   await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({
@@ -81,6 +84,70 @@ async function mockApi(page: Page) {
 }
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
+
+for (const viewport of [
+  { width: 320, height: 900, colorScheme: 'light' as const },
+  { width: 390, height: 900, colorScheme: 'dark' as const },
+  { width: 1440, height: 1000, colorScheme: 'light' as const },
+]) {
+  test(`巡检与简报在 ${viewport.width}px ${viewport.colorScheme} 下可阅读和操作`, async ({ page }, testInfo) => {
+    await mockApi(page);
+    await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: inspection }));
+    await page.setViewportSize(viewport);
+    await page.emulateMedia({ colorScheme: viewport.colorScheme });
+    await page.goto('/');
+    const dashboard = page.getByRole('region', { name: '日常巡检' });
+    await expect(dashboard.getByRole('heading', { name: '今日关注' })).toBeVisible();
+    await expect(dashboard.locator('dd')).toHaveText(['1', '1', '1']);
+    const viewportElement = page.locator('[data-slot=aui_thread-viewport]');
+    expect(await viewportElement.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: testInfo.outputPath('inspection.png'), fullPage: true });
+    await page.getByRole('button', { name: '调查 测试点 A' }).click();
+    await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeFocused();
+
+    await page.goto('/?threadId=report-session');
+    const reportRegion = page.getByRole('region', { name: '调查简报' });
+    await expect(reportRegion.getByRole('heading', { name: report.conclusion })).toBeVisible();
+    expect(await viewportElement.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+    await viewportElement.evaluate((element) => { element.scrollTop = 0; });
+    await page.screenshot({ path: testInfo.outputPath('report.png'), fullPage: true });
+    await reportRegion.getByRole('button', { name: /查看依据 1：/ }).first().click();
+    await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
+  });
+}
+
+test('普通 AI 消息的标题、列表和长表格在窄屏保持可读', async ({ page }, testInfo) => {
+  await mockApi(page);
+  const markdown = [
+    '## 近期变化分析',
+    '北向位移仍在缓慢累积，整体趋势与前一周一致。重点关注以下两项变化。',
+    '- 北向累计变化约 **2 mm**，方向保持一致。',
+    '- 东向与高程变化相对平稳。',
+    '',
+    '### 监测数据',
+    '| 测点 | 北向变化 | 东向变化 | 高程变化 | 分析时间窗口 |',
+    '| --- | --- | --- | --- | --- |',
+    '| SCWM-04 | -18.0 mm | 2.1 mm | 0.7 mm | 2026-08-01T00:00:00+08:00 |',
+    '',
+    '> 从变化形态看，更倾向于缓慢的持续变形。',
+  ].join('\n');
+  await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({
+    json: { values: { messages: [messages[0], { type: 'ai', id: 'plain-answer', content: markdown }] }, latest_run: null },
+  }));
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto('/?threadId=report-session');
+  const answer = page.locator('[data-role=assistant]');
+  await expect(answer.getByRole('heading', { name: '近期变化分析' })).toBeVisible();
+  await expect(answer.getByRole('table')).toBeVisible();
+  const tableRegion = answer.getByRole('region', { name: '数据表格，可横向滚动' });
+  expect(await tableRegion.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  const columnHeader = await answer.getByRole('columnheader', { name: '东向变化' }).boundingBox();
+  expect(columnHeader!.height).toBeLessThan(60);
+  const viewportElement = page.locator('[data-slot=aui_thread-viewport]');
+  expect(await viewportElement.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await viewportElement.evaluate((element) => { element.scrollTop = 0; });
+  await page.screenshot({ path: testInfo.outputPath('markdown.png'), fullPage: true });
+});
 
 test('简报先给结论，按优先级列测点，事实与推断分开', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);

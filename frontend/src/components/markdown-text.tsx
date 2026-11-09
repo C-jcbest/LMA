@@ -43,7 +43,7 @@ const defaultComponents: StreamdownTextComponents = {
   h1: ({ className, ...props }) => (
     <h1
       className={cn(
-        "aui-md-h1 mt-5 mb-2 scroll-m-20 text-xl font-semibold first:mt-0 last:mb-0",
+        "aui-md-h1 mt-8 mb-4 scroll-m-20 text-2xl leading-snug font-semibold tracking-tight first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -52,7 +52,7 @@ const defaultComponents: StreamdownTextComponents = {
   h2: ({ className, ...props }) => (
     <h2
       className={cn(
-        "aui-md-h2 mt-5 mb-2 scroll-m-20 text-lg font-semibold first:mt-0 last:mb-0",
+        "aui-md-h2 mt-7 mb-3 scroll-m-20 text-lg leading-snug font-semibold first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -61,7 +61,7 @@ const defaultComponents: StreamdownTextComponents = {
   h3: ({ className, ...props }) => (
     <h3
       className={cn(
-        "aui-md-h3 mt-4 mb-1.5 scroll-m-20 text-base font-semibold first:mt-0 last:mb-0",
+        "aui-md-h3 mt-6 mb-2 scroll-m-20 text-base font-semibold first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -97,7 +97,7 @@ const defaultComponents: StreamdownTextComponents = {
   p: ({ className, ...props }) => (
     <p
       className={cn(
-        "aui-md-p my-3 leading-relaxed first:mt-0 last:mb-0",
+        "aui-md-p my-4 leading-7 first:mt-0 last:mb-0",
         className,
       )}
       {...props}
@@ -115,7 +115,7 @@ const defaultComponents: StreamdownTextComponents = {
   blockquote: ({ className, ...props }) => (
     <blockquote
       className={cn(
-        "aui-md-blockquote border-muted-foreground/30 text-muted-foreground my-3 border-s-2 ps-4",
+        "aui-md-blockquote border-muted-foreground/30 bg-muted/30 text-muted-foreground my-5 rounded-e-lg border-s-2 px-4 py-3",
         className,
       )}
       {...props}
@@ -124,7 +124,7 @@ const defaultComponents: StreamdownTextComponents = {
   ul: ({ className, ...props }) => (
     <ul
       className={cn(
-        "aui-md-ul marker:text-muted-foreground my-3 ms-5 list-disc [&>li]:mt-1",
+        "aui-md-ul marker:text-muted-foreground my-4 ms-5 list-disc [&>li]:mt-2 [&>li]:ps-1",
         className,
       )}
       {...props}
@@ -133,7 +133,7 @@ const defaultComponents: StreamdownTextComponents = {
   ol: ({ className, ...props }) => (
     <ol
       className={cn(
-        "aui-md-ol marker:text-muted-foreground my-3 ms-5 list-decimal [&>li]:mt-1",
+        "aui-md-ol marker:text-muted-foreground my-4 ms-5 list-decimal [&>li]:mt-2 [&>li]:ps-1",
         className,
       )}
       {...props}
@@ -141,15 +141,20 @@ const defaultComponents: StreamdownTextComponents = {
   ),
   hr: ({ className, ...props }) => (
     <hr
-      className={cn("aui-md-hr border-muted-foreground/20 my-3", className)}
+      className={cn("aui-md-hr my-6", className)}
       {...props}
     />
   ),
   table: ({ className, ...props }) => (
-    <div className="aui-md-table-wrapper my-3 overflow-x-auto">
+    <div
+      role="region"
+      aria-label="数据表格，可横向滚动"
+      tabIndex={0}
+      className="aui-md-table-wrapper focus-visible:ring-ring my-5 max-w-full overflow-x-auto rounded-xl border focus-visible:ring-2 focus-visible:outline-none"
+    >
       <table
         className={cn(
-          "aui-md-table w-full border-separate border-spacing-0",
+          "aui-md-table w-full border-separate border-spacing-0 text-sm leading-6",
           className,
         )}
         {...props}
@@ -158,8 +163,9 @@ const defaultComponents: StreamdownTextComponents = {
   ),
   th: ({ className, ...props }) => (
     <th
+      scope="col"
       className={cn(
-        "aui-md-th bg-muted px-3 py-1.5 text-start font-medium first:rounded-ss-lg last:rounded-se-lg [[align=center]]:text-center [[align=right]]:text-right",
+        "aui-md-th bg-muted/70 min-w-24 px-4 py-3 text-start font-semibold whitespace-nowrap [[align=center]]:text-center [[align=right]]:text-right",
         className,
       )}
       {...props}
@@ -168,7 +174,7 @@ const defaultComponents: StreamdownTextComponents = {
   td: ({ className, ...props }) => (
     <td
       className={cn(
-        "aui-md-td border-muted-foreground/20 border-s border-b px-3 py-1.5 text-start last:border-e [[align=center]]:text-center [[align=right]]:text-right",
+        "aui-md-td border-t px-4 py-3 text-start align-top tabular-nums [[align=center]]:text-center [[align=right]]:text-right",
         className,
       )}
       {...props}
@@ -184,7 +190,7 @@ const defaultComponents: StreamdownTextComponents = {
     />
   ),
   li: ({ className, ...props }) => (
-    <li className={cn("aui-md-li leading-relaxed", className)} {...props} />
+    <li className={cn("aui-md-li leading-7", className)} {...props} />
   ),
   strong: ({ className, ...props }) => (
     <strong
@@ -229,7 +235,7 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
 }) => {
   return (
     <StreamdownTextPrimitive
-      className={cn("aui-md", className)}
+      className={cn("aui-md min-w-0 space-y-0", className)}
       plugins={{
         code,
         ...plugins,

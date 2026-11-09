@@ -1,5 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({
+    json: { running: null, latest_attempt: null, inspection: null, stations: [] },
+  }));
+});
+
 // 只替换 HTTP 边界，实际运行页面、官方 Runtime、抽屉与列表交互。
 const sessions = [
   { id: 'layout-first', name: '测点近期调查', archived: false, created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T02:00:00Z' },

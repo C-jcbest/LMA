@@ -89,7 +89,6 @@ class InvestigationReportTests(unittest.IsolatedAsyncioTestCase):
         cases = {
             "编造依据": report_call("bad", findings=[{"level": "fact", "text": "x", "evidence_ids": ["Efake00"]}]),
             "事实无依据": report_call("bad", findings=[{"level": "fact", "text": "x", "evidence_ids": []}]),
-            "推断不审慎": report_call("bad", findings=[{"level": "inference", "text": "这是降雨导致的", "evidence_ids": []}]),
             "未调查测点": report_call("bad", stations=[{
                 "station_name": "不存在的点", "status": "持续关注", "reason": "r",
                 "acceleration": "无法判断", "data_quality": "q",
@@ -104,6 +103,13 @@ class InvestigationReportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(failed.status, "error")
                 self.assertIsNone(failed.artifact)
                 self.assertEqual(report_in_last_turn(result["messages"])[0], "good")
+
+    async def test_inference_accepts_natural_wording_without_required_keywords(self):
+        finding = {"level": "inference", "text": "从变化形态看，更倾向于坡体缓慢变形。", "evidence_ids": []}
+        result, model = await self.run_agent(gnss_call(), report_call(findings=[finding]))
+        self.assertEqual(len(model.inputs), 2)
+        self.assertEqual(result["messages"][-1].status, "success")
+        self.assertEqual(result["messages"][-1].artifact["data"]["findings"][0]["text"], finding["text"])
 
     async def test_plain_answer_is_still_allowed(self):
         result, _ = await self.run_agent(AIMessage(content="共有 3 个分组。"))

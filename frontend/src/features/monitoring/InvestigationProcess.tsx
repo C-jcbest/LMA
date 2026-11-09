@@ -175,9 +175,9 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
   }
 
   return (
-    <div data-slot="investigation" className="mb-3 flex flex-col gap-1.5">
+    <div data-slot="investigation" className="investigation-process mb-5 flex flex-col gap-2">
       <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <CollapsibleTrigger className="group/process -ms-1.5 flex min-h-8 max-w-full items-center gap-2 rounded-md px-1.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <CollapsibleTrigger className="group/process flex min-h-10 max-w-full items-center gap-2 rounded-lg border bg-muted/30 px-3 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <StepIcon state={headlineState} />
           <span className={cn('min-w-0 truncate', isRunning && 'text-shimmer')} role={isRunning ? 'status' : undefined}>
             {headlineOf(steps, stations.length, isRunning)}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FC } from 'react';
 import { useAui } from '@assistant-ui/react';
-import { ChevronRightIcon } from 'lucide-react';
+import { ActivityIcon, ChevronRightIcon, RefreshCwIcon } from 'lucide-react';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,21 +48,23 @@ const StationRow: FC<{ station: InspectionStation }> = ({ station }) => {
   const hasChanged = station.previous_screening !== null && station.previous_screening !== station.screening;
 
   return (
-    <li className="flex flex-col items-stretch sm:flex-row">
+    <li className="inspection-station">
       <button
         type="button"
         aria-label={`调查 ${station.station_name}`}
         onClick={prepareInvestigation}
-        className="hover:bg-muted/60 focus-visible:ring-ring min-w-0 flex-1 rounded-md px-2 py-2 text-start transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+        className="inspection-station-main hover:bg-muted/60 focus-visible:ring-ring min-w-0 flex-1 rounded-lg p-3 text-start transition-colors focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
       >
-        <span className="flex items-center gap-2">
+        <span className="flex min-w-0 items-center gap-2">
           <span className={cn('size-2 shrink-0 rounded-full', SCREENING_DOT_CLASS[station.screening])} aria-hidden />
-          <span className="max-w-[60%] shrink-0 truncate font-medium">{station.station_name}</span>
-          <span className="text-muted-foreground min-w-0 truncate text-sm">{station.group_name}</span>
-          {hasChanged && <span className="text-muted-foreground shrink-0 text-sm">此前{station.previous_screening}</span>}
+          <span className="min-w-0 wrap-anywhere font-semibold">{station.station_name}</span>
           <span className="ms-auto shrink-0"><Sparkline values={station.trend} /></span>
         </span>
-        {clues && <span className="text-muted-foreground mt-0.5 block text-sm wrap-break-word">{clues}</span>}
+        <span className="text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          <span className="wrap-anywhere">{station.group_name}</span>
+          {hasChanged && <span>此前{station.previous_screening}</span>}
+        </span>
+        {clues && <span className="mt-2 block text-sm leading-relaxed wrap-anywhere">{clues}</span>}
       </button>
       {conclusion && (
         <button
@@ -70,7 +72,7 @@ const StationRow: FC<{ station: InspectionStation }> = ({ station }) => {
           title={conclusion.reason}
           aria-label={`打开 ${station.station_name} 的上次调查`}
           onClick={() => void aui.threads().switchToThread(conclusion.session_id)}
-          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex min-h-8 shrink-0 items-center gap-0.5 self-start rounded-md px-2 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none sm:self-auto"
+          className="inspection-history text-muted-foreground hover:text-foreground focus-visible:ring-ring flex min-h-9 items-center gap-1 rounded-md px-3 text-xs transition-colors focus-visible:ring-2 focus-visible:outline-none"
         >
           上次{conclusion.status}
           <ChevronRightIcon className="size-3.5" aria-hidden />
@@ -83,8 +85,8 @@ const StationRow: FC<{ station: InspectionStation }> = ({ station }) => {
 const FoldedStations: FC<{ label: string; stations: InspectionStation[] }> = ({ label, stations }) => {
   if (stations.length === 0) return null;
   return (
-    <Collapsible>
-      <CollapsibleTrigger className="group/fold text-muted-foreground hover:text-foreground focus-visible:ring-ring flex min-h-8 items-center gap-1 rounded-md px-2 text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none">
+    <Collapsible className="inspection-fold">
+      <CollapsibleTrigger className="group/fold text-muted-foreground hover:text-foreground focus-visible:ring-ring flex min-h-11 w-full items-center justify-between gap-2 rounded-lg px-3 text-left text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none">
         {label} {stations.length} 个
         <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]/fold:rotate-90 motion-reduce:transition-none" aria-hidden />
       </CollapsibleTrigger>
@@ -190,20 +192,30 @@ export const TodayAttention: FC = () => {
   }
 
   return (
-    <div className="aui-thread-welcome-root mb-6 px-2">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-        <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">
-          {hasResults ? '今日关注' : '今天要查哪个测点？'}
-        </h1>
-        <div className="flex items-center gap-3">
+    <section aria-label="日常巡检" className="aui-thread-welcome-root inspection-dashboard mb-6">
+      <div className="inspection-heading">
+        <div>
+          <p className="mb-3 flex items-center gap-2 text-xs font-medium tracking-widest text-muted-foreground"><ActivityIcon className="size-4" aria-hidden />监测工作台</p>
+          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+            {hasResults ? '今日关注' : '今天要查哪个测点？'}
+          </h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            {hasResults ? '从变化线索出发，查看值得关注的测点。' : '发起一次巡检，或直接提问，查看测点的近期变化。'}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
           {latest?.inspection && (
             <span className="text-muted-foreground text-sm tabular-nums">{formatFinishedAt(latest.inspection.finished_at)} 巡检</span>
           )}
           <Button type="button" variant="outline" size="sm" disabled={isRunning || isStarting || isLoading} onClick={() => void start()}>
+            <RefreshCwIcon className={cn('size-3.5', (isRunning || isStarting) && 'animate-spin motion-reduce:animate-none')} aria-hidden />
             {startLabel}
           </Button>
         </div>
       </div>
+      {latest?.running && (
+        <progress className="inspection-progress" aria-label="巡检进度" max={Math.max(1, latest.running.total_stations)} value={latest.running.completed_stations} />
+      )}
 
       {hasLoadError && (
         <p role="alert" className="text-muted-foreground mt-3 text-sm">
@@ -224,9 +236,14 @@ export const TodayAttention: FC = () => {
       )}
 
       {hasResults && (
-        <div className="mt-4 space-y-2">
+        <div className="mt-6 space-y-3">
+          <dl className="inspection-overview" aria-label="当前筛选结果概览">
+            <div><dt>建议调查</dt><dd className="text-status-attention">{needsLook.length}</dd></div>
+            <div><dt>未见明显变化</dt><dd>{quiet.length}</dd></div>
+            <div><dt>数据待核查</dt><dd>{unavailable.length}</dd></div>
+          </dl>
           {(groupOptions.length > 1 || (allStations?.length ?? 0) >= SEARCH_VISIBLE_FROM) && (
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="inspection-filters flex flex-wrap items-center gap-2">
               {groupOptions.length > 1 && groupOptions.length <= MAX_GROUP_OPTIONS && (
                 <Segmented
                   label="分组"
@@ -259,9 +276,15 @@ export const TodayAttention: FC = () => {
           )}
 
           {needsLook.length > 0 && (
-            <ul aria-label="建议调查的测点">
-              {needsLook.map((station) => <StationRow key={station.station_uuid} station={station} />)}
-            </ul>
+            <div className="inspection-priority">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-3 pb-1">
+                <h2 className="text-sm font-semibold">优先关注</h2>
+                <span className="text-xs text-muted-foreground">选择测点，准备调查</span>
+              </div>
+              <ul aria-label="建议调查的测点" className="divide-y">
+                {needsLook.map((station) => <StationRow key={station.station_uuid} station={station} />)}
+              </ul>
+            </div>
           )}
           {needsLook.length === 0 && visible.length > 0 && (
             <p className="text-muted-foreground px-2 text-sm">初筛未发现需要优先调查的测点。</p>
@@ -272,6 +295,6 @@ export const TodayAttention: FC = () => {
           <FoldedStations label="未见明显变化" stations={quiet} />
         </div>
       )}
-    </div>
+    </section>
   );
 };
