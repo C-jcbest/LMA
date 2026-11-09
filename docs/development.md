@@ -78,6 +78,10 @@ pnpm test:gate
 
 test:gate 包含 Vitest、Playwright 和生产构建。浏览器测试需要后端依赖，使用 21420 / 25174 / 19090 独立端口和 HTTP stub，不调用真实模型或监测账号。
 
+浏览器回归保留 25 个关键场景：相同交互只覆盖 320px 窄屏与桌面代表尺寸，不再为每个中间屏宽重复整条流程；简报复制与依据定位、巡检中断与重启合并为连续操作。基准站不返回展示 artifact 由后端工具测试和前端 investigation 单元测试覆盖，不再重复跑两轮模型 stub 与刷新。成功用例不额外保存截图，失败仍保留截图和 trace。纯样式细节、开发环境设置入口不作为发布门禁。
+
+Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.ts 写入真实隔离 API，其余文件使用各自页面的 HTTP mock，因此不增加真实 Run 的并发。不要在这些文件中混入共享后端写操作。需要检查单个功能时使用 `pnpm exec playwright test e2e/对应文件.spec.ts`，无需重复执行整套门禁。
+
 | 回归范围 | 现有入口与保留理由 |
 | --- | --- |
 | Agent 多轮、并行、取消配对、重试与调用限额 | backend/tests/test_agent_runtime.py；验证 LMA 组装后的实际运行行为 |

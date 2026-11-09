@@ -3,8 +3,10 @@ name: Test and deploy LMA
 on:
   pull_request:
     branches: [main]
+    paths-ignore: ['docs/**', 'README.md', 'AGENTS.md', 'prd.md']
   push:
     branches: [main]
+    paths-ignore: ['docs/**', 'README.md', 'AGENTS.md', 'prd.md']
   workflow_dispatch:
 
 permissions:
@@ -14,6 +16,10 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # 只取消过时测试，不中断已进入服务器更新阶段的部署。
+    concurrency:
+      group: lma-test-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: true
     services:
       postgres:
         image: postgres:16-alpine
@@ -53,7 +59,7 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm --dir frontend install --frozen-lockfile
       - name: Install browser
-        run: pnpm --dir frontend exec playwright install --with-deps chromium
+        run: pnpm --dir frontend exec playwright install --with-deps --only-shell chromium
       - name: Test frontend
         run: pnpm --dir frontend test
       - name: Test conversation lifecycle in browser

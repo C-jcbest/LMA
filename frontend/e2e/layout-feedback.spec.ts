@@ -83,28 +83,15 @@ test('导航拖动只在松开后保存，折叠、刷新和跨屏宽后保留�
   await expect(handle).toHaveAttribute('aria-valuenow', '260');
 });
 
-test('减少动态效果时抽屉和折叠内容不播放过渡', async ({ page }) => {
-  await mockSessions(page);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  await page.getByRole('button', { name: '打开会话列表' }).click();
-  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
-  await expect(drawer).toBeVisible();
-  expect(await drawer.evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
-  await page.keyboard.press('Escape');
-  await expect(drawer).toHaveCount(0);
-  await page.setViewportSize({ width: 1280, height: 844 });
-  expect(await page.locator('[data-navigation-docked]').evaluate((element) => getComputedStyle(element).transitionDuration)).toBe('0s');
-});
-
 test('抽屉可调整宽度并重新打开，Esc 撤销拖动且不会残留拖动状态', async ({ page }) => {
   await mockSessions(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   const navigation = page.getByRole('button', { name: '打开会话列表' });
   const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
   await navigation.click();
+  expect(await drawer.evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
   const handle = drawer.getByRole('separator', { name: '调整会话列表宽度' });
   await handle.focus();
   await page.keyboard.press('Shift+ArrowRight');
@@ -124,46 +111,14 @@ test('抽屉可调整宽度并重新打开，Esc 撤销拖动且不会残留拖�
   await navigation.click();
   await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(300);
   await expect.poll(async () => (await drawer.boundingBox())!.x).toBe(0);
-  await page.screenshot({ path: test.info().outputPath('drawer-mobile.png'), animations: 'disabled' });
 });
-
-for (const width of [320, 390, 430]) {
-  test(width + 'px 首次进入可直接输入，抽屉不挤压聊天区', async ({ page }) => {
-    await mockSessions(page);
-    await page.setViewportSize({ width, height: 844 });
-    await page.goto('/');
-    const input = page.getByRole('textbox', { name: '输入监测问题' });
-    await expect(input).toBeInViewport();
-    const box = await page.locator('[data-slot="aui_composer-shell"]').boundingBox();
-    expect(box!.width).toBeGreaterThan(width - 60);
-    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
-    expect(await page.evaluate(() => document.body.scrollWidth)).toBe(width);
-
-    const navigation = page.getByRole('button', { name: '打开会话列表' });
-    await navigation.click();
-    const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
-    await expect(drawer).toBeVisible();
-    await expect.poll(async () => (await drawer.boundingBox())?.x).toBe(0);
-    const drawerBox = await drawer.boundingBox();
-    expect(drawerBox!.x).toBe(0);
-    expect(drawerBox!.y).toBe(0);
-    expect(drawerBox!.height).toBe(844);
-    expect(drawerBox!.width).toBeLessThan(width);
-    await page.getByRole('button', { name: '关闭会话列表' }).click();
-    await expect(drawer).not.toBeVisible();
-    await expect(navigation).toBeFocused();
-
-    await navigation.click();
-    await page.keyboard.press('Escape');
-    await expect(drawer).not.toBeVisible();
-    await expect(navigation).toBeFocused();
-  });
-}
 
 test('窄屏切换已有会话、当前会话与新会话后关闭抽屉，桌面导航仍保持展开', async ({ page }) => {
   await mockSessions(page);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 320, height: 844 });
   await page.goto('/');
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
+  expect(await page.evaluate(() => document.body.scrollWidth)).toBe(320);
   const navigation = page.getByRole('button', { name: '打开会话列表' });
   const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
 
@@ -223,34 +178,4 @@ test('列表失败在窄屏直接可见，失败重试不循环，恢复后保�
   expect(requestCount).toBe(3);
   await page.getByRole('button', { name: '打开会话列表' }).click();
   await expect(page.getByRole('button', { name: sessions[0].name, exact: true })).toBeVisible();
-});
-
-test('抽屉支持点击遮罩关闭及打开服务设置，跨屏宽切换不丢失输入', async ({ page }) => {
-  await mockSessions(page);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
-  const input = page.getByRole('textbox', { name: '输入监测问题' });
-  await input.fill('切换布局前的草稿');
-  const navigation = page.getByRole('button', { name: '打开会话列表' });
-  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
-  await navigation.click();
-  await page.mouse.click(380, 400);
-  await expect(drawer).not.toBeVisible();
-  await expect(input).toHaveValue('切换布局前的草稿');
-
-  await navigation.click();
-  await drawer.getByRole('button', { name: '服务配置', exact: true }).click();
-  await expect(drawer).not.toBeVisible();
-  const settings = page.getByRole('dialog', { name: 'LMA 服务对接配置' });
-  await expect(settings).toBeVisible();
-  await expect(settings.getByRole('textbox')).toBeFocused();
-  await page.keyboard.press('Escape');
-  await expect(settings).not.toBeVisible();
-
-  await page.setViewportSize({ width: 1280, height: 844 });
-  await expect(page.getByRole('complementary', { name: '会话导航' })).toBeVisible();
-  await expect(input).toHaveValue('切换布局前的草稿');
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(drawer).not.toBeVisible();
-  await expect(input).toHaveValue('切换布局前的草稿');
 });

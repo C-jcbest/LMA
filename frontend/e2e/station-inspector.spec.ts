@@ -63,7 +63,7 @@ async function openInvestigation(page: Page, width: number, history: readonly un
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 const stationEntry = (page: Page) => page.getByRole('button', { name: '查看 测试点 A 的依据' });
 
-for (const width of [320, 390, 768, 1024, 1440]) {
+for (const width of [320, 1440]) {
   test(`${width}px 结论优先，测点时间轴可打开并恢复草稿与焦点`, async ({ page }) => {
     await openInvestigation(page, width);
     const input = page.getByRole('textbox', { name: '输入监测问题' });
@@ -191,10 +191,8 @@ test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度�
   await page.setViewportSize({ width: 1920, height: 900 });
   await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
   await expect.poll(async () => (await page.locator('[data-navigation-docked]').boundingBox())!.width).toBe(260);
-  await page.screenshot({ path: test.info().outputPath('workbench-light.png'), animations: 'disabled' });
   await page.getByRole('radio', { name: '深色主题', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await page.screenshot({ path: test.info().outputPath('workbench-dark.png'), animations: 'disabled' });
   expect(chartWarnings).toEqual([]);
 });
 

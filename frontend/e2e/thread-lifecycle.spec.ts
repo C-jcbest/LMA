@@ -306,26 +306,3 @@ test('最新用户消息可编辑重新生成、复制，悬停不改变消息�
     await client.deleteSession(threadId);
   }
 });
-
-
-for (const mode of ['数值', '视觉']) {
-  test(`基准站${mode}请求仅向模型说明，刷新后也不出现错误卡片`, async ({ page }) => {
-    const threadId = await createThread(`基准站${mode}`);
-    try {
-      await openThread(page, threadId);
-      await send(page, `查询基准站${mode}数据`);
-      await expect(page.getByText('该站仅提供差分基准，不适用形变序列分析。')).toBeVisible();
-      await expect(page.locator('[data-role="assistant"] button').filter({ hasText: /GNSS|视觉/ })).toHaveCount(0);
-      const state = await client.getState(threadId);
-      const messages = (state.values as { messages: Array<Record<string, unknown>> }).messages;
-      const result = messages.find((message) => message.type === 'tool');
-      expect(result?.artifact).toBeNull();
-      expect(persistedText(result?.content)).toContain('未查询形变数据');
-      await page.reload();
-      await expect(page.getByText('该站仅提供差分基准，不适用形变序列分析。')).toBeVisible();
-      await expect(page.locator('[data-role="assistant"] button').filter({ hasText: /GNSS|视觉/ })).toHaveCount(0);
-    } finally {
-      await client.deleteSession(threadId);
-    }
-  });
-}

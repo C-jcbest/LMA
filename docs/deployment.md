@@ -29,11 +29,13 @@ journalctl -u lma-certbot.service --since '2 days ago'
 
 ## GitHub Actions
 
-仓库 C-jcbest/LMA 的 .github/workflows/ci-deploy.yml 在 PR、推送 main 和手动触发时运行：
+仓库 C-jcbest/LMA 只保留 .github/workflows/ci-deploy.yml，在面向 main 的 PR、推送 main 和手动触发时运行。只改 docs/、README.md、AGENTS.md 或 prd.md 时不自动触发；提示词 Markdown 不在排除范围内。
 
 1. PostgreSQL 隔离数据库上运行后端 unittest。
-2. 前端 Vitest、Chromium 会话生命周期回归与 Vite 生产构建。
+2. 前端 Vitest、精简后的 Chromium 关键交互回归与 Vite 生产构建。浏览器只安装 headless shell，测试文件最多并行两个，文件内串行。
 3. 仅 main 且测试成功时，在 production environment 自动部署相同 commit。PR 不读取部署密钥、不发布。
+
+同一分支的新提交取消仍在运行的旧测试；部署仍使用独立串行锁，已开始的部署不会因新测试被取消。不再重复运行一套 Windows 测试和构建。
 
 production environment 中配置：
 

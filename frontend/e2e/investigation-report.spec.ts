@@ -85,38 +85,7 @@ async function mockApi(page: Page) {
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 
-for (const viewport of [
-  { width: 320, height: 900, colorScheme: 'light' as const },
-  { width: 390, height: 900, colorScheme: 'dark' as const },
-  { width: 1440, height: 1000, colorScheme: 'light' as const },
-]) {
-  test(`巡检与简报在 ${viewport.width}px ${viewport.colorScheme} 下可阅读和操作`, async ({ page }, testInfo) => {
-    await mockApi(page);
-    await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: inspection }));
-    await page.setViewportSize(viewport);
-    await page.emulateMedia({ colorScheme: viewport.colorScheme });
-    await page.goto('/');
-    const dashboard = page.getByRole('region', { name: '日常巡检' });
-    await expect(dashboard.getByRole('heading', { name: '今日关注' })).toBeVisible();
-    await expect(dashboard.locator('dd')).toHaveText(['1', '1', '1']);
-    const viewportElement = page.locator('[data-slot=aui_thread-viewport]');
-    expect(await viewportElement.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-    await page.screenshot({ path: testInfo.outputPath('inspection.png'), fullPage: true });
-    await page.getByRole('button', { name: '调查 测试点 A' }).click();
-    await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeFocused();
-
-    await page.goto('/?threadId=report-session');
-    const reportRegion = page.getByRole('region', { name: '调查简报' });
-    await expect(reportRegion.getByRole('heading', { name: report.conclusion })).toBeVisible();
-    expect(await viewportElement.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-    await viewportElement.evaluate((element) => { element.scrollTop = 0; });
-    await page.screenshot({ path: testInfo.outputPath('report.png'), fullPage: true });
-    await reportRegion.getByRole('button', { name: /查看依据 1：/ }).first().click();
-    await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
-  });
-}
-
-test('普通 AI 消息的标题、列表和长表格在窄屏保持可读', async ({ page }, testInfo) => {
+test('普通 AI 消息的标题、列表和长表格在窄屏保持可读', async ({ page }) => {
   await mockApi(page);
   const markdown = [
     '## 近期变化分析',
@@ -146,10 +115,9 @@ test('普通 AI 消息的标题、列表和长表格在窄屏保持可读', asyn
   const viewportElement = page.locator('[data-slot=aui_thread-viewport]');
   expect(await viewportElement.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await viewportElement.evaluate((element) => { element.scrollTop = 0; });
-  await page.screenshot({ path: testInfo.outputPath('markdown.png'), fullPage: true });
 });
 
-test('简报先给结论，按优先级列测点，事实与推断分开', async ({ page, context }) => {
+test('简报分层、复制及依据时间窗口定位', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await mockApi(page);
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -167,13 +135,6 @@ test('简报先给结论，按优先级列测点，事实与推断分开', async
   const copy = page.locator('[data-role="assistant"]').last().getByRole('button', { name: '复制', exact: true });
   await copy.click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('## 专业推断');
-});
-
-test('点击依据编号定位到对应的时间窗口', async ({ page }) => {
-  await mockApi(page);
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/?threadId=report-session');
-
   await page.getByRole('button', { name: /查看依据 1：/ }).first().click();
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
   await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
@@ -190,10 +151,13 @@ test('今日关注把需要看的测点放在最前，点击只填入输入框',
     runRequests += 1;
     return route.abort();
   });
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: '今日关注' })).toBeVisible();
+  await expect(page.locator('.inspection-overview dd')).toHaveText(['1', '1', '1']);
+  expect(await page.locator('[data-slot=aui_thread-viewport]').evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect(page.getByRole('list', { name: '建议调查的测点' }).getByRole('listitem')).toHaveCount(1);
   await expect(page.getByText('此前未见明显变化')).toBeVisible();
   await expect(page.getByRole('button', { name: /未见明显变化 1 个/ })).toBeVisible();
@@ -209,9 +173,12 @@ test('今日关注把需要看的测点放在最前，点击只填入输入框',
   await expect(page.getByText(report.conclusion)).toBeVisible();
 });
 
-test('巡检进行中显示进度，完成后展示结果，失败不影响直接提问', async ({ page }) => {
+test('巡检中断后可重新启动，显示进度并恢复结果', async ({ page }) => {
   await mockApi(page);
-  let state: Record<string, unknown> = { running: null, latest_attempt: null, inspection: null, stations: [] };
+  let state: Record<string, unknown> = {
+    running: null, inspection: null, stations: [],
+    latest_attempt: { id: 'interrupted-run', status: 'interrupted', finished_at: '2026-11-09T08:30:00+08:00', total_stations: 3, completed_stations: 1 },
+  };
   let startCount = 0;
   await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: state }));
   await page.route('**/api/inspections', (route) => {
@@ -227,6 +194,9 @@ test('巡检进行中显示进度，完成后展示结果，失败不影响直�
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: '今天要查哪个测点？' })).toBeVisible();
+  await expect(page.getByRole('alert')).toContainText('最近一次巡检已中断');
+  const input = page.getByRole('textbox', { name: '输入监测问题' });
+  await input.fill('保留我的调查问题');
   await page.getByRole('button', { name: '开始巡检' }).click();
   await expect(page.getByRole('button', { name: '巡检中 1/3' })).toBeDisabled();
   expect(startCount).toBe(1);
@@ -234,6 +204,7 @@ test('巡检进行中显示进度，完成后展示结果，失败不影响直�
   state = inspection;
   await expect(page.getByRole('heading', { name: '今日关注' })).toBeVisible({ timeout: 6000 });
   await expect(page.getByRole('button', { name: '重新巡检' })).toBeEnabled();
+  await expect(input).toHaveValue('保留我的调查问题');
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 });
@@ -286,20 +257,6 @@ test('巡检慢请求可完成且不并发，后台失败保留上次结果并�
   expect(reads).toBe(initialReads + 1);
   expect(maximumRequests).toBe(1);
   expect(abortedRequests).toEqual([]);
-});
-
-test('首次巡检中断明确提示，输入框和重新启动仍可用', async ({ page }) => {
-  await mockApi(page);
-  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: {
-    running: null, inspection: null, stations: [],
-    latest_attempt: { id: 'interrupted-run', status: 'interrupted', finished_at: '2026-11-09T08:30:00+08:00', total_stations: 3, completed_stations: 1 },
-  } }));
-  await page.goto('/');
-  await expect(page.getByRole('alert')).toContainText('最近一次巡检已中断');
-  await expect(page.getByRole('alert')).toContainText('你仍可直接提问');
-  await expect(page.getByRole('button', { name: '开始巡检' })).toBeEnabled();
-  await page.getByRole('textbox', { name: '输入监测问题' }).fill('保留我的调查问题');
-  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('保留我的调查问题');
 });
 
 test('多分组选单可筛选，重新巡检移除所选分组后恢复全部', async ({ page }) => {

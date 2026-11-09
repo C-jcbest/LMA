@@ -3,7 +3,8 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
-  workers: 1,
+  // 文件内仍串行；只有会话生命周期文件写入 API，其余文件使用页面级 HTTP mock。
+  workers: 2,
   retries: 0,
   timeout: 60_000,
   expect: { timeout: 15_000 },
