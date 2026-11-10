@@ -194,17 +194,33 @@ async def migrate_domain_records(pool):
                 start = next((index for index in range(anchor, -1, -1) if isinstance(messages[index], HumanMessage)), None)
                 if start is None:
                     continue
-                candidates = [identifier for identifier, name in station_identities(messages[start:anchor + 1]).items() if name == record["station_name"]]
+                turn = messages[start:anchor + 1]
+                candidates = {
+                    identifier for identifier, name in station_identities(turn).items()
+                    if name == record["station_name"]
+                }
+                # 旧观测可能只保存名称；同一原始回合的台账也是身份依据，不证明结论已验证。
+                # 合并全部候选后仍须唯一，不借当前台账或其他回合消除同名歧义。
+                for message in turn:
+                    if not isinstance(message, ToolMessage) or message.status == "error":
+                        continue
+                    artifact = message.artifact
+                    if not isinstance(artifact, dict) or artifact.get("kind") != "station_list":
+                        continue
+                    for station in artifact.get("data", {}).get("stations", []):
+                        if station.get("station_name") == record["station_name"] and station.get("station_uuid"):
+                            candidates.add(str(station["station_uuid"]))
                 if len(candidates) != 1:
                     continue
+                station_uuid = next(iter(candidates))
                 await connection.execute("""INSERT INTO lma_station_records(session_id,anchor_id,station_uuid,station_name,report_tool_call_id,question,created_at)
                                             VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                                         (session_id, record["anchor_id"], candidates[0], record["station_name"], record["report_tool_call_id"], record["question"], record["created_at"]))
+                                         (session_id, record["anchor_id"], station_uuid, record["station_name"], record["report_tool_call_id"], record["question"], record["created_at"]))
                 if record["report_tool_call_id"]:
                     await connection.execute("""INSERT INTO lma_station_results(session_id,tool_call_id,station_uuid,station_name,status,reason,detail,validated,created_at)
                                                 SELECT session_id,tool_call_id,%s,station_name,status,reason,'{}'::jsonb,false,created_at FROM lma_station_conclusions
                                                 WHERE session_id=%s AND tool_call_id=%s AND station_name=%s ON CONFLICT DO NOTHING""",
-                                             (candidates[0], session_id, record["report_tool_call_id"], record["station_name"]))
+                                             (station_uuid, session_id, record["report_tool_call_id"], record["station_name"]))
 
 
 class SessionStorage:

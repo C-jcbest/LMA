@@ -92,7 +92,7 @@ const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (record: Stati
   const [hasError, setHasError] = useState(false);
 
   if (records.length === 0) {
-    return <p className="text-muted-foreground text-sm">还没有调查过这个测点。</p>;
+    return <p className="text-muted-foreground text-sm">暂无关联的调查记录。</p>;
   }
   return (
     <div>

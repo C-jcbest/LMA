@@ -46,6 +46,82 @@ class EvidenceRecoveryTests(unittest.TestCase):
         if not self.uri.endswith('/lma_test'):
             raise ValueError('只允许隔离lma_test数据库')
 
+    def test_legacy_record_migration_uses_only_unique_identity_in_original_turn(self):
+        from app.server.storage import migrate_domain_records
+
+        ambiguous_one = str(uuid4())
+        ambiguous_two = str(uuid4())
+        later_station = str(uuid4())
+
+        def catalog(call_id, stations):
+            return ToolMessage(
+                id=call_id, name='list_stations', tool_call_id=call_id, content='原始台账',
+                artifact={'kind': 'station_list', 'status': 'success', 'data': {'stations': stations}},
+            )
+
+        messages = [
+            HumanMessage(id='old-question', content='原始调查'),
+            AIMessage(id='old-query', content='', tool_calls=[{'id': 'old-list', 'name': 'list_stations', 'args': {}}]),
+            catalog('old-list', [
+                {'station_uuid': STATION, 'station_name': '历史唯一站'},
+                {'station_uuid': ambiguous_one, 'station_name': '历史同名站'},
+                {'station_uuid': ambiguous_two, 'station_name': '历史同名站'},
+            ]),
+            AIMessage(id='old-answer', content='原回答，只保存名称而未保存观测UUID'),
+            HumanMessage(id='later-question', content='另一次调查'),
+            AIMessage(id='later-query', content='', tool_calls=[{'id': 'later-list', 'name': 'list_stations', 'args': {}}]),
+            catalog('later-list', [{'station_uuid': later_station, 'station_name': '仅后续回合出现的站'}]),
+            AIMessage(id='later-answer', content='后续回答'),
+        ]
+
+        async def scenario():
+            await migrate_database(self.uri)
+            async with connection_pool(self.uri) as pool:
+                await pool.wait()
+                storage = SessionStorage(pool)
+                session = str(uuid4())
+                await storage.create(session, '历史身份迁移回归')
+                saver = AsyncPostgresSaver(pool)
+                try:
+                    agent = create_lma_agent(
+                        ScriptedModel(script=[]), agent_tools=[observation], checkpointer=saver,
+                        investigation_storage=storage, summary_model=ScriptedModel(script=[]),
+                    )
+                    await agent.aupdate_state({'configurable': {'thread_id': session}}, {'messages': messages}, as_node='tools')
+                    async with pool.connection() as connection:
+                        for name in ('历史唯一站', '历史同名站', '仅后续回合出现的站'):
+                            await connection.execute(
+                                """INSERT INTO lma_station_investigations
+                                   (session_id,anchor_id,station_name,report_tool_call_id,question)
+                                   VALUES (%s,'old-answer',%s,'old-report','原始调查')""",
+                                (session, name),
+                            )
+                        await connection.execute(
+                            """INSERT INTO lma_station_conclusions
+                               (session_id,tool_call_id,station_name,status,reason)
+                               VALUES (%s,'old-report','历史唯一站','未见明显变化','原结论')""", (session,),
+                        )
+                    await migrate_domain_records(pool)
+                    await migrate_domain_records(pool)
+                    records = [row for row in await storage.station_records(STATION) if str(row['session_id']) == session]
+                    self.assertEqual(len(records), 1)
+                    self.assertEqual(records[0]['anchor_id'], 'old-answer')
+                    self.assertFalse(records[0]['validated'])
+                    self.assertIsNone(records[0]['status'])
+                    self.assertEqual(records[0]['historical_status'], '未见明显变化')
+                    for station in (ambiguous_one, ambiguous_two, later_station):
+                        rows = [row for row in await storage.station_records(station) if str(row['session_id']) == session]
+                        self.assertEqual(rows, [])
+                    async with pool.connection() as connection:
+                        cursor = await connection.execute(
+                            'SELECT count(*) AS count FROM lma_station_investigations WHERE session_id=%s', (session,),
+                        )
+                        self.assertEqual((await cursor.fetchone())['count'], 3)
+                finally:
+                    await storage.delete(session)
+                    await saver.adelete_thread(session)
+        run_async(scenario)
+
     def test_report_index_survives_failure_after_tools_before_agent_finalization(self):
         from app.agent.report import submit_investigation_report
         from app.agent.evidence import EvidenceMiddleware
