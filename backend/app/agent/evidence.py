@@ -28,11 +28,14 @@ def _restored(record):
     return ToolMessage.model_validate({**metadata, 'artifact': record['snapshot'], 'additional_kwargs': {**metadata.get('additional_kwargs', {}), 'lma_evidence_uuid': str(record['id']), 'lma_execution_id': record['execution_id']}})
 
 
-async def _commit_completed(storage, session_id, origin, message):
+async def _commit_completed(storage, session_id, origin, message, report_record=None):
     async def commit():
         with anyio.fail_after(6, shield=True):
-            return await storage.save_evidence(session_id, message.tool_call_id, message.artifact,
-                                               execution_id=origin, message=_message_data(message))
+            return await storage.save_evidence(
+                session_id, message.tool_call_id, message.artifact,
+                execution_id=origin, message=_message_data(message),
+                report_record=report_record,
+            )
     # 仅保护已完成结果的短写入，不屏蔽工具取数、模型调用或整轮调查的取消。
     task = asyncio.create_task(commit())
     try:
@@ -41,6 +44,14 @@ async def _commit_completed(storage, session_id, origin, message):
         with anyio.CancelScope(shield=True):
             await asyncio.shield(task)
         raise
+
+
+def _report_record(messages, message):
+    if message.artifact.get('kind') != 'investigation_report' or message.status == 'error':
+        return None
+    from app.server.investigations import investigation_record
+
+    return investigation_record([*messages, message])
 
 
 def _failure_artifact(request, result):
@@ -91,9 +102,8 @@ class EvidenceMiddleware(AgentMiddleware):
         if session_id is None:
             return None
         messages = state.get('messages', [])
-        report = report_in_last_turn(messages)
-        if report is not None:
-            await self.storage.record_conclusions(session_id, report[0], report[1]['stations'])
+        if report_in_last_turn(messages) is not None:
+            return None
         record = investigation_record(messages)
         if record is not None:
             await self.storage.record_investigation(session_id, record)
@@ -118,7 +128,8 @@ class EvidenceMiddleware(AgentMiddleware):
                 result = result.model_copy(update={'artifact': artifact})
         if not isinstance(result.artifact, dict):
             return result
-        record = await _commit_completed(self.storage, session_id, origin, result)
+        report_record = _report_record(request.state.get('messages', []), result)
+        record = await _commit_completed(self.storage, session_id, origin, result, report_record)
         return result.model_copy(update={'additional_kwargs': {
             **result.additional_kwargs, 'lma_evidence_uuid': str(record['id']), 'lma_execution_id': origin,
         }})
@@ -135,7 +146,8 @@ async def reconcile_evidence(storage, session_id, messages):
         if (isinstance(message, ToolMessage) and isinstance(message.artifact, dict) and message.name != 'reuse_investigation_evidence'
                 and message.additional_kwargs.get('lma_evidence_uuid') not in existing):
             origin = _origin(messages[:index + 1], message.tool_call_id)
-            record = await _commit_completed(storage, session_id, origin, message)
+            report_record = _report_record(messages[:index], message)
+            record = await _commit_completed(storage, session_id, origin, message, report_record)
             if message.additional_kwargs.get('lma_evidence_uuid') != str(record['id']):
                 recovered.append(message.model_copy(update={'additional_kwargs': {
                     **message.additional_kwargs, 'lma_evidence_uuid': str(record['id']), 'lma_execution_id': origin,

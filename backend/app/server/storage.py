@@ -340,7 +340,7 @@ class SessionStorage:
             )
             return await cursor.fetchall()
 
-    async def save_evidence(self, session_id: str, tool_call_id: str, snapshot: dict, *, execution_id="manual", message=None) -> dict:
+    async def save_evidence(self, session_id: str, tool_call_id: str, snapshot: dict, *, execution_id="manual", message=None, report_record=None) -> dict:
         identifier = str(uuid5(NAMESPACE_URL, f"lma:{session_id}:{execution_id}:{tool_call_id}"))
         async with self.pool.connection() as connection:
             async with connection.transaction():
@@ -350,6 +350,16 @@ class SessionStorage:
                        VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (session_id,execution_id,tool_call_id) DO UPDATE SET message=COALESCE(lma_evidence.message, EXCLUDED.message)""",
                     (identifier, session_id, execution_id, tool_call_id, Jsonb(snapshot), Jsonb(message)),
                 )
+                if report_record is not None:
+                    # 正式报告与可导航索引同事务提交，不等Agent收尾或SSE发送。
+                    for station in snapshot['data']['stations']:
+                        await connection.execute(
+                            """INSERT INTO lma_station_results(session_id,tool_call_id,station_uuid,station_name,status,reason,detail)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                            (session_id, tool_call_id, station['station_uuid'], station['station_name'],
+                             station['status'], station['reason'], Jsonb(station)),
+                        )
+                    await self._record_investigation(connection, session_id, report_record)
                 cursor = await connection.execute(
                     "SELECT * FROM lma_evidence WHERE session_id=%s AND execution_id=%s AND tool_call_id=%s",
                     (session_id, execution_id, tool_call_id),
@@ -499,16 +509,6 @@ class SessionStorage:
                 "UPDATE lma_inspections SET status = 'interrupted', finished_at = now() WHERE status = 'running'",
             )
 
-    async def record_conclusions(self, session_id, tool_call_id, stations):
-        async with self.pool.connection() as connection:
-            async with connection.transaction():
-                for station in stations:
-                    await connection.execute(
-                        """INSERT INTO lma_station_results(session_id,tool_call_id,station_uuid,station_name,status,reason,detail)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                        (session_id, tool_call_id, station["station_uuid"], station["station_name"], station["status"], station["reason"], Jsonb(station)),
-                    )
-
     async def session_conclusions(self):
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
@@ -534,12 +534,16 @@ class SessionStorage:
     async def record_investigation(self, session_id, record):
         async with self.pool.connection() as connection:
             async with connection.transaction():
-                for station in record["stations"]:
-                    await connection.execute(
-                        """INSERT INTO lma_station_records(session_id,anchor_id,station_uuid,station_name,report_tool_call_id,question)
-                           VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                        (session_id,record["anchor_id"],station["station_uuid"],station["station_name"],record["report_tool_call_id"],record["question"]),
-                    )
+                await self._record_investigation(connection, session_id, record)
+
+    async def _record_investigation(self, connection, session_id, record):
+        for station in record["stations"]:
+            await connection.execute(
+                """INSERT INTO lma_station_records(session_id,anchor_id,station_uuid,station_name,report_tool_call_id,question)
+                   VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                (session_id, record["anchor_id"], station["station_uuid"], station["station_name"],
+                 record["report_tool_call_id"], record["question"]),
+            )
 
     async def start_inspection(self, inspection_id: str) -> None:
         async with self.pool.connection() as connection:

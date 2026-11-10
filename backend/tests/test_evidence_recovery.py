@@ -46,6 +46,70 @@ class EvidenceRecoveryTests(unittest.TestCase):
         if not self.uri.endswith('/lma_test'):
             raise ValueError('只允许隔离lma_test数据库')
 
+    def test_report_index_survives_failure_after_tools_before_agent_finalization(self):
+        from app.agent.report import submit_investigation_report
+        from app.agent.evidence import EvidenceMiddleware
+        from test_investigation_report import fake_gnss, gnss_call, report_call
+
+        async def fail_after_agent(self, state, runtime):
+            raise RuntimeError('模拟工具已完成、Agent收尾之前发生故障')
+
+        async def scenario():
+            await migrate_database(self.uri)
+            async with connection_pool(self.uri) as pool:
+                await pool.wait()
+                storage = SessionStorage(pool)
+                session = str(uuid4())
+                await storage.create(session, '报告索引事务边界回归')
+                saver = AsyncPostgresSaver(pool)
+                try:
+                    with patch.object(EvidenceMiddleware, 'aafter_agent', new=fail_after_agent):
+                        agent = create_lma_agent(
+                            ScriptedModel(script=[gnss_call(), report_call()]),
+                            agent_tools=[fake_gnss, submit_investigation_report], checkpointer=saver,
+                            investigation_storage=storage, summary_model=ScriptedModel(script=[]),
+                        )
+                        with self.assertRaisesRegex(RuntimeError, 'Agent收尾之前'):
+                            await agent.ainvoke(
+                                {'messages': [HumanMessage(content='复核并留档')]},
+                                {'configurable': {'thread_id': session}},
+                            )
+                    evidence = await storage.evidence(session)
+                    self.assertTrue(any(item['snapshot']['kind'] == 'investigation_report' for item in evidence))
+                    records = [item for item in await storage.station_records(STATION) if str(item['session_id']) == session]
+                    self.assertEqual(len(records), 1)
+                    self.assertEqual(records[0]['status'], '需人工复核')
+                    self.assertTrue(records[0]['validated'])
+                    self.assertEqual(records[0]['anchor_id'], 'report-1')
+
+                    # 模拟只剩官方checkpoint的报告；索引失败须回滚快照，重试须一起补全。
+                    state = await agent.aget_state({'configurable': {'thread_id': session}})
+                    async with pool.connection() as connection:
+                        async with connection.transaction():
+                            await connection.execute(
+                                'DELETE FROM lma_evidence WHERE session_id=%s AND tool_call_id=%s',
+                                (session, 'report-1'),
+                            )
+                            await connection.execute('DELETE FROM lma_station_results WHERE session_id=%s', (session,))
+                            await connection.execute('DELETE FROM lma_station_records WHERE session_id=%s', (session,))
+                    with patch.object(storage, '_record_investigation', side_effect=RuntimeError('模拟报告索引写入失败')):
+                        with self.assertRaisesRegex(RuntimeError, '索引写入失败'):
+                            await reconcile_evidence(storage, session, state.values['messages'])
+                    remaining = await storage.evidence(session)
+                    self.assertFalse(any(item['snapshot']['kind'] == 'investigation_report' for item in remaining))
+                    conclusions = [item for item in await storage.session_conclusions() if str(item['session_id']) == session]
+                    self.assertEqual(conclusions, [])
+                    await reconcile_evidence(storage, session, state.values['messages'])
+                    await reconcile_evidence(storage, session, state.values['messages'])
+                    restored = [item for item in await storage.station_records(STATION) if str(item['session_id']) == session]
+                    self.assertEqual(len(restored), 1)
+                    self.assertTrue(restored[0]['validated'])
+                    self.assertEqual(len(await storage.evidence(session)), len(evidence))
+                finally:
+                    await storage.delete(session)
+                    await saver.adelete_thread(session)
+        run_async(scenario)
+
     def test_stage_report_leaves_model_a_chance_to_finish_recorded_targets(self):
         from app.agent.report import submit_investigation_report, report_in_last_turn
         from test_investigation_report import fake_gnss, gnss_call, report_call
