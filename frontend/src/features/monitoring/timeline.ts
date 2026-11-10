@@ -339,3 +339,6 @@ export const formatChartTime = (millis: number) => {
   const date = new Date(millis);
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
+
+export const rangeQuestion = (stationName: string, range: { start: number; end: number }) =>
+  `${stationName} ${formatChartTime(range.start)} 至 ${formatChartTime(range.end)} 这段发生了什么？`;

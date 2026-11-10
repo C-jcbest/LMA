@@ -142,6 +142,35 @@ class InspectionApiTests(unittest.TestCase):
         self.assertEqual(rows["测试点 A"]["last_conclusion"]["session_id"], session_id)
         self.assertIsNone(rows["测试点 B"]["last_conclusion"])
 
+    def test_station_page_reads_series_and_past_conclusions_without_the_model(self):
+        session_id = self.client.post("/sessions", json={"name": "测点页记录"}).json()["id"]
+        self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
+        self.client.post(f"/sessions/{session_id}/runs", json={
+            "messages": [{"type": "human", "id": str(uuid4()), "content": "最近怎么样？"}],
+            "focus_station": "测试点 A",
+        })
+        calls_after_run = len(self.model.script)
+
+        timeline = self.client.get("/stations/uuid-测试点 A/timeline", params={"days": 30}).json()
+        self.assertEqual(timeline["station_name"], "测试点 A")
+        self.assertEqual(timeline["group_name"], "K3")
+        self.assertEqual(timeline["series"]["sampling"]["mode"], "sample_times")
+        self.assertEqual(timeline["records"][0]["session_id"], session_id)
+        self.assertEqual(timeline["records"][0]["status"], "需人工复核")
+        self.assertEqual(len(self.model.script), calls_after_run)
+
+        conclusions = [row for row in self.client.get("/sessions/conclusions").json() if row["session_id"] == session_id]
+        self.assertEqual([(row["station_name"], row["status"]) for row in conclusions], [("测试点 A", "需人工复核")])
+
+        self.assertIsNone(self.client.get("/stations/uuid-基准站 R/timeline").json()["series"])
+        self.assertEqual(self.client.get("/stations/uuid-不存在/timeline").status_code, 404)
+        self.assertEqual(self.client.get("/stations/uuid-测试点 A/timeline", params={"days": 5}).status_code, 422)
+
+        self.beidou.unavailable = True
+        failed = self.client.get("/stations/uuid-测试点 B/timeline")
+        self.assertEqual(failed.status_code, 502)
+        self.assertNotIn("PRIVATE_UPSTREAM", failed.text)
+
     def test_failed_attempt_preserves_success_and_next_success_clears_failure(self):
         successful = self.inspect()
         self.beidou.station_list_unavailable = True

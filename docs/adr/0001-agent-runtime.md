@@ -85,3 +85,11 @@ API 行为以锁定版本的公共类型与实际 FastAPI + PostgreSQL 测试核
 批量巡检在单 worker 内以 asyncio 任务运行，上游并发固定为 4，结果写入 lma_inspections 和 lma_inspection_stations；进程重启时进行中的巡检标记为 interrupted，不自动重放。初筛规则集中在 app/inspection/screening.py，不调用模型。
 
 前端不再为工具注册逐个 Renderer：GroupedParts 把一条消息的工具调用归为一个调查过程，依据按测点从官方 tool part 的 artifact 派生，不复制到前端状态。时间轴使用按需加载的 ECharts，同轴、缺测带、联动和缩放由图表库完成，不自建绘图逻辑；颜色全部来自 CSS 变量。主题默认跟随系统，可手动选择浅色或深色。主题、导航折叠和面板宽度只保存在当前浏览器；窄屏临时收窄或全屏显示，不覆盖桌面宽度偏好。拖动按帧修改 CSS 尺寸，操作结束才保存；不复制会话历史或滚动状态。
+
+## 2026-11-10 以测点为中心的页面与测点数据接口
+
+页面分为今日、测点、记录和测点页，当前页面只存于地址栏参数（`page`、`station`），与 Runtime 的 `threadId` 各自维护；会话列表、选择和分页仍只用官方 Runtime，侧栏取最近几条，记录页是完整列表。
+
+测点页的位移序列由 `GET /stations/{uuid}/timeline` 直接读取监测平台，不经过模型，返回与 GNSS 工具产物相同的序列结构，前端复用同一张时间轴；不落库、不缓存，每次查看都会请求上游。会话旁的结论标记来自 `GET /sessions/conclusions`，只是补充信息，读取失败不影响会话列表。
+
+用户在测点页提问时，请求带 `focus_station`，服务端在发送时并入该消息的 `lma_context` 快照，仅在模型调用边界投影为 `<lma_message_context>` 的一行；消息正文和对客户端的投影不变。编辑和重新生成产生的新消息不带这个字段。

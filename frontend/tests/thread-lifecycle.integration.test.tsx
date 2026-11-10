@@ -63,6 +63,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     mockClient = {
       getLatestInspection: vi.fn().mockResolvedValue({ running: null, latest_attempt: null, inspection: null, stations: [] }),
       listSessions: vi.fn().mockResolvedValue([]),
+      listSessionConclusions: vi.fn().mockResolvedValue([]),
       createSession: vi.fn().mockResolvedValue({ id: 'new-thread' }),
       getSession: vi.fn().mockImplementation(async (id: string) => ({
         id, name: '会话 ' + id, archived: false,
@@ -81,7 +82,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     mockClient.listSessions.mockRejectedValueOnce(new Error('PRIVATE_BACKEND_DIAGNOSTIC'));
     render(<App />);
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('会话列表加载失败');
+    expect(await screen.findByRole('alert')).toHaveTextContent('会话列表尚未载入');
     expect(screen.queryByText('PRIVATE_BACKEND_DIAGNOSTIC')).not.toBeInTheDocument();
     const input = screen.getByRole('textbox', { name: '输入监测问题' });
     await userEvent.type(input, '尚未发送的监测问题');
@@ -118,10 +119,10 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     mockClient.listSessions.mockRejectedValue(new Error('服务不可用'));
     await act(async () => { await aui!.threads().reload(); });
 
-    expect(screen.getByRole('alert')).toHaveTextContent('会话列表加载失败');
+    expect(screen.getByRole('alert')).toHaveTextContent('会话列表尚未载入');
     expect(screen.getByText('已有调查')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '重试', exact: true }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('会话列表加载失败');
+    expect(await screen.findByRole('alert')).toHaveTextContent('会话列表尚未载入');
     expect(screen.getByText('已有调查')).toBeInTheDocument();
     expect(mockClient.listSessions).toHaveBeenCalledTimes(3);
   });
@@ -135,6 +136,36 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     expect(screen.queryByText('ZJ-MS10 2025年10月监测数据稳定性如何')).not.toBeInTheDocument();
     await userEvent.type(input, '查看这个测点近期的变化');
     expect(input).toHaveValue('查看这个测点近期的变化');
+  });
+
+  it('消息产生前的发送异常提供单一受控反馈和重试入口', async () => {
+    mockClient.streamRun.mockImplementation(() => (async function* () {
+      throw new Error('PRIVATE_STREAM_DIAGNOSTIC');
+    })());
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox', { name: '输入监测问题' }), '查看近期变化');
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(await screen.findByText('本次回答未完成。')).toBeInTheDocument();
+    expect(screen.queryByText('PRIVATE_STREAM_DIAGNOSTIC')).not.toBeInTheDocument();
+    expect(screen.getAllByText('本次回答未完成。')).toHaveLength(1);
+    mockClient.streamRun.mockImplementation(() => (async function* () {})());
+    await userEvent.click(screen.getByRole('button', { name: '重试', exact: true }));
+    await waitFor(() => expect(mockClient.streamRun).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('本次回答未完成。')).not.toBeInTheDocument();
+  });
+
+  it('已有回答的运行错误只在消息内显示，不重复弹出全局提示', async () => {
+    mockClient.streamRun.mockImplementation(() => (async function* () {
+      yield { event: 'messages/complete', data: [{ type: 'ai', id: 'partial-answer', content: '已取得部分监测记录。' }] };
+      yield { event: 'error', data: { message: 'PRIVATE_RUNTIME_DIAGNOSTIC' } };
+    })());
+    render(<App />);
+    await userEvent.type(screen.getByRole('textbox', { name: '输入监测问题' }), '查看近期变化');
+    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    expect(await screen.findByText('本次回答未完成，请重试。')).toBeInTheDocument();
+    expect(screen.queryByText('本次回答未完成。')).not.toBeInTheDocument();
+    expect(screen.queryByText('PRIVATE_RUNTIME_DIAGNOSTIC')).not.toBeInTheDocument();
+    expect(screen.getByText('已取得部分监测记录。')).toBeInTheDocument();
   });
 
   it('点击服务配置能正常呼出 ServiceSettingsDialog，修改 API URL 后更新客户端', async () => {

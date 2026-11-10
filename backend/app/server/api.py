@@ -9,6 +9,7 @@ from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
 import anyio
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -23,9 +24,11 @@ from app.agent.graph import _get_llm, create_lma_agent
 from app.agent.report import report_in_last_turn
 from app.agent.title import generate_title_node
 from app.agent.tools import _build_client
+from app.beidou.client import BeidouApiError
 from app.config import Settings, get_settings
 from app.inspection.runner import run_inspection
 from app.server.messages import project_message, project_state
+from app.server.stations import TIMELINE_WINDOW_DAYS, find_station, load_station_series
 from app.server.storage import SessionStorage, connection_pool
 
 logger = logging.getLogger(__name__)
@@ -68,6 +71,8 @@ class RunInput(ApiInput):
         default_factory=list, max_length=65,
     )
     checkpoint_id: str | None = Field(default=None, max_length=200)
+    # 用户提问时正在查看的测点；只作为模型可见的上下文，不改变消息正文。
+    focus_station: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class CheckpointInput(ApiInput):
@@ -136,7 +141,8 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
     if set(pending_calls) != cancelled_ids:
         raise HTTPException(409, "上轮有未完成的工具调用，请重新载入会话后提交。")
     for user in users:
-        accepted.append(HumanMessage(id=user.id, content=user.content))
+        focus = {"lma_focus_station": body.focus_station} if body.focus_station else {}
+        accepted.append(HumanMessage(id=user.id, content=user.content, additional_kwargs=focus))
     return accepted
 
 
@@ -210,6 +216,10 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
     async def list_sessions(limit: int = Query(21, ge=1, le=100), offset: int = Query(0, ge=0)):
         return await app.state.storage.list(limit, offset)
 
+    @app.get("/sessions/conclusions")
+    async def list_session_conclusions():
+        return await app.state.storage.session_conclusions()
+
     @app.post("/sessions", status_code=201)
     async def create_session(body: SessionCreate):
         return await app.state.storage.create(str(uuid4()), body.name)
@@ -266,6 +276,28 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         active_inspections.add(task)
         task.add_done_callback(active_inspections.discard)
         return {"id": inspection_id}
+
+    @app.get("/stations/{station_uuid}/timeline")
+    async def station_timeline(station_uuid: str, days: int = 90):
+        if days not in TIMELINE_WINDOW_DAYS:
+            raise HTTPException(422, "请求参数不符合接口要求。")
+        try:
+            async with (inspection_client_factory or _build_client)() as client:
+                station = await find_station(client, station_uuid)
+                if station is None:
+                    raise HTTPException(404, "测点不存在。")
+                series = await load_station_series(client, station, days)
+        except (BeidouApiError, httpx.HTTPError):
+            # 原始错误可能带上游地址和账号信息，只进日志。
+            logger.warning("station timeline request failed", exc_info=True)
+            raise HTTPException(502, "监测平台数据暂不可用，请稍后重试。") from None
+        return {
+            "station_uuid": station.station_uuid,
+            "station_name": station.station_name,
+            "group_name": station.group_name,
+            "series": series,
+            "records": await app.state.storage.station_records(station.station_name),
+        }
 
     @app.post("/title")
     async def generate_title(body: TitleInput):

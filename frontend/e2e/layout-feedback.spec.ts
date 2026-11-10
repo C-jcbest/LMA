@@ -52,7 +52,7 @@ test('导航拖动只在松开后保存，折叠、刷新和跨屏宽后保留�
   await page.goto('/');
   const input = page.getByRole('textbox', { name: '输入监测问题' });
   await input.fill('调整布局时保留的草稿');
-  const handle = page.getByRole('separator', { name: '调整会话列表宽度' });
+  const handle = page.getByRole('separator', { name: '调整导航宽度' });
   const box = (await handle.boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, 300);
   await page.mouse.down();
@@ -69,8 +69,8 @@ test('导航拖动只在松开后保存，折叠、刷新和跨屏宽后保留�
   await expect.poll(async () => (await page.locator('[data-navigation-docked]').boundingBox())!.width).toBe(360);
 
   await page.setViewportSize({ width: 320, height: 844 });
-  await page.getByRole('button', { name: '打开会话列表' }).click();
-  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
+  await page.getByRole('button', { name: '打开导航' }).click();
+  const drawer = page.getByRole('dialog', { name: '导航', exact: true });
   await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(288);
   await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 1280, height: 844 });
@@ -88,11 +88,11 @@ test('抽屉可调整宽度并重新打开，Esc 撤销拖动且不会残留拖�
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  const navigation = page.getByRole('button', { name: '打开会话列表' });
-  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
+  const navigation = page.getByRole('button', { name: '打开导航' });
+  const drawer = page.getByRole('dialog', { name: '导航', exact: true });
   await navigation.click();
   expect(await drawer.evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
-  const handle = drawer.getByRole('separator', { name: '调整会话列表宽度' });
+  const handle = drawer.getByRole('separator', { name: '调整导航宽度' });
   await handle.focus();
   await page.keyboard.press('Shift+ArrowRight');
   await expect.poll(async () => (await drawer.boundingBox())!.width).toBe(300);
@@ -119,8 +119,8 @@ test('窄屏切换已有会话、当前会话与新会话后关闭抽屉，桌�
   await page.goto('/');
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
   expect(await page.evaluate(() => document.body.scrollWidth)).toBe(320);
-  const navigation = page.getByRole('button', { name: '打开会话列表' });
-  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
+  const navigation = page.getByRole('button', { name: '打开导航' });
+  const drawer = page.getByRole('dialog', { name: '导航', exact: true });
 
   for (const session of [sessions[0], sessions[1], sessions[1]]) {
     await navigation.click();
@@ -131,7 +131,7 @@ test('窄屏切换已有会话、当前会话与新会话后关闭抽屉，桌�
   }
 
   await navigation.click();
-  await drawer.getByRole('button', { name: '新建会话', exact: true }).click();
+  await drawer.getByRole('button', { name: '今日', exact: true }).click();
   await expect(drawer).not.toBeVisible();
   await expect(page).not.toHaveURL(/threadId=/);
 
@@ -139,11 +139,11 @@ test('窄屏切换已有会话、当前会话与新会话后关闭抽屉，桌�
   await page.setViewportSize({ width: 1280, height: 844 });
   await expect(drawer).not.toBeVisible();
   await page.getByRole('button', { name: sessions[0].name, exact: true }).click();
-  await expect(page.getByRole('complementary', { name: '会话导航' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: '导航' })).toBeVisible();
   await page.getByRole('button', { name: '折叠侧边栏' }).click();
-  await expect(page.getByRole('complementary', { name: '会话导航' })).not.toBeVisible();
+  await expect(page.getByRole('complementary', { name: '导航' })).not.toBeVisible();
   await page.getByRole('button', { name: '展开侧边栏' }).click();
-  await expect(page.getByRole('complementary', { name: '会话导航' })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: '导航' })).toBeVisible();
 });
 
 test('列表失败在窄屏直接可见，失败重试不循环，恢复后保留草稿', async ({ page }) => {
@@ -159,23 +159,23 @@ test('列表失败在窄屏直接可见，失败重试不循环，恢复后保�
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await expect(page.getByRole('alert')).toContainText('会话列表加载失败');
+  await expect(page.getByRole('alert')).toContainText('会话列表尚未载入');
   await expect(page.getByText('PRIVATE_BACKEND_DIAGNOSTIC')).toHaveCount(0);
   const input = page.getByRole('textbox', { name: '输入监测问题' });
   await input.fill('未发送的调查问题');
-  await page.getByRole('button', { name: '打开会话列表' }).click();
-  const drawer = page.getByRole('dialog', { name: '会话列表', exact: true });
-  await expect(drawer.getByRole('alert')).toContainText('会话列表加载失败');
+  await page.getByRole('button', { name: '打开导航' }).click();
+  const drawer = page.getByRole('dialog', { name: '导航', exact: true });
+  await expect(drawer.getByRole('alert')).toContainText('会话列表尚未载入');
   await drawer.getByRole('button', { name: '重试', exact: true }).click();
-  await expect(drawer.getByRole('alert')).toContainText('会话列表加载失败');
+  await expect(drawer.getByRole('alert')).toContainText('会话列表尚未载入');
   expect(requestCount).toBe(2);
 
   serviceAvailable = true;
   await drawer.getByRole('button', { name: '重试', exact: true }).click();
   await expect(page.getByRole('alert')).toHaveCount(0);
-  await page.getByRole('button', { name: '关闭会话列表' }).click();
+  await page.getByRole('button', { name: '关闭导航' }).click();
   await expect(input).toHaveValue('未发送的调查问题');
   expect(requestCount).toBe(3);
-  await page.getByRole('button', { name: '打开会话列表' }).click();
+  await page.getByRole('button', { name: '打开导航' }).click();
   await expect(page.getByRole('button', { name: sessions[0].name, exact: true })).toBeVisible();
 });

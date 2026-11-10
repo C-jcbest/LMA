@@ -44,11 +44,17 @@ export const Sparkline: FC<{ values: readonly (number | null)[] }> = ({ values }
   const max = Math.max(...validValues);
   const min = Math.min(...validValues);
   const span = max - min || 1;
-  const coordinates = values.flatMap((value, index) => {
-    if (value === null) return [];
+  let startsSegment = true;
+  const coordinates = values.map((value, index) => {
+    if (value === null) {
+      startsSegment = true;
+      return '';
+    }
     const x = (index / (values.length - 1)) * SPARKLINE_WIDTH;
     const y = SPARKLINE_HEIGHT - 1 - ((value - min) / span) * (SPARKLINE_HEIGHT - 2);
-    return [`${x.toFixed(1)},${y.toFixed(1)}`];
+    const command = startsSegment ? 'M' : 'L';
+    startsSegment = false;
+    return `${command}${x.toFixed(1)},${y.toFixed(1)}`;
   });
 
   return (
@@ -59,7 +65,7 @@ export const Sparkline: FC<{ values: readonly (number | null)[] }> = ({ values }
       className="shrink-0 text-muted-foreground"
       aria-hidden
     >
-      <polyline points={coordinates.join(' ')} fill="none" stroke="currentColor" strokeWidth="1.25" />
+      <path d={coordinates.join(' ')} fill="none" stroke="currentColor" strokeWidth="1.25" />
     </svg>
   );
 };
@@ -69,7 +75,7 @@ const StepIcon: FC<{ state: StepState }> = ({ state }) => {
     case 'running':
       return <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-none" aria-hidden />;
     case 'failed':
-      return <AlertCircleIcon className="size-3.5 shrink-0 text-destructive" aria-hidden />;
+      return <AlertCircleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
     case 'cancelled':
       return <MinusIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
     case 'complete':
@@ -133,14 +139,17 @@ const StepRow: FC<{ step: InvestigationStep; onOpenStation: (name: string) => vo
 };
 
 const headlineOf = (steps: readonly InvestigationStep[], stationCount: number, isRunning: boolean) => {
-  const finishedCount = steps.filter((step) => step.state !== 'running').length;
+  const finishedCount = steps.filter((step) => step.state === 'complete').length;
   if (isRunning) {
     const current = steps.filter((step) => step.state === 'running').at(-1);
     const progress = finishedCount > 0 ? ` · 已完成 ${finishedCount} 项` : '';
     return `${current?.label ?? '正在分析查询结果…'}${progress}`;
   }
   if (steps.some((step) => step.state === 'cancelled')) {
-    return `已停止 · 完成 ${finishedCount - steps.filter((step) => step.state === 'cancelled').length} 项查询`;
+    return `已停止 · 完成 ${finishedCount} 项查询`;
+  }
+  if (steps.some((step) => step.state === 'failed')) {
+    return `查询记录 · ${finishedCount} 项已获取`;
   }
   return stationCount > 0
     ? `已调查 ${stationCount} 个测点 · ${steps.length} 项查询`
@@ -165,13 +174,14 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
   const isFirstToolGroup = firstPartIndex === parts.findIndex((part) => part.type === 'tool-call');
   if (!isFirstToolGroup || steps.length === 0) return null;
 
-  const failures = steps.filter((step) => step.state === 'failed');
   const open = (stationName: string) => openStation({ messageId, stationName });
   let headlineState: StepState = 'complete';
   if (isRunning) {
     headlineState = 'running';
   } else if (steps.some((step) => step.state === 'cancelled')) {
     headlineState = 'cancelled';
+  } else if (steps.some((step) => step.state === 'failed')) {
+    headlineState = 'failed';
   }
 
   return (
@@ -192,12 +202,6 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
           </div>
         </CollapsibleContent>
       </Collapsible>
-
-      {failures.map((step) => (
-        <p key={step.toolCallId} role="alert" className="text-sm text-destructive wrap-break-word">
-          {step.label}{step.errorMessage ? `：${step.errorMessage}` : ''}
-        </p>
-      ))}
 
       {/* 有简报时由简报的测点行作为入口，避免同一入口出现两次。 */}
       {!isRunning && !hasReport && stations.length > 0 && (

@@ -3,12 +3,13 @@ import { useAui, useAuiState } from '@assistant-ui/react';
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive, Tabs } from 'radix-ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { useTheme } from '@/app/providers/ThemeProvider';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
+import { appendToComposerDraft } from '@/lib/composer-draft';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import type { EvidenceSource, GnssArtifactData, VisionCandidateArtifact } from '@/types/envelope';
+import { useChartColors } from './chartColors';
 import { collectStations, type StationEvidence } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
 import {
@@ -17,8 +18,8 @@ import {
   formatChartTime,
   peerSeriesFor,
   seriesDuration,
+  rangeQuestion,
   seriesLabel,
-  type ChartColors,
   type TimelineMode,
 } from './timeline';
 import type { ChartRange } from './TimelineChart';
@@ -32,26 +33,6 @@ const TimelineChart = lazy(() => import('./TimelineChart'));
 
 const MILLIMETERS_PER_METER = 1000;
 
-const readChartColors = (): ChartColors => {
-  const styles = getComputedStyle(document.documentElement);
-  const token = (name: string) => styles.getPropertyValue(name).trim();
-  return {
-    text: token('--foreground'),
-    mutedText: token('--muted-foreground'),
-    grid: token('--border'),
-    surface: token('--popover'),
-    border: token('--border'),
-    primary: token('--foreground'),
-    north: token('--chart-north'),
-    east: token('--chart-east'),
-    up: token('--chart-up'),
-    rain: token('--chart-rain'),
-    peer: token('--chart-peer'),
-    candidate: token('--chart-candidate'),
-    gap: token('--chart-gap'),
-  };
-};
-
 const formatChange = (meters: number | null | undefined) => {
   if (meters === null || meters === undefined) return '—';
   const millimeters = meters * MILLIMETERS_PER_METER;
@@ -59,7 +40,7 @@ const formatChange = (meters: number | null | undefined) => {
   return `${sign}${millimeters.toFixed(1)}`;
 };
 
-const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
+export const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
   const metrics = [
     { label: '北向净变化', value: formatChange(data.summary.n.change), unit: 'mm' },
     { label: '东向净变化', value: formatChange(data.summary.e.change), unit: 'mm' },
@@ -107,11 +88,7 @@ interface TimelineViewProps {
 const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedIndex, onSelectIndex, peers }) => {
   const aui = useAui();
   const { isSplit, composerInputRef, closeInspector } = useStationInspector();
-  const { resolvedTheme } = useTheme();
-  const [chartColors, setChartColors] = useState(readChartColors);
-  useEffect(() => {
-    setChartColors(readChartColors());
-  }, [resolvedTheme]);
+  const chartColors = useChartColors();
   const [mode, setMode] = useState<TimelineMode>('components');
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
@@ -136,7 +113,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
 
   const askAboutRange = () => {
     if (!range) return;
-    aui.composer().setText(`${station.name} ${formatChartTime(range.start)} 至 ${formatChartTime(range.end)} 这段发生了什么？`);
+    appendToComposerDraft(aui, rangeQuestion(station.name, range));
     if (isSplit) {
       composerInputRef.current?.focus();
     } else {
@@ -275,7 +252,8 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
     () => stations.filter((candidate) => (
       candidate.name !== station.name
       && candidate.series.length > 0
-      && (!candidate.group || !station.group || candidate.group === station.group)
+      && Boolean(station.group)
+      && candidate.group === station.group
     )),
     [stations, station],
   );

@@ -69,7 +69,7 @@ export class ErrorBoundary extends Component<Props, State> {
                   {this.props.fallbackTitle || '会话界面加载异常'}
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  界面渲染发生不可恢复的错误，请尝试刷新页面。
+                  请重新载入页面。
                 </p>
               </div>
               <button

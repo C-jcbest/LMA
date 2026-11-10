@@ -3,6 +3,9 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSessionVerdict } from "@/features/records/SessionConclusions";
+import { investigationStatusLabel } from "@/features/monitoring/investigation";
+import { StatusDot } from "@/features/monitoring/status";
 import { cn } from "@/lib/utils";
 import {
   AuiIf,
@@ -17,7 +20,6 @@ import {
   Loader2Icon,
   MoreHorizontalIcon,
   PencilIcon,
-  PlusIcon,
   SearchIcon,
   TrashIcon,
 } from "lucide-react";
@@ -46,8 +48,7 @@ export const ThreadListLoadError: FC = () => {
     <div role="alert" className="flex shrink-0 items-start gap-2 border-b border-destructive/20 bg-destructive/5 px-4 py-3 text-sm">
       <AlertCircleIcon className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden />
       <div className="min-w-0 flex-1">
-        <p className="font-medium text-destructive">会话列表加载失败</p>
-        <p className="mt-1 text-xs text-muted-foreground">请检查服务连接后重试，已有会话不会因此被删除。</p>
+        <p className="font-medium">会话列表尚未载入</p>
       </div>
       <Button
         type="button"
@@ -66,26 +67,55 @@ export const ThreadListLoadError: FC = () => {
 
 const ThreadListNavigationContext = createContext<(() => void) | undefined>(undefined);
 
-export const ThreadList: FC<{ onNavigate?: () => void }> = ({ onNavigate }) => {
+/** 侧栏只放最近几条，行高紧凑；记录页是完整列表，并写出结论。 */
+type ThreadListVariant = "recent" | "all";
+const ThreadListVariantContext = createContext<ThreadListVariant>("all");
+const RECENT_THREAD_COUNT = 6;
+
+export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => void }> = ({ variant, onNavigate }) => {
   const [search, setSearch] = useState("");
   const hasThreads = useAuiState((s) => s.threads.threadIds.length > 0);
 
   return (
     <ThreadListNavigationContext.Provider value={onNavigate}>
-      <ThreadListRoot>
-        <ThreadListNew onClick={onNavigate} />
-        {hasThreads && (
-          <ThreadListSearch value={search} onValueChange={setSearch} />
-        )}
-        <div
-          data-slot="aui_thread-list-viewport"
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
-        >
-          <ThreadListItems searchQuery={hasThreads ? search : ""} />
-          <ThreadListPagination autoLoad={!search.trim()} />
-        </div>
-      </ThreadListRoot>
+      <ThreadListVariantContext.Provider value={variant}>
+        <ThreadListRoot>
+          {variant === "all" && hasThreads && (
+            <ThreadListSearch value={search} onValueChange={setSearch} />
+          )}
+          <div
+            data-slot="aui_thread-list-viewport"
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+          >
+            {variant === "recent" ? (
+              <RecentThreadListItems />
+            ) : (
+              <>
+                <ThreadListItems searchQuery={hasThreads ? search : ""} />
+                <ThreadListPagination autoLoad={!search.trim()} />
+              </>
+            )}
+          </div>
+        </ThreadListRoot>
+      </ThreadListVariantContext.Provider>
     </ThreadListNavigationContext.Provider>
+  );
+};
+
+/** Runtime 已按最近活动排序，取前几条即可；更早的在记录页查看。 */
+const RecentThreadListItems: FC = () => {
+  const threadIds = useAuiState((s) => s.threads.threadIds);
+  const isLoading = useAuiState((s) => s.threads.isLoading);
+
+  if (isLoading && threadIds.length === 0) {
+    return <ThreadListSkeleton />;
+  }
+  return (
+    <div data-slot="aui_thread-list-items" className="flex flex-col gap-0.5">
+      {threadIds.slice(0, RECENT_THREAD_COUNT).map((threadId, index) => (
+        <ThreadListPrimitive.ItemByIndex key={threadId} index={index} components={{ ThreadListItem }} />
+      ))}
+    </div>
   );
 };
 
@@ -138,7 +168,7 @@ export const ThreadListSearch = forwardRef<
   }
 >(({ className, value, onValueChange, ...props }, ref) => {
   return (
-    <div data-slot="aui_thread-list-search" className="relative shrink-0 px-0.5 py-1">
+    <div data-slot="aui_thread-list-search" className="relative mb-3 shrink-0 px-0.5">
       <SearchIcon
         data-slot="aui_thread-list-search-icon"
         className="text-muted-foreground pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2"
@@ -149,9 +179,9 @@ export const ThreadListSearch = forwardRef<
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
         aria-label="搜索会话"
-        placeholder="搜索已加载会话"
+        placeholder="搜索已加载的记录"
         className={cn(
-          "h-8 border-transparent bg-transparent ps-8 text-sm shadow-none hover:bg-muted focus-visible:bg-background",
+          "h-9 border-transparent bg-muted ps-8 text-sm shadow-none focus-visible:bg-background",
           className,
         )}
         {...props}
@@ -271,7 +301,7 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
         data-slot="aui_thread-list-empty"
         className="text-muted-foreground px-2.5 py-4 text-sm"
       >
-        已加载的会话中未找到匹配项
+        已加载的记录中未找到匹配项
       </div>
     );
   }
@@ -305,43 +335,6 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
   ));
 };
 
-export const ThreadListNew = forwardRef<
-  HTMLButtonElement,
-  ComponentPropsWithoutRef<typeof Button> & { labelClassName?: string }
->(({ className, labelClassName, children, ...props }, ref) => {
-  return (
-    <ThreadListPrimitive.New asChild>
-      <Button
-        ref={ref}
-        variant="outline"
-        data-slot="aui_thread-list-new"
-        className={cn(
-          "h-8 shrink-0 justify-start gap-2 rounded-md bg-background px-2.5 text-sm font-medium text-foreground shadow-xs hover:bg-muted/50",
-          className,
-        )}
-        {...props}
-      >
-        {children ?? (
-          <>
-            <PlusIcon
-              data-slot="aui_thread-list-new-icon"
-              className="size-4 shrink-0"
-            />
-            <span
-              data-slot="aui_thread-list-new-label"
-              className={cn("whitespace-nowrap", labelClassName)}
-            >
-              新建会话
-            </span>
-          </>
-        )}
-      </Button>
-    </ThreadListPrimitive.New>
-  );
-});
-
-ThreadListNew.displayName = "ThreadListNew";
-
 const ThreadListSkeleton: FC = () => {
   return (
     <div className="flex flex-col gap-0.5">
@@ -365,7 +358,9 @@ const ThreadListSkeleton: FC = () => {
 
 export const ThreadListItem: FC = () => {
   const onNavigate = useContext(ThreadListNavigationContext);
+  const variant = useContext(ThreadListVariantContext);
   const isRunning = useAuiState((s) => s.threadListItem.isRunning);
+  const verdict = useSessionVerdict(useAuiState((s) => s.threadListItem.remoteId));
   const [isRenaming, setIsRenaming] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(false);
@@ -379,7 +374,10 @@ export const ThreadListItem: FC = () => {
   return (
     <ThreadListItemPrimitive.Root
       data-slot="aui_thread-list-item"
-      className="group hover:bg-muted focus-visible:bg-muted data-active:bg-muted has-focus-visible:bg-muted has-data-[state=open]:bg-muted relative flex h-8 items-center rounded-md transition-colors focus-visible:outline-none"
+      className={cn(
+        "group hover:bg-muted focus-visible:bg-muted data-active:bg-muted has-focus-visible:bg-muted has-data-[state=open]:bg-muted relative flex items-center rounded-md transition-colors focus-visible:outline-none",
+        variant === "all" ? "h-11" : "h-8",
+      )}
     >
       {isRenaming ? (
         <ThreadListItemRename
@@ -395,12 +393,15 @@ export const ThreadListItem: FC = () => {
           data-slot="aui_thread-list-item-trigger"
           className="focus-visible:ring-ring/50 flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
         >
-          {isRunning && (
+          {isRunning ? (
             <Loader2Icon
               aria-hidden
               data-slot="aui_thread-list-item-running"
-              className="text-muted-foreground me-1.5 size-3.5 shrink-0 animate-spin"
+              className="text-muted-foreground me-2 size-3.5 shrink-0 animate-spin"
             />
+          ) : (
+            // 没有结论的记录留出同样的位置，标题才能对齐。
+            <StatusDot status={verdict?.status} className={cn("me-2.5", !verdict && "invisible")} />
           )}
           <span
             data-slot="aui_thread-list-item-title"
@@ -409,6 +410,14 @@ export const ThreadListItem: FC = () => {
             <ThreadListItemPrimitive.Title fallback="新会话" />
           </span>
           {isRunning && <span className="sr-only">运行中</span>}
+          {variant === "all" && verdict && (
+            <span
+              data-slot="aui_thread-list-item-verdict"
+              className="text-muted-foreground ms-3 max-w-[45%] shrink-0 truncate text-xs"
+            >
+              {verdict.stations.join("、")} · {investigationStatusLabel(verdict.status)}
+            </span>
+          )}
         </ThreadListItemPrimitive.Trigger>
       )}
       <ThreadListItemMore onRename={() => setIsRenaming(true)} />

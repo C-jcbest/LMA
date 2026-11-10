@@ -87,4 +87,10 @@ def tool_result(
     return json.dumps(facts, ensure_ascii=False), validate_artifact_envelope(envelope)
 
 
-VALIDATION_MESSAGE = "工具参数不符合要求，请检查时间格式、时间顺序、取样方式或筛选范围后重新查询。"
+def describe_validation_error(error) -> str:
+    """把参数校验失败转成模型可据以修正的说明：指出具体字段和要求，不回显参数值。"""
+    problems = []
+    for item in error.errors():
+        field = ".".join(str(part) for part in item["loc"])
+        problems.append(f"{field}：{item['msg']}" if field else item["msg"])
+    return "工具参数不符合要求，请修正后重新调用。" + "；".join(problems)

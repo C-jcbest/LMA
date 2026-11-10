@@ -18,10 +18,10 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ToolCallLimitMiddleware,
 )
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.beidou.client import BeidouApiError
-from app.agent.tool_protocol import ToolFailure, VALIDATION_MESSAGE
+from app.agent.tool_protocol import ToolFailure, describe_validation_error
 from app.agent.context import build_context_usage
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
@@ -63,6 +63,24 @@ class AgentState(BaseAgentState):
     context_usage: dict
 
 
+class QueryCallLimitMiddleware(ToolCallLimitMiddleware):
+    """查询额度只约束取数类工具。
+
+    简报是提交最终回答而不是查询；若计入额度，额度用尽后已取得的证据无法以简报形式交付。
+    简报反复校验失败仍受模型调用上限约束。
+    """
+
+    def _matches_tool_filter(self, tool_call) -> bool:
+        return tool_call["name"] != REPORT_TOOL_NAME
+
+
+_FINAL_MODEL_CALL_NOTICE = (
+    "\n\n# 本轮最后一次作答\n\n"
+    "本轮的调用次数即将用尽，这是最后一次作答机会，不能再发起查询或提交简报。"
+    "请基于已取得的证据直接用文字回答，并说明哪些对象或时段尚未覆盖。"
+)
+
+
 @lru_cache
 def _get_llm():
     settings = get_settings()
@@ -83,7 +101,8 @@ def _get_llm():
 class LmaMiddleware(AgentMiddleware):
     state_schema = AgentState
 
-    def __init__(self, model):
+    def __init__(self, model, *, model_run_limit: int):
+        self.model_run_limit = model_run_limit
         self.max_input_tokens = model_max_input_tokens(model)
         self.model_name = (
             getattr(model, "model_name", None)
@@ -112,7 +131,15 @@ class LmaMiddleware(AgentMiddleware):
         return None
 
     async def awrap_model_call(self, request, handler):
-        response = await handler(request.override(messages=model_messages(request.messages)))
+        request = request.override(messages=model_messages(request.messages))
+        # 模型调用超限会让整轮报错、已取得的证据无法交付；最后一次调用撤掉工具，让模型直接作答。
+        completed_model_calls = request.state.get("run_model_call_count", 0)
+        if completed_model_calls >= self.model_run_limit - 1:
+            final_system_message = SystemMessage(
+                content=f"{request.system_message.content}{_FINAL_MODEL_CALL_NOTICE}"
+            )
+            request = request.override(tools=[], system_message=final_system_message)
+        response = await handler(request)
         stamped = []
         for message in response.result:
             if message.type == "ai":
@@ -155,18 +182,18 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
     settings = get_settings()
     bound_tools = tools if agent_tools is None else agent_tools
     for agent_tool in bound_tools:
-        agent_tool.handle_validation_error = VALIDATION_MESSAGE
+        agent_tool.handle_validation_error = describe_validation_error
     return create_agent(
         model, tools=bound_tools,
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
-            LmaMiddleware(model),
+            LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,
             ),
             ModelCallLimitMiddleware(run_limit=settings.agent_model_run_limit, exit_behavior="error"),
-            ToolCallLimitMiddleware(run_limit=settings.agent_tool_run_limit, exit_behavior="continue"),
+            QueryCallLimitMiddleware(run_limit=settings.agent_tool_run_limit, exit_behavior="continue"),
             ModelRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
                 on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
                 max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),

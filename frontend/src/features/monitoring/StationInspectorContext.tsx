@@ -31,11 +31,13 @@ interface StationInspectorContextValue {
 const StationInspectorContext = createContext<StationInspectorContextValue | null>(null);
 
 /** 只保存打开的位置；证据始终从当前消息的官方 tool part 派生。 */
-export function StationInspectorProvider({ children }: { children: ReactNode }) {
+export function StationInspectorProvider({ children, canSplit = true }: { children: ReactNode; canSplit?: boolean }) {
   const [selection, setSelection] = useState<StationSelection | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
-  const isSplit = useMediaQuery('(min-width: 1024px)');
+  // 测点页已经是数据与对话并排，依据在那里全屏打开，不再挤出第四栏。
+  const isWide = useMediaQuery('(min-width: 1024px)');
+  const isSplit = canSplit && isWide;
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const focusAfterCloseRef = useRef<HTMLElement | null>(null);
 

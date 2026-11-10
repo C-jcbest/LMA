@@ -64,7 +64,7 @@ class ToolInput(BaseModel):
 
 
 class StationInput(ToolInput):
-    station_name_or_uuid: str = Field(min_length=1, max_length=200, description="监测点名称或 UUID，需能唯一确定")
+    station_name_or_uuid: str = Field(min_length=1, max_length=200, description="监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID")
 
 
 class TimeWindowInput(StationInput):
@@ -94,7 +94,7 @@ class VisionInput(TimeWindowInput):
 
 
 class GnssInput(TimeWindowInput):
-    sampling_frequency: str | None = Field(default=None, description="小时或整数分钟，例如 1h、6h、90m")
+    sampling_frequency: str | None = Field(default=None, description="小时或整数分钟，例如 1h、6h、90m；不传为每小时一条")
     sample_times: list[str] | None = Field(default=None, description="每日整点取样时刻，最多6个，例如 [03:00, 15:00]；优先于频率")
 
     @field_validator("sampling_frequency")
@@ -116,8 +116,8 @@ class GnssInput(TimeWindowInput):
 
 
 class StationListInput(ToolInput):
-    group_name: str | None = None
-    station_name: str | None = None
+    group_name: str | None = Field(default=None, description="分组名称，支持模糊匹配，需能唯一确定一个分组")
+    station_name: str | None = Field(default=None, description="监测点名称，支持模糊匹配")
     station_status: Literal[10, 20, 30, 40] | None = Field(default=None, description="10正常、20离线、30告警、40故障")
 
 

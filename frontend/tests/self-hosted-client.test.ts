@@ -14,7 +14,7 @@ it('SSE 按官方解码器处理分块中文、values 和工具 artifact', async
     },
   })));
   const events = [];
-  for await (const event of createLmaClient('/api').streamRun('session', [], undefined, new AbortController().signal)) {
+  for await (const event of createLmaClient('/api').streamRun('session', [], { signal: new AbortController().signal })) {
     events.push(event);
   }
   expect(events).toEqual([{ event: 'values', data: { messages: [{ type: 'tool', content: '暂无站点', artifact }] } }]);

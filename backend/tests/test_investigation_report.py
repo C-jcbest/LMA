@@ -116,6 +116,21 @@ class InvestigationReportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["messages"][-1].content, "共有 3 个分组。")
         self.assertIsNone(report_in_last_turn(result["messages"]))
 
+    async def test_plain_answer_after_data_query_does_not_require_report(self):
+        result, _ = await self.run_agent(
+            gnss_call(), AIMessage(id="plain-data", content="本时段没有监测记录。"),
+        )
+        self.assertEqual(result["messages"][-1].content, "本时段没有监测记录。")
+        self.assertIsNone(report_in_last_turn(result["messages"]))
+
+    async def test_report_can_omit_irrelevant_station_details(self):
+        result, _ = await self.run_agent(gnss_call(), report_call(stations=[{
+            "station_name": "测试点 A", "status": "数据不足", "reason": "本时段没有监测记录",
+        }]))
+        station = result["messages"][-1].artifact["data"]["stations"][0]
+        self.assertNotIn("acceleration", station)
+        self.assertEqual(station["data_quality"], "")
+
     async def test_only_current_turn_evidence_can_be_cited(self):
         model = ScriptedModel(script=[gnss_call(), report_call(), report_call("stale"), AIMessage(content="未能提交")])
         agent = graph.create_lma_agent(

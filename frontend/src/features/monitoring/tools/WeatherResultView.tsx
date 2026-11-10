@@ -47,7 +47,7 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
         rain?.recent_24h_precipitation != null
           ? `${rain.recent_24h_precipitation} mm`
           : rain?.recent_24h_window
-          ? `数据不足（${rain.recent_24h_window.available_hours}/24 小时）`
+          ? `现有记录覆盖 ${rain.recent_24h_window.available_hours}/24 小时`
           : '-',
     },
     {

@@ -82,6 +82,11 @@ Object.defineProperty(Element.prototype, 'scrollIntoView', {
   value: () => undefined,
 });
 
+Object.defineProperty(Element.prototype, 'scrollTo', {
+  configurable: true,
+  value: () => undefined,
+});
+
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,

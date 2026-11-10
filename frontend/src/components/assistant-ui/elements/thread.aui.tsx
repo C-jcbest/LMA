@@ -13,7 +13,6 @@ import {
 import { InvestigationReport, ReportActions } from "@/features/monitoring/InvestigationReport";
 import { useStationInspector } from "@/features/monitoring/StationInspectorContext";
 import { findReport } from "@/features/monitoring/investigation";
-import { TodayAttention } from "@/features/today/TodayAttention";
 import { cn } from "@/lib/utils";
 import { useSessionMetadata } from "@/lib/session-metadata";
 import {
@@ -39,7 +38,7 @@ import {
   RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
-import { useState, type FC } from "react";
+import { useState, type FC, type ReactNode } from "react";
 
 const messageGroupBy = groupPartByType({
   "tool-call": ["group-investigation"],
@@ -47,10 +46,15 @@ const messageGroupBy = groupPartByType({
 
 export type ThreadProps = {
   autoFocus?: boolean | undefined;
+  /** 还没有消息时显示的内容：首页是今日关注，测点页是针对该测点的提示。 */
+  welcome?: ReactNode;
+  placeholder?: string | undefined;
 };
 
+const DEFAULT_PLACEHOLDER = "询问监测数据、变化趋势、降雨关联或场地环境…";
+
 // Startup exposes a loading placeholder thread; treat it as a new chat so
-// the composer mounts centered. Loads after startup keep the docked layout.
+// the welcome content shows at once instead of a history skeleton.
 const isNewChatView = (s: AssistantState) =>
   s.thread.messages.length === 0 &&
   (!s.thread.isLoading || s.threads.isLoading);
@@ -83,9 +87,7 @@ const ThreadHistorySkeleton: FC = () => (
   </div>
 );
 
-export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
-  const isEmpty = useAuiState(isNewChatView);
-
+export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, placeholder = DEFAULT_PLACEHOLDER }) => {
   return (
     <ThreadPrimitive.Root
       className="aui-root aui-thread-root bg-background @container flex h-full min-h-0 min-w-0 flex-col font-sans"
@@ -100,14 +102,9 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto overflow-y-auto [scrollbar-gutter:stable] [overflow-anchor:none]"
       >
         <div
-          className={cn(
-            "mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-6 sm:px-6 sm:pt-8",
-            isEmpty && "justify-center",
-          )}
+          className="mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-6 sm:px-6 sm:pt-8"
         >
-          <AuiIf condition={isNewChatView}>
-            <TodayAttention />
-          </AuiIf>
+          <AuiIf condition={isNewChatView}>{welcome}</AuiIf>
           <AuiIf condition={isHistoryLoadingView}>
             <ThreadHistorySkeleton />
           </AuiIf>
@@ -122,14 +119,13 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true }) => {
           <ThreadPrimitive.ViewportFooter
             className={cn(
               "aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible px-2 pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-6",
-              "sticky bottom-0",
+              "sticky bottom-0 mt-auto",
               // 内容滑入输入框下方时渐隐，而不是被硬切。
-              !isEmpty &&
-                "before:from-background before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t mt-auto",
+              "before:from-background before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t",
             )}
           >
             <ThreadScrollToBottom />
-            <Composer autoFocus={autoFocus} />
+            <Composer autoFocus={autoFocus} placeholder={placeholder} />
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>
@@ -235,7 +231,7 @@ const ThreadScrollToBottom: FC = () => {
   );
 };
 
-const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
+const Composer: FC<{ autoFocus: boolean; placeholder: string }> = ({ autoFocus, placeholder }) => {
   const { composerInputRef } = useStationInspector();
 
   return (
@@ -245,7 +241,7 @@ const Composer: FC<{ autoFocus: boolean }> = ({ autoFocus }) => {
     >
       <ComposerPrimitive.Input
         ref={composerInputRef}
-        placeholder="询问监测数据、变化趋势、降雨关联或场地环境…"
+        placeholder={placeholder}
         className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 outline-none"
         rows={1}
         autoFocus={autoFocus}
@@ -302,7 +298,7 @@ const MessageError: FC = () => {
   return (
     <MessagePrimitive.Error>
       <ErrorPrimitive.Root className="aui-message-error-root border-destructive/40 bg-destructive/10 text-destructive mt-2 rounded-md border p-3 text-sm">
-        <ErrorPrimitive.Message className="aui-message-error-message wrap-break-word" />
+        <span className="aui-message-error-message wrap-break-word">本次回答未完成，请重试。</span>
       </ErrorPrimitive.Root>
     </MessagePrimitive.Error>
   );

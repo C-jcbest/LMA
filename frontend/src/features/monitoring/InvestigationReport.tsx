@@ -4,7 +4,7 @@ import { CheckIcon, CopyIcon, DownloadIcon } from 'lucide-react';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { cn } from '@/lib/utils';
-import type { InvestigationStatus, ReportFindingArtifact } from '@/types/envelope';
+import type { ReportFindingArtifact } from '@/types/envelope';
 import { StationSparkline } from './InvestigationProcess';
 import {
   buildSteps,
@@ -12,18 +12,13 @@ import {
   FINDING_LEVELS,
   findingHeading,
   findReport,
+  investigationStatusLabel,
+  reportStationDetails,
   reportToMarkdown,
   STATUS_PRIORITY,
 } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
-
-const STATUS_DOT_CLASS: Record<InvestigationStatus, string> = {
-  需人工复核: 'bg-status-critical',
-  持续关注: 'bg-status-attention',
-  数据不足: 'bg-status-unknown',
-  暂无法分析: 'bg-status-unknown',
-  未见明显变化: 'bg-status-normal',
-};
+import { StatusDot } from './status';
 
 const useReportEvidence = () => {
   const messageId = useAuiState((state) => state.message.id);
@@ -109,18 +104,17 @@ export const InvestigationReport: FC = () => {
         {orderedStations.map((item) => {
           const evidence = stations.find((station) => station.name === item.station_name);
           const isSelected = selection?.messageId === messageId && selection.stationName === item.station_name;
+          const details = reportStationDetails(item).join(' · ');
           const content = (
             <>
               <span className="flex flex-wrap items-center gap-2">
-                <span className={cn('size-2 shrink-0 rounded-full', STATUS_DOT_CLASS[item.status])} aria-hidden />
+                <StatusDot status={item.status} />
                 <span className="min-w-0 wrap-anywhere font-semibold">{item.station_name}</span>
-                <span className="rounded-md bg-muted px-2 py-0.5 text-xs">{item.status}</span>
+                <span className="rounded-md bg-muted px-2 py-0.5 text-xs">{investigationStatusLabel(item.status)}</span>
                 {evidence && <span className="ms-auto"><StationSparkline station={evidence} /></span>}
               </span>
               <span className="mt-2 block text-sm leading-relaxed wrap-anywhere">{item.reason}</span>
-              <span className="text-muted-foreground mt-1 block text-xs leading-relaxed wrap-anywhere">
-                {item.acceleration} · {item.data_quality}
-              </span>
+              {details && <span className="text-muted-foreground mt-1 block text-xs leading-relaxed wrap-anywhere">{details}</span>}
             </>
           );
           return (

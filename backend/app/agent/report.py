@@ -18,10 +18,20 @@ _FORBIDDEN_PATTERN = re.compile(r"已(经)?发生滑坡|即将发生滑坡|必�
 
 class ReportStation(BaseModel):
     station_name: str = Field(min_length=1, max_length=80, description="测点名称，使用工具结果中的原始名称")
-    status: Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"]
+    status: Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"] = Field(
+        description=(
+            "未见明显变化：现有数据未显示值得关注的变化；"
+            "持续关注：存在持续或同向变化，尚无突变或加速迹象，建议继续观察；"
+            "需人工复核：出现突变、疑似加速或证据相互矛盾，需要人工进一步确认；"
+            "数据不足：取得了数据，但覆盖范围或质量不足以判断；"
+            "暂无法分析：未能取得可用数据"
+        ),
+    )
     reason: str = Field(min_length=1, max_length=200, description="得到该调查状态的一句话原因")
-    acceleration: Literal["未见持续加速", "疑似加速", "无法判断"]
-    data_quality: str = Field(min_length=1, max_length=120, description="数据是否可靠的一句话说明，含缺测情况")
+    acceleration: Literal["未见持续加速", "疑似加速", "无法判断"] | None = Field(
+        default=None, description="涉及加速判断时提供；与当前问题无关时省略，必要限制写入原因",
+    )
+    data_quality: str = Field(default="", max_length=120, description="影响结论的数据覆盖或缺测情况；无必要补充时省略")
 
 
 class ReportFinding(BaseModel):
@@ -81,8 +91,13 @@ def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessag
             raise ToolFailure(f"简报中的测点“{station.station_name}”不在本轮查询结果中，请使用工具返回的测点名称。")
 
     written_text = [report.conclusion, *(finding.text for finding in report.findings), *report.next_steps]
-    if any(_FORBIDDEN_PATTERN.search(text) for text in written_text):
-        raise ToolFailure("简报包含超出系统证据能力的表述，请改为审慎的调查描述。")
+    for text in written_text:
+        forbidden = _FORBIDDEN_PATTERN.search(text)
+        if forbidden:
+            raise ToolFailure(
+                f"简报中的“{forbidden.group()}”属于灾害认定或处置指令，监测数据不足以支持，"
+                "请改为描述观测到的变化及其可能含义。"
+            )
 
     for finding in report.findings:
         unknown = [item for item in finding.evidence_ids if item not in tool_call_ids]
@@ -103,7 +118,7 @@ async def submit_investigation_report(
 ) -> tuple[str, dict]:
     """提交本轮调查简报并结束回答。
 
-    完成对监测点状态、异常、趋势或诱因的调查后调用。提交成功后不再输出其他内容，
+    数据分析需要结构化简报时自主选择调用；简短分析、追问或其他问题可以直接回答。提交成功后不再输出其他内容，
     简报即最终回答；校验失败时根据错误信息修正后重新提交。
     """
     report = InvestigationReportInput(

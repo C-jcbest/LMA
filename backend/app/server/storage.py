@@ -165,6 +165,35 @@ class SessionStorage:
                     (session_id, tool_call_id, station["station_name"], station["status"], station["reason"]),
                 )
 
+    async def session_conclusions(self) -> Sequence[dict]:
+        """每个会话最近一份简报里各测点的结论，供调查记录显示。"""
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                """WITH latest AS (
+                       SELECT DISTINCT ON (session_id) session_id, tool_call_id
+                       FROM lma_station_conclusions ORDER BY session_id, created_at DESC
+                   )
+                   SELECT conclusion.session_id, conclusion.station_name, conclusion.status
+                   FROM lma_station_conclusions conclusion
+                   JOIN latest USING (session_id, tool_call_id)
+                   ORDER BY conclusion.session_id, conclusion.station_name""",
+            )
+            return await cursor.fetchall()
+
+    async def station_records(self, station_name: str, limit: int = 20) -> Sequence[dict]:
+        """一个测点历次调查的结论，最近的在前。"""
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                """SELECT conclusion.session_id, session.name AS session_name,
+                          conclusion.status, conclusion.reason, conclusion.created_at
+                   FROM lma_station_conclusions conclusion
+                   JOIN lma_sessions session ON session.id = conclusion.session_id
+                   WHERE conclusion.station_name = %s
+                   ORDER BY conclusion.created_at DESC LIMIT %s""",
+                (station_name, limit),
+            )
+            return await cursor.fetchall()
+
     async def start_inspection(self, inspection_id: str) -> None:
         async with self.pool.connection() as connection:
             await connection.execute(

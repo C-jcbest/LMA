@@ -171,22 +171,10 @@ async def query_weather(
 ) -> tuple[str, dict]:
     """查询指定监测点或坐标位置的气象背景。
 
-    可用于用户明确询问天气、降雨、风况、历史气象，
-    或 Agent 认为气象信息有助于调查已有监测现象时。
-    并非每次监测数据分析都需要调用。
+    适用于用户询问天气、降雨、风况或历史气象，或气象背景有助于调查已发现的监测现象时。
 
-    返回当前天气、指定历史窗口的气象信息以及可用的近期预报。
-    气象信息属于辅助证据，不代表其与形变存在因果关系。
-
-    Args:
-        station_name_or_uuid: 监测点名称（需能唯一确定）或 36 位 UUID，
-            提供后自动解析站点经纬度。与经纬度二选一。
-        latitude: 纬度（-90 到 90）。与 longitude 成对提供，与 station_name_or_uuid 二选一。
-        longitude: 经度（-180 到 180）。与 latitude 成对提供，与 station_name_or_uuid 二选一。
-        start_date: 历史天气开始日期，Asia/Shanghai 业务时区，格式 YYYY-MM-DD，最早支持 1940-01-01。
-            与 end_date 成对提供（不传默认查询最近 7 天，最多到昨天）。单次历史查询跨度不超过 31 天。
-        end_date: 历史天气结束日期，格式 YYYY-MM-DD，最多只能查询到昨天。与 start_date 跨度不超过 31 天。
-        forecast_days: 未来预报天数，取值范围 0 到 16 天（0 表示不查询预报），默认 7 天。
+    返回当前天气、指定历史窗口的逐日气象以及近期预报，数据来自公开气象服务，
+    不等同于现场雨量计实测。
     """
     resolved = await _resolve_coordinates(station_name_or_uuid, latitude, longitude)
     lat, lon, station_name = resolved

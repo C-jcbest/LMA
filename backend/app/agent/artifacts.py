@@ -281,7 +281,7 @@ class ReportStationArtifact(ArtifactModel):
     station_name: str
     status: Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"]
     reason: str
-    acceleration: Literal["未见持续加速", "疑似加速", "无法判断"]
+    acceleration: Literal["未见持续加速", "疑似加速", "无法判断"] | None
     data_quality: str
 
 

@@ -171,6 +171,39 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         result = await agent.ainvoke({"messages": [HumanMessage(content="下一轮")]}, config)
         self.assertEqual(result["messages"][-1].content, "下一轮可以继续")
 
+    async def test_final_model_call_answers_from_evidence_instead_of_failing(self):
+        self.settings.agent_model_run_limit = 2
+        @tool
+        def station():
+            """读取站点证据。"""
+            return "已取得证据"
+        model = ScriptedModel(script=[call("c1"), AIMessage(content="基于已有证据作答")])
+        agent = graph.create_lma_agent(model, agent_tools=[station])
+        result = await agent.ainvoke({"messages": [HumanMessage(content="循环查询")]})
+        self.assertEqual(result["messages"][-1].content, "基于已有证据作答")
+        first_system, final_system = model.inputs[0][0].content, model.inputs[1][0].content
+        self.assertNotIn("最后一次作答", first_system)
+        self.assertIn("最后一次作答", final_system)
+
+    async def test_report_submission_does_not_consume_query_budget(self):
+        self.settings.agent_tool_run_limit = 1
+        @tool
+        def station():
+            """读取站点。"""
+            return "真实证据"
+        @tool(graph.REPORT_TOOL_NAME)
+        def report():
+            """提交简报。"""
+            return "已提交"
+        request = AIMessage(content="", tool_calls=[
+            *call("c1").tool_calls, {"id": "c2", "name": graph.REPORT_TOOL_NAME, "args": {}},
+        ])
+        model = ScriptedModel(script=[request, AIMessage(content="继续")])
+        result = await graph.create_lma_agent(model, agent_tools=[station, report]).ainvoke(
+            {"messages": [HumanMessage(content="查询并提交")]})
+        results = [m for m in result["messages"] if m.type == "tool"]
+        self.assertEqual({m.name: m.status for m in results}, {"station": "success", graph.REPORT_TOOL_NAME: "success"})
+
     async def test_tool_budget_blocks_only_exceeded_calls_and_preserves_usage(self):
         self.settings.agent_tool_run_limit = 1
         calls = []

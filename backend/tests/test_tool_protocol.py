@@ -108,6 +108,17 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             source.assert_not_called()
             fetch.assert_not_called()
 
+    async def test_exact_station_name_wins_over_longer_names_containing_it(self):
+        client = AsyncMock()
+        client.get_stations.return_value = [
+            SimpleNamespace(station_name="MS10", station_uuid="uuid-10"),
+            SimpleNamespace(station_name="MS1", station_uuid="uuid-1"),
+        ]
+        station = await tools._resolve_station(client, "MS1")
+        self.assertEqual(station.station_uuid, "uuid-1")
+        with self.assertRaises(tools.ToolFailure):
+            await tools._resolve_station(client, "MS")
+
     async def test_empty_data_returns_success_status_and_zero_points(self):
         client = AsyncMock()
         client.__aenter__.return_value = client

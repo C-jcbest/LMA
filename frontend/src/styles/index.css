@@ -105,6 +105,7 @@
   --color-status-attention: var(--status-attention);
   --color-status-critical: var(--status-critical);
   --color-status-unknown: var(--status-unknown);
+  --color-chart-north: var(--chart-north);
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -134,77 +135,78 @@
   }
 }
 
-/* 巡检与调查简报采用同一阅读节奏，尺寸跟随聊天列而非整个视口。 */
-.inspection-dashboard {
+/* 今日、测点和记录三个页面共用同一列宽与留白，和对话列对齐。 */
+.page-column {
+  width: 100%;
+  max-width: 52rem;
+  margin-inline: auto;
+  padding: clamp(24px, 6vh, 56px) clamp(16px, 4vw, 24px) 32px;
+}
+.today {
   container-type: inline-size;
-  padding: clamp(16px, 3vw, 28px);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--card);
+  padding-top: clamp(8px, 5vh, 48px);
+}
+.today-row,
+.station-row,
+.record-row {
+  display: grid;
+  align-items: center;
+  column-gap: 20px;
+  row-gap: 8px;
+  padding: 14px 12px;
+}
+.today-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.today-row-trend {
+  grid-column: 1 / -1;
+  order: 3;
+}
+.today-row-change {
+  white-space: nowrap;
+  text-align: end;
+}
+.station-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-block: 10px;
+}
+.station-row-trend,
+.station-row-note {
+  display: none;
+}
+.record-row {
+  grid-template-columns: 3.5rem auto minmax(0, 1fr);
+  padding-block: 10px;
+}
+.station-data {
+  width: 100%;
+  max-width: 60rem;
+  margin-inline: auto;
+  padding: clamp(20px, 4vh, 36px) clamp(16px, 3vw, 36px) 40px;
+}
+@container (min-width: 560px) {
+  .today-row {
+    grid-template-columns: minmax(0, 1fr) 180px 104px;
+  }
+  .today-row-trend {
+    grid-column: auto;
+    order: 0;
+  }
+}
+@media (min-width: 720px) {
+  .station-row {
+    grid-template-columns: minmax(9rem, 1.1fr) 120px minmax(0, 1.6fr) 88px;
+  }
+  .station-row-trend,
+  .station-row-note {
+    display: block;
+  }
 }
 
-.inspection-heading {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-.inspection-overview {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--muted) 45%, var(--card));
-}
-.inspection-overview > div {
-  padding: 16px 12px;
-}
-.inspection-overview > div + div {
-  border-left: 1px solid var(--border);
-}
-.inspection-overview dt {
-  min-height: 3em;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  line-height: 1.5;
-}
-.inspection-overview dd {
-  margin-top: 8px;
-  font-size: 28px;
-  font-weight: 600;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-}
-.inspection-filters {
-  padding-block: 8px;
-}
-.inspection-priority {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  overflow: hidden;
-}
-.inspection-station {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  padding: 4px;
-}
-.inspection-history {
-  align-self: flex-start;
-  margin-left: 4px;
-  margin-bottom: 4px;
-}
-.inspection-fold {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-.inspection-fold li + li {
-  border-top: 1px solid var(--border);
-}
 .inspection-progress {
   width: 100%;
   height: 4px;
-  margin-top: 20px;
+  margin-top: 16px;
   accent-color: var(--primary);
 }
 .inspection-progress::-webkit-progress-bar {
@@ -274,20 +276,6 @@
 }
 
 @container (min-width: 520px) {
-  .inspection-station {
-    flex-direction: row;
-    align-items: center;
-  }
-  .inspection-history {
-    align-self: center;
-    margin: 0;
-  }
-  .inspection-overview > div {
-    padding: 20px;
-  }
-  .inspection-overview dt {
-    min-height: 0;
-  }
   .report-section {
     grid-template-columns: 88px minmax(0, 1fr);
     gap: 20px;

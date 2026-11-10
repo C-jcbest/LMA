@@ -161,6 +161,10 @@ async def _resolve_station(
         raise ToolFailure(
             f"未找到名称包含“{station_name_or_uuid}”的监测点",
         )
+    # 平台按“名称包含”匹配：MS1 会同时命中 MS10。名称完全一致的站点优先，否则它永远无法按名称选中。
+    exact = [item for item in stations if item.station_name == station_name_or_uuid]
+    if len(exact) == 1:
+        return exact[0]
     if len(stations) > 1:
         names = [item.station_name for item in stations[:20]]
         raise ToolFailure(
@@ -199,12 +203,7 @@ async def list_stations(
     station_name: str | None = None,
     station_status: int | None = None,
 ) -> tuple[str, dict]:
-    """按条件查询监测点列表。
-
-    Args:
-        group_name: 监测点分组名称（精确或模糊匹配分组名，不传则查全部分组）。
-        station_name: 监测点名称，支持模糊匹配，不传则返回全部。
-        station_status: 监测点状态过滤：10=正常，20=离线，30=告警，40=故障。不传则不限状态。
+    """按条件查询监测点列表，条件都不传时返回全部监测点。
 
     返回站点名称、所属分组、类型、状态、位置、WGS84 经纬度和海拔等摘要信息；
     类型与状态字段已转换为中文描述（如“基准站”“正常”），不返回数字代码。
@@ -215,6 +214,9 @@ async def list_stations(
         if group_name:
             groups = await client.get_station_groups()
             matched = [g for g in groups if group_name in g.group_name]
+            exact = [g for g in matched if g.group_name == group_name]
+            if len(exact) == 1:
+                matched = exact
             if len(matched) > 1:
                 raise ToolFailure(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(g.group_name for g in matched[:20]))
             if matched:
@@ -247,19 +249,11 @@ async def get_daily_gnss_data(
 
     形变分析适用于移动站；已知站点为基准站时，可结合站点信息说明其差分基准用途，无需请求形变序列。
 
-    Args:
-        station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID。
-        begin_time: 开始时间，业务时区 Asia/Shanghai，格式必须为 "YYYY-MM-DD HH:mm:ss"。
-        end_time: 结束时间，格式必须为 "YYYY-MM-DD HH:mm:ss"，可跨天。
-        sampling_frequency: 可选采样频率，如 "1h"/"2h"/"3h"/"6h" 或整数分钟，
-            不传则返回默认每小时一条。
-        sample_times: 可选固定每日取样时刻（Asia/Shanghai），如 ["03:00", "15:00"]（必须为整点，HH:mm），
-            传入后优先于 sampling_frequency。
-
     返回的数据点包含时间以及 N（北向坐标，m）、E（东向坐标，m）、U（垂直坐标，m）。
     数据量自动控制：预计超过 1500 条时自动调整采样间隔（固定时刻模式按天抽稀），
     仍超出时等间隔降采样（时间范围仍完整覆盖），调整方式记录在 sampling 字段；
     并附 summary 统计摘要（各方向首末值/变化量/极值及缺失时段）。
+    趋势斜率、最大单步变化等形态特征不在本工具返回，由图表复核工具提供。
     """
     normalized_sample_times = sample_times
 

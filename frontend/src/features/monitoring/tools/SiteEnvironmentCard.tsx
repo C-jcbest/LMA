@@ -265,7 +265,7 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
   };
 
   if (!center) {
-    return <p className="text-sm text-muted-foreground">站点缺少有效的 WGS84 经纬度，无法绘制地图。</p>;
+    return <p className="text-sm text-muted-foreground">该测点尚未提供有效位置信息。</p>;
   }
 
   const terrain = environment.terrain;

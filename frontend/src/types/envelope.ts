@@ -248,7 +248,7 @@ export interface ReportStationArtifact {
   station_name: string;
   status: InvestigationStatus;
   reason: string;
-  acceleration: '未见持续加速' | '疑似加速' | '无法判断';
+  acceleration?: '未见持续加速' | '疑似加速' | '无法判断';
   data_quality: string;
 }
 

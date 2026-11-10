@@ -11,7 +11,7 @@ async function createThread(name: string) {
 
 async function seedThread(threadId: string, message: string) {
   const messages = [{ type: 'human' as const, id: crypto.randomUUID(), content: message }];
-  for await (const event of client.streamRun(threadId, messages, undefined, new AbortController().signal)) {
+  for await (const event of client.streamRun(threadId, messages, { signal: new AbortController().signal })) {
     if (event.event === 'error') throw new Error('隔离会话初始化失败');
   }
 }
@@ -199,14 +199,17 @@ test('重新生成使用 checkpoint fork，刷新后显示最新回答', async (
   }
 });
 
-test('工具失败原因直接可见，空结果在调查过程内说明，刷新后由持久化 ToolMessage 恢复', async ({ page }) => {
+test('工具错误不直出内部原因，空结果和查询记录刷新后仍可查看', async ({ page }) => {
   const errorThreadId = await createThread('工具错误');
   const emptyThreadId = await createThread('工具空结果');
   try {
     await openThread(page, errorThreadId);
     await send(page, '查询不存在监测点的 GNSS 数据');
-    const failure = page.getByRole('alert').filter({ hasText: /GNSS 数据获取失败.*未找到名称包含“不存在监测点”的监测点/ });
+    const failure = page.getByRole('button', { name: /查询记录 · 0 项已获取/ });
     await expect(failure).toBeVisible();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    await failure.click();
+    await expect(page.getByText('本次未取得监测记录')).toBeVisible();
 
     await page.reload();
     await expect(failure).toBeVisible();
@@ -228,7 +231,7 @@ test('工具失败原因直接可见，空结果在调查过程内说明，刷�
   }
 });
 
-test('会话栏滚动加载下一页，整页耗尽后隐藏加载入口', async ({ page }) => {
+test('调查记录滚动加载下一页，整页耗尽后隐藏加载入口，侧栏只留最近几条', async ({ page }) => {
   // 隔离持久化的历史测试数据，只替换列表 HTTP 响应，运行真实 Runtime 与浏览器布局。
   const rows = Array.from({ length: 40 }, (_, index) => ({
     id: `pagination-${index}`,
@@ -246,18 +249,20 @@ test('会话栏滚动加载下一页，整页耗尽后隐藏加载入口', async
     await route.fulfill({ json: rows.slice(offset, offset + limit) });
   });
   await page.setViewportSize({ width: 1280, height: 480 });
-  await page.goto('/');
-  const items = page.locator('[data-slot="aui_thread-list-item"]');
+  await page.goto('/?page=records');
+  const records = page.getByRole('region', { name: '调查记录' });
+  const items = records.locator('[data-slot="aui_thread-list-item"]');
   await expect(items).toHaveCount(20);
-  const viewport = page.locator('[data-slot="aui_thread-list-viewport"]');
+  await expect(page.getByRole('complementary', { name: '导航' }).locator('[data-slot="aui_thread-list-item"]')).toHaveCount(6);
+  const viewport = records.locator('[data-slot="aui_thread-list-viewport"]');
   await expect.poll(() => viewport.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
-  const newButton = page.getByRole('button', { name: '新建会话', exact: true });
-  const before = await newButton.boundingBox();
+  const heading = records.getByRole('heading', { name: '调查记录' });
+  const before = await heading.boundingBox();
   await viewport.hover();
   await page.mouse.wheel(0, 2000);
   await expect(items).toHaveCount(40);
   await expect(page.getByRole('button', { name: /加载.*会话/ })).toHaveCount(0);
-  expect((await newButton.boundingBox())?.y).toBe(before?.y);
+  expect((await heading.boundingBox())?.y).toBe(before?.y);
   expect(offsets).toEqual([0, 20]);
 });
 

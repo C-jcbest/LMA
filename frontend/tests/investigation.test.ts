@@ -64,15 +64,15 @@ describe('调查过程由官方 tool part 派生', () => {
     expect(steps[3]!.inlineEnvelope?.kind).toBe('station_list');
   });
 
-  it('普通错误只读取官方 isError 与 result，不要求 artifact', () => {
+  it('普通错误保留真实状态，不将内部原因投影到展示步骤', () => {
     const [step] = stepsOf([
       toolPart('get_daily_gnss_data', { isError: true, result: '未找到指定监测点，请确认站点。' }),
     ]);
     expect(step).toMatchObject({
       state: 'failed',
-      label: 'GNSS 数据获取失败',
-      errorMessage: '未找到指定监测点，请确认站点。',
+      label: '本次未取得监测记录',
     });
+    expect(step).not.toHaveProperty('errorMessage');
   });
 
   it('部分失败保留已取得的证据，并给出受控原因', () => {
@@ -103,7 +103,8 @@ describe('调查过程由官方 tool part 派生', () => {
       }),
     ];
     const [step] = stepsOf(parts);
-    expect(step).toMatchObject({ state: 'failed', errorMessage: '视觉模型未配置，已返回图表供人工查看。', stationName: '测试点 A' });
+    expect(step).toMatchObject({ state: 'failed', stationName: '测试点 A' });
+    expect(step).not.toHaveProperty('errorMessage');
     expect(collectStations(parts)[0]!.vision).toHaveLength(1);
   });
 
@@ -112,7 +113,7 @@ describe('调查过程由官方 tool part 派生', () => {
       toolPart('get_daily_gnss_data', { status: { type: 'incomplete', reason: 'cancelled' } }),
       toolPart('list_station_groups', { status: { type: 'running' } }),
     ]);
-    expect(cancelled).toMatchObject({ state: 'cancelled', errorMessage: undefined });
+    expect(cancelled).toMatchObject({ state: 'cancelled' });
     expect(running).toMatchObject({ state: 'running', label: '正在查询监测点分组…' });
   });
 
@@ -130,7 +131,7 @@ describe('调查过程由官方 tool part 派生', () => {
   it('仅供模型的答复不进入调查过程，真正错误仍然可见', () => {
     expect(stepsOf([toolPart('get_daily_gnss_data', { artifact: null, result: '基准站不适用形变查询' })])).toEqual([]);
     expect(stepsOf([toolPart('get_daily_gnss_data', { artifact: null, result: '没有访问权限', isError: true })])[0])
-      .toMatchObject({ state: 'failed', errorMessage: '没有访问权限' });
+      .toMatchObject({ state: 'failed', label: '本次未取得监测记录' });
   });
 
   it('未注册工具使用通用文案，不泄露工具名与模型内容', () => {
@@ -138,5 +139,15 @@ describe('调查过程由官方 tool part 派生', () => {
     expect(step).toMatchObject({ state: 'complete', label: '已完成辅助查询', detail: undefined, notice: undefined });
     expect(JSON.stringify(step)).not.toContain('internal_step');
     expect(JSON.stringify(step)).not.toContain('MODEL_ONLY');
+  });
+
+  it('同一查询成功后收起此前失败，不消除其他测点或后续失败', () => {
+    const parts = [
+      toolPart('get_daily_gnss_data', { args: { station: 'A' }, isError: true }),
+      toolPart('get_daily_gnss_data', { args: { station: 'B' }, isError: true }),
+      toolPart('get_daily_gnss_data', { args: { station: 'A' }, artifact: gnssEnvelope('A') }),
+      toolPart('get_daily_gnss_data', { args: { station: 'A' }, isError: true }),
+    ];
+    expect(stepsOf(parts).map((step) => step.state)).toEqual(['failed', 'complete', 'failed']);
   });
 });

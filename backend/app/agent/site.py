@@ -133,10 +133,6 @@ async def inspect_site_environment(
 
     可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差）、
     地质单元及构造线等可用公开资料，适用于需要从场地环境角度补充调查背景的任务。
-    场地环境属于辅助证据，并非每次监测数据分析都需要调用。
-
-    Args:
-        station_name_or_uuid: 监测点名称（需能唯一确定）或 36 位 UUID。
     """
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)

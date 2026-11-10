@@ -570,20 +570,17 @@ async def analyze_gnss_chart(
     end_time: str,
     tool_call_id: str,
 ) -> tuple[str | ToolMessage, dict | None]:
-    """渲染指定监测点在时间范围内的 GNSS 原始坐标、累计位移与合成位移图，
-    并由视觉模型返回全窗口形态观察及候选区间。累计位移优先以监测点初始坐标为基准，
-    未登记时回退到窗口首个有效点。
+    """对指定监测点在时间范围内的 GNSS 位移曲线做图形复核，并给出形态数值特征。
+
+    用全量小时级数据绘制累计位移与合成位移图，由视觉模型观察全窗口形态并标出值得核查的候选区间；
+    再对整个窗口和每个候选区间计算数值特征：相对基线的累计位移、窗口净变化、鲁棒趋势斜率、
+    最大单步变化及发生时刻、跳变后是维持还是回落。累计位移以监测点初始坐标为基线，
+    未登记时回退到窗口首个有效点，结果中会注明采用的基线。
+
+    视觉候选是待核查的线索，是否成立以数值特征为准。窗口越窄图形分辨率越高，
+    需要看清某一段时可以用更窄的时间范围再次调用。图表同时展示给用户。
 
     形变分析适用于移动站；已知站点为基准站时，可结合站点信息说明其差分基准用途，无需请求形变序列。
-
-    Args:
-        station_name_or_uuid: 监测点名称（模糊匹配，需能唯一确定）或 36 位 UUID。
-        begin_time: 开始时间，业务时区 Asia/Shanghai，格式必须为 "YYYY-MM-DD HH:mm:ss"。
-        end_time: 结束时间，格式必须为 "YYYY-MM-DD HH:mm:ss"，可跨天。
-
-    返回视觉观察（趋势、拐点、候选区间、数值特征、形态学解释和近似读数）；
-    渲染好的图表 PNG（images，全量数据绘制）与全量 chart_points 数据序列
-    通过 artifact 随流转发给前端展示，不进入模型上下文。
     """
     time_start = datetime.strptime(begin_time, _TIME_FORMAT)
     time_end = datetime.strptime(end_time, _TIME_FORMAT)
@@ -677,10 +674,15 @@ async def analyze_gnss_chart(
         # 原始时序与累计位移形态等价（仅差基准），两图大载荷下视觉模型间歇性
         # 返回非 JSON，不再多送。artifact 仍包含全部 3 图供前端展示
         vision_charts = [c for c in charts if c["name"] in (_CHART_CUMULATIVE, _CHART_RESULTANT)] or charts
-        chart_desc = (
-            f"第 1 张图为{baseline_desc}的累计位移 ΔN/ΔE/ΔU（mm，橙色阴影为缺测时段），"
-            "第 2 张为合成位移（水平与三维，mm，同一基线）。"
-            "累计位移与合成位移图最宜识别跳变与持续形变。"
+        # 单张渲染失败时附图会变少，说明必须按实际送出的图生成
+        chart_notes = {
+            _CHART_RAW: "原始坐标 N/E/U 时序（m）",
+            _CHART_CUMULATIVE: f"{baseline_desc}的累计位移 ΔN/ΔE/ΔU（mm，橙色阴影为缺测时段）",
+            _CHART_RESULTANT: f"{baseline_desc}的合成位移（水平与三维，mm，橙色阴影为缺测时段）",
+        }
+        chart_desc = "".join(
+            f"第 {index} 张图为{chart_notes[chart['name']]}。"
+            for index, chart in enumerate(vision_charts, start=1)
         )
         content: list[dict] = [
             {
@@ -767,14 +769,8 @@ async def analyze_gnss_chart(
             "鲁棒斜率 robust_slope_mm_day（Theil–Sen，mm/天）、最大单步变化 max_step_mm 及"
             "发生时刻 max_step_time、跳变前后水平差 level_shift_mm 与跳后持续性 "
             "jump_persistence（持续/回落/样本不足）。"
-            "interpretation 为视觉模型的形态学推断，转述时可以自然表达推测，"
-            "不要求固定措辞或重复免责声明。"
-            "判断持续形变时优先参考 global_features 的鲁棒斜率与净变化。"
-            "向用户转述时必须使用中文业务语言：不得出现 features、global_features、"
-            "recheck、interpretation 等字段名与英文判定码；三类结论分别表述为"
-            "“数值证据支持 / 存在变化但证据不足 / 复核未获数值支持（视觉误判）”；"
-            "核验范围比视觉定位区间略宽时，说明为“核验时向区间两侧适当放宽了时间窗”；"
-            "极值出现时刻与候选区间不一致时，应指出实际偏离发生的时间。"
+            "interpretation 为视觉模型的形态学推断，不是数值事实。"
+            "视觉定位的时间存在误差，变化的实际发生时刻以特征中的时刻为准。"
         )
         if any(not item.get("ok") for item in rechecks):
             return tool_error_result(

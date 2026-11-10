@@ -3,6 +3,7 @@ import type {
   FindingLevel,
   InvestigationReportArtifactData,
   InvestigationStatus,
+  ReportStationArtifact,
   StationArtifact,
   ToolArtifactEnvelope,
   ToolArtifactEnvelopeFor,
@@ -36,7 +37,7 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     kind: 'station_list',
     running: '正在查询监测点分组…',
     complete: '已查询监测点分组',
-    failed: '监测点分组查询失败',
+    failed: '本次未取得分组信息',
     cancelled: '已取消查询监测点分组',
     emptyNotice: '未查询到符合条件的监测点分组。',
   },
@@ -44,7 +45,7 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     kind: 'station_list',
     running: '正在查询监测点信息…',
     complete: '已查询监测点信息',
-    failed: '监测点信息查询失败',
+    failed: '本次未取得测点信息',
     cancelled: '已取消查询监测点信息',
     emptyNotice: STATION_LIST_EMPTY,
   },
@@ -52,7 +53,7 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     kind: 'gnss_series',
     running: '正在获取 GNSS 监测数据…',
     complete: '已获取 GNSS 监测数据',
-    failed: 'GNSS 数据获取失败',
+    failed: '本次未取得监测记录',
     cancelled: '已取消获取 GNSS 监测数据',
     emptyNotice: '该时间范围内暂无 GNSS 数据。',
   },
@@ -60,7 +61,7 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     kind: 'weather',
     running: '正在查询同期天气…',
     complete: '已获取同期天气',
-    failed: '天气数据查询失败',
+    failed: '本次未取得同期天气',
     cancelled: '已取消查询天气',
     emptyNotice: '未查询到符合条件的天气数据。',
   },
@@ -68,7 +69,7 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     kind: 'vision',
     running: '正在复核位移曲线…',
     complete: '已完成位移曲线复核',
-    failed: '位移曲线复核失败',
+    failed: '本次未取得曲线复核结果',
     cancelled: '已取消复核位移曲线',
     emptyNotice: '该时间范围内暂无可供复核的 GNSS 数据。',
   },
@@ -76,7 +77,7 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     kind: 'site_environment',
     running: '正在获取场地环境信息…',
     complete: '已获取场地环境信息',
-    failed: '场地环境信息获取失败',
+    failed: '本次未取得场地信息',
     cancelled: '已取消调查场地环境',
     emptyNotice: '未取得可展示的场地环境信息。',
   },
@@ -85,7 +86,7 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
 const UNKNOWN_TOOL_PRESENTATION: ToolPresentation = {
   running: '正在获取辅助信息…',
   complete: '已完成辅助查询',
-  failed: '辅助查询失败',
+  failed: '本次未取得补充信息',
   cancelled: '已取消辅助查询',
   emptyNotice: '',
 };
@@ -207,7 +208,6 @@ export interface InvestigationStep {
   state: StepState;
   label: string;
   detail?: string;
-  errorMessage?: string;
   /** 工具正常结束但没有可展示内容时的说明。 */
   notice?: string;
   /** 能归到测点的步骤打开时间轴，其余结果在步骤内展开。 */
@@ -236,18 +236,6 @@ const stepDetail = (envelope: ToolArtifactEnvelope): string | undefined => {
   }
 };
 
-const failureMessage = (
-  status: ToolCallMessagePartStatus,
-  envelope: ToolArtifactEnvelope | undefined,
-  result: unknown,
-): string | undefined => {
-  if (envelope?.error?.message) return envelope.error.message;
-  if (typeof result === 'string') return result;
-  if (status.type !== 'incomplete') return undefined;
-  if (typeof status.error === 'string') return status.error;
-  return status.error instanceof Error ? status.error.message : undefined;
-};
-
 type ToolPart = Extract<PartState, { type: 'tool-call' }>;
 
 const stepStateOf = (part: ToolPart, envelope: ToolArtifactEnvelope | undefined): StepState => {
@@ -266,12 +254,21 @@ export function buildSteps(
 ): InvestigationStep[] {
   const stationNames = new Set(stations.map((station) => station.name));
   const steps: InvestigationStep[] = [];
+  const successfulRequests = new Set<string>();
 
-  for (const part of parts) {
+  // 只收起同工具、同参数且随后成功的尝试，不将其他时段或测点的成功当作恢复。
+  for (const part of [...parts].reverse()) {
     if (part.type !== 'tool-call') continue;
     const presentation = presentationOf(part.toolName);
     const envelope = decodeToolPart(part);
     const state = stepStateOf(part, envelope);
+    const requestKey = JSON.stringify([part.toolName, part.args]);
+    if (state === 'failed' && successfulRequests.has(requestKey)) {
+      continue;
+    }
+    if (state === 'complete') {
+      successfulRequests.add(requestKey);
+    }
 
     // 简报是回答本身；校验失败由模型修正，用户只需看到正在整理。
     if (part.toolName === REPORT_TOOL_NAME && state !== 'running') continue;
@@ -294,15 +291,12 @@ export function buildSteps(
       state,
       label,
       detail: envelope ? stepDetail(envelope) : undefined,
-      errorMessage: state === 'failed'
-        ? failureMessage(part.status as ToolCallMessagePartStatus, envelope, part.result)
-        : undefined,
       notice: isEmpty ? presentation.emptyNotice || undefined : undefined,
       stationName,
       inlineEnvelope: envelope && !stationName && !isEmpty ? envelope : undefined,
     });
   }
-  return steps;
+  return steps.reverse();
 }
 
 /** 校验失败的提交不产生 artifact，只有通过校验的简报才会被取到。 */
@@ -325,6 +319,20 @@ export const STATUS_PRIORITY: Record<InvestigationStatus, number> = {
   未见明显变化: 4,
 };
 
+export const investigationStatusLabel = (status: string): string =>
+  status === '数据不足' || status === '暂无法分析' ? '数据待核查' : status;
+
+export const reportStationDetails = (station: ReportStationArtifact): string[] => {
+  const details: string[] = [];
+  if (station.acceleration && station.acceleration !== '无法判断') {
+    details.push(station.acceleration);
+  }
+  if (station.data_quality) {
+    details.push(station.data_quality);
+  }
+  return details;
+};
+
 const FINDING_HEADINGS: Record<FindingLevel, string> = {
   fact: '观测事实',
   analysis: '分析判断',
@@ -340,7 +348,11 @@ export function reportToMarkdown(report: InvestigationReportArtifactData): strin
   const sections = [
     report.conclusion,
     report.stations
-      .map((station) => `- ${station.station_name}：${station.status}。${station.reason}（${station.acceleration}；${station.data_quality}）`)
+      .map((station) => {
+        const status = investigationStatusLabel(station.status);
+        const details = reportStationDetails(station).join('；');
+        return `- ${station.station_name}：${status}。${station.reason}${details ? `（${details}）` : ''}`;
+      })
       .join('\n'),
     ...FINDING_LEVELS.flatMap((level) => {
       const findings = report.findings.filter((finding) => finding.level === level);

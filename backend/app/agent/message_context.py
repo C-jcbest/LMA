@@ -7,19 +7,22 @@ from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 from app.business_time import BUSINESS_TIMEZONE, business_now
 
 
+# 接口层写入、发送时并入快照的临时字段：用户提问时正在查看的测点。
+FOCUS_STATION_KEY = "lma_focus_station"
+
+
 def stamp_user_message(message: HumanMessage) -> HumanMessage:
     if "lma_context" in message.additional_kwargs:
         return message
-    now = business_now()
-    return message.model_copy(update={
-        "additional_kwargs": {
-            **message.additional_kwargs,
-            "lma_context": {
-                "sent_at": now.isoformat(timespec="seconds"),
-                "timezone": BUSINESS_TIMEZONE,
-            },
-        },
-    })
+    context = {
+        "sent_at": business_now().isoformat(timespec="seconds"),
+        "timezone": BUSINESS_TIMEZONE,
+    }
+    kwargs = dict(message.additional_kwargs)
+    focus_station = kwargs.pop(FOCUS_STATION_KEY, None)
+    if focus_station:
+        context["focus_station"] = focus_station
+    return message.model_copy(update={"additional_kwargs": {**kwargs, "lma_context": context}})
 
 
 def evidence_id(tool_call_id: str) -> str:
@@ -33,12 +36,10 @@ def is_evidence(message: BaseMessage) -> bool:
 
 def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
     # 每条历史消息使用自身不可变的快照；不改 system prompt 或 checkpoint 正文。
-    metadata = (
-        "<lma_message_context>\n"
-        f"sent_at: {context['sent_at']}\n"
-        f"timezone: {context['timezone']}\n"
-        "</lma_message_context>"
-    )
+    lines = [f"sent_at: {context['sent_at']}", f"timezone: {context['timezone']}"]
+    if context.get("focus_station"):
+        lines.append(f"focus_station: {context['focus_station']}")
+    metadata = "<lma_message_context>\n" + "\n".join(lines) + "\n</lma_message_context>"
     content = message.content
     if isinstance(content, str):
         content = f"{metadata}\n\n{content}"

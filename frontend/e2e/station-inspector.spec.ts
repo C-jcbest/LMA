@@ -69,7 +69,8 @@ for (const width of [320, 1440]) {
     const input = page.getByRole('textbox', { name: '输入监测问题' });
     await input.fill('保留的追问草稿');
 
-    await expect(page.getByRole('alert')).toContainText('气象服务暂不可用');
+    await expect(page.getByText('气象服务暂不可用，未取得本次降雨数据。')).toHaveCount(0);
+    await expect(page.getByText('测试点 A 需要优先复核。气象数据本次未取得，暂不能核查降雨关联。')).toBeVisible();
     await expect(page.getByText('PRIVATE_CHAIN_SHOULD_NOT_RENDER')).toHaveCount(0);
     await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
@@ -106,7 +107,7 @@ for (const width of [320, 1440]) {
 
 test('调查过程默认折叠，展开后每一步都能定位到对应测点', async ({ page }) => {
   await openInvestigation(page, 1440);
-  const process = page.getByRole('button', { name: /已调查 2 个测点 · 3 项查询/ });
+  const process = page.getByRole('button', { name: /查询记录 · 2 项已获取/ });
   await expect(page.getByText('GNSS 数据获取失败')).toHaveCount(0);
   await process.click();
   await page.getByRole('button', { name: /已获取 GNSS 监测数据.*测试点 B/ }).click();
@@ -117,6 +118,7 @@ test('调查过程默认折叠，展开后每一步都能定位到对应测点',
 
 test('框选时间段后可带入追问，还原后恢复完整窗口', async ({ page }) => {
   await openInvestigation(page, 1440);
+  await page.getByRole('textbox', { name: '输入监测问题' }).fill('也看看东向变化');
   await stationEntry(page).click();
   const canvas = inspector(page).locator('canvas').first();
   await expect(canvas).toBeVisible();
@@ -142,7 +144,7 @@ test('框选时间段后可带入追问，还原后恢复完整窗口', async ({
 
   await inspector(page).getByRole('button', { name: '追问这段' }).click();
   const input = page.getByRole('textbox', { name: '输入监测问题' });
-  await expect(input).toHaveValue(/^测试点 A 2026-11-\d\d \d\d:\d\d 至 2026-11-\d\d \d\d:\d\d 这段发生了什么？$/);
+  await expect(input).toHaveValue(/^也看看东向变化\n测试点 A 2026-11-\d\d \d\d:\d\d 至 2026-11-\d\d \d\d:\d\d 这段发生了什么？$/);
   await expect(input).toBeFocused();
 
   await inspector(page).getByRole('button', { name: '还原' }).click();
@@ -183,7 +185,7 @@ test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度�
   await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(390);
+  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(390);
   await page.setViewportSize({ width: 1024, height: 844 });
   await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(664);
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
@@ -246,10 +248,10 @@ test('切换屏宽和会话时不残留依据，宽度不足时会话导航改�
   await openInvestigation(page, 1440);
   await stationEntry(page).click();
   await expect(inspector(page)).toBeVisible();
-  await expect(page.getByRole('complementary', { name: '会话导航' })).toHaveCount(0);
+  await expect(page.getByRole('complementary', { name: '导航' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: '打开会话列表' }).click();
-  await expect(page.getByRole('dialog', { name: '会话列表', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '打开导航' }).click();
+  await expect(page.getByRole('dialog', { name: '导航', exact: true })).toBeVisible();
   await expect(inspector(page)).toBeVisible();
   await page.keyboard.press('Escape');
 
@@ -261,8 +263,8 @@ test('切换屏宽和会话时不残留依据，宽度不足时会话导航改�
 
   await stationEntry(page).click();
   await page.getByRole('button', { name: '关闭依据' }).click();
-  await page.getByRole('button', { name: '打开会话列表' }).click();
-  await page.getByRole('button', { name: '新建会话', exact: true }).click();
+  await page.getByRole('button', { name: '打开导航' }).click();
+  await page.getByRole('button', { name: '今日', exact: true }).click();
   // 首页可展示已有巡检结果；切换成功取决于旧消息清空和新输入区可用。
   await expect(page.getByText('测试点 A 需要优先复核')).toHaveCount(0);
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeVisible();

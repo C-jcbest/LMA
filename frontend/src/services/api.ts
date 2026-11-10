@@ -1,4 +1,5 @@
 import type { LangChainMessage, LangGraphMessagesEvent } from '@assistant-ui/react-langgraph';
+import type { GnssArtifactData } from '@/types/envelope';
 import { BytesLineDecoder, IterableReadableStream, SSEDecoder } from '@langchain/langgraph-sdk/utils';
 
 const STORAGE_KEY_CONFIG = 'lma_api_url';
@@ -25,6 +26,7 @@ export interface InspectionStation {
   group_name: string;
   screening: Screening;
   reasons: string[];
+  metrics: { net_change_mm?: Partial<Record<'n' | 'e' | 'u', number>> };
   trend: Array<number | null>;
   previous_screening: Screening | null;
   last_conclusion: { status: string; reason: string; session_id: string; created_at: string } | null;
@@ -41,6 +43,31 @@ export interface LatestInspection {
   } | null;
   inspection: { id: string; finished_at: string } | null;
   stations: InspectionStation[];
+}
+
+export type TimelineDays = 7 | 30 | 90;
+
+export interface StationRecord {
+  session_id: string;
+  session_name: string;
+  status: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface StationTimeline {
+  station_uuid: string;
+  station_name: string;
+  group_name: string;
+  /** 基准站等没有形变序列的测点为 null。 */
+  series: GnssArtifactData | null;
+  records: StationRecord[];
+}
+
+export interface SessionConclusion {
+  session_id: string;
+  station_name: string;
+  status: string;
 }
 
 export const getStoredApiUrl = () => {
@@ -119,6 +146,15 @@ export class LmaClient {
     await this.request('/inspections', { method: 'POST' });
   }
 
+  async getStationTimeline(stationUuid: string, days: TimelineDays, signal?: AbortSignal): Promise<StationTimeline> {
+    const path = `/stations/${encodeURIComponent(stationUuid)}/timeline?days=${days}`;
+    return (await this.request(path, { signal })).json();
+  }
+
+  async listSessionConclusions(signal?: AbortSignal): Promise<SessionConclusion[]> {
+    return (await this.request('/sessions/conclusions', { signal })).json();
+  }
+
   async cancelRun(id: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
   }
@@ -126,12 +162,12 @@ export class LmaClient {
   async *streamRun(
     id: string,
     messages: LangChainMessage[],
-    checkpointId: string | undefined,
-    signal: AbortSignal,
+    options: { checkpointId?: string; focusStation?: string; signal: AbortSignal },
   ): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
     try {
       const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs`, {
-        method: 'POST', body: JSON.stringify({ messages, checkpoint_id: checkpointId }), signal,
+        method: 'POST', body: JSON.stringify({ messages, checkpoint_id: options.checkpointId, focus_station: options.focusStation }),
+        signal: options.signal,
       });
       if (!response.body) throw new Error('服务未返回消息流。');
       const events = response.body.pipeThrough(BytesLineDecoder()).pipeThrough(SSEDecoder());
@@ -139,7 +175,7 @@ export class LmaClient {
         yield { event: event.event, data: event.data };
       }
     } finally {
-      if (signal.aborted) await this.cancelRun(id);
+      if (options.signal.aborted) await this.cancelRun(id);
     }
   }
 }
