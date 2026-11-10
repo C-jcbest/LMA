@@ -35,7 +35,7 @@ export function TodayPage({ draft, onDraftChange }: { draft: string; onDraftChan
   };
 
   return (
-    <section aria-label="今日页面" className="h-full overflow-y-auto [scrollbar-gutter:stable]">
+    <section aria-label="今日页面" className="@container h-full overflow-y-auto [scrollbar-gutter:stable]">
       <div className="mx-auto flex min-h-full w-full max-w-[52rem] flex-col px-4 pt-6 sm:px-6 sm:pt-8">
         <TodayAttention />
         <form className="sticky bottom-0 mt-auto bg-background pb-[max(1rem,env(safe-area-inset-bottom))] pt-3"

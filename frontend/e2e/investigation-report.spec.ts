@@ -102,6 +102,20 @@ async function mockApi(page: Page) {
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 
+test('今日列表按页面宽度排列测点、趋势和变化量', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: inspection }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const row = page.getByRole('button', { name: '查看 测试点 A', exact: true });
+  await expect(row).toBeVisible();
+  const columns = () => row.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length);
+  expect(await columns()).toBe(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(columns).toBe(2);
+  expect(await page.getByRole('region', { name: '今日页面', exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
 test('首页提问创建独立调查，原会话草稿不被覆盖', async ({ page }) => {
   await mockApi(page);
   let created = 0;
