@@ -18,7 +18,7 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
   const id = href.slice('#evidence-'.length);
   const step = steps.find((item) => item.evidenceId === id && item.state === 'complete');
   // 不存在或尚未收到的依据不生成跳转，避免暴露内部编号和伪造引用。
-  if (!step || (!step.stationName && !step.inlineEnvelope)) {
+  if (!step || (!step.stationId && !step.inlineEnvelope)) {
     return <span className="text-muted-foreground text-xs">{children}</span>;
   }
   return (
@@ -28,14 +28,14 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
         aria-label={`查看依据 ${children}：${step.detail ?? step.label}`}
         className="report-citation text-muted-foreground hover:text-foreground inline-flex min-h-8 min-w-8 items-center justify-center rounded-md text-xs tabular-nums focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         onClick={() => {
-          if (step.stationName) {
-            openStation({ messageId, stationName: step.stationName, toolCallId: step.toolCallId });
+          if (step.stationId) {
+            openStation({ messageId, stationId: step.stationId, toolCallId: step.toolCallId });
           } else {
             setExpanded(true);
           }
         }}
       >{children}</button>
-      {!step.stationName && (
+      {!step.stationId && (
         <Dialog open={expanded} onOpenChange={setExpanded}>
           <DialogContent className="max-h-[85dvh] overflow-y-auto">
             <DialogTitle>{step.detail ?? step.label}</DialogTitle>

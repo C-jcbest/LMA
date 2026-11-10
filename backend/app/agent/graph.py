@@ -5,6 +5,7 @@ LMA middleware 维护消息上下文和用量；官方 SummarizationMiddleware �
 """
 
 import logging
+from uuid import uuid4
 from dataclasses import replace
 from functools import lru_cache
 
@@ -23,6 +24,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, describe_validation_error
 from app.agent.context import build_context_usage
+from app.agent.evidence import EvidenceMiddleware
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
@@ -72,7 +74,8 @@ class QueryCallLimitMiddleware(ToolCallLimitMiddleware):
 
     def _matches_tool_filter(self, tool_call) -> bool:
         return tool_call["name"] not in {
-            REPORT_TOOL_NAME, "record_investigation_progress",
+            REPORT_TOOL_NAME, "start_investigation", "record_target_result",
+            "add_investigation_targets", "finish_investigation", "withdraw_investigation_target",
             "read_investigation_record", "reuse_investigation_evidence",
             "compare_investigation_evidence",
         }
@@ -128,20 +131,19 @@ class LmaMiddleware(AgentMiddleware):
     @hook_config(can_jump_to=["end"])
     async def abefore_model(self, state, runtime):
         # 官方 return_direct 在工具失败时也会结束；简报校验失败需要回到模型修正。
+        latest_results = []
         for message in reversed(state["messages"]):
             if not isinstance(message, ToolMessage):
-                return None
-            if message.name == REPORT_TOOL_NAME and message.status != "error":
-                return {"jump_to": "end"}
+                break
+            latest_results.append(message)
+        if any(message.status == "error" for message in latest_results):
+            return None
+        if any(message.name == REPORT_TOOL_NAME and message.status != "error" for message in latest_results):
+            return {"jump_to": "end"}
         return None
 
     async def awrap_model_call(self, request, handler):
-        persistent_evidence = None
-        execution = request.runtime.execution_info
-        session_id = execution.thread_id if execution is not None else None
-        if self.investigation_storage is not None and session_id is not None:
-            persistent_evidence = await self.investigation_storage.evidence_identifiers(session_id)
-        request = request.override(messages=model_messages(request.messages, persistent_evidence=persistent_evidence))
+        request = request.override(messages=model_messages(request.messages))
         # 模型调用超限会让整轮报错、已取得的证据无法交付；最后一次调用撤掉工具，让模型直接作答。
         completed_model_calls = request.state.get("run_model_call_count", 0)
         if completed_model_calls >= self.model_run_limit - 1:
@@ -157,7 +159,7 @@ class LmaMiddleware(AgentMiddleware):
                     **message.additional_kwargs,
                     "created_at": business_now().isoformat(timespec="seconds"),
                 }
-                message = message.model_copy(update={"additional_kwargs": metadata})
+                message = message.model_copy(update={"id": message.id or str(uuid4()), "additional_kwargs": metadata})
             stamped.append(message)
         return replace(response, result=stamped)
 
@@ -201,6 +203,7 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
+            *([EvidenceMiddleware(investigation_storage)] if investigation_storage is not None else []),
             LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit, investigation_storage=investigation_storage),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,

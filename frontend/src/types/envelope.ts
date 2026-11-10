@@ -117,6 +117,7 @@ export interface WeatherDailyArtifact {
 export interface WeatherArtifactData {
   ok: boolean;
   location: {
+    station_uuid?: string | null;
     station_name?: string | null;
     latitude: number;
     longitude: number;
@@ -248,6 +249,10 @@ export interface SiteEnvironmentArtifactData {
 export type InvestigationStatus = '未见明显变化' | '持续关注' | '需人工复核' | '数据不足' | '暂无法分析';
 
 export interface ReportStationArtifact {
+  station_uuid: string;
+  begin_time: string;
+  end_time: string;
+  supports: ReportFindingArtifact["supports"];
   station_name: string;
   status: InvestigationStatus;
   reason: string;
@@ -258,8 +263,8 @@ export interface ReportStationArtifact {
 export type FindingLevel = 'fact' | 'analysis' | 'inference';
 
 export interface ReportFindingArtifact {
-  supports: Array<{ evidence_id: string; station_uuid: string; begin_time?: string; end_time?: string; axis?: string; weather_period?: string; claim: string; rationale: string }>;
-  station_names?: string[];
+  supports: Array<{ evidence_id: string; station_uuid: string; begin_time?: string; end_time?: string; axis?: string; weather_period?: string; scope?: string; claim: string; rationale: string; fact?: Record<string, unknown> }>;
+  station_uuids?: string[];
   level: FindingLevel;
   text: string;
   /** 经服务端校验、属于本轮的工具调用 ID。 */
@@ -274,6 +279,8 @@ export interface InvestigationReportArtifactData {
 }
 
 export interface NumericalArtifactData {
+  quality?: Record<string, unknown>;
+  reference?: Record<string, unknown>;
   station_uuid: string;
   station_name: string;
   begin_time: string;

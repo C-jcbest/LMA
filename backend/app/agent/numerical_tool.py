@@ -1,15 +1,17 @@
 """不依赖视觉模型的数值调查入口。"""
+import asyncio
 from datetime import datetime, timedelta
 from typing import Literal
 
 from langchain_core.tools import tool
 from pydantic import Field, model_validator
 
-from app.agent.numerical import axis_features, compare_windows, common_period_features
+from app.agent.numerical import window_features, compare_windows, common_period_features, numerical_model_data
 from app.agent.tools import _build_client, _resolve_station
 from app.agent.tool_inputs import TimeWindowInput
 from app.agent.tool_protocol import tool_result, ToolFailure
 from app.business_time import TIME_FORMAT, business_now
+from app.observations import normalize_observations, observation_quality, raw_snapshot, station_reference
 
 
 class NumericalInput(TimeWindowInput):
@@ -53,6 +55,9 @@ async def analyze_gnss_numerically(
     sample_times = ["15:00"] if sampling == "daily" else None
     comparison_points = {}
     station_names = {}
+    station_objects = {}
+    raw_points = {}
+    quality = {}
     async with _build_client() as client:
         station = await _resolve_station(client, station_name_or_uuid)
         if station.station_type == 1:
@@ -64,28 +69,46 @@ async def analyze_gnss_numerically(
                 other = await _resolve_station(client, station_uuid)
                 if not station.group_uuid or other.group_uuid != station.group_uuid or other.station_type == 1:
                     raise ToolFailure("共同有效时段比较只接受已确认同组的移动站")
-            samples = await client.get_daily_data(
-                station_uuid=other.station_uuid, begin_time=begin_time, end_time=end_time,
-                sample_times=sample_times,
-            )
-            points_in_window = [point for point in samples if begin_time <= point.data_time <= end_time]
-            if len(points_in_window) > 1600:
-                raise ToolFailure("回查返回超过1600点，请缩小窗口或改用每日采样；未裁剪数据")
-            comparison_points[other.station_uuid] = points_in_window
+            station_objects[other.station_uuid] = other
             station_names[other.station_uuid] = other.station_name
+        limiter = asyncio.Semaphore(4)
+
+        async def fetch(other):
+            async with limiter:
+                samples = await client.get_daily_data(
+                    station_uuid=other.station_uuid, begin_time=begin_time, end_time=end_time,
+                    sample_times=sample_times,
+                )
+            if len(samples) > 1600:
+                raise ToolFailure("回查返回超过1600点，请缩小窗口或改用每日采样；未裁剪数据")
+            points_in_window, cleaning = normalize_observations(samples, begin_time, end_time)
+            comparison_points[other.station_uuid] = points_in_window
+            raw_points[other.station_uuid] = raw_snapshot(samples)
+            quality[other.station_uuid] = observation_quality(
+                points_in_window, begin_time, end_time, sample_times=sample_times, cleaning=cleaning,
+            )
+
+        outcomes = await asyncio.gather(*(fetch(other) for other in station_objects.values()), return_exceptions=True)
+        failures = {}
+        for other, outcome in zip(station_objects.values(), outcomes):
+            if isinstance(outcome, BaseException):
+                if other.station_uuid == station.station_uuid:
+                    raise outcome
+                failures[other.station_uuid] = "该比较站未取得可用数据，不能用其他站代替"
+                comparison_points[other.station_uuid] = []
 
     points = comparison_points[station.station_uuid]
     times = [point.data_time for point in points]
-    features = {}
+    features = window_features(points, station, begin_time, end_time, cadence_hours)
     comparisons = {}
     first = [point for point in points if split_time and point.data_time < split_time]
     second = [point for point in points if split_time and point.data_time >= split_time]
-    for axis in ("n", "e", "u"):
-        features[axis] = axis_features(times, [getattr(point, axis) for point in points], cadence_hours=cadence_hours)
-        if split_time:
+    if split_time:
+        first_features = window_features(first, station, begin_time, split_time, cadence_hours, "first_window")
+        second_features = window_features(second, station, split_time, end_time, cadence_hours, "second_window")
+        for axis in features:
             comparisons[axis] = compare_windows(
-                axis_features([point.data_time for point in first], [getattr(point, axis) for point in first], cadence_hours=cadence_hours),
-                axis_features([point.data_time for point in second], [getattr(point, axis) for point in second], cadence_hours=cadence_hours),
+                first_features[axis], second_features[axis],
             )
     if compare_station_uuids:
         comparisons["common_period"] = {
@@ -93,11 +116,16 @@ async def analyze_gnss_numerically(
             for axis in ("n", "e", "u")
         }
         comparisons["station_names"] = station_names
+        comparisons["failures"] = failures
 
     data = {
         "station_uuid": station.station_uuid, "station_name": station.station_name,
         "begin_time": begin_time, "end_time": end_time, "features": features,
         "comparisons": comparisons, "sampling": sampling,
+        "quality": quality[station.station_uuid],
+        "reference": {"coordinates_m": station_reference(station), "device_uuid": station.device_uuid,
+                      "applicability": "获取时平台登记的固定参考；平台未提供变更历史，不能据此认定跨基准或迁站前后可直接拼接"},
+        "raw_points": raw_points[station.station_uuid],
         "points": [dict(time=point.data_time, n=point.n, e=point.e, u=point.u) for point in points],
     }
     if compare_station_uuids:
@@ -105,10 +133,11 @@ async def analyze_gnss_numerically(
             identifier: [dict(time=point.data_time, n=point.n, e=point.e, u=point.u) for point in samples]
             for identifier, samples in comparison_points.items()
         }
+        data["comparisons"]["quality"] = quality
     # 原始快照留作复核；模型只需计算结果，避免多站完整序列占满上下文。
-    facts = {key: value for key, value in data.items() if key not in {"points", "comparisons"}}
+    facts = {key: value for key, value in data.items() if key not in {"points", "raw_points", "comparisons"}}
     facts["comparisons"] = {key: value for key, value in comparisons.items() if key != "snapshots"}
     return tool_result(
-        facts, kind="numerical", display=data, observed_at=business_now().isoformat(),
+        numerical_model_data(data), kind="numerical", display=data, observed_at=business_now().isoformat(),
         limitations=["仅描述数值证据；阈值未经真实场景校准，不构成灾害判断"],
     )

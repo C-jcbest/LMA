@@ -10,6 +10,7 @@ import {
   collectStations,
   findReport,
   groupReportFindings,
+  formatSupportFact,
   investigationStatusLabel,
   reportStationDetails,
   reportToMarkdown,
@@ -45,7 +46,7 @@ const FindingRow: FC<{
       {finding.supports.map((support, index) => (
         <p key={index}>
           {support.begin_time && support.end_time ? `${support.begin_time} 至 ${support.end_time}` : '场地背景快照'}
-          {' · '}{support.rationale}
+          {' · '}{support.rationale}{support.fact && <span> · {formatSupportFact(support.fact)}</span>}
         </p>
       ))}
     </details>
@@ -77,7 +78,7 @@ export const InvestigationReport: FC = () => {
   const { messageId, stations, steps, report, selection, openStation } = useReportEvidence();
   if (!report) return null;
 
-  const stationNames = new Set(stations.map((station) => station.name));
+  const stationIds = new Set(stations.map((station) => station.id));
   const stepByCall = new Map(steps.map((step) => [step.toolCallId, step]));
   const citationNumbers = new Map<string, number>();
   for (const finding of report.findings) {
@@ -92,11 +93,11 @@ export const InvestigationReport: FC = () => {
     const step = stepByCall.get(toolCallId);
     return step ? [step.label, step.detail].filter(Boolean).join(' · ') : undefined;
   };
-  const canOpenEvidence = (toolCallId: string) => stepByCall.get(toolCallId)?.stationName !== undefined;
+  const canOpenEvidence = (toolCallId: string) => stepByCall.get(toolCallId)?.stationId !== undefined;
   const openEvidence = (toolCallId: string) => {
-    const stationName = stepByCall.get(toolCallId)?.stationName;
-    if (stationName) {
-      openStation({ messageId, stationName, toolCallId });
+    const stationId = stepByCall.get(toolCallId)?.stationId;
+    if (stationId) {
+      openStation({ messageId, stationId, toolCallId });
     }
   };
   const orderedStations = [...report.stations].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
@@ -113,15 +114,15 @@ export const InvestigationReport: FC = () => {
   );
   const renderStation = (item: typeof report.stations[number]) => {
     const details = reportStationDetails(item).join(' · ');
-    const isSelected = selection?.messageId === messageId && selection.stationName === item.station_name;
-    const findings = findingsByStation.get(item.station_name) ?? [];
+    const isSelected = selection?.messageId === messageId && selection.stationId === item.station_uuid;
+    const findings = findingsByStation.get(item.station_uuid) ?? [];
     return (
-      <section key={item.station_name} className={cn('report-station', isSelected && 'report-station-selected')}>
+      <section key={item.station_uuid ?? orderedStations.indexOf(item)} className={cn('report-station', isSelected && 'report-station-selected')}>
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <h3 className="text-base font-semibold">
-            {stationNames.has(item.station_name) ? (
+            {stationIds.has(item.station_uuid) ? (
               <button type="button" aria-label={`查看 ${item.station_name} 的依据`} aria-pressed={isSelected}
-                onClick={() => openStation({ messageId, stationName: item.station_name })}
+                onClick={() => openStation({ messageId, stationId: item.station_uuid })}
                 className="focus-visible:ring-ring flex min-h-10 items-center gap-1 rounded-md text-start hover:underline focus-visible:ring-2 focus-visible:outline-none">
                 {item.station_name}<ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
               </button>
@@ -138,6 +139,7 @@ export const InvestigationReport: FC = () => {
 
   return (
     <section data-slot="investigation-report" aria-label="调查简报" className="investigation-report">
+      {report.stations.some((station) => !station.station_uuid) && <p className="mb-3 text-sm text-muted-foreground">历史报告 · 尚未经当前事实契约复核</p>}
       <h2 className="mb-5 text-lg font-semibold leading-7 wrap-anywhere">{report.conclusion}</h2>
       {(showAll ? orderedStations : focused).map(renderStation)}
       {!showAll && quiet.length > 0 && (

@@ -10,14 +10,16 @@ class NumericalTests(unittest.TestCase):
         for hours, expected in (((0, 1, 2, 6, 7, 8), 3), ((0, 1, 3, 4, 5), 1)):
             with self.subTest(hours=hours):
                 points = [point(NOW + timedelta(hours=hour), 100) for hour in hours]
-                gaps = _detect_gaps(list(reversed(points)) + [points[0]])
+                gaps = _detect_gaps(list(reversed(points)), points[0].data_time, points[-1].data_time)
                 self.assertEqual(len(gaps), 1)
                 self.assertEqual(gaps[0]['missing_hours'], expected)
 
     def test_continuing_change_and_terminal_jump_are_not_return_to_baseline(self):
         times = [(NOW + timedelta(hours=i)).strftime('%Y-%m-%d %H:%M:%S') for i in range(25)]
         rising = [100 + i * .001 for i in range(25)]
-        self.assertEqual(axis_features(times, rising)['jump_persistence'], '继续变化，未稳定')
+        self.assertEqual(axis_features(times, rising)['events'], [])
+        self.assertTrue(axis_features(times, rising)['trend_supported'])
+        self.assertGreater(axis_features(times, rising)['net_change_mm'], 0)
         terminal = [100.0] * 24 + [100.1]
         self.assertEqual(axis_features(times, terminal)['jump_persistence'], '待观察')
 
@@ -25,7 +27,7 @@ class NumericalTests(unittest.TestCase):
         times = [(NOW + timedelta(hours=i)).strftime('%Y-%m-%d %H:%M:%S') for i in range(25)]
         values = [100.0] * 25
         values[10] = 100.1
-        self.assertEqual(axis_features(times, values)['jump_persistence'], '回落')
+        self.assertEqual(axis_features(times, values)['events'][0]['status'], '回落')
         self.assertIsNone(axis_features(times, [100.0] * 25)['max_step_time'])
 
     def test_unknown_is_not_zero(self):

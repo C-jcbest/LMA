@@ -16,6 +16,7 @@ from app.beidou.client import BeidouClient
 from app.beidou.schemas import Station
 from app.config import get_settings
 from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT
+from app.observations import finite_number, normalize_observations, observation_quality, raw_snapshot
 
 # 返回给 LLM 的 GNSS 数据点上限：超出时优先在请求前调整采样间隔（或按天抽稀），
 # 仍超出再等间隔降采样，保证返回数据量不超过该值
@@ -54,10 +55,7 @@ def _build_client() -> BeidouClient:
 
 def _to_float(value: str | float | int | None) -> float | None:
     """安全转 float，失败返回 None。"""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    return finite_number(value)
 
 
 def _axis_summary(values: list[str]) -> dict:
@@ -75,35 +73,11 @@ def _axis_summary(values: list[str]) -> dict:
     }
 
 
-def _detect_gaps(points) -> list[dict]:
-    """按观测的典型采样间隔识别缺测；缺失时长不包含两端正常采样间隔。"""
-    times = []
-    for p in points:
-        try:
-            times.append(datetime.strptime(p.data_time, _TIME_FORMAT))
-        except (TypeError, ValueError):
-            return []
-    times = sorted(set(times))
-    if len(times) < 3:
-        return []
-    intervals = [
-        (times[i + 1] - times[i]).total_seconds() for i in range(len(times) - 1)
-    ]
-    median = sorted(intervals)[len(intervals) // 2]
-    if median <= 0:
-        return []
-    gaps = []
-    for i, sec in enumerate(intervals):
-        if sec > median * 1.5:
-            gaps.append(
-                {
-                    "from": times[i].strftime(_TIME_FORMAT),
-                    "to": times[i + 1].strftime(_TIME_FORMAT),
-                    "missing_hours": round((sec - median) / 3600, 1),
-                }
-            )
-    return gaps[:20]
-
+def _detect_gaps(points, begin_time, end_time, *, frequency_minutes=60, sample_times=None) -> list[dict]:
+    """缺测以请求日历为准，包括头尾和全空窗口，不用观测间隔反推采样。"""
+    normalized, cleaning = normalize_observations(points, begin_time, end_time)
+    return observation_quality(normalized, begin_time, end_time, frequency_minutes=frequency_minutes,
+                               sample_times=sample_times, cleaning=cleaning)["gaps"]
 
 
 def _thin_days(points: list, stride: int) -> list:
@@ -306,6 +280,14 @@ async def get_daily_gnss_data(
         )
 
     total_points = len(points)
+    original_points = raw_snapshot(points)
+    points, cleaning = normalize_observations(points, begin_time, end_time)
+    quality = observation_quality(
+        points, begin_time, end_time, sample_times=normalized_sample_times,
+        frequency_minutes=_parse_frequency_minutes(effective_frequency) or 60, cleaning=cleaning,
+    )
+    summary = {axis: _axis_summary([getattr(point, axis) for point in points]) for axis in ("n", "e", "u")}
+    summary["gaps"] = quality["gaps"]
 
     # 固定时刻模式：按天抽稀（保留全部指定时刻，仅减少参与对比的天数）
     if normalized_sample_times and day_stride > 1:
@@ -327,8 +309,7 @@ async def get_daily_gnss_data(
         if normalized_sample_times
         else ("frequency" if effective_frequency else "hourly")
     )
-    return tool_result(
-        {
+    data = {
             "station_name": station.station_name,
             "begin_time": begin_time,
             "station_uuid": station.station_uuid,
@@ -348,16 +329,15 @@ async def get_daily_gnss_data(
                 "points_limit": _MAX_DATA_POINTS,
                 "note": "；".join(notes) if notes else None,
             },
-            "summary": {
-                "n": _axis_summary([p.n for p in points]),
-                "e": _axis_summary([p.e for p in points]),
-                "u": _axis_summary([p.u for p in points]),
-                "gaps": _detect_gaps(points),
-            },
+            "summary": summary,
+            "quality": quality,
+            "raw_points": original_points,
             "points": [
                 {"time": p.data_time, "n": p.n, "e": p.e, "u": p.u}
                 for p in points_to_return
             ],
-        },
-        kind="gnss_series",
+        }
+    return tool_result(
+        {key: value for key, value in data.items() if key != "raw_points"},
+        kind="gnss_series", display=data,
     )

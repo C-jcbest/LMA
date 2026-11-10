@@ -109,10 +109,10 @@ const StepRow: FC<{ step: InvestigationStep; onOpenStation: (name: string) => vo
   step,
   onOpenStation,
 }) => {
-  const stationName = step.stationName;
-  if (stationName) {
+  const stationId = step.stationId;
+  if (stationId) {
     return (
-      <button type="button" className={STEP_ACTION_CLASS} onClick={() => onOpenStation(stationName)}>
+      <button type="button" className={STEP_ACTION_CLASS} onClick={() => onOpenStation(stationId)}>
         <StepText step={step} />
       </button>
     );
@@ -174,7 +174,7 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
   const isFirstToolGroup = firstPartIndex === parts.findIndex((part) => part.type === 'tool-call');
   if (!isFirstToolGroup || steps.length === 0) return null;
 
-  const open = (stationName: string) => openStation({ messageId, stationName });
+  const open = (stationId: string) => openStation({ messageId, stationId });
   let headlineState: StepState = 'complete';
   if (isRunning) {
     headlineState = 'running';
@@ -207,14 +207,14 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
       {!isRunning && !hasReport && stations.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           {stations.slice(0, MAX_VISIBLE_STATIONS).map((station) => {
-            const isSelected = selection?.messageId === messageId && selection.stationName === station.name;
+            const isSelected = selection?.messageId === messageId && selection.stationId === station.id;
             return (
               <button
-                key={station.name}
+                key={station.id}
                 type="button"
                 aria-label={`查看 ${station.name} 的依据`}
                 aria-pressed={isSelected}
-                onClick={() => open(station.name)}
+                onClick={() => open(station.id)}
                 className={cn(
                   'flex min-h-9 max-w-full items-center gap-2 rounded-full border px-3 text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   isSelected && 'border-foreground/40 bg-muted',

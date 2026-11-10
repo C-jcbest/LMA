@@ -78,6 +78,10 @@ class GapArtifact(ArtifactModel):
     from_: str = Field(alias="from")
     to: str
     missing_hours: float
+    missing_count: int | None = None
+    boundary: str | None = None
+    first_missing_time: str | None = None
+    last_missing_time: str | None = None
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -113,6 +117,8 @@ class GnssArtifactData(ArtifactModel):
     points: list[GnssPointArtifact]
     summary: GnssSummaryArtifact
     sampling: GnssSamplingArtifact | None = None
+    quality: dict[str, JsonValue] = Field(default_factory=dict)
+    raw_points: list[GnssPointArtifact] = Field(default_factory=list)
 
 
 class WeatherLocationArtifact(ArtifactModel):
@@ -237,6 +243,8 @@ class VisionArtifactData(ArtifactModel):
     chart_points: list[ChartPointArtifact]
     ok: bool | None = None
     observations: dict[str, JsonValue] | None = None
+    quality: dict[str, JsonValue] = Field(default_factory=dict)
+    raw_points: list[GnssPointArtifact] = Field(default_factory=list)
 
 
 class TerrainArtifact(ArtifactModel):
@@ -283,6 +291,10 @@ class SiteEnvironmentArtifactData(ArtifactModel):
 
 
 class ReportStationArtifact(ArtifactModel):
+    station_uuid: str
+    begin_time: str
+    end_time: str
+    supports: list[dict[str, JsonValue]]
     station_name: str
     status: Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"]
     reason: str
@@ -294,7 +306,7 @@ class ReportFindingArtifact(ArtifactModel):
     supports: list[dict[str, JsonValue]]
     level: Literal["fact", "analysis", "inference"]
     text: str
-    station_names: list[str] = Field(default_factory=list)
+    station_uuids: list[str] = Field(default_factory=list)
     evidence: list[str]
 
 
@@ -314,6 +326,9 @@ class NumericalArtifactData(ArtifactModel):
     features: dict[str, JsonValue]
     comparisons: dict[str, JsonValue]
     points: list[GnssPointArtifact]
+    raw_points: list[GnssPointArtifact] = Field(default_factory=list)
+    quality: dict[str, JsonValue] = Field(default_factory=dict)
+    reference: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {

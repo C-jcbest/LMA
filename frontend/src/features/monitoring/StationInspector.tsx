@@ -251,7 +251,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
 
   const peers = useMemo(
     () => stations.filter((candidate) => (
-      candidate.name !== station.name
+      candidate.id !== station.id
       && candidate.series.length > 0
       && Boolean(station.group)
       && candidate.group === station.group
@@ -259,7 +259,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
     [stations, station],
   );
 
-  const stationIndex = stations.findIndex((item) => item.name === station.name);
+  const stationIndex = stations.findIndex((item) => item.id === station.id);
   const previousStation = stations[stationIndex - 1];
   const nextStation = stations[stationIndex + 1];
   const hasTimeline = seriesList.length > 0;
@@ -371,7 +371,7 @@ export const StationInspector: FC = () => {
     selection ? state.thread.messages.find((message) => message.id === selection.messageId)?.content : undefined
   ));
   const stations = useMemo(() => (messageContent ? collectStations(messageContent) : []), [messageContent]);
-  const station = stations.find((item) => item.name === selection?.stationName);
+  const station = stations.find((item) => item.id === selection?.stationId);
 
   const hasLostSelection = selection !== null && !station;
   useEffect(() => {
@@ -400,9 +400,9 @@ export const StationInspector: FC = () => {
   }
 
   const title = <h2 className="min-w-0 truncate text-base font-medium">{station.name}</h2>;
-  const selectStation = (stationName: string) => openStation({ messageId: selection.messageId, stationName });
+  const selectStation = (stationId: string) => openStation({ messageId: selection.messageId, stationId });
   const close = () => closeInspector();
-  const inspectorKey = `${station.name}:${selection.toolCallId ?? ''}`;
+  const inspectorKey = `${station.id}:${selection.toolCallId ?? ''}`;
 
   if (isSplit) {
     return (

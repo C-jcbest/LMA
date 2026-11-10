@@ -2,7 +2,8 @@
 
 from datetime import timedelta
 
-from app.agent.tools import _axis_summary, _detect_gaps
+from app.agent.tools import _axis_summary
+from app.observations import normalize_observations, observation_quality, raw_snapshot
 from app.beidou.client import BeidouClient
 from app.beidou.schemas import Station
 from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT, business_now
@@ -35,7 +36,12 @@ async def load_station_series(client: BeidouClient, station: Station, days: int)
         station.station_uuid, begin_time, end_time, sample_times=sample_times,
     )
 
+    original_points = raw_snapshot(points)
+    points, cleaning = normalize_observations(points, begin_time, end_time)
+    quality = observation_quality(points, begin_time, end_time, sample_times=sample_times, cleaning=cleaning)
     return {
+        "quality": quality,
+        "raw_points": original_points,
         "station_uuid": station.station_uuid,
         "station_name": station.station_name,
         "begin_time": begin_time,
@@ -55,7 +61,7 @@ async def load_station_series(client: BeidouClient, station: Station, days: int)
             "n": _axis_summary([point.n for point in points]),
             "e": _axis_summary([point.e for point in points]),
             "u": _axis_summary([point.u for point in points]),
-            "gaps": _detect_gaps(points),
+            "gaps": quality["gaps"],
         },
         "points": [
             {"time": point.data_time, "n": point.n, "e": point.e, "u": point.u}

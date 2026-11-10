@@ -38,6 +38,7 @@ from app.agent.prompting import VISION_PROMPT
 from app.agent.numerical import axis_features as _axis_features
 from app.agent.retry import is_transient_error
 from app.business_time import BUSINESS_TIMEZONE
+from app.observations import normalize_observations, observation_quality, raw_snapshot
 from app.agent.tools import (
     _TIME_FORMAT,
     _build_client,
@@ -152,16 +153,10 @@ def _series_values(points: list, key: str) -> list[float | None]:
 
 
 def _shade_gaps(axis, times: list[datetime]) -> None:
-    """在图上用橙色阴影标注缺测时段（间隔≥中位间隔 3 倍），辅助异常定位。"""
-    if len(times) < 3:
-        return
-    intervals = [(times[i + 1] - times[i]).total_seconds() for i in range(len(times) - 1)]
-    median = sorted(intervals)[len(intervals) // 2]
-    if median <= 0:
-        return
-    for i, sec in enumerate(intervals):
-        if sec >= median * 3:
-            axis.axvspan(times[i], times[i + 1], color="#f59e0b", alpha=0.18, linewidth=0)
+    """本工具请求小时数据，图示也按小时识别缺口，不反推观测节奏。"""
+    for first, second in zip(times, times[1:]):
+        if (second - first).total_seconds() > 5400:
+            axis.axvspan(first, second, color="#f59e0b", alpha=0.18, linewidth=0)
 
 
 def _save_fig_png(fig) -> bytes:
@@ -384,6 +379,7 @@ def _window_features(
 
     基线优先用监测点初始坐标（StationN0/E0/U0），未登记时各方向回退为窗口首点。
     """
+    points, _ = normalize_observations(points)
     if not points:
         return {"points": 0}
     times = [p.data_time for p in points]
@@ -391,7 +387,7 @@ def _window_features(
         "points": len(points),
         "begin_time": times[0],
         "end_time": times[-1],
-        "baseline": "监测点初始坐标" if baseline is not None else "窗口首点",
+        "baseline": "监测点初始坐标" if baseline is not None else "固定参考缺失；仅计算窗口变化",
     }
     for key, base_index in (("n", 0), ("e", 1), ("u", 2)):
         base = baseline[base_index] if baseline is not None else None
@@ -434,7 +430,9 @@ async def _recheck_candidate_window(
         if is_transient_error(e):
             raise
         return {"ok": False, "error": "数值回查失败，候选尚未获得数值复核支持"}
+    points, cleaning = normalize_observations(points, query_start.strftime(_TIME_FORMAT), query_end.strftime(_TIME_FORMAT))
     return {
+        "quality": observation_quality(points, query_start.strftime(_TIME_FORMAT), query_end.strftime(_TIME_FORMAT), cleaning=cleaning),
         "ok": True,
         "begin_time": query_start.strftime(_TIME_FORMAT),
         "end_time": query_end.strftime(_TIME_FORMAT),
@@ -510,7 +508,11 @@ async def analyze_gnss_chart(
             end_time=end_time,
         )
 
+        original_points = raw_snapshot(points)
+        points, cleaning = normalize_observations(points, begin_time, end_time)
+        quality = observation_quality(points, begin_time, end_time, cleaning=cleaning)
         base_result = {
+            "quality": quality,
             "station_uuid": station.station_uuid,
             "station_name": station.station_name,
             "begin_time": begin_time,
@@ -561,7 +563,7 @@ async def analyze_gnss_chart(
             _render_all_charts, points, baseline, station.station_name, begin_time, end_time
         )
         # 展示数据只存在 artifact.data：渲染失败时仍可用全量序列兜底绘制。
-        artifact_data = {**base_result, "images": charts, "chart_points": chart_points}
+        artifact_data = {**base_result, "images": charts, "chart_points": chart_points, "raw_points": original_points}
         if not charts:
             return tool_error_result(
                 "图表渲染失败，无法进行视觉复核",

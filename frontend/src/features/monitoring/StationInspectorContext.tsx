@@ -13,7 +13,7 @@ import { useMediaQuery } from '@/hooks/use-media-query';
 
 export interface StationSelection {
   messageId: string;
-  stationName: string;
+  stationId: string;
   /** 从简报依据进入时，定位到这条工具结果。 */
   toolCallId?: string;
 }

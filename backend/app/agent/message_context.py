@@ -22,6 +22,10 @@ def stamp_user_message(message: HumanMessage) -> HumanMessage:
     focus_station = kwargs.pop(FOCUS_STATION_KEY, None)
     if focus_station:
         context["focus_station"] = focus_station
+    for key, name in (("lma_resume_investigation_id", "resume_investigation_id"), ("lma_focus_identity", "focus_identity")):
+        value = kwargs.pop(key, None)
+        if value:
+            context[name] = value
     return message.model_copy(update={"additional_kwargs": {**kwargs, "lma_context": context}})
 
 
@@ -31,7 +35,7 @@ def evidence_id(tool_call_id: str) -> str:
 
 
 def is_evidence(message: BaseMessage) -> bool:
-    return isinstance(message, ToolMessage) and message.status != "error" and message.artifact is not None
+    return isinstance(message, ToolMessage) and message.artifact is not None
 
 
 def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
@@ -39,6 +43,11 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
     lines = [f"sent_at: {context['sent_at']}", f"timezone: {context['timezone']}"]
     if context.get("focus_station"):
         lines.append(f"focus_station: {context['focus_station']}")
+    if context.get("focus_identity"):
+        lines.append(f"focus_station_uuid: {context['focus_identity']['station_uuid']}")
+    if context.get("resume_investigation_id"):
+        lines.append(f"resume_investigation_id: {context['resume_investigation_id']}")
+        lines.append("用户明确续查此调查；读取原目标和证据后只处理剩余问题，按当前目标决定是否刷新。")
     metadata = "<lma_message_context>\n" + "\n".join(lines) + "\n</lma_message_context>"
     content = message.content
     if isinstance(content, str):
@@ -60,7 +69,7 @@ def model_messages(messages: list[BaseMessage], *, persistent_evidence: dict[str
             projected.append(_with_message_context(message, context))
         elif is_evidence(message) and isinstance(message.content, str):
             label = f'<lma_evidence id="{evidence_id(message.tool_call_id)}"/>'
-            persisted_uuid = (persistent_evidence or {}).get(message.tool_call_id)
+            persisted_uuid = message.additional_kwargs.get("lma_evidence_uuid")
             if persisted_uuid is not None:
                 label += f'\n<lma_persisted_evidence uuid="{persisted_uuid}"/>'
             projected.append(message.model_copy(update={"content": f"{message.content}\n\n{label}"}))

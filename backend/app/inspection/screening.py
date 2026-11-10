@@ -5,6 +5,7 @@
 """
 
 import math
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from statistics import median
@@ -12,6 +13,7 @@ from typing import Literal, Sequence
 
 from app.beidou.schemas import GnssDataPoint
 from app.business_time import TIME_FORMAT
+from app.observations import finite_number, normalize_observations, observation_quality
 
 Screening = Literal["建议调查", "未见明显变化", "数据不足", "暂无法分析"]
 
@@ -57,11 +59,7 @@ class ScreeningResult:
 
 
 def _to_float(value: str | float | int | None) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    return number if math.isfinite(number) else None
+    return finite_number(value)
 
 
 def _point_time(point: GnssDataPoint) -> datetime:
@@ -104,12 +102,19 @@ def _robust_sigma(values: Sequence[float]) -> float:
     return max(_ROBUST_SIGMA_FACTOR * median(abs(value - center) for value in values), _NOISE_FLOOR_MM)
 
 
-def _direction_consistency(values: Sequence[float], slope: float) -> float:
-    """按周间隔比较，避免日内和逐日抖动掩盖持续同向变化。"""
-    lagged = [values[i + _DIRECTION_LAG_POINTS] - values[i] for i in range(len(values) - _DIRECTION_LAG_POINTS)]
-    if not lagged or slope == 0:
+def _direction_consistency(series: AxisSeries, slope: float) -> float:
+    """按实际时间比较；长窗七天，近期用四分之一窗跨度，不把七点称为一周。"""
+    if len(series.days) < 7 or slope == 0:
         return 0.0
-    return sum(1 for change in lagged if change * slope > 0) / len(lagged)
+    lag_days = min(7.0, (series.days[-1] - series.days[0]) / 4)
+    if lag_days < 3 * series.cadence_days:
+        return 0.0
+    changes = []
+    for index, day in enumerate(series.days):
+        later = bisect_left(series.days, day + lag_days)
+        if later < len(series.days) and series.days[later] - day <= lag_days + series.cadence_days * 1.5:
+            changes.append(series.values[later] - series.values[index])
+    return sum(change * slope > 0 for change in changes) / len(changes) if changes else 0.0
 
 
 def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str], int, float, float]:
@@ -126,22 +131,23 @@ def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str],
     direction = 0
     is_trending = (
         abs(total_change) > _TREND_NOISE_MULTIPLE * noise
-        and _direction_consistency(series.values, slope) >= _MIN_DIRECTION_CONSISTENCY
+        and _direction_consistency(series, slope) >= _MIN_DIRECTION_CONSISTENCY
     )
     if is_trending:
         direction = 1 if slope > 0 else -1
         flags.append(f"{name} {span:.0f} 天持续同向变化，约 {total_change:+.1f} mm")
 
-    split_day = series.days[-1] - ACCELERATION_WINDOW_DAYS
+    comparison_days = min(ACCELERATION_WINDOW_DAYS, span / 2)
+    split_day = series.days[-1] - comparison_days
     recent = [(day, value) for day, value in zip(series.days, series.values) if day >= split_day]
     earlier = [(day, value) for day, value in zip(series.days, series.values) if day < split_day]
     if len(recent) >= _DIRECTION_LAG_POINTS and len(earlier) >= _DIRECTION_LAG_POINTS:
         recent_slope = theil_sen_slope(*zip(*recent))
         earlier_slope = theil_sen_slope(*zip(*earlier))
         is_faster = abs(recent_slope) >= _ACCELERATION_RATIO * abs(earlier_slope)
-        is_significant = abs(recent_slope) * ACCELERATION_WINDOW_DAYS > _TREND_NOISE_MULTIPLE * noise
+        is_significant = abs(recent_slope) * (recent[-1][0] - recent[0][0]) > _TREND_NOISE_MULTIPLE * noise
         if is_faster and is_significant and recent_slope * earlier_slope >= 0:
-            flags.append(f"{name}近 {ACCELERATION_WINDOW_DAYS} 天变化快于此前")
+            flags.append(f"{name}近 {comparison_days:.1f} 天变化快于此前，仍需分窗复核")
 
     steps = [series.values[i + 1] - series.values[i] for i in range(len(series.values) - 1)]
     adjacent = [i for i in range(len(steps))
@@ -172,13 +178,17 @@ def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str],
 
 def _cumulative_offset(points: Sequence[GnssDataPoint], reference: dict[str, float | None]) -> dict | None:
     """相对平台登记的固定初始坐标；缺少基准时不用首点代替，避免混淆两种口径。"""
-    latest = {}
-    for axis in _AXIS_NAMES:
-        value = next((v for v in (_to_float(getattr(p, axis)) for p in reversed(points)) if v is not None), None)
-        if value is None or reference.get(axis) is None:
-            return None
-        latest[axis] = round((value - reference[axis]) * _MILLIMETERS_PER_METER, 1)
+    if any(finite_number(reference.get(axis)) is None for axis in _AXIS_NAMES):
+        return None
+    latest_point = next((point for point in sorted(points, key=lambda point: point.data_time, reverse=True)
+                         if all(_to_float(getattr(point, axis)) is not None for axis in _AXIS_NAMES)), None)
+    if latest_point is None:
+        return None
+    latest = {axis: round((_to_float(getattr(latest_point, axis)) - reference[axis]) * 1000, 1) for axis in _AXIS_NAMES}
     latest["h"] = round(math.hypot(latest["n"], latest["e"]), 1)
+    latest["d"] = round(math.sqrt(sum(latest[axis] ** 2 for axis in _AXIS_NAMES)), 1)
+    latest["observed_at"] = latest_point.data_time
+    latest["baseline"] = "获取时平台登记的固定初始坐标；未提供历史变更时间"
     return latest
 
 
@@ -192,14 +202,8 @@ def _horizontal_trend(north: AxisSeries, east: AxisSeries) -> list[float | None]
 
 def _window_points(points: Sequence[GnssDataPoint], start: datetime, end: datetime) -> tuple[list[GnssDataPoint], int]:
     """重复时间无法确定哪个观测可信，整个时间戳剔除，不以输入顺序选值。"""
-    by_time: dict[datetime, list[GnssDataPoint]] = {}
-    for point in points:
-        moment = _point_time(point)
-        if start <= moment <= end:
-            by_time.setdefault(moment, []).append(point)
-    duplicates = sum(len(items) - 1 for items in by_time.values())
-    unique = [items[0] for _, items in sorted(by_time.items()) if len(items) == 1]
-    return unique, duplicates
+    normalized, cleaning = normalize_observations(points, start.strftime(TIME_FORMAT), end.strftime(TIME_FORMAT))
+    return normalized, cleaning["duplicate_records"]
 
 
 def screen_station(
@@ -237,7 +241,7 @@ def screen_station(
         directions[axis] = direction
         metrics["net_change_mm"][axis] = round(series[axis].values[-1], 1)
         metrics["slope_mm_per_day"][axis] = round(slope, 3)
-    metrics["cumulative_offset_mm"] = _cumulative_offset(long_points, reference)
+    metrics["cumulative_offset_mm"] = _cumulative_offset([*long_points, *recent_points], reference)
 
     for axis in _AXIS_NAMES:
         recent_series = _axis_series(recent_points, axis, 1 / 24)
@@ -250,7 +254,9 @@ def screen_station(
     expected_hours = RECENT_WINDOW_DAYS * 24
     recent_completeness = round(min(min(len(_axis_series(recent_points, axis).values) for axis in _AXIS_NAMES) / expected_hours, 1.0), 2)
     metrics["recent_completeness"] = recent_completeness
-    latest_time = max((_point_time(point) for point in recent_points), default=None)
+    metrics["recent_quality"] = observation_quality(recent_points, (now - timedelta(days=RECENT_WINDOW_DAYS)).strftime(TIME_FORMAT), now.strftime(TIME_FORMAT))
+    metrics["long_quality"] = observation_quality(long_points, (now - timedelta(days=LONG_WINDOW_DAYS)).strftime(TIME_FORMAT), now.strftime(TIME_FORMAT), sample_times=["15:00"])
+    latest_time = max((_point_time(point) for point in recent_points if any(_to_float(getattr(point, axis)) is not None for axis in _AXIS_NAMES)), default=None)
     is_stale = latest_time is None or (now - latest_time).total_seconds() > _STALE_AFTER_HOURS * 3600
     data_problems = []
     if long_duplicates or recent_duplicates:

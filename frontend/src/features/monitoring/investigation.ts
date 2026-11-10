@@ -105,6 +105,8 @@ const presentationOf = (toolName: string) =>
 type Located<K extends ToolArtifactKind> = ToolArtifactEnvelopeFor<K> & { toolCallId: string };
 
 export interface StationEvidence {
+  id: string;
+  uuid?: string;
   name: string;
   status?: string | null;
   group?: string | null;
@@ -156,6 +158,21 @@ const stationNameOf = (envelope: ToolArtifactEnvelope): string | null => {
   }
 };
 
+const stationUuidOf = (envelope: ToolArtifactEnvelope): string | null => {
+  switch (envelope.kind) {
+    case 'numerical':
+    case 'gnss_series':
+    case 'vision':
+      return envelope.data.station_uuid || null;
+    case 'weather':
+      return envelope.data.location.station_uuid || null;
+    case 'site_environment':
+      return envelope.data.center_station.station_uuid || null;
+    default:
+      return null;
+  }
+};
+
 /** 依据按测点归集，而不是按工具调用顺序：用户核查的对象是测点。 */
 export function collectStations(parts: readonly { type: string }[]): StationEvidence[] {
   const stations = new Map<string, StationEvidence>();
@@ -179,10 +196,12 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
     const name = stationNameOf(envelope);
     if (!name || !hasChartableData(envelope)) continue;
 
-    let station = stations.get(name);
+    const uuid = stationUuidOf(envelope);
+    const id = uuid ?? 'evidence:' + part.toolCallId;
+    let station = stations.get(id);
     if (!station) {
-      station = { name, numerical: [], series: [], weather: [], vision: [], site: [] };
-      stations.set(name, station);
+      station = { id, uuid: uuid ?? undefined, name, numerical: [], series: [], weather: [], vision: [], site: [] };
+      stations.set(id, station);
     }
     const toolCallId = part.toolCallId;
     switch (envelope.kind) {
@@ -205,7 +224,7 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
   }
 
   for (const known of knownStations) {
-    const station = stations.get(known.station_name);
+    const station = known.station_uuid ? stations.get(known.station_uuid) : undefined;
     if (station) {
       station.status = known.station_status ?? station.status;
       station.group = known.group_name ?? station.group;
@@ -226,6 +245,7 @@ export interface InvestigationStep {
   notice?: string;
   /** 能归到测点的步骤打开时间轴，其余结果在步骤内展开。 */
   stationName?: string;
+  stationId?: string;
   inlineEnvelope?: ToolArtifactEnvelope;
 }
 
@@ -267,7 +287,7 @@ export function buildSteps(
   parts: readonly PartState[],
   stations: readonly StationEvidence[],
 ): InvestigationStep[] {
-  const stationNames = new Set(stations.map((station) => station.name));
+  const stationIds = new Set(stations.map((station) => station.id));
   const steps: InvestigationStep[] = [];
   const successfulRequests = new Set<string>();
 
@@ -292,7 +312,9 @@ export function buildSteps(
     if (state === 'complete' && part.artifact === null) continue;
 
     const name = envelope ? stationNameOf(envelope) : null;
-    const stationName = name && stationNames.has(name) ? name : undefined;
+    const identifier = envelope ? stationUuidOf(envelope) ?? 'evidence:' + part.toolCallId : undefined;
+    const stationId = identifier && stationIds.has(identifier) ? identifier : undefined;
+    const stationName = stationId ? name ?? undefined : undefined;
     const isEmpty = state === 'complete' && (!envelope || !hasChartableData(envelope));
     const label = {
       running: presentation.running,
@@ -309,6 +331,7 @@ export function buildSteps(
       detail: envelope ? stepDetail(envelope) : undefined,
       notice: isEmpty ? presentation.emptyNotice || undefined : undefined,
       stationName,
+      stationId,
       inlineEnvelope: envelope && !stationName && !isEmpty ? envelope : undefined,
     });
   }
@@ -350,25 +373,13 @@ export const reportStationDetails = (station: ReportStationArtifact): string[] =
 };
 
 /** 页面与导出共用测点归属；跨测点的发现保留为综合判断。 */
-export function groupReportFindings(report: InvestigationReportArtifactData, steps: readonly InvestigationStep[] = []) {
-  const stepByCall = new Map(steps.map((step) => [step.toolCallId, step]));
-  const byStation = new Map<string, ReportFindingArtifact[]>(report.stations.map((station) => [station.station_name, []]));
+export function groupReportFindings(report: InvestigationReportArtifactData, _steps: readonly InvestigationStep[] = []) {
+  const byStation = new Map<string, ReportFindingArtifact[]>(report.stations.map((station) => [station.station_uuid, []]));
   const shared: ReportFindingArtifact[] = [];
   for (const finding of report.findings) {
-    const names = new Set(finding.station_names ?? []);
-    if (names.size === 0) {
-      for (const id of finding.evidence) {
-        const name = stepByCall.get(id)?.stationName;
-        if (name) {
-          names.add(name);
-        }
-      }
-    }
-    if (names.size === 0 && report.stations.length === 1) {
-      names.add(report.stations[0]!.station_name);
-    }
-    const name = names.size === 1 ? [...names][0] : undefined;
-    const findings = name ? byStation.get(name) : undefined;
+    const identifiers = new Set(finding.station_uuids ?? finding.supports.map((support) => support.station_uuid));
+    const identifier = identifiers.size === 1 ? [...identifiers][0] : undefined;
+    const findings = identifier ? byStation.get(identifier) : undefined;
     if (findings) {
       findings.push(finding);
     } else {
@@ -381,7 +392,10 @@ export function groupReportFindings(report: InvestigationReportArtifactData, ste
 /** 简报存放在工具结果里，消息没有正文可复制，这里生成可分享的文本。 */
 export function reportToMarkdown(report: InvestigationReportArtifactData, steps: readonly InvestigationStep[] = []): string {
   const { byStation, shared } = groupReportFindings(report, steps);
-  const findingText = (finding: ReportFindingArtifact) => `- ${finding.level === 'inference' ? '推断：' : ''}${finding.text}`;
+  const findingText = (finding: ReportFindingArtifact) => [
+    '- ' + (finding.level === 'inference' ? '推断：' : '') + finding.text,
+    ...finding.supports.map((support) => '  - ' + support.station_uuid + ' · ' + (support.scope ?? 'window') + ' · ' + (support.begin_time ?? '') + ' 至 ' + (support.end_time ?? '') + ' · ' + support.rationale + (support.fact ? '；核验事实：' + formatSupportFact(support.fact) : '')),
+  ].join('\n');
   const sections = [
     report.conclusion,
     [...report.stations]
@@ -389,7 +403,7 @@ export function reportToMarkdown(report: InvestigationReportArtifactData, steps:
       .map((station) => {
         const status = investigationStatusLabel(station.status);
         const details = reportStationDetails(station).join('；');
-        const findings = (byStation.get(station.station_name) ?? []).map(findingText).join('\n');
+        const findings = (byStation.get(station.station_uuid) ?? []).map(findingText).join('\n');
         return `## ${station.station_name} · ${status}\n\n${station.reason}${details ? `（${details}）` : ''}\n\n${findings}`;
       })
       .join('\n'),
@@ -399,4 +413,14 @@ export function reportToMarkdown(report: InvestigationReportArtifactData, steps:
       : []),
   ];
   return sections.join('\n\n');
+}
+
+
+export function formatSupportFact(fact: Record<string, unknown>): string {
+  const text = [];
+  if (typeof fact.count === 'number') text.push('有效点 ' + fact.count);
+  if (typeof fact.net_change_mm === 'number') text.push('净变化 ' + fact.net_change_mm.toLocaleString('zh-CN', { maximumSignificantDigits: 5 }) + ' mm');
+  if (typeof fact.robust_slope_mm_day === 'number') text.push('描述斜率 ' + fact.robust_slope_mm_day.toLocaleString('zh-CN', { maximumSignificantDigits: 5 }) + ' mm/day');
+  if (typeof fact.limitation === 'string') text.push(fact.limitation);
+  return text.join('；');
 }

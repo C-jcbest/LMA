@@ -14,7 +14,28 @@ from app.agent.tool_protocol import ToolFailure, tool_result
 
 REPORT_TOOL_NAME = "submit_investigation_report"
 
+class EvidenceSupport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    evidence_id: str = Field(description="所引用工具结果末尾lma_evidence标记中的编号；不是持久化证据UUID")
+    station_uuid: UUID
+    begin_time: datetime | None = None
+    end_time: datetime | None = None
+    axis: Literal["n", "e", "u", "h", "d"] | None = Field(default=None, description="数值变化、趋势或跳变必须指定n/e/u；数据质量无需指定")
+    scope: Literal["window", "common_period", "first_window", "second_window"] = "window"
+    weather_period: Literal["history", "forecast", "current"] | None = None
+    weather_variable: str | None = Field(default=None, max_length=80, description="气象判断实际引用的字段，如precipitation_sum或wind_speed_10m")
+    claim: Literal["numeric_change", "trend", "jump", "data_quality", "weather", "site", "unavailable"] = Field(
+        description="numeric_change/trend/jump只能引用独立数值工具；data_quality也可引用GNSS或视觉的覆盖与缺测；weather/site引用对应工具",
+    )
+    rationale: str = Field(min_length=1, max_length=500)
+
+
 class ReportStation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    station_uuid: UUID
+    begin_time: datetime
+    end_time: datetime
+    supports: list[EvidenceSupport] = Field(min_length=1, max_length=12, description="本测点本问题的适用事实；不足和失败也须对应真实证据")
     station_name: str = Field(min_length=1, max_length=80, description="测点名称，使用工具结果中的原始名称")
     status: Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"] = Field(
         description=(
@@ -32,21 +53,6 @@ class ReportStation(BaseModel):
     data_quality: str = Field(default="", max_length=120, description="影响结论的数据覆盖或缺测情况；无必要补充时省略")
 
 
-class EvidenceSupport(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    evidence_id: str = Field(description="所引用工具结果末尾lma_evidence标记中的编号；不是持久化证据UUID")
-    station_uuid: UUID
-    begin_time: datetime | None = None
-    end_time: datetime | None = None
-    axis: Literal["n", "e", "u"] | None = Field(default=None, description="数值变化、趋势或跳变必须指定n/e/u；数据质量无需指定")
-    scope: Literal["window", "common_period", "first_window", "second_window"] = "window"
-    weather_period: Literal["history", "forecast", "current"] | None = None
-    weather_variable: str | None = Field(default=None, max_length=80, description="气象判断实际引用的字段，如precipitation_sum或wind_speed_10m")
-    claim: Literal["numeric_change", "trend", "jump", "data_quality", "weather", "site"] = Field(
-        description="numeric_change/trend/jump只能引用独立数值工具；data_quality也可引用GNSS或视觉的覆盖与缺测；weather/site引用对应工具",
-    )
-    rationale: str = Field(min_length=1, max_length=500)
-
 
 def _business_time(value: datetime | str) -> datetime:
     moment = datetime.fromisoformat(value) if isinstance(value, str) else value
@@ -58,6 +64,18 @@ def _business_time(value: datetime | str) -> datetime:
 def _validate_support(support: EvidenceSupport, artifact: dict) -> str:
     """校验对象、证据种类及实际覆盖；不尝试用关键词替代专业语义判断。"""
     data = artifact["data"]
+    if artifact.get("status") == "error" and support.claim not in {"data_quality", "unavailable"}:
+        raise ToolFailure("失败证据只能说明缺失或限制，不能支持成功数值判断")
+    if support.claim == "unavailable":
+        if artifact["kind"] != "acquisition_failure":
+            raise ToolFailure("未取得数据必须引用对应查询失败，而非其他站的结果或台账")
+        if data.get("station_uuid") != str(support.station_uuid):
+            raise ToolFailure("失败查询与测点UUID不一致")
+        if support.begin_time is None or support.end_time is None:
+            raise ToolFailure("失败查询须说明目标窗口")
+        if _business_time(support.begin_time) != _business_time(data["begin_time"]) or _business_time(support.end_time) != _business_time(data["end_time"]):
+            raise ToolFailure("失败查询与目标窗口不一致")
+        return data["station_name"]
     identity = data
     if support.claim == "site":
         if artifact["kind"] != "site_environment":
@@ -133,7 +151,7 @@ def _validate_support(support: EvidenceSupport, artifact: dict) -> str:
         raise ToolFailure("有效样本不足以支持变化判断")
     if support.claim == "jump" and feature.get("max_step_time") is None:
         raise ToolFailure("没有连续有效观测支持单步变化")
-    if support.claim == "trend" and feature.get("robust_slope_mm_day") is None:
+    if support.claim == "trend" and not feature.get("trend_supported", False):
         raise ToolFailure("没有有效趋势计算结果")
     if start < _business_time(bounds["begin_time"]) or end > _business_time(bounds["end_time"]):
         raise ToolFailure("判断时间窗超出实际证据覆盖")
@@ -154,7 +172,7 @@ class ReportFinding(BaseModel):
         )
     )
     text: str = Field(min_length=1, max_length=300)
-    station_names: list[str] = Field(default_factory=list, description="这条发现对应的测点；跨点综合判断可列多个，未针对具体测点时省略")
+    station_uuids: list[UUID] = Field(default_factory=list, description="这条发现实际分析的测点UUID；每个对象均须有自身支持，背景对象不要列入")
 
 
 class InvestigationReportInput(BaseModel):
@@ -164,54 +182,90 @@ class InvestigationReportInput(BaseModel):
     next_steps: list[str] = Field(default_factory=list, max_length=6, description="建议进一步核查的内容")
 
 
-def _names_in_artifact(artifact: dict) -> set[str]:
-    data = artifact.get("data", {})
-    match artifact.get("kind"):
-        case "gnss_series" | "vision" | "numerical":
-            return {data["station_name"], *data.get("comparisons", {}).get("station_names", {}).values()}
-        case "weather":
-            name = data["location"].get("station_name")
-            return {name} if name else set()
-        case "site_environment":
-            return {data["center_station"]["station_name"],
-                    *(station["station_name"] for station in data["group_stations"])}
-        case "station_list":
-            return {station["station_name"] for station in data.get("stations") or []}
-    return set()
-
-
 def _current_turn_evidence(messages: list[BaseMessage]) -> list[ToolMessage]:
     evidence = []
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             break
-        if is_evidence(message) and message.name != REPORT_TOOL_NAME:
+        if isinstance(message, ToolMessage) and message.artifact is not None and message.name != REPORT_TOOL_NAME:
             evidence.append(message)
     return evidence
 
 
+def _support_feature(support: EvidenceSupport, artifact: dict):
+    data = artifact["data"]
+    if support.scope == "common_period":
+        return data.get("comparisons", {}).get("common_period", {}).get(support.axis, {}).get(str(support.station_uuid), {})
+    if support.scope in {"first_window", "second_window"}:
+        key = "first" if support.scope == "first_window" else "second"
+        return data.get("comparisons", {}).get(support.axis, {}).get(key, {})
+    return data.get("features", {}).get(support.axis, {})
+
+
+def project_support(support: EvidenceSupport, artifact: dict):
+    """数值由实际计算结果投影；模型只负责引用及解释。"""
+    projected = support.model_dump(mode="json")
+    feature = _support_feature(support, artifact)
+    if feature:
+        projected["fact"] = {key: feature.get(key) for key in (
+            "count", "net_change_mm", "robust_slope_mm_day", "max_step_mm", "max_step_time",
+            "cum_start_mm", "cum_end_mm", "baseline", "begin_time", "end_time", "cadence_hours",
+            "effective_span_hours", "trend_supported", "units",
+        )}
+        projected["fact"]["sample_set"] = {key: value for key, value in feature.get("sample_set", {}).items() if key != "timestamps"}
+    elif support.claim == "data_quality":
+        projected["fact"] = artifact["data"].get("quality", {})
+    elif support.claim == "unavailable":
+        projected["fact"] = {"limitation": artifact["data"]["message"]}
+    return projected
+
+
 def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessage]) -> dict[str, str]:
-    """失败信息返回给模型修正，因此明确指出问题所在。"""
+    evidence_by_id = {evidence_id(message.tool_call_id): message.artifact for message in evidence}
     tool_call_ids = {evidence_id(message.tool_call_id): message.tool_call_id for message in evidence}
-    known_stations = set().union(*(_names_in_artifact(message.artifact) for message in evidence), set())
+    declared = {str(station.station_uuid) for station in report.stations}
+    if len(declared) != len(report.stations):
+        raise ToolFailure("简报测点UUID不能重复；同名站分别使用各自UUID")
+
+    def validate(support):
+        artifact = evidence_by_id.get(support.evidence_id)
+        if artifact is None:
+            raise ToolFailure(f"依据编号 {support.evidence_id} 不在本轮查询结果中，只能引用本轮 lma_evidence 编号。")
+        if str(support.station_uuid) not in declared:
+            raise ToolFailure("支持关系中的测点必须列入报告")
+        return _validate_support(support, artifact), artifact
 
     for station in report.stations:
-        if station.station_name not in known_stations:
-            raise ToolFailure(f"简报中的测点“{station.station_name}”不在本轮查询结果中，请使用工具返回的测点名称。")
+        start, end = _business_time(station.begin_time), _business_time(station.end_time)
+        if start >= end:
+            raise ToolFailure("单站结论目标窗口必须正向")
+        observed = False
+        trend_scopes = set()
+        for support in station.supports:
+            if support.station_uuid != station.station_uuid:
+                raise ToolFailure("单站结论必须引用该站UUID的证据，不能用其他测点代替")
+            name, artifact = validate(support)
+            if name != station.station_name:
+                raise ToolFailure("测点名称须使用该UUID的证据展示名称")
+            if support.begin_time is not None and (not start <= _business_time(support.begin_time) < _business_time(support.end_time) <= end):
+                raise ToolFailure("单站支持窗口必须包含于目标窗口")
+            feature = _support_feature(support, artifact)
+            if artifact.get("kind") == "numerical" and artifact.get("status") != "error":
+                observed = observed or feature.get("trend_supported", False) or (support.claim == "jump" and feature.get("event_count", 0) > 0)
+                if support.claim == "trend":
+                    trend_scopes.add(support.scope)
+        if station.status not in {"数据不足", "暂无法分析"} and not observed:
+            raise ToolFailure("该站缺少适用且充分的观测事实；台账、失败或两点斜率不能支持已调查稳定结论，可如实交付数据不足")
+        if station.acceleration not in (None, "无法判断") and not {"first_window", "second_window"} <= trend_scopes:
+            raise ToolFailure("加速判断须有该站两个适用窗口的充分趋势证据，不能仅凭单窗或两点斜率")
 
     for finding in report.findings:
-        evidence_by_id = {evidence_id(message.tool_call_id): message.artifact for message in evidence}
+        supported = set()
         for support in finding.supports:
-            artifact = evidence_by_id.get(support.evidence_id)
-            if artifact is None:
-                raise ToolFailure(f"依据编号 {support.evidence_id} 不存在，只能引用本轮工具结果中的 lma_evidence 编号。")
-            name = _validate_support(support, artifact)
-            if name not in {station.station_name for station in report.stations}:
-                raise ToolFailure("支持关系中的测点必须列入报告")
-            if finding.station_names and name not in finding.station_names:
-                raise ToolFailure("支持关系中的测点与发现对应的测点不一致")
-        if not set(finding.station_names).issubset({station.station_name for station in report.stations}):
-            raise ToolFailure("发现对应的测点必须在简报测点列表中。")
+            validate(support)
+            supported.add(str(support.station_uuid))
+        if not {str(identifier) for identifier in finding.station_uuids}.issubset(supported):
+            raise ToolFailure("发现列出的每个测点都必须有自身适用事实，不能跨站借用支持")
     return tool_call_ids
 
 
@@ -231,18 +285,22 @@ async def submit_investigation_report(
     report = InvestigationReportInput(
         conclusion=conclusion, stations=stations, findings=findings, next_steps=next_steps or [],
     )
-    tool_call_ids = _validate_report(report, _current_turn_evidence(runtime.state["messages"]))
+    evidence = _current_turn_evidence(runtime.state["messages"])
+    tool_call_ids = _validate_report(report, evidence)
+    evidence_by_id = {evidence_id(message.tool_call_id): message.artifact for message in evidence}
 
     facts = report.model_dump(mode="json")
     display = {
         "conclusion": report.conclusion,
-        "stations": [station.model_dump(mode="json") for station in report.stations],
+        "stations": [{**station.model_dump(mode="json"),
+                      "supports": [project_support(support, evidence_by_id[support.evidence_id]) for support in station.supports]}
+                     for station in report.stations],
         "findings": [
             {
-                "supports": [support.model_dump(mode="json") for support in finding.supports],
+                "supports": [project_support(support, evidence_by_id[support.evidence_id]) for support in finding.supports],
                 "level": finding.level,
                 "text": finding.text,
-                "station_names": finding.station_names,
+                "station_uuids": [str(identifier) for identifier in finding.station_uuids] or list(dict.fromkeys(str(support.station_uuid) for support in finding.supports)),
                 "evidence": list(dict.fromkeys(tool_call_ids[support.evidence_id] for support in finding.supports)),
             }
             for finding in report.findings

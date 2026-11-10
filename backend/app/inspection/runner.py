@@ -10,6 +10,7 @@ import httpx
 
 from app.beidou.client import BeidouApiError, BeidouClient
 from app.beidou.schemas import Station
+from app.observations import station_reference
 from app.business_time import TIME_FORMAT, business_now
 from app.inspection.screening import (
     LONG_WINDOW_DAYS,
@@ -26,15 +27,6 @@ logger = logging.getLogger(__name__)
 _DISPLACEMENT_STATION_TYPES = {2, 3}
 _LONG_WINDOW_SAMPLE_TIMES = ["15:00"]
 _UPSTREAM_CONCURRENCY = 4
-
-
-def _to_reference(station: Station) -> dict[str, float | None]:
-    def parse(value: str) -> float | None:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
-    return {"n": parse(station.station_n0), "e": parse(station.station_e0), "u": parse(station.station_u0)}
 
 
 async def _screen(client: BeidouClient, station: Station, limiter: asyncio.Semaphore) -> ScreeningResult:
@@ -57,7 +49,7 @@ async def _screen(client: BeidouClient, station: Station, limiter: asyncio.Semap
         # 单点失败不影响其余测点；原始错误只进日志。
         logger.warning("inspection data request failed", exc_info=True)
         return ScreeningResult("暂无法分析", ["监测平台数据暂不可用"])
-    return screen_station(long_points, recent_points, _to_reference(station), now)
+    return screen_station(long_points, recent_points, station_reference(station), now)
 
 
 async def run_inspection(

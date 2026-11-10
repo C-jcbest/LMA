@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
+from weakref import WeakValueDictionary
 
 import anyio
 import httpx
@@ -22,6 +23,7 @@ from sse_starlette import EventSourceResponse
 
 from app.agent.graph import _get_llm, create_lma_agent
 from app.agent.report import report_in_last_turn
+from app.agent.evidence import reconcile_evidence
 from app.agent.title import generate_title_node
 from app.agent.tools import _build_client
 from app.beidou.client import BeidouApiError
@@ -75,6 +77,8 @@ class RunInput(ApiInput):
     checkpoint_id: str | None = Field(default=None, max_length=200)
     # 用户提问时正在查看的测点；只作为模型可见的上下文，不改变消息正文。
     focus_station: str | None = Field(default=None, min_length=1, max_length=100)
+    focus_station_uuid: UUID | None = None
+    resume_investigation_id: UUID | None = None
 
 
 class CheckpointInput(ApiInput):
@@ -151,6 +155,7 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
 def create_app(settings: Settings | None = None, agent_factory=None, inspection_client_factory=None) -> FastAPI:
     settings = settings or get_settings()
     active_runs: dict[str, ActiveRun] = {}
+    state_locks = WeakValueDictionary()
     active_inspections: set[asyncio.Task] = set()
 
     @asynccontextmanager
@@ -236,6 +241,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
     @app.patch("/sessions/{session_id}")
     async def update_session(session_id: UUID, body: SessionUpdate):
         await require_session(session_id)
+        require_idle(session_id)
         return await app.state.storage.update(str(session_id), body.name, body.archived)
 
     @app.delete("/sessions/{session_id}", status_code=204)
@@ -246,10 +252,20 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         await app.state.storage.delete(str(session_id))
         return Response(status_code=204)
 
+    async def reconciled_state(session_id, config):
+        async with state_locks.setdefault(session_id, asyncio.Lock()):
+            snapshot = await app.state.agent.aget_state(config)
+            if session_id not in active_runs:
+                recovered = await reconcile_evidence(app.state.storage, session_id, snapshot.values.get("messages", []))
+                if recovered:
+                    config = await app.state.agent.aupdate_state(snapshot.config, {"messages": recovered}, as_node="tools")
+                    snapshot = await app.state.agent.aget_state(config)
+            return snapshot
+
     @app.get("/sessions/{session_id}/state")
     async def get_state(session_id: UUID):
         await require_session(session_id)
-        snapshot = await app.state.agent.aget_state(graph_config(str(session_id)))
+        snapshot = await reconciled_state(str(session_id), graph_config(str(session_id)))
         return {
             "values": project_state(snapshot.values),
             "latest_run": await app.state.storage.latest_run(str(session_id)),
@@ -261,9 +277,17 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         return await app.state.storage.investigations(str(session_id))
 
     @app.get("/sessions/{session_id}/evidence")
-    async def list_evidence(session_id: UUID):
+    async def list_evidence(session_id: UUID, limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0), investigation_id: UUID | None = None):
         await require_session(session_id)
-        return await app.state.storage.evidence(str(session_id))
+        return await app.state.storage.evidence_catalog(str(session_id), limit=limit, offset=offset, investigation_id=str(investigation_id) if investigation_id else None)
+
+    @app.get("/sessions/{session_id}/evidence/{evidence_id}")
+    async def evidence_detail(session_id: UUID, evidence_id: UUID):
+        await require_session(session_id)
+        item = await app.state.storage.evidence_item(str(session_id), str(evidence_id))
+        if item is None:
+            raise HTTPException(404, "证据不存在。")
+        return item
 
     @app.post("/sessions/{session_id}/investigations/{investigation_id}/resume")
     async def resume_investigation(session_id: UUID, investigation_id: UUID):
@@ -274,11 +298,9 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             raise HTTPException(404, "调查不存在")
         if record["status"] == "completed":
             raise HTTPException(409, "调查已完成；当前问题应新建调查")
-        progress = record["progress"]
-        text = (f"请续查调查 {investigation_id}。先读取原调查及证据，核查获取时间和窗口对当前目标的适用性。"
-                "仅处理待解决问题；已覆盖对象不重复查询，除非当前问题需要刷新，并明确记录刷新理由。"
-                f"待解决：{json.dumps(progress['unresolved'], ensure_ascii=False)}")
-        return await stream_run(session_id, RunInput(messages=[UserInput(type="human", id=str(uuid4()), content=text)]))
+        return await stream_run(session_id, RunInput(
+            messages=[UserInput(type="human", id=str(uuid4()), content="继续调查")], resume_investigation_id=investigation_id,
+        ))
 
     @app.post("/sessions/{session_id}/checkpoint")
     async def find_checkpoint(session_id: UUID, body: CheckpointInput):
@@ -343,7 +365,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             "station_name": station.station_name,
             "group_name": station.group_name,
             "series": series,
-            "records": await app.state.storage.station_records(station.station_name),
+            "records": await app.state.storage.station_records(station.station_uuid),
         }
 
     @app.post("/title")
@@ -370,15 +392,40 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         await require_session(session_id)
         require_idle(session_id)
         key = str(session_id)
-        control = ActiveRun(id=str(uuid4()))
-        active_runs[key] = control
         config = graph_config(key, body.checkpoint_id)
-        try:
+        async with state_locks.setdefault(key, asyncio.Lock()):
+            require_idle(session_id)
             snapshot = await app.state.agent.aget_state(config)
+            recovered = await reconcile_evidence(app.state.storage, key, snapshot.values.get("messages", []))
+            if recovered:
+                config = await app.state.agent.aupdate_state(snapshot.config, {"messages": recovered}, as_node="tools")
+                snapshot = await app.state.agent.aget_state(config)
+            control = ActiveRun(id=str(uuid4()))
+            active_runs[key] = control
+        config = snapshot.config if snapshot.created_at else config
+        config = {**config, "run_id": control.id}
+        try:
             if body.checkpoint_id is not None and not snapshot.created_at:
                 raise HTTPException(404, "checkpoint 不存在。")
             latest_run = await app.state.storage.latest_run(key)
             messages = prepare_messages(body, snapshot, latest_run)
+            session = await require_session(session_id)
+            if body.focus_station_uuid is not None and session.get("station_uuid") != str(body.focus_station_uuid):
+                raise HTTPException(422, "当前测点与会话归属不一致。")
+            if body.resume_investigation_id is not None:
+                record = await app.state.storage.investigation(key, str(body.resume_investigation_id))
+                if record is None:
+                    raise HTTPException(404, "调查不存在。")
+                if record["status"] == "completed":
+                    raise HTTPException(409, "调查已完成；当前问题应建立新目标。")
+            for message in messages:
+                if isinstance(message, HumanMessage):
+                    if body.resume_investigation_id is not None:
+                        if message.text != "继续调查":
+                            raise HTTPException(422, "续查操作与消息不匹配。")
+                        message.additional_kwargs["lma_resume_investigation_id"] = str(body.resume_investigation_id)
+                    if body.focus_station and body.focus_station_uuid is not None:
+                        message.additional_kwargs["lma_focus_identity"] = {"station_uuid": str(body.focus_station_uuid), "station_name": body.focus_station}
             if any(isinstance(message, ToolCancellation) for message in body.messages):
                 # 并行 ToolNode 被停止时，已完成工具可能仍在 pending writes 中。
                 # 用官方 update_state 提交这些真实结果及用户的取消确认，避免新输入丢弃 pending writes。
@@ -397,8 +444,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             # 客户端断开也可能直接关闭生成器；只有图完整结束才记录成功。
             status = "cancelled"
             final_values = None
-            persisted_calls = {message.tool_call_id for message in snapshot.values.get("messages", [])
-                               if isinstance(message, ToolMessage)}
             try:
                 with anyio.CancelScope() as cancel_scope:
                     control.cancel_scope = cancel_scope
@@ -407,7 +452,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                     yield {"event": "metadata", "data": json.dumps({"run_id": control.id})}
                     graph_input = {"messages": messages} if messages else None
                     async for mode, data in app.state.agent.astream(
-                        graph_input, config, stream_mode=["messages", "values"],
+                        graph_input, config, stream_mode=["messages", "values"], durability="sync",
                     ):
                         if mode == "messages":
                             message, metadata = data
@@ -416,12 +461,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                             }]
                         else:
                             final_values = data
-                            for completed in data.get("messages", []):
-                                if (isinstance(completed, ToolMessage) and isinstance(completed.artifact, dict)
-                                        and completed.name != "reuse_investigation_evidence"
-                                        and completed.tool_call_id not in persisted_calls):
-                                    await app.state.storage.save_evidence(key, completed.tool_call_id, completed.artifact)
-                                    persisted_calls.add(completed.tool_call_id)
                             payload = project_state(data)
                         yield {"event": mode, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
                     status = "success"
