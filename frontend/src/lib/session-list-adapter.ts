@@ -14,18 +14,18 @@ function threadMetadata(session: Session) {
   };
 }
 
-export function createSessionListAdapter(client: LmaClient): RemoteThreadListAdapter {
+export function createSessionListAdapter(client: LmaClient, stationUuid?: string): RemoteThreadListAdapter {
   return {
     async list(params) {
       const offset = params?.after === undefined ? 0 : Number(params.after);
-      const sessions = await client.listSessions({ limit: PAGE_SIZE + 1, offset });
+      const sessions = await client.listSessions({ limit: PAGE_SIZE + 1, offset, ...(stationUuid ? { stationUuid } : {}) });
       return {
         threads: sessions.slice(0, PAGE_SIZE).map(threadMetadata),
         nextCursor: sessions.length > PAGE_SIZE ? String(offset + PAGE_SIZE) : undefined,
       };
     },
     async initialize() {
-      const session = await client.createSession();
+      const session = await client.createSession(stationUuid);
       return { remoteId: session.id, externalId: session.id };
     },
     async fetch(id) {

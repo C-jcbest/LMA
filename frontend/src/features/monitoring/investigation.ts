@@ -205,6 +205,7 @@ export type StepState = 'running' | 'complete' | 'failed' | 'cancelled';
 
 export interface InvestigationStep {
   toolCallId: string;
+  evidenceId?: string;
   state: StepState;
   label: string;
   detail?: string;
@@ -288,6 +289,7 @@ export function buildSteps(
 
     steps.push({
       toolCallId: part.toolCallId,
+      evidenceId: envelope?.evidence_id,
       state,
       label,
       detail: envelope ? stepDetail(envelope) : undefined,

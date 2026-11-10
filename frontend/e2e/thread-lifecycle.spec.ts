@@ -69,6 +69,60 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test('测点调查发送到自己的会话，离开页面不停止，返回后恢复完成结果', async ({ page }) => {
+  const stationUuid = '11111111-1111-1111-1111-111111111111';
+  const dedicated = await client.createSession(stationUuid);
+  const unrelated = await createThread('其他测点的会话');
+  try {
+    await seedThread(unrelated, '其他测点的旧消息');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/?station=${stationUuid}&threadId=${unrelated}`);
+    await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+    await expect(page.getByText('已继续处理：其他测点的旧消息')).toHaveCount(0);
+    await send(page, '请慢速回答切换会话场景');
+    await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
+    await page.getByRole('button', { name: '返回', exact: true }).click();
+    await expect(page).toHaveURL(/page=stations/);
+    await expect.poll(async () => (await client.getState(dedicated.id)).latest_run?.status, { timeout: 20000 }).toBe('success');
+    await page.getByRole('list', { name: '测点列表' }).getByRole('button', { name: /E2E空数据站/ }).click();
+    await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
+    const unchanged = JSON.stringify((await client.getState(unrelated)).values.messages);
+    expect(unchanged).not.toContain('请慢速回答切换会话场景');
+    await page.reload();
+    await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
+  } finally {
+    await client.cancelRun(dedicated.id);
+    await client.deleteSession(dedicated.id);
+    await client.deleteSession(unrelated);
+  }
+});
+
+test('首次测点提问才创建带测点归属的会话', async ({ page }) => {
+  const stationUuid = '11111111-1111-1111-1111-111111111111';
+  let createdId: string | undefined;
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/?station=${stationUuid}`);
+    await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+    const created = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/sessions'));
+    await send(page, '查看这个测点');
+    const session = await (await created).json();
+    createdId = session.id;
+    expect(session.station_uuid).toBe(stationUuid);
+    await expect(page.getByText('已继续处理：查看这个测点')).toBeVisible();
+    await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
+    const latest = await client.listSessions({ stationUuid, limit: 1, offset: 0 });
+    expect(latest[0]?.id).toBe(createdId);
+  } finally {
+    if (createdId) {
+      await client.cancelRun(createdId);
+      await client.deleteSession(createdId);
+    }
+  }
+});
+
 test('深链接、浏览器前进后退与刷新保持同一 Thread', async ({ page }) => {
   const suffix = Date.now().toString(36);
   const firstName = `导航会话一-${suffix}`;

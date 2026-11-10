@@ -1,6 +1,7 @@
 """将 checkpoint 投影为 assistant-ui 官方 LangGraph 消息；不建立第二份历史。"""
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from app.agent.message_context import evidence_id, is_evidence
 
 
 # 客户端只接收明确公开的字段。用白名单而不是拦截已知推理字段，
@@ -16,6 +17,8 @@ def _pick(source: dict, allowed: set[str]) -> dict:
 
 def project_message(message: BaseMessage) -> dict:
     result = message.model_dump(mode="json")
+    if is_evidence(message) and isinstance(result.get("artifact"), dict):
+        result["artifact"]["evidence_id"] = evidence_id(message.tool_call_id)
     if isinstance(message, (AIMessage, AIMessageChunk)):
         # checkpoint 保留供应商工具协议所需的推理字段，客户端只接收公开内容。
         result["content"] = [

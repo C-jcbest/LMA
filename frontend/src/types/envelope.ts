@@ -279,6 +279,7 @@ export interface ArtifactDataByKind {
 }
 
 export type ToolArtifactEnvelopeFor<K extends ToolArtifactKind> = {
+  evidence_id?: string;
   version: 1;
   kind: K;
   status: ToolArtifactStatus;

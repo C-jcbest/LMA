@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS lma_runs (
     created_at timestamptz NOT NULL DEFAULT now(),
     ended_at timestamptz
 );
+ALTER TABLE lma_sessions ADD COLUMN IF NOT EXISTS station_uuid text;
+CREATE INDEX IF NOT EXISTS lma_sessions_station ON lma_sessions (station_uuid, updated_at DESC) WHERE station_uuid IS NOT NULL;
 CREATE TABLE IF NOT EXISTS lma_inspections (
     id uuid PRIMARY KEY,
     status text NOT NULL CHECK (status IN ('running', 'success', 'error', 'interrupted')),
@@ -96,8 +98,15 @@ class SessionStorage:
     def __init__(self, pool: AsyncConnectionPool):
         self.pool = pool
 
-    async def list(self, limit: int, offset: int) -> list[dict]:
+    async def list(self, limit: int, offset: int, station_uuid: str | None = None) -> list[dict]:
         async with self.pool.connection() as connection:
+            if station_uuid is not None:
+                cursor = await connection.execute(
+                    """SELECT * FROM lma_sessions WHERE station_uuid = %s AND archived = false
+                       ORDER BY updated_at DESC, id DESC LIMIT %s OFFSET %s""",
+                    (station_uuid, limit, offset),
+                )
+                return await cursor.fetchall()
             cursor = await connection.execute(
                 "SELECT * FROM lma_sessions ORDER BY updated_at DESC, id DESC LIMIT %s OFFSET %s",
                 (limit, offset),
@@ -111,11 +120,11 @@ class SessionStorage:
             )
             return await cursor.fetchone()
 
-    async def create(self, session_id: str, name: str) -> dict:
+    async def create(self, session_id: str, name: str, station_uuid: str | None = None) -> dict:
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
-                "INSERT INTO lma_sessions (id, name) VALUES (%s, %s) RETURNING *",
-                (session_id, name),
+                "INSERT INTO lma_sessions (id, name, station_uuid) VALUES (%s, %s, %s) RETURNING *",
+                (session_id, name, station_uuid),
             )
             return await cursor.fetchone()
 

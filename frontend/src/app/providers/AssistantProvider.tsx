@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLangGraphRuntime } from '@assistant-ui/react-langgraph';
-import { AssistantRuntimeProvider, useAuiState } from '@assistant-ui/react';
+import { AssistantRuntimeProvider, useAui, useAuiState } from '@assistant-ui/react';
 import type { LmaClient } from '@/services/api';
 import { createSessionListAdapter } from '@/lib/session-list-adapter';
 import { FocusStationContext, LmaClientContext } from './LmaClientContext';
@@ -9,6 +9,29 @@ const getUrlThreadId = () => new URL(window.location.href).searchParams.get('thr
 
 type RecoveryError = 'history' | 'run' | null;
 const RequestedSessionContext = createContext<string | undefined>(undefined);
+const StationDraftsContext = createContext<Map<string, string> | null>(null);
+
+export interface StationConversationScope {
+  stationUuid: string;
+  stationName: string;
+  initialThreadId?: string;
+}
+
+function StationDraft({ stationUuid }: { stationUuid: string }) {
+  const aui = useAui();
+  const drafts = useContext(StationDraftsContext)!;
+  const isLoading = useConversationLoading();
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+    aui.composer().setText(drafts.get(stationUuid) ?? '');
+    return () => {
+      drafts.set(stationUuid, aui.composer().getState().text);
+    };
+  }, [aui, drafts, stationUuid, isLoading]);
+  return null;
+}
 
 /** URL 选中的历史会话尚未接管 Runtime 时，不能向临时的新会话发送。 */
 export function useConversationLoading() {
@@ -48,18 +71,26 @@ function RecoveryNotice({ error, runtime }: { error: RecoveryError; runtime: Ret
   );
 }
 
-export function AssistantProvider({ client, children }: { client: LmaClient; children: ReactNode }) {
-  const [threadId, setThreadId] = useState(getUrlThreadId);
+export function AssistantProvider({ client, children, scope }: { client: LmaClient; children: ReactNode; scope?: StationConversationScope }) {
+  const [threadId, setThreadId] = useState(() => scope ? scope.initialThreadId : getUrlThreadId());
+  const inheritedDrafts = useContext(StationDraftsContext);
+  const ownDrafts = useRef(new Map<string, string>());
   const [error, setError] = useState<RecoveryError>(null);
   useEffect(() => {
+    if (scope) {
+      return;
+    }
     const onPopState = () => setThreadId(getUrlThreadId());
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, []);
+  }, [scope]);
 
   const handleThreadIdChange = useCallback((id: string | undefined) => {
     setError(null);
     setThreadId(id);
+    if (scope) {
+      return;
+    }
     const url = new URL(window.location.href);
     if ((url.searchParams.get('threadId') || undefined) === id) return;
     if (id) {
@@ -68,14 +99,14 @@ export function AssistantProvider({ client, children }: { client: LmaClient; chi
       url.searchParams.delete('threadId');
     }
     window.history.pushState(null, '', url);
-  }, []);
+  }, [scope]);
 
   const focusStationRef = useRef<string | null>(null);
   const setFocusStation = useCallback((stationName: string | null) => {
     focusStationRef.current = stationName;
   }, []);
 
-  const adapter = useMemo(() => createSessionListAdapter(client), [client]);
+  const adapter = useMemo(() => createSessionListAdapter(client, scope?.stationUuid), [client, scope?.stationUuid]);
   const runtime = useLangGraphRuntime({
     threadId,
     onThreadIdChange: handleThreadIdChange,
@@ -88,7 +119,7 @@ export function AssistantProvider({ client, children }: { client: LmaClient; chi
         if (!externalId) throw new Error('会话尚未创建。');
         yield* client.streamRun(externalId, messages, {
           checkpointId: config.checkpointId,
-          focusStation: focusStationRef.current ?? undefined,
+          focusStation: scope?.stationName ?? focusStationRef.current ?? undefined,
           signal: config.abortSignal,
         });
       } catch (reason) {
@@ -123,7 +154,10 @@ export function AssistantProvider({ client, children }: { client: LmaClient; chi
       <RecoveryNotice error={error} runtime={runtime} />
       <LmaClientContext.Provider value={client}>
         <RequestedSessionContext.Provider value={threadId}>
-          <FocusStationContext.Provider value={setFocusStation}>{children}</FocusStationContext.Provider>
+          <StationDraftsContext.Provider value={inheritedDrafts ?? ownDrafts.current}>
+            {scope && <StationDraft stationUuid={scope.stationUuid} />}
+            <FocusStationContext.Provider value={setFocusStation}>{children}</FocusStationContext.Provider>
+          </StationDraftsContext.Provider>
         </RequestedSessionContext.Provider>
       </LmaClientContext.Provider>
     </AssistantRuntimeProvider>

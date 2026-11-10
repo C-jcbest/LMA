@@ -83,7 +83,7 @@ const StepIcon: FC<{ state: StepState }> = ({ state }) => {
   }
 };
 
-const StepInlineResult: FC<{ step: InvestigationStep }> = ({ step }) => {
+export const StepInlineResult: FC<{ step: InvestigationStep }> = ({ step }) => {
   const envelope = step.inlineEnvelope;
   if (envelope?.kind === 'station_list') {
     return <StationResultView data={envelope.data} />;

@@ -1,6 +1,7 @@
 "use client";
 
 import { MarkdownText } from "@/components/markdown-text";
+import { EvidenceMarkdown } from "@/features/monitoring/EvidenceMarkdown";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -362,7 +363,7 @@ const AssistantMessage: FC = () => {
               case "group-investigation":
                 return <InvestigationProcess firstPartIndex={part.indices[0]!} />;
               case "text":
-                return <MarkdownText />;
+                return <EvidenceMarkdown />;
               case "tool-call":
                 return <></>;
               case "indicator":

@@ -208,6 +208,7 @@ export function decodeToolArtifact(
     kind: expectedKind,
     status,
     data: rawArtifact.data,
+    ...(typeof rawArtifact.evidence_id === 'string' ? { evidence_id: rawArtifact.evidence_id } : {}),
     ...(typeof rawArtifact.observedAt === 'string'
       ? { observedAt: rawArtifact.observedAt }
       : {}),

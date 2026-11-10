@@ -5,13 +5,22 @@ import unittest
 from datetime import datetime
 from unittest.mock import patch
 
-from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from app.agent import message_context
 from app.server.messages import project_message, project_state
 
 
 class MessageProjectionTests(unittest.TestCase):
+    def test_visible_evidence_matches_model_marker_without_mutating_checkpoint(self):
+        message = ToolMessage(content="监测结果", tool_call_id="query-1", artifact={"version": 1, "kind": "gnss_series", "data": {}})
+        public = project_message(message)
+        identifier = public["artifact"]["evidence_id"]
+        self.assertIn(identifier, message_context.model_messages([message])[0].content)
+        self.assertNotIn("evidence_id", message.artifact)
+        message.status = "error"
+        self.assertNotIn("evidence_id", project_message(message)["artifact"])
+
     def test_time_snapshot_is_immutable_and_never_changes_user_body(self):
         original = HumanMessage(id="question", content="今天如何？")
         now = datetime.fromisoformat("2026-11-09T12:30:00+08:00")

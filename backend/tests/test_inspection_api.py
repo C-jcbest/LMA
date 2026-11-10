@@ -116,6 +116,22 @@ class InspectionApiTests(unittest.TestCase):
     def by_name(self, latest):
         return {row["station_name"]: row for row in latest["stations"]}
 
+    def test_station_sessions_are_explicitly_scoped_and_latest_unarchived_first(self):
+        sessions = []
+        for station_uuid in [None, "uuid-A", "uuid-B", "uuid-A"]:
+            body = {"name": "独立调查", "station_uuid": station_uuid}
+            response = self.client.post("/sessions", json=body)
+            self.assertEqual(response.status_code, 201)
+            session = response.json()
+            sessions.append(session)
+            self.addCleanup(lambda key=session["id"]: self.client.delete(f"/sessions/{key}"))
+        latest = self.client.get("/sessions", params={"station_uuid": "uuid-A", "limit": 1}).json()
+        self.assertEqual([row["id"] for row in latest], [sessions[3]["id"]])
+        self.client.patch(f"/sessions/{sessions[3]['id']}", json={"archived": True})
+        remaining = self.client.get("/sessions", params={"station_uuid": "uuid-A"}).json()
+        self.assertEqual([row["id"] for row in remaining], [sessions[1]["id"]])
+        self.assertEqual(self.client.get("/sessions", params={"station_uuid": "uuid-unknown"}).json(), [])
+
     def test_directory_does_not_require_inspection_or_model(self):
         remaining = len(self.model.script)
         response = self.client.get("/stations")

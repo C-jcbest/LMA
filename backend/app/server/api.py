@@ -44,6 +44,7 @@ SessionName = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 
 class SessionCreate(ApiInput):
     name: SessionName = "新会话"
+    station_uuid: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class SessionUpdate(ApiInput):
@@ -214,8 +215,11 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         return {"ok": True, "service": "lma"}
 
     @app.get("/sessions")
-    async def list_sessions(limit: int = Query(21, ge=1, le=100), offset: int = Query(0, ge=0)):
-        return await app.state.storage.list(limit, offset)
+    async def list_sessions(
+        limit: int = Query(21, ge=1, le=100), offset: int = Query(0, ge=0),
+        station_uuid: str | None = Query(None, min_length=1, max_length=200),
+    ):
+        return await app.state.storage.list(limit, offset, station_uuid)
 
     @app.get("/sessions/conclusions")
     async def list_session_conclusions():
@@ -223,7 +227,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
 
     @app.post("/sessions", status_code=201)
     async def create_session(body: SessionCreate):
-        return await app.state.storage.create(str(uuid4()), body.name)
+        return await app.state.storage.create(str(uuid4()), body.name, body.station_uuid)
 
     @app.get("/sessions/{session_id}")
     async def get_session(session_id: UUID):

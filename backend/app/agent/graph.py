@@ -26,7 +26,7 @@ from app.agent.context import build_context_usage
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
-from app.agent.report import REPORT_TOOL_NAME, submit_investigation_report
+from app.agent.report import REPORT_TOOL_NAME
 from app.agent.retry import is_transient_error
 from app.agent.models import create_chat_model, model_max_input_tokens
 from app.agent.site import inspect_site_environment
@@ -41,8 +41,7 @@ from app.agent.weather import query_weather
 from app.config import get_settings
 
 tools = [list_station_groups, list_stations, get_daily_gnss_data,
-         query_weather, analyze_gnss_chart, inspect_site_environment,
-         submit_investigation_report]
+         query_weather, analyze_gnss_chart, inspect_site_environment]
 logger = logging.getLogger(__name__)
 
 

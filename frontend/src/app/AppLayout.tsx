@@ -106,10 +106,6 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
         </div>
       </div>
       <div className="shrink-0 space-y-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <div className="flex items-center justify-between px-1.5">
-          <span className="text-sm text-muted-foreground">外观</span>
-          <ThemeSelector />
-        </div>
         {onOpenSettings && (
           <Button
             variant="ghost"
@@ -170,6 +166,12 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
     }
   });
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [runningStations, setRunningStations] = useState<ReadonlySet<string>>(new Set());
+  const visibleStation = page === 'station' ? stationUuid : null;
+  const mountedStations = new Set(runningStations);
+  if (visibleStation) {
+    mountedStations.add(visibleStation);
+  }
   const navigationPanelRef = useRef<HTMLDivElement>(null);
   const drawerPanelRef = useRef<HTMLDivElement>(null);
   const navigationResize = usePanelResize({
@@ -284,9 +286,8 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
       )}
 
       <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" style={{ minWidth: isSplit && selection !== null ? 360 : undefined }}>
-        {!isSidebarDocked && (
           <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
-            <Button
+            {!isSidebarDocked && <Button
               ref={navigationButtonRef}
               type="button"
               variant="ghost"
@@ -302,17 +303,30 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
               title={navigationLabel}
             >
               <PanelLeftOpen className="size-4" />
-            </Button>
+            </Button>}
             <span className="min-w-0 flex-1 truncate text-sm font-medium" title={headerTitle}>{headerTitle}</span>
             <ThemeSelector />
           </header>
-        )}
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">
           {(page === 'home' || page === 'conversation') && <Thread autoFocus={isDesktop} overview={page === 'home' ? <TodayAttention /> : undefined} />}
           <div className="h-full" hidden={page !== 'stations'}><StationsPage /></div>
           {page === 'records' && <RecordsPage />}
-          {page === 'station' && stationUuid && <StationPage key={stationUuid} stationUuid={stationUuid} />}
+          {[...mountedStations].map((id) => (
+            <div key={id} className="h-full" hidden={id !== visibleStation}>
+              <StationPage stationUuid={id} active={id === visibleStation} onRunningChange={(running) => {
+                setRunningStations((current) => {
+                  const next = new Set(current);
+                  if (running) {
+                    next.add(id);
+                  } else {
+                    next.delete(id);
+                  }
+                  return next;
+                });
+              }} />
+            </div>
+          ))}
         </div>
       </main>
 

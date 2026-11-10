@@ -1,8 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC } from 'react';
-import { useAui, useAuiEvent, useAuiState } from '@assistant-ui/react';
+import { useAui } from '@assistant-ui/react';
 import { ArrowLeftIcon } from 'lucide-react';
 import { useNavigation } from '@/app/navigation';
-import { useLmaClient, useSetFocusStation } from '@/app/providers/LmaClientContext';
+import { useLmaClient } from '@/app/providers/LmaClientContext';
+import { useConversationLoading } from '@/app/providers/AssistantProvider';
+import { StationConversation } from './StationConversation';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
@@ -38,6 +40,8 @@ const formatRecordDate = (value: string) => {
 
 const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk: () => void }> = ({ stationName, data, onAsk }) => {
   const aui = useAui();
+  const { composerInputRef } = useStationInspector();
+  const isLoading = useConversationLoading();
   const chartColors = useChartColors();
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
@@ -52,6 +56,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
     }
     appendToComposerDraft(aui, rangeQuestion(stationName, range));
     onAsk();
+    requestAnimationFrame(() => composerInputRef.current?.focus());
   };
 
   return (
@@ -63,7 +68,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
         {range && (
           <div className="flex shrink-0 items-center gap-1">
             <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
-            <Button type="button" variant="outline" size="sm" onClick={askAboutRange}>追问这段</Button>
+            <Button type="button" variant="outline" size="sm" disabled={isLoading} onClick={askAboutRange}>追问这段</Button>
           </div>
         )}
       </div>
@@ -82,25 +87,32 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   );
 };
 
-const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (anchor: string) => void }> = ({ records, onOpen }) => {
-  const aui = useAui();
-  const currentSessionId = useAuiState((state) => (
-    state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId
-  ));
+const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (record: StationRecord) => Promise<void> }> = ({ records, onOpen }) => {
+  const [opening, setOpening] = useState<string | null>(null);
+  const [hasError, setHasError] = useState(false);
 
   if (records.length === 0) {
     return <p className="text-muted-foreground text-sm">还没有调查过这个测点。</p>;
   }
   return (
+    <div>
+    {hasError && <p role="alert" className="text-sm text-muted-foreground">这次调查尚未打开，请重试。</p>}
     <ul className="-mx-3">
       {records.map((record) => (
         <li key={`${record.session_id}:${record.anchor_id}`}>
           <button
             type="button"
-            aria-current={record.session_id === currentSessionId}
+            disabled={opening !== null}
             onClick={async () => {
-              await aui.threads().switchToThread(record.session_id);
-              onOpen(record.anchor_id);
+              setOpening(record.anchor_id);
+              setHasError(false);
+              try {
+                await onOpen(record);
+              } catch {
+                setHasError(true);
+              } finally {
+                setOpening(null);
+              }
             }}
             className="record-row hover:bg-muted/60 aria-[current=true]:bg-muted focus-visible:ring-ring w-full rounded-lg text-start text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none"
           >
@@ -113,12 +125,14 @@ const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (anchor: strin
         </li>
       ))}
     </ul>
+    </div>
   );
 };
 
 /** 对话为空时的右侧面板：有初筛线索就提供一键调查，否则只留输入框。 */
 const StationAsk: FC<{ stationName: string; inspection: InspectionStation | undefined }> = ({ stationName, inspection }) => {
   const aui = useAui();
+  const isLoading = useConversationLoading();
   const needsLook = inspection?.screening === '建议调查';
 
   return (
@@ -127,6 +141,7 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
       {needsLook && (
         <Button
           type="button"
+          disabled={isLoading}
           className="self-start rounded-full"
           onClick={() => aui.thread().append({ role: 'user', content: [{ type: 'text', text: `调查 ${stationName} 的近期变化` }] })}
         >
@@ -138,12 +153,11 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
 };
 
 /** 测点页：左边直接读平台数据，不经过模型；右边是针对这个测点的对话。 */
-export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
+export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningChange: (running: boolean) => void }> = ({ stationUuid, active, onRunningChange }) => {
   const client = useLmaClient();
-  const setFocusStation = useSetFocusStation();
+  const globalAui = useAui();
   const { returnFromStation, showConversation } = useNavigation();
   const { latest } = useInspection();
-  const { composerInputRef } = useStationInspector();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
   const [days, setDays] = useState<TimelineDays>(90);
   const [timeline, setTimeline] = useState<StationTimeline | null>(null);
@@ -153,7 +167,10 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
   const loadedKeyRef = useRef('');
 
   // 一轮调查结束后结论可能更新，重新读取这个测点的记录。
-  useAuiEvent('thread.runEnd', () => setReloadCount((count) => count + 1));
+  const investigationCompleted = () => {
+    setReloadCount((count) => count + 1);
+    void globalAui.threads().reload();
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -165,6 +182,9 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
     setHasError(false);
     client.getStationTimeline(stationUuid, days, controller.signal).then(
       (result) => {
+        if (controller.signal.aborted) {
+          return;
+        }
         loadedKeyRef.current = key;
         setTimeline(result);
       },
@@ -181,23 +201,17 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
   const stationName = timeline?.station_name ?? inspection?.station_name;
   const groupName = timeline?.group_name ?? inspection?.group_name;
 
-  useEffect(() => {
-    setFocusStation(stationName ?? null);
-    return () => setFocusStation(null);
-  }, [stationName, setFocusStation]);
-
   const showChat = () => {
     setPanel('chat');
-    requestAnimationFrame(() => composerInputRef.current?.focus());
   };
 
   const dataPanel = (
     <section aria-label="测点数据" className="h-full min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div className="station-data">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Button type="button" variant="ghost" size="icon" className="-ms-2 size-9 text-muted-foreground" aria-label="返回" onClick={returnFromStation}>
+          {(isSideBySide || !stationName) && <Button type="button" variant="ghost" size="icon" className="-ms-2 size-9 text-muted-foreground" aria-label="返回" onClick={returnFromStation}>
             <ArrowLeftIcon className="size-4" />
-          </Button>
+          </Button>}
           <h1 className="min-w-0 text-2xl font-semibold tracking-tight wrap-anywhere">{stationName ?? '测点'}</h1>
           {groupName && <span className="text-muted-foreground text-sm">{groupName}</span>}
           {inspection && (
@@ -238,7 +252,10 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
         {timeline && (
           <div className="mt-9">
             <h2 className="mb-2 text-sm font-medium">调查记录</h2>
-            <RecordList records={timeline.records} onOpen={showConversation} />
+            <RecordList records={timeline.records} onOpen={async (record) => {
+              await globalAui.threads().switchToThread(record.session_id);
+              showConversation(record.anchor_id);
+            }} />
           </div>
         )}
       </div>
@@ -255,9 +272,14 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
     </aside>
   );
 
+  if (!stationName) {
+    return dataPanel;
+  }
   return (
+    <StationConversation stationUuid={stationUuid} stationName={stationName} onComplete={investigationCompleted} active={active} onRunningChange={onRunningChange} onBack={returnFromStation}>
     <div className="flex h-full min-h-0 flex-col">
       {!isSideBySide && <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
+        <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
         <span className="min-w-0 truncate text-sm font-medium">{stationName}</span>
         <Segmented
           label="测点页内容"
@@ -271,5 +293,6 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
         <div className={cn('h-full min-w-0', isSideBySide ? 'w-[26rem] shrink-0 border-l' : 'flex-1', !isSideBySide && panel !== 'chat' && 'hidden')}>{chatPanel}</div>
       </div>
     </div>
+    </StationConversation>
   );
 };

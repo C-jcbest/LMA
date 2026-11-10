@@ -81,9 +81,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     showConversation: (resultAnchor) => navigate({ page: 'conversation', stationUuid: null, resultAnchor }),
     startConversation: () => {
       void aui.threads().switchToNewThread();
-      if (location.page !== 'station') {
-        navigate({ page: 'conversation', stationUuid: null });
-      }
+      navigate({ page: 'conversation', stationUuid: null });
     },
     returnFromStation: () => navigate(stationOrigin.current),
     goStations: () => navigate({ page: 'stations', stationUuid: null }),

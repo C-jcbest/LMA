@@ -87,7 +87,7 @@ async function mockApi(page: Page) {
     json: { running: null, latest_attempt: null, inspection: null, stations: [] },
   }));
   await page.route('**/api/sessions/conclusions', (route) => route.fulfill({ json: [] }));
-  await page.route('**/api/sessions?*', (route) => route.fulfill({ json: [session] }));
+  await page.route('**/api/sessions?*', (route) => route.fulfill({ json: new URL(route.request().url()).searchParams.has('station_uuid') ? [] : [session] }));
   await page.route('**/api/sessions/report-session', (route) => route.fulfill({ json: session }));
   await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({
     json: { values: { messages }, latest_run: { id: 'run-1', status: 'success' } },
@@ -95,6 +95,75 @@ async function mockApi(page: Page) {
 }
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
+
+test('数据分析使用九月正文模板，正文引用仍可打开当前依据', async ({ page }, testInfo) => {
+  await mockApi(page);
+  const evidence = gnssResult('gnss-short', '2026-11-01 00:00:00');
+  const history = [
+    messages[0], messages[1],
+    { ...evidence, artifact: { ...evidence.artifact, evidence_id: 'E123abc' } },
+    { type: 'ai', id: 'markdown-report', content: '## 调查结论\n\n**测试点 A 需要持续关注。** 北向仍有同向变化，近期未见持续加速。\n\n### 一、数据现象\n\n北向本时段净变化约 **2 mm**。[1](#evidence-E123abc)\n\n### 二、滑坡推断\n\n这种变化可能与坡体缓慢变形有关。\n\n### 三、建议与风险提示\n\n- 继续观察长期趋势，并核查观测墩状态。' },
+  ];
+  await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?threadId=report-session');
+  await expect(page.getByRole('heading', { name: '调查结论' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '一、数据现象' })).toBeVisible();
+  await expect(page.getByText('E123abc', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /查看依据 1/ }).click();
+  await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
+  await page.getByRole('button', { name: '关闭依据' }).click();
+  await expect(page.getByRole('button', { name: /查看依据 1/ })).toBeFocused();
+  await page.locator('[data-slot=aui_thread-viewport]').evaluate((element) => { element.scrollTop = 0; });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  await page.screenshot({ path: testInfo.outputPath('九月模板-390px.png'), fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByRole('heading', { name: '调查结论' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('九月模板-1440px.png'), fullPage: true });
+});
+
+test('今日切换测点只恢复各自最新调查，草稿互不串站且浏览不创建会话', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: { ...inspection, stations: inspection.stations.map((row) => ({ ...row, screening: '建议调查' })) } }));
+  const stationSessions = { A: { ...session, id: 'station-A', name: 'A 的调查' }, B: { ...session, id: 'station-B', name: 'B 的调查' } };
+  await page.route('**/api/sessions?*', (route) => {
+    const station = new URL(route.request().url()).searchParams.get('station_uuid');
+    const selected = station?.endsWith('A') ? stationSessions.A : stationSessions.B;
+    return route.fulfill({ json: station ? [selected] : [session] });
+  });
+  await page.route('**/api/sessions/station-*', (route) => {
+    const name = route.request().url().endsWith('A') ? 'A' : 'B';
+    return route.fulfill({ json: stationSessions[name] });
+  });
+  await page.route('**/api/sessions/station-*/state', (route) => {
+    const name = route.request().url().includes('station-A') ? 'A' : 'B';
+    return route.fulfill({ json: { values: { messages: [{ type: 'human', id: `q-${name}`, content: `分析测试点 ${name}` }, { type: 'ai', id: `a-${name}`, content: `这是测试点 ${name} 的最新调查` }] }, latest_run: null } });
+  });
+  await page.route('**/api/stations/*/timeline*', (route) => {
+    const name = decodeURIComponent(route.request().url()).includes('测试点 A') ? '测试点 A' : '测试点 B';
+    return route.fulfill({ json: { ...stationTimeline, station_uuid: name, station_name: name, series: { ...stationTimeline.series, station_name: name } } });
+  });
+  let creations = 0;
+  await page.route('**/api/sessions', (route) => { creations += 1; return route.abort(); });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?page=home&threadId=report-session');
+  await page.getByRole('button', { name: '查看 测试点 A', exact: true }).click();
+  await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+  await expect(page.getByText('这是测试点 A 的最新调查')).toBeVisible();
+  await expect(page.getByText(report.conclusion)).toHaveCount(0);
+  await page.getByRole('textbox', { name: '输入监测问题' }).fill('A 的草稿');
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  await page.getByRole('button', { name: '查看 测试点 B', exact: true }).click();
+  await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+  await expect(page.getByText('这是测试点 B 的最新调查')).toBeVisible();
+  await expect(page.getByText('这是测试点 A 的最新调查')).toHaveCount(0);
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('');
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  await page.getByRole('button', { name: '查看 测试点 A', exact: true }).click();
+  await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('A 的草稿');
+  expect(creations).toBe(0);
+});
 
 for (const scenario of ['单点', '全部平稳', '资料有限']) {
   test(`简报状态：${scenario}`, async ({ page }, testInfo) => {

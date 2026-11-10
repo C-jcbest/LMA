@@ -106,13 +106,16 @@ export class LmaClient {
     return response.json();
   }
 
-  async listSessions(params: { limit: number; offset: number }): Promise<Session[]> {
+  async listSessions(params: { limit: number; offset: number; stationUuid?: string }): Promise<Session[]> {
     const query = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+    if (params.stationUuid) {
+      query.set('station_uuid', params.stationUuid);
+    }
     return (await this.request(`/sessions?${query}`)).json();
   }
 
-  async createSession(): Promise<Session> {
-    return (await this.request('/sessions', { method: 'POST', body: JSON.stringify({ name: '新会话' }) })).json();
+  async createSession(stationUuid?: string): Promise<Session> {
+    return (await this.request('/sessions', { method: 'POST', body: JSON.stringify({ name: '新会话', station_uuid: stationUuid }) })).json();
   }
 
   async getSession(id: string): Promise<Session> {
