@@ -102,10 +102,11 @@ jobs:
           printf '%s\n' "$LMA_DEPLOY_KEY" > ~/.ssh/lma_deploy
           chmod 600 ~/.ssh/lma_deploy
           printf '%s\n' "$LMA_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          git archive --format=tar HEAD | gzip | ssh \
+          python3 ops/package-release.py --output "$RUNNER_TEMP/lma-release.tar.gz"
+          ssh \
             -i ~/.ssh/lma_deploy -o IdentitiesOnly=yes -o BatchMode=yes \
             -o StrictHostKeyChecking=yes -o ServerAliveInterval=20 \
-            "$LMA_SSH_USER@$LMA_HOST" "$GITHUB_SHA"
+            "$LMA_SSH_USER@$LMA_HOST" "$GITHUB_SHA" < "$RUNNER_TEMP/lma-release.tar.gz"
       - name: Verify public HTTPS and access protection
         env:
           LMA_HOST: ${{ vars.LMA_HOST }}

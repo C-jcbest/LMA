@@ -1,2 +1,16 @@
 # Do not check whitespace errors inside patch files
 *.patch -whitespace
+
+# Keep Docker cache inputs and release scripts identical on Windows and Linux.
+/backend/Dockerfile text eol=lf
+/backend/requirements.txt text eol=lf
+/backend/.dockerignore text eol=lf
+/frontend/Dockerfile text eol=lf
+/frontend/package.json text eol=lf
+/frontend/pnpm-lock.yaml text eol=lf
+/frontend/nginx.conf text eol=lf
+/frontend/.dockerignore text eol=lf
+/docker-compose.yml text eol=lf
+/ops/*.sh text eol=lf
+/ops/*.py text eol=lf
+/.github/workflows/*.yml text eol=lf

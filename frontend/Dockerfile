@@ -3,7 +3,8 @@ FROM node:22-alpine AS build
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=lma-pnpm,target=/pnpm/store,sharing=locked \
+    pnpm install --frozen-lockfile --store-dir=/pnpm/store
 COPY . .
 RUN pnpm build
 

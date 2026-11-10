@@ -46,9 +46,13 @@ production environment 中配置：
 | LMA_SSH_USER | Variable | lma-deploy，仅用于部署 |
 | LMA_SSH_KNOWN_HOSTS | Variable | 管理连接核验过的服务器 SSH host key，禁止关闭严格校验 |
 
-CI 经 git archive 发送已测试的提交，不上传 .env 或工作区未提交文件。服务器 forced-command 密钥只允许部署入口，参数必须为 40 位十六进制 SHA，不开放交互 shell、端口转发或 root SSH 密钥。发布串行执行，允许相同归档重跑；同 SHA 内容不同或解压不完整会拒绝。
+CI 和人工发布统一使用 `ops/package-release.py` 打包指定提交，不上传 .env 或工作区未提交文件。脚本固定禁用 Git 换行转换并输出 tar.gz；构建输入和发布脚本另由 .gitattributes 固定 LF，避免 Windows 与 Linux 的依赖文件内容不同而误失效缓存。服务器 forced-command 密钥只允许部署入口，参数必须为 40 位十六进制 SHA，不开放交互 shell、端口转发或 root SSH 密钥。发布串行执行，允许相同归档重跑；同 SHA 内容不同或解压不完整会拒绝。
 
-用户明确要求本次跳过测试时，可在提交中使用 `[skip ci]` 跳过自动流水线，再通过管理员连接调用同一服务器部署程序；构建、数据库备份、迁移和上线健康检查仍保留。人工归档统一使用 `git -c core.autocrlf=false archive --format=tar.gz --output=<归档文件> HEAD`，避免 Windows 换行转换导致相同依赖文件无法命中 Linux 构建缓存。将归档上传为独立临时文件，再执行 `/usr/local/sbin/lma-deploy <完整提交 SHA> < <临时归档路径>`；临时文件不能使用部署程序写入的 `/opt/lma/incoming/<SHA>.tar.gz`，否则重定向读取时会被截断。
+用户明确要求本次跳过测试时，可在提交中使用 `[skip ci]` 跳过自动流水线，再通过管理员连接调用同一服务器部署程序；构建、数据库备份、迁移和上线健康检查仍保留。在 Windows 仓库根目录使用 `backend/.venv/Scripts/python.exe ops/package-release.py --output <归档文件>`，Linux 使用 `python3 ops/package-release.py --output <归档文件>`，均默认打包 HEAD；`--revision` 可指定提交。将归档上传为独立临时文件，再执行 `/usr/local/sbin/lma-deploy <脚本输出的完整提交 SHA> < <临时归档路径>`；临时文件不能使用部署程序写入的 `/opt/lma/incoming/<SHA>.tar.gz`，否则重定向读取时会被截断。
+
+后端 pip 和前端 pnpm 使用 BuildKit 缓存挂载保存已下载的包；依赖清单变化后也可复用下载，依赖清单未变化时仍优先命中整个安装层。缓存只留在构建器中，不进入运行镜像；不要在每次发布前清空构建缓存。首次启用缓存挂载会重新安装依赖以填充缓存。
+
+后端包源由 Compose 构建参数 `LMA_PIP_INDEX_URL` 控制，默认 `https://pypi.org/simple`。腾讯云生产服务器在 `/opt/lma/shared/.env` 配置 `LMA_PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple/`，仅在构建安装时使用该包源；不自动切换其他来源。当前固定版本的直接依赖已核验可从腾讯镜像取得，间接依赖和平台适配以实际构建结果为准。迁移服务和 API 服务共用同一后端构建配置。
 
 部署先构建镜像；已有版本在构建期间继续运行。更新容器前对现有云端数据库执行 pg_dump，随后由一次性 migrate 服务运行官方 checkpointer setup，再等待服务健康。仅在 API 与首页检查成功后更新 current。容器切换时可能短暂中断，正在运行的请求可能停止；本方案不承诺零停机。测试成功不代表外部监测平台和模型始终可用。
 
