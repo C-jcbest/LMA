@@ -192,11 +192,11 @@ export class LmaClient {
   async *streamRun(
     id: string,
     messages: LangChainMessage[],
-    options: { checkpointId?: string; focusStation?: string; signal: AbortSignal },
+    options: { checkpointId?: string; focusStation?: string; resumeInvestigationId?: string; signal: AbortSignal },
   ): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
     try {
       const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs`, {
-        method: 'POST', body: JSON.stringify({ messages, checkpoint_id: options.checkpointId, focus_station: options.focusStation }),
+        method: 'POST', body: JSON.stringify({ messages, checkpoint_id: options.checkpointId, focus_station: options.focusStation, resume_investigation_id: options.resumeInvestigationId }),
         signal: options.signal,
       });
       if (!response.body) throw new Error('服务未返回消息流。');

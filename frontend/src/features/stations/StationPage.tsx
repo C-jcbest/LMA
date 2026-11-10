@@ -38,7 +38,7 @@ const formatRecordDate = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' }).format(new Date(value));
 };
 
-const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk: () => void }> = ({ stationName, data, onAsk }) => {
+const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk: () => void; disabled: boolean }> = ({ stationName, data, onAsk, disabled }) => {
   const aui = useAui();
   const { composerInputRef } = useStationInspector();
   const isLoading = useConversationLoading();
@@ -68,7 +68,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
         {range && (
           <div className="flex shrink-0 items-center gap-1">
             <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
-            <Button type="button" variant="outline" size="sm" disabled={isLoading} onClick={askAboutRange}>追问这段</Button>
+            <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={askAboutRange}>追问这段</Button>
           </div>
         )}
       </div>
@@ -205,14 +205,14 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     setPanel('chat');
   };
 
-  const dataPanel = (
+  const dataPanel = (conversationReady: boolean) => (
     <section aria-label="测点数据" className="h-full min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div className="station-data">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {(isSideBySide || !stationName) && <Button type="button" variant="ghost" size="icon" className="-ms-2 size-9 text-muted-foreground" aria-label="返回" onClick={returnFromStation}>
             <ArrowLeftIcon className="size-4" />
           </Button>}
-          <h1 className="min-w-0 text-2xl font-semibold tracking-tight wrap-anywhere">{stationName ?? '测点'}</h1>
+          {(isSideBySide || !stationName) && <h1 className="min-w-0 text-2xl font-semibold tracking-tight wrap-anywhere">{stationName ?? '测点'}</h1>}
           {groupName && <span className="text-muted-foreground text-sm">{groupName}</span>}
           {inspection && (
             <span className="bg-muted inline-flex min-h-7 items-center gap-2 rounded-full px-3 text-xs">
@@ -244,7 +244,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           {timeline?.series && timeline.series.points.length > 0 && (
             <>
               <WindowMetrics data={timeline.series} />
-              <DisplacementChart stationName={timeline.station_name} data={timeline.series} onAsk={showChat} />
+              <DisplacementChart stationName={timeline.station_name} data={timeline.series} onAsk={showChat} disabled={!conversationReady} />
             </>
           )}
         </div>
@@ -273,26 +273,28 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   );
 
   if (!stationName) {
-    return dataPanel;
+    return dataPanel(false);
   }
   return (
-    <StationConversation stationUuid={stationUuid} stationName={stationName} onComplete={investigationCompleted} active={active} onRunningChange={onRunningChange} onBack={returnFromStation}>
-    <div className="flex h-full min-h-0 flex-col">
-      {!isSideBySide && <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
-        <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
-        <span className="min-w-0 truncate text-sm font-medium">{stationName}</span>
-        <Segmented
-          label="测点页内容"
-          value={panel}
-          options={[{ value: 'data', label: '数据' }, { value: 'chat', label: 'AI 调查' }]}
-          onValueChange={(value) => setPanel(value as Panel)}
-        />
-      </div>}
-      <div className="flex min-h-0 flex-1">
-        <div className={cn('h-full min-w-0 flex-1', !isSideBySide && panel !== 'data' && 'hidden')}>{dataPanel}</div>
-        <div className={cn('h-full min-w-0', isSideBySide ? 'w-[26rem] shrink-0 border-l' : 'flex-1', !isSideBySide && panel !== 'chat' && 'hidden')}>{chatPanel}</div>
-      </div>
-    </div>
+    <StationConversation stationUuid={stationUuid} stationName={stationName} onComplete={investigationCompleted} active={active} onRunningChange={onRunningChange}>
+      {(notice) => (
+        <div className="flex h-full min-h-0 flex-col">
+          {!isSideBySide && <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
+            <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
+            <h1 className="min-w-0 truncate text-sm font-medium">{stationName}</h1>
+            <Segmented
+              label="测点页内容"
+              value={panel}
+              options={[{ value: 'data', label: '数据' }, { value: 'chat', label: 'AI 调查' }]}
+              onValueChange={(value) => setPanel(value as Panel)}
+            />
+          </div>}
+          <div className="flex min-h-0 flex-1">
+            <div className={cn('h-full min-w-0 flex-1', !isSideBySide && panel !== 'data' && 'hidden')}>{dataPanel(!notice)}</div>
+            <div className={cn('h-full min-w-0', isSideBySide ? 'w-[26rem] shrink-0 border-l' : 'flex-1', !isSideBySide && panel !== 'chat' && 'hidden')}>{notice ?? chatPanel}</div>
+          </div>
+        </div>
+      )}
     </StationConversation>
   );
 };

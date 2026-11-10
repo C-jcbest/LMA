@@ -50,7 +50,7 @@ export function NumericalResultView({ data }: { data: NumericalArtifactData }) {
       })}
       {isRecord(common) && (
         <section className="space-y-3">
-          <h4 className="font-medium">同组共同有效时段</h4>
+          <h4 className="font-medium">共同有效时段比较</h4>
           <p className="text-muted-foreground">仅比较各测点均有有效观测的同一时刻，缺测不插值。</p>
           {Object.entries(common).map(([axis, stations]) => isRecord(stations) && (
             <div key={axis} className="space-y-2">

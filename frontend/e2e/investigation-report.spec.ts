@@ -102,6 +102,90 @@ async function mockApi(page: Page) {
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 
+test('今日列表按页面宽度排列测点、趋势和变化量', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: inspection }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const row = page.getByRole('button', { name: '查看 测试点 A', exact: true });
+  await expect(row).toBeVisible();
+  const columns = () => row.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length);
+  expect(await columns()).toBe(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(columns).toBe(2);
+  expect(await page.getByRole('region', { name: '今日页面', exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test('首页提问创建独立调查，原会话草稿不被覆盖', async ({ page }) => {
+  await mockApi(page);
+  let created = 0;
+  const runs: string[] = [];
+  await page.route('**/api/sessions', (route) => {
+    created += 1;
+    return route.fulfill({ json: { ...session, id: 'new-home-session' } });
+  });
+  await page.route('**/api/sessions/new-home-session', (route) => route.fulfill({ json: { ...session, id: 'new-home-session' } }));
+  await page.route('**/api/title', (route) => route.fulfill({ json: { title: '新调查' } }));
+  await page.route('**/api/sessions/*/runs', (route) => {
+    runs.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 503, json: { detail: '测试故障' } });
+  });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?threadId=report-session');
+  const composer = page.getByRole('textbox', { name: '输入监测问题' });
+  await composer.fill('原会话未完成的草稿');
+  await page.getByRole('button', { name: '今日', exact: true }).click();
+  expect(created).toBe(0);
+  await expect(composer).toHaveValue('');
+  await composer.fill('调查一个新的问题');
+  await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect.poll(() => runs).toEqual(['/api/sessions/new-home-session/runs']);
+  expect(created).toBe(1);
+  await page.getByRole('button', { name: '测试分组巡检', exact: true }).click();
+  await expect(composer).toHaveValue('原会话未完成的草稿');
+  await expect(page.locator('.aui-message-error-root')).toHaveCount(0);
+});
+
+test('390px 会话加载失败不挡住测点数据，局部重试恢复调查', async ({ page }, testInfo) => {
+  await mockApi(page);
+  let failSessions = true;
+  await page.route('**/api/sessions?*', (route) => {
+    if (new URL(route.request().url()).searchParams.has('station_uuid')) {
+      return route.fulfill(failSessions ? { status: 503, json: { detail: '测试故障' } } : { json: [] });
+    }
+    return route.fulfill({ json: [session] });
+  });
+  await page.route('**/api/stations/*/timeline?*', (route) => route.fulfill({ json: stationTimeline }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?station=A');
+  await expect(page.getByRole('region', { name: '测点数据' })).toBeVisible();
+  await expect(page.getByText('北向净变化', { exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: '测试点 A 位移时间轴' }).locator('canvas').first()).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('测点局部失败-数据仍可用-390px.png') });
+  await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('调查记录尚未载入');
+  failSessions = false;
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeEnabled();
+  await page.getByRole('radio', { name: '数据', exact: true }).click();
+  await expect(page.getByText('北向净变化', { exact: true })).toBeVisible();
+});
+
+test('完成的调查不显示虚假的待解决事项', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/sessions/*/investigations', (route) => route.fulfill({ json: [{
+    id: 'completed-investigation', status: 'completed', progress: {
+      goal: '复核测点 A', covered: ['A'], unresolved: [], stage_conclusion: '已完成复核',
+      targets: [{ target_id: 'A', question: '复核测点 A' }],
+    },
+  }] }));
+  await page.goto('/?threadId=report-session');
+  await page.getByText('调查进度', { exact: true }).click();
+  await expect(page.getByText('已完成复核', { exact: true })).toBeVisible();
+  await expect(page.getByText('待解决：尚未记录', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '继续调查', exact: true })).toHaveCount(0);
+});
+
 test('320px 独立数值证据可查看两窗口与共同有效时段，无需视觉结果', async ({ page }) => {
   await mockApi(page);
   const feature = { count: 4, net_change_mm: 3, robust_slope_mm_day: 1, max_step_mm: 1,
@@ -124,12 +208,12 @@ test('320px 独立数值证据可查看两窗口与共同有效时段，无需�
   await page.goto('/?threadId=report-session');
   await page.getByRole('button', { name: '查看 测试点 A 的依据', exact: true }).click();
   await expect(inspector(page).getByText('两个窗口比较')).toBeVisible();
-  await expect(inspector(page).getByText('同组共同有效时段')).toBeVisible();
+  await expect(inspector(page).getByText('共同有效时段比较')).toBeVisible();
   await expect(inspector(page).getByText('测试点 B', { exact: true })).toBeVisible();
   expect(await inspector(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test('调查进度保留覆盖范围，继续调查由用户点击后发送且不覆盖草稿', async ({ page }) => {
+test('调查进度保留覆盖范围，继续调查由用户点击后发送且不覆盖草稿', async ({ page }, testInfo) => {
   await mockApi(page);
   const investigationId = '44444444-4444-4444-4444-444444444444';
   await page.route('**/api/sessions/*/investigations', (route) => route.fulfill({ json: [{
@@ -141,7 +225,7 @@ test('调查进度保留覆盖范围，继续调查由用户点击后发送且�
       })),
     },
   }] }));
-  const requests: Array<{ messages: Array<{ content: string }> }> = [];
+  const requests: Array<{ messages: Array<{ content: string }>; resume_investigation_id: string }> = [];
   await page.route('**/api/sessions/*/runs', (route) => {
     requests.push(route.request().postDataJSON());
     return route.fulfill({ status: 503, json: { detail: '测试执行服务暂不可用' } });
@@ -157,8 +241,16 @@ test('调查进度保留覆盖范围，继续调查由用户点击后发送且�
   expect(requests).toHaveLength(0);
   await page.getByRole('button', { name: '继续调查', exact: true }).click();
   await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0]!.messages[0]!.content).toContain(investigationId);
+  expect(requests[0]!.messages[0]!.content).toBe('继续调查');
+  expect(requests[0]!.resume_investigation_id).toBe(investigationId);
+  await expect(page.getByText(investigationId, { exact: false })).toHaveCount(0);
   await expect(composer).toHaveValue('我还没写完的问题');
+  await expect(page.getByRole('alert')).toContainText('本次回答未完成');
+  await expect(page.locator('.aui-message-error-root')).toHaveCount(0);
+  await page.getByRole('radio', { name: '深色主题', exact: true }).click();
+  await expect(page.getByRole('radio', { name: '深色主题', exact: true })).toHaveAttribute('aria-checked', 'true');
+  await page.locator('[data-role=user]').last().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('续查与局部反馈-390px.png') });
 });
 
 test('数据分析使用九月正文模板，正文引用仍可打开当前依据', async ({ page }, testInfo) => {
@@ -438,7 +530,7 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: /3 个测点.*1 个.*建议调查/ })).toBeVisible();
-  expect(await page.locator('[data-slot=aui_thread-viewport]').evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  expect(await page.getByRole('region', { name: '今日页面', exact: true }).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect(page.getByRole('list', { name: '建议调查的测点' }).getByRole('listitem')).toHaveCount(1);
   await expect(page.getByText('上次巡检未见明显变化')).toBeVisible();
   await expect(page.getByText('上次调查：持续关注')).toBeVisible();

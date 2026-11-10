@@ -28,7 +28,11 @@ export function InvestigationRecords() {
     setRecords([]);
     setError('');
     if (id && !running) {
-      client.listInvestigations(id, controller.signal).then(setRecords).catch(() => {
+      client.listInvestigations(id, controller.signal).then((result) => {
+        if (!controller.signal.aborted) {
+          setRecords(result);
+        }
+      }).catch(() => {
         if (!controller.signal.aborted) {
           setError('调查记录暂未载入。');
         }
@@ -42,8 +46,9 @@ export function InvestigationRecords() {
       role: 'user',
       content: [{
         type: 'text',
-        text: '请续查调查 ' + investigationId + '，读取原调查和证据，核查新鲜度，只处理待解决问题。已覆盖对象不重复查询，当前问题需要刷新时说明理由并保留旧证据。',
+        text: '继续调查',
       }],
+      runConfig: { custom: { resumeInvestigationId: investigationId } },
     });
   };
 
@@ -74,7 +79,7 @@ export function InvestigationRecords() {
                 <li key={target.target_id}>待调查：{target.question}（{target.begin_time} 至 {target.end_time}）</li>
               ))}
             </ul>
-            <p>待解决：{record.progress.unresolved.join('；') || '尚未记录'}</p>
+            {record.progress.unresolved.length > 0 && <p>待解决：{record.progress.unresolved.join('；')}</p>}
             {record.status !== 'completed' && (
               <button type="button" disabled={running} className="underline" onClick={() => continueInvestigation(record.id)}>
                 继续调查

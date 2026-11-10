@@ -76,7 +76,7 @@ describe('会话关键路径集成回归', () => {
       },
     }} />);
     expect(screen.getByText('两个窗口比较')).toBeVisible();
-    expect(screen.getByText('同组共同有效时段')).toBeVisible();
+    expect(screen.getByText('共同有效时段比较')).toBeVisible();
     expect(screen.getByText('测点B')).toBeVisible();
     expect(screen.getAllByText('趋势速度 未知 mm/day')).toHaveLength(4);
     expect(screen.getByText('速度差 未知 mm/day · 速度倍率 未知')).toBeVisible();

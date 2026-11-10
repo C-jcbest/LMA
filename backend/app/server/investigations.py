@@ -10,6 +10,8 @@ def station_identities(messages):
         if not isinstance(message, ToolMessage) or not isinstance(message.artifact, dict):
             continue
         artifact = message.artifact
+        if message.status == 'error' and artifact.get('kind') != 'acquisition_failure':
+            continue
         data = artifact.get('data', {})
         if artifact.get('kind') in {'gnss_series', 'vision', 'numerical', 'acquisition_failure'}:
             station = data

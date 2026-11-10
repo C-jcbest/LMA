@@ -21,11 +21,11 @@ class StationInvestigationTests(unittest.TestCase):
 
     def test_successful_query_records_answer_but_failed_query_does_not(self):
         query = ToolMessage(content="记录", tool_call_id="query", artifact={
-            "kind": "gnss_series", "data": {"station_name": "A"},
+            "kind": "gnss_series", "data": {"station_name": "A", "station_uuid": "uuid-A"},
         })
         messages = [HumanMessage(content="近期变化"), query, AIMessage(id="answer", content="北向缓慢变化")]
         self.assertEqual(investigation_record(messages), {
-            "anchor_id": "answer", "report_tool_call_id": None, "station_names": ["A"], "question": "近期变化",
+            "anchor_id": "answer", "report_tool_call_id": None, "stations": [{"station_name": "A", "station_uuid": "uuid-A"}], "question": "近期变化",
         })
         query.status = "error"
         self.assertIsNone(investigation_record(messages))

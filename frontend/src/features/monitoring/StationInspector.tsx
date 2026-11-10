@@ -10,7 +10,7 @@ import { appendToComposerDraft } from '@/lib/composer-draft';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import type { EvidenceSource, GnssArtifactData, VisionCandidateArtifact } from '@/types/envelope';
 import { useChartColors } from './chartColors';
-import { collectStations, type StationEvidence } from './investigation';
+import { collectStations, findReport, type StationEvidence } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
 import {
   buildTimelineOption,
@@ -234,11 +234,12 @@ interface InspectorBodyProps {
   focusToolCallId?: string;
   stations: readonly StationEvidence[];
   title: ReactNode;
+  supportNotes: string[];
   onSelectStation: (name: string) => void;
   onClose: () => void;
 }
 
-const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stations, title, onSelectStation, onClose }) => {
+const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stations, title, supportNotes, onSelectStation, onClose }) => {
   // 默认看最长窗口：长期背景决定是否存在缓慢累积，短窗口用于放大细节。
   const sortedSeries = useMemo(
     () => [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data)),
@@ -268,7 +269,9 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
   let defaultTab = 'details';
   if (isSiteFocused || (hasSite && !hasTimeline)) {
     defaultTab = 'site';
-  } else if (hasTimeline) {
+  } else if (hasTimeline && !station.numerical.some((item) => item.toolCallId === focusToolCallId)
+    && !station.weather.some((item) => item.toolCallId === focusToolCallId)
+    && !station.vision.some((item) => item.toolCallId === focusToolCallId)) {
     defaultTab = 'timeline';
   }
   const [activeTab, setActiveTab] = useState(defaultTab);
@@ -344,6 +347,10 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
               </DetailSection>
             ))}
           </Tabs.Content>
+          {supportNotes.length > 0 && <details className="mt-5 text-sm text-muted-foreground">
+            <summary className="cursor-pointer py-2">依据说明</summary>
+            {supportNotes.map((note) => <p key={note} className="mt-2">{note}</p>)}
+          </details>}
           <EvidenceNotes station={station} />
         </div>
       </Tabs.Root>
@@ -403,6 +410,10 @@ export const StationInspector: FC = () => {
   const selectStation = (stationId: string) => openStation({ messageId: selection.messageId, stationId });
   const close = () => closeInspector();
   const inspectorKey = `${station.id}:${selection.toolCallId ?? ''}`;
+  const report = messageContent ? findReport(messageContent) : undefined;
+  const supportNotes = [...new Set(report?.findings
+    .filter((finding) => selection.toolCallId && finding.evidence.includes(selection.toolCallId))
+    .flatMap((finding) => finding.supports.map((support) => support.rationale)) ?? [])];
 
   if (isSplit) {
     return (
@@ -423,6 +434,7 @@ export const StationInspector: FC = () => {
           focusToolCallId={selection.toolCallId}
           stations={stations}
           title={title}
+          supportNotes={supportNotes}
           onSelectStation={selectStation}
           onClose={close}
         />
@@ -452,6 +464,7 @@ export const StationInspector: FC = () => {
             focusToolCallId={selection.toolCallId}
             stations={stations}
             title={<DialogPrimitive.Title asChild>{title}</DialogPrimitive.Title>}
+            supportNotes={supportNotes}
             onSelectStation={selectStation}
             onClose={close}
           />

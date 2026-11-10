@@ -3,8 +3,6 @@ import { AuiConfig, AuiProvider, useAuiEvent } from '@assistant-ui/react';
 import { AssistantProvider } from '@/app/providers/AssistantProvider';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
-import { ArrowLeftIcon } from 'lucide-react';
 import { StationInspector } from '@/features/monitoring/StationInspector';
 import { StationInspectorProvider, useStationInspector } from '@/features/monitoring/StationInspectorContext';
 
@@ -28,14 +26,13 @@ function InvestigationEvents({ onComplete, onRunningChange, active }: {
 }
 
 /** 每个测点有自己的会话运行时，不使用全局最近选中的对话。浏览不创建数据库会话。 */
-export function StationConversation({ stationUuid, stationName, onComplete, onRunningChange, onBack, active, children }: {
+export function StationConversation({ stationUuid, stationName, onComplete, onRunningChange, active, children }: {
   stationUuid: string;
   stationName: string;
   onComplete: () => void;
   onRunningChange: (running: boolean) => void;
   active: boolean;
-  onBack: () => void;
-  children: ReactNode;
+  children: (notice?: ReactNode) => ReactNode;
 }) {
   const client = useLmaClient();
   const [sessionId, setSessionId] = useState<string | null>();
@@ -62,14 +59,8 @@ export function StationConversation({ stationUuid, stationName, onComplete, onRu
     [stationUuid, stationName, sessionId],
   );
   if (hasError || sessionId === undefined) {
-    return (
+    return children(
       <div className="p-4">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" aria-label="返回" onClick={onBack}>
-            <ArrowLeftIcon className="size-4" />
-          </Button>
-          <h1 className="font-semibold">{stationName}</h1>
-        </div>
         {hasError ? (
           <p role="alert" className="mt-4 text-sm text-muted-foreground">
             调查记录尚未载入。
@@ -84,7 +75,7 @@ export function StationConversation({ stationUuid, stationName, onComplete, onRu
       <AssistantProvider client={client} scope={scope}>
         <StationInspectorProvider canSplit={false}>
           <InvestigationEvents onComplete={onComplete} onRunningChange={onRunningChange} active={active} />
-          {children}
+          {children()}
           <StationInspector />
         </StationInspectorProvider>
       </AssistantProvider>

@@ -166,8 +166,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             # 本服务固定一个 worker；进程终止的 Run 显式标记中断，不自动重放外部请求。
             await storage.interrupt_previous_runs()
             checkpointer = AsyncPostgresSaver(pool)
-            factory = agent_factory or (lambda saver: create_lma_agent(_get_llm(), checkpointer=saver, investigation_storage=storage))
-            app.state.agent = factory(checkpointer)
+            factory = agent_factory or (lambda saver, records: create_lma_agent(_get_llm(), checkpointer=saver, investigation_storage=records))
+            app.state.agent = factory(checkpointer, storage)
             app.state.storage = storage
             app.state.checkpointer = checkpointer
             try:
@@ -389,7 +389,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
 
     @app.post("/sessions/{session_id}/runs")
     async def stream_run(session_id: UUID, body: RunInput):
-        await require_session(session_id)
+        session = await require_session(session_id)
         require_idle(session_id)
         key = str(session_id)
         config = graph_config(key, body.checkpoint_id)
@@ -409,7 +409,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                 raise HTTPException(404, "checkpoint 不存在。")
             latest_run = await app.state.storage.latest_run(key)
             messages = prepare_messages(body, snapshot, latest_run)
-            session = await require_session(session_id)
             if body.focus_station_uuid is not None and session.get("station_uuid") != str(body.focus_station_uuid):
                 raise HTTPException(422, "当前测点与会话归属不一致。")
             if body.resume_investigation_id is not None:
@@ -424,8 +423,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                         if message.text != "继续调查":
                             raise HTTPException(422, "续查操作与消息不匹配。")
                         message.additional_kwargs["lma_resume_investigation_id"] = str(body.resume_investigation_id)
-                    if body.focus_station and body.focus_station_uuid is not None:
-                        message.additional_kwargs["lma_focus_identity"] = {"station_uuid": str(body.focus_station_uuid), "station_name": body.focus_station}
+                    if body.focus_station and session.get("station_uuid"):
+                        message.additional_kwargs["lma_focus_identity"] = {"station_uuid": session["station_uuid"], "station_name": body.focus_station}
             if any(isinstance(message, ToolCancellation) for message in body.messages):
                 # 并行 ToolNode 被停止时，已完成工具可能仍在 pending writes 中。
                 # 用官方 update_state 提交这些真实结果及用户的取消确认，避免新输入丢弃 pending writes。
@@ -477,13 +476,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                 with anyio.CancelScope(shield=True):
                     try:
                         report = report_in_last_turn(final_values["messages"]) if status == "success" and final_values else None
-                        if report is not None:
-                            tool_call_id, data = report
-                            await app.state.storage.record_conclusions(key, tool_call_id, data["stations"])
-                        if status == "success" and final_values:
-                            record = investigation_record(final_values["messages"])
-                            if record is not None:
-                                await app.state.storage.record_investigation(key, record)
                         stage_conclusion = ""
                         reason = status
                         if final_values:

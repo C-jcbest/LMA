@@ -17,7 +17,7 @@ import { SessionConclusionsProvider } from '@/features/records/SessionConclusion
 import { ThemeSelector } from '@/features/settings/ThemeSelector';
 import { StationPage } from '@/features/stations/StationPage';
 import { StationsPage } from '@/features/stations/StationsPage';
-import { TodayAttention } from '@/features/today/TodayAttention';
+import { TodayPage } from '@/features/today/TodayPage';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { cn } from '@/lib/utils';
 import { NavigationProvider, useNavigation, type Page } from './navigation';
@@ -166,6 +166,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
     }
   });
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [homeDraft, setHomeDraft] = useState('');
   const [runningStations, setRunningStations] = useState<ReadonlySet<string>>(new Set());
   const visibleStation = page === 'station' ? stationUuid : null;
   const mountedStations = new Set(runningStations);
@@ -309,7 +310,8 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
           </header>
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">
-          {(page === 'home' || page === 'conversation') && <Thread autoFocus={isDesktop} overview={page === 'home' ? <TodayAttention /> : undefined} />}
+          {page === 'home' && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} />}
+          {page === 'conversation' && <Thread autoFocus={isDesktop} />}
           <div className="h-full" hidden={page !== 'stations'}><StationsPage /></div>
           {page === 'records' && <RecordsPage />}
           {[...mountedStations].map((id) => (

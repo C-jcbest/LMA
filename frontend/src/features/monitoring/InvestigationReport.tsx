@@ -13,7 +13,7 @@ import {
   formatSupportFact,
   investigationStatusLabel,
   reportStationDetails,
-  reportToMarkdown,
+  answerToMarkdown,
   STATUS_PRIORITY,
 } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
@@ -165,12 +165,10 @@ export const InvestigationReport: FC = () => {
 };
 
 /** 官方复制和导出只读取消息正文，简报需要自己生成文本。 */
-export const ReportActions: FC = () => {
+export const AnswerActions: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
   const { isCopied, copyToClipboard } = useCopyToClipboard();
-  const report = findReport(parts);
-  if (!report) return null;
-  const markdown = reportToMarkdown(report, buildSteps(parts, collectStations(parts)));
+  const markdown = answerToMarkdown(parts);
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
