@@ -47,10 +47,17 @@ export interface LatestInspection {
 
 export type TimelineDays = 7 | 30 | 90;
 
+export interface StationDirectoryEntry {
+  station_uuid: string;
+  station_name: string;
+  group_name: string;
+}
+
 export interface StationRecord {
+  anchor_id: string;
   session_id: string;
   session_name: string;
-  status: string;
+  status: string | null;
   reason: string;
   created_at: string;
 }
@@ -149,6 +156,10 @@ export class LmaClient {
   async getStationTimeline(stationUuid: string, days: TimelineDays, signal?: AbortSignal): Promise<StationTimeline> {
     const path = `/stations/${encodeURIComponent(stationUuid)}/timeline?days=${days}`;
     return (await this.request(path, { signal })).json();
+  }
+
+  async listStations(signal?: AbortSignal): Promise<StationDirectoryEntry[]> {
+    return (await this.request('/stations', { signal })).json();
   }
 
   async listSessionConclusions(signal?: AbortSignal): Promise<SessionConclusion[]> {

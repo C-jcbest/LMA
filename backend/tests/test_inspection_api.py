@@ -11,6 +11,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agent.graph import create_lma_agent
@@ -114,6 +115,47 @@ class InspectionApiTests(unittest.TestCase):
 
     def by_name(self, latest):
         return {row["station_name"]: row for row in latest["stations"]}
+
+    def test_directory_does_not_require_inspection_or_model(self):
+        remaining = len(self.model.script)
+        response = self.client.get("/stations")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({row["station_name"] for row in response.json()}, {"测试点 A", "测试点 B", "基准站 R"})
+        self.assertEqual(len(self.model.script), remaining)
+        self.beidou.station_list_unavailable = True
+        response = self.client.get("/stations")
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("PRIVATE_UPSTREAM", response.text)
+
+    def test_existing_report_records_are_migrated_once(self):
+        session_id = self.client.post("/sessions", json={"name": "历史简报迁移"}).json()["id"]
+        self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
+        storage = self.client.app.state.storage
+        self.client.portal.call(storage.record_conclusions, session_id, "old-report", [
+            {"station_name": "测试点 A", "status": "持续关注", "reason": "历史判断"},
+        ])
+        self.client.portal.call(migrate_database, DATABASE_URI)
+        self.client.portal.call(migrate_database, DATABASE_URI)
+        records = self.client.portal.call(storage.station_records, "测试点 A")
+        migrated = [row for row in records if str(row["session_id"]) == session_id]
+        self.assertEqual(len(migrated), 1)
+        self.assertEqual(migrated[0]["anchor_id"], "old-report")
+        self.assertEqual(migrated[0]["reason"], "历史判断")
+
+    def test_plain_answer_is_recorded_with_answer_anchor_without_inventing_status(self):
+        self.model.script[:] = [AIMessage(id="plain-answer", content="可以继续观察北向的变化。")]
+        session_id = self.client.post("/sessions", json={"name": "自然回答记录"}).json()["id"]
+        self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
+        self.client.post(f"/sessions/{session_id}/runs", json={
+            "messages": [{"type": "human", "id": str(uuid4()), "content": "下一步看什么？"}],
+            "focus_station": "测试点 A",
+        })
+        records = self.client.get("/stations/uuid-测试点 A/timeline").json()["records"]
+        record = next(row for row in records if row["session_id"] == session_id)
+        self.assertEqual(record["anchor_id"], "plain-answer")
+        self.assertIsNone(record["status"])
+        self.assertEqual(record["reason"], "下一步看什么？")
+        self.assertFalse(any(row["session_id"] == session_id for row in self.client.get("/sessions/conclusions").json()))
 
     def test_inspection_flags_change_and_compares_with_previous_run(self):
         first = self.by_name(self.inspect())

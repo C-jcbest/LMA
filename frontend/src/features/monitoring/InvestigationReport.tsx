@@ -1,17 +1,15 @@
 import { useMemo, type FC } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { CheckIcon, CopyIcon, DownloadIcon } from 'lucide-react';
+import { CheckIcon, ChevronRightIcon, CopyIcon, DownloadIcon } from 'lucide-react';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { cn } from '@/lib/utils';
 import type { ReportFindingArtifact } from '@/types/envelope';
-import { StationSparkline } from './InvestigationProcess';
 import {
   buildSteps,
   collectStations,
-  FINDING_LEVELS,
-  findingHeading,
   findReport,
+  groupReportFindings,
   investigationStatusLabel,
   reportStationDetails,
   reportToMarkdown,
@@ -40,6 +38,7 @@ const FindingRow: FC<{
   canOpen: (toolCallId: string) => boolean;
 }> = ({ finding, citationNumbers, describe, onOpen, canOpen }) => (
   <li className="wrap-anywhere">
+    {finding.level === 'inference' && <span className="me-2 text-xs text-muted-foreground">推断</span>}
     {finding.text}
     {finding.evidence.map((toolCallId) => {
       const number = citationNumbers.get(toolCallId);
@@ -51,7 +50,7 @@ const FindingRow: FC<{
           title={description}
           aria-label={`查看依据 ${number}：${description ?? ''}`}
           onClick={() => onOpen(toolCallId)}
-          className="bg-muted text-muted-foreground hover:text-foreground focus-visible:ring-ring ms-1 inline-flex size-[1.125rem] items-center justify-center rounded-full align-[0.1em] text-xs tabular-nums transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          className="report-citation text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex min-h-8 min-w-8 items-center justify-center rounded-md text-xs tabular-nums transition-colors focus-visible:ring-2 focus-visible:outline-none"
         >
           {number}
         </button>
@@ -64,7 +63,7 @@ const FindingRow: FC<{
   </li>
 );
 
-/** 简报先回答哪些点需要看，事实、分析和推断分开呈现，依据跟着结论走。 */
+/** 简报先回答哪些点需要看，发现按测点集中呈现，依据跟着结论走。 */
 export const InvestigationReport: FC = () => {
   const { messageId, stations, steps, report, selection, openStation } = useReportEvidence();
   if (!report) return null;
@@ -92,83 +91,63 @@ export const InvestigationReport: FC = () => {
     }
   };
   const orderedStations = [...report.stations].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
+  const { byStation: findingsByStation, shared: sharedFindings } = groupReportFindings(report, steps);
+  const quiet = orderedStations.filter((item) => item.status === '未见明显变化');
+  const focused = orderedStations.filter((item) => item.status !== '未见明显变化');
+  const showAll = report.stations.length === 1;
+  const renderFindings = (findings: readonly ReportFindingArtifact[]) => (
+    <ul className="report-findings">
+      {findings.map((finding, index) => (
+        <FindingRow key={index} finding={finding} citationNumbers={citationNumbers} describe={describeEvidence} onOpen={openEvidence} canOpen={canOpenEvidence} />
+      ))}
+    </ul>
+  );
+  const renderStation = (item: typeof report.stations[number]) => {
+    const details = reportStationDetails(item).join(' · ');
+    const isSelected = selection?.messageId === messageId && selection.stationName === item.station_name;
+    const findings = findingsByStation.get(item.station_name) ?? [];
+    return (
+      <section key={item.station_name} className={cn('report-station', isSelected && 'report-station-selected')}>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <h3 className="text-base font-semibold">
+            {stationNames.has(item.station_name) ? (
+              <button type="button" aria-label={`查看 ${item.station_name} 的依据`} aria-pressed={isSelected}
+                onClick={() => openStation({ messageId, stationName: item.station_name })}
+                className="focus-visible:ring-ring flex min-h-10 items-center gap-1 rounded-md text-start hover:underline focus-visible:ring-2 focus-visible:outline-none">
+                {item.station_name}<ChevronRightIcon className="size-4 text-muted-foreground" aria-hidden />
+              </button>
+            ) : <span className="inline-flex min-h-10 items-center">{item.station_name}</span>}
+          </h3>
+          <span className="text-muted-foreground inline-flex items-center gap-2 text-xs"><StatusDot status={item.status} />{investigationStatusLabel(item.status)}</span>
+        </div>
+        {item.reason !== report.conclusion && <p className="mb-2 leading-7 wrap-anywhere">{item.reason}</p>}
+        {findings.length > 0 && renderFindings(findings)}
+        {details && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{details}</p>}
+      </section>
+    );
+  };
 
   return (
     <section data-slot="investigation-report" aria-label="调查简报" className="investigation-report">
-      <header className="report-summary">
-        <p className="mb-2 text-xs font-medium tracking-widest text-muted-foreground">调查简报 · {report.stations.length} 个测点</p>
-        <h2 className="text-lg leading-relaxed font-semibold wrap-anywhere sm:text-xl">{report.conclusion}</h2>
-      </header>
-
-      <ul className="report-stations divide-y overflow-hidden rounded-xl border">
-        {orderedStations.map((item) => {
-          const evidence = stations.find((station) => station.name === item.station_name);
-          const isSelected = selection?.messageId === messageId && selection.stationName === item.station_name;
-          const details = reportStationDetails(item).join(' · ');
-          const content = (
-            <>
-              <span className="flex flex-wrap items-center gap-2">
-                <StatusDot status={item.status} />
-                <span className="min-w-0 wrap-anywhere font-semibold">{item.station_name}</span>
-                <span className="rounded-md bg-muted px-2 py-0.5 text-xs">{investigationStatusLabel(item.status)}</span>
-                {evidence && <span className="ms-auto"><StationSparkline station={evidence} /></span>}
-              </span>
-              <span className="mt-2 block text-sm leading-relaxed wrap-anywhere">{item.reason}</span>
-              {details && <span className="text-muted-foreground mt-1 block text-xs leading-relaxed wrap-anywhere">{details}</span>}
-            </>
-          );
-          return (
-            <li key={item.station_name}>
-              {stationNames.has(item.station_name) ? (
-                <button
-                  type="button"
-                  aria-label={`查看 ${item.station_name} 的依据`}
-                  aria-pressed={isSelected}
-                  onClick={() => openStation({ messageId, stationName: item.station_name })}
-                  className={cn(
-                    'focus-visible:ring-ring block w-full p-4 text-start transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset',
-                    isSelected && 'bg-muted',
-                  )}
-                >
-                  {content}
-                </button>
-              ) : (
-                <div className="p-4">{content}</div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-
-      {FINDING_LEVELS.map((level) => {
-        const findings = report.findings.filter((finding) => finding.level === level);
-        if (findings.length === 0) return null;
-        return (
-          <div key={level} className="report-section">
-            <h3>{findingHeading(level)}</h3>
-            <ul className="report-findings">
-              {findings.map((finding, index) => (
-                <FindingRow
-                  key={index}
-                  finding={finding}
-                  citationNumbers={citationNumbers}
-                  describe={describeEvidence}
-                  onOpen={openEvidence}
-                  canOpen={canOpenEvidence}
-                />
-              ))}
-            </ul>
-          </div>
-        );
-      })}
-
+      <h2 className="mb-5 text-lg font-semibold leading-7 wrap-anywhere">{report.conclusion}</h2>
+      {(showAll ? orderedStations : focused).map(renderStation)}
+      {!showAll && quiet.length > 0 && (
+        <details className="report-quiet">
+          <summary className="cursor-pointer py-3 text-sm text-muted-foreground focus-visible:outline-ring">{quiet.length} 个测点未见明显变化</summary>
+          {quiet.map(renderStation)}
+        </details>
+      )}
+      {sharedFindings.length > 0 && (
+        <section className="report-shared">
+          <h3 className="mb-2 text-base font-semibold">综合判断</h3>
+          {renderFindings(sharedFindings)}
+        </section>
+      )}
       {report.next_steps.length > 0 && (
-        <div className="report-section report-next-steps">
-          <h3>建议</h3>
-          <ol className="report-findings list-decimal">
-            {report.next_steps.map((step, index) => <li key={index} className="wrap-anywhere">{step}</li>)}
-          </ol>
-        </div>
+        <section className="report-next-steps">
+          <h3 className="mb-2 text-base font-semibold">建议</h3>
+          <ul className="report-findings">{report.next_steps.map((step, index) => <li key={index} className="wrap-anywhere">{step}</li>)}</ul>
+        </section>
       )}
     </section>
   );
@@ -180,7 +159,7 @@ export const ReportActions: FC = () => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const report = findReport(parts);
   if (!report) return null;
-  const markdown = reportToMarkdown(report);
+  const markdown = reportToMarkdown(report, buildSteps(parts, collectStations(parts)));
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));

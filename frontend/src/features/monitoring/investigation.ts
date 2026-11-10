@@ -1,6 +1,6 @@
 import type { PartState, ToolCallMessagePartStatus } from '@assistant-ui/react';
 import type {
-  FindingLevel,
+  ReportFindingArtifact,
   InvestigationReportArtifactData,
   InvestigationStatus,
   ReportStationArtifact,
@@ -333,33 +333,51 @@ export const reportStationDetails = (station: ReportStationArtifact): string[] =
   return details;
 };
 
-const FINDING_HEADINGS: Record<FindingLevel, string> = {
-  fact: '观测事实',
-  analysis: '分析判断',
-  inference: '专业推断',
-};
-
-export const FINDING_LEVELS: readonly FindingLevel[] = ['fact', 'analysis', 'inference'];
-
-export const findingHeading = (level: FindingLevel) => FINDING_HEADINGS[level];
+/** 页面与导出共用测点归属；跨测点的发现保留为综合判断。 */
+export function groupReportFindings(report: InvestigationReportArtifactData, steps: readonly InvestigationStep[] = []) {
+  const stepByCall = new Map(steps.map((step) => [step.toolCallId, step]));
+  const byStation = new Map<string, ReportFindingArtifact[]>(report.stations.map((station) => [station.station_name, []]));
+  const shared: ReportFindingArtifact[] = [];
+  for (const finding of report.findings) {
+    const names = new Set(finding.station_names ?? []);
+    if (names.size === 0) {
+      for (const id of finding.evidence) {
+        const name = stepByCall.get(id)?.stationName;
+        if (name) {
+          names.add(name);
+        }
+      }
+    }
+    if (names.size === 0 && report.stations.length === 1) {
+      names.add(report.stations[0]!.station_name);
+    }
+    const name = names.size === 1 ? [...names][0] : undefined;
+    const findings = name ? byStation.get(name) : undefined;
+    if (findings) {
+      findings.push(finding);
+    } else {
+      shared.push(finding);
+    }
+  }
+  return { byStation, shared };
+}
 
 /** 简报存放在工具结果里，消息没有正文可复制，这里生成可分享的文本。 */
-export function reportToMarkdown(report: InvestigationReportArtifactData): string {
+export function reportToMarkdown(report: InvestigationReportArtifactData, steps: readonly InvestigationStep[] = []): string {
+  const { byStation, shared } = groupReportFindings(report, steps);
+  const findingText = (finding: ReportFindingArtifact) => `- ${finding.level === 'inference' ? '推断：' : ''}${finding.text}`;
   const sections = [
     report.conclusion,
-    report.stations
+    [...report.stations]
+      .sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status])
       .map((station) => {
         const status = investigationStatusLabel(station.status);
         const details = reportStationDetails(station).join('；');
-        return `- ${station.station_name}：${status}。${station.reason}${details ? `（${details}）` : ''}`;
+        const findings = (byStation.get(station.station_name) ?? []).map(findingText).join('\n');
+        return `## ${station.station_name} · ${status}\n\n${station.reason}${details ? `（${details}）` : ''}\n\n${findings}`;
       })
       .join('\n'),
-    ...FINDING_LEVELS.flatMap((level) => {
-      const findings = report.findings.filter((finding) => finding.level === level);
-      return findings.length > 0
-        ? [`## ${FINDING_HEADINGS[level]}\n\n${findings.map((finding) => `- ${finding.text}`).join('\n')}`]
-        : [];
-    }),
+    ...(shared.length > 0 ? [`## 综合判断\n\n${shared.map(findingText).join('\n')}`] : []),
     ...(report.next_steps.length > 0
       ? [`## 建议\n\n${report.next_steps.map((step) => `- ${step}`).join('\n')}`]
       : []),

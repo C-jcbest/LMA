@@ -58,7 +58,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
     <div>
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-muted-foreground min-w-0 truncate text-sm tabular-nums">
-          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : '相对窗口首点的变化，拖动可放大一段'}
+          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : '相对窗口首点的变化'}
         </p>
         {range && (
           <div className="flex shrink-0 items-center gap-1">
@@ -82,7 +82,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   );
 };
 
-const RecordList: FC<{ records: readonly StationRecord[]; onOpen: () => void }> = ({ records, onOpen }) => {
+const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (anchor: string) => void }> = ({ records, onOpen }) => {
   const aui = useAui();
   const currentSessionId = useAuiState((state) => (
     state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId
@@ -94,19 +94,19 @@ const RecordList: FC<{ records: readonly StationRecord[]; onOpen: () => void }> 
   return (
     <ul className="-mx-3">
       {records.map((record) => (
-        <li key={`${record.session_id}:${record.created_at}`}>
+        <li key={`${record.session_id}:${record.anchor_id}`}>
           <button
             type="button"
             aria-current={record.session_id === currentSessionId}
-            onClick={() => {
-              void aui.threads().switchToThread(record.session_id);
-              onOpen();
+            onClick={async () => {
+              await aui.threads().switchToThread(record.session_id);
+              onOpen(record.anchor_id);
             }}
             className="record-row hover:bg-muted/60 aria-[current=true]:bg-muted focus-visible:ring-ring w-full rounded-lg text-start text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none"
           >
             <span className="text-muted-foreground tabular-nums">{formatRecordDate(record.created_at)}</span>
             <span className="inline-flex items-center gap-2 whitespace-nowrap">
-              <StatusDot status={record.status} />{investigationStatusLabel(record.status)}
+              <StatusDot status={record.status} />{record.status ? investigationStatusLabel(record.status) : '调查'}
             </span>
             <span className="text-muted-foreground min-w-0 truncate">{record.reason}</span>
           </button>
@@ -122,12 +122,8 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
   const needsLook = inspection?.screening === '建议调查';
 
   return (
-    <div className="aui-thread-welcome-root flex flex-1 flex-col justify-end gap-3 pb-6">
-      <p className="text-muted-foreground text-sm leading-relaxed">
-        {needsLook
-          ? 'AI 会结合同组测点、降雨和数据质量，判断这个变化是否需要处理。'
-          : `直接提问，AI 会以 ${stationName} 为对象。`}
-      </p>
+    <div className="aui-thread-welcome-root flex flex-col gap-3 py-5">
+      <h2 className="text-lg font-semibold">{stationName}</h2>
       {needsLook && (
         <Button
           type="button"
@@ -145,7 +141,7 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
 export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
   const client = useLmaClient();
   const setFocusStation = useSetFocusStation();
-  const { goStations } = useNavigation();
+  const { returnFromStation, showConversation } = useNavigation();
   const { latest } = useInspection();
   const { composerInputRef } = useStationInspector();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
@@ -199,7 +195,7 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
     <section aria-label="测点数据" className="h-full min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div className="station-data">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <Button type="button" variant="ghost" size="icon" className="-ms-2 size-9 text-muted-foreground" aria-label="返回测点列表" onClick={goStations}>
+          <Button type="button" variant="ghost" size="icon" className="-ms-2 size-9 text-muted-foreground" aria-label="返回" onClick={returnFromStation}>
             <ArrowLeftIcon className="size-4" />
           </Button>
           <h1 className="min-w-0 text-2xl font-semibold tracking-tight wrap-anywhere">{stationName ?? '测点'}</h1>
@@ -242,7 +238,7 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
         {timeline && (
           <div className="mt-9">
             <h2 className="mb-2 text-sm font-medium">调查记录</h2>
-            <RecordList records={timeline.records} onOpen={() => setPanel('chat')} />
+            <RecordList records={timeline.records} onOpen={showConversation} />
           </div>
         )}
       </div>
@@ -250,7 +246,7 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
   );
 
   const chatPanel = (
-    <aside aria-label="AI 调查" className={cn('h-full min-w-0', isSideBySide ? 'w-[26rem] shrink-0 border-l' : 'flex-1')}>
+    <aside aria-label="AI 调查" className="h-full min-w-0">
       <Thread
         autoFocus={false}
         placeholder={stationName ? `问问 ${stationName}…` : undefined}
@@ -259,20 +255,21 @@ export const StationPage: FC<{ stationUuid: string }> = ({ stationUuid }) => {
     </aside>
   );
 
-  if (isSideBySide) {
-    return <div className="flex h-full min-h-0">{dataPanel}{chatPanel}</div>;
-  }
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 justify-center border-b py-1.5">
+      {!isSideBySide && <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
+        <span className="min-w-0 truncate text-sm font-medium">{stationName}</span>
         <Segmented
           label="测点页内容"
           value={panel}
           options={[{ value: 'data', label: '数据' }, { value: 'chat', label: 'AI 调查' }]}
           onValueChange={(value) => setPanel(value as Panel)}
         />
+      </div>}
+      <div className="flex min-h-0 flex-1">
+        <div className={cn('h-full min-w-0 flex-1', !isSideBySide && panel !== 'data' && 'hidden')}>{dataPanel}</div>
+        <div className={cn('h-full min-w-0', isSideBySide ? 'w-[26rem] shrink-0 border-l' : 'flex-1', !isSideBySide && panel !== 'chat' && 'hidden')}>{chatPanel}</div>
       </div>
-      <div className="flex min-h-0 flex-1">{panel === 'data' ? dataPanel : chatPanel}</div>
     </div>
   );
 };

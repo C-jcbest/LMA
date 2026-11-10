@@ -20,7 +20,7 @@ export const StatusDot: FC<{ status: string | null | undefined; className?: stri
 const AXIS_LABELS = { n: '北向', e: '东向', u: '垂向' } as const;
 
 /** 巡检窗口内变化最大的方向，用一个数字概括“动了多少”。 */
-export function largestChange(station: InspectionStation): { axis: string; millimeters: number } | null {
+export function largestChange(station: Pick<InspectionStation, 'metrics'>): { axis: string; millimeters: number } | null {
   const changes = station.metrics?.net_change_mm;
   if (!changes) {
     return null;

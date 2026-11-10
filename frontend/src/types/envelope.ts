@@ -255,6 +255,7 @@ export interface ReportStationArtifact {
 export type FindingLevel = 'fact' | 'analysis' | 'inference';
 
 export interface ReportFindingArtifact {
+  station_names?: string[];
   level: FindingLevel;
   text: string;
   /** 经服务端校验、属于本轮的工具调用 ID。 */

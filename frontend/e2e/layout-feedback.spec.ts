@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/stations', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/sessions/conclusions', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/inspections/latest', (route) => route.fulfill({
     json: { running: null, latest_attempt: null, inspection: null, stations: [] },
   }));
@@ -133,7 +135,8 @@ test('窄屏切换已有会话、当前会话与新会话后关闭抽屉，桌�
   await navigation.click();
   await drawer.getByRole('button', { name: '今日', exact: true }).click();
   await expect(drawer).not.toBeVisible();
-  await expect(page).not.toHaveURL(/threadId=/);
+  await expect(page).toHaveURL(/page=home/);
+  await expect(page).toHaveURL(/threadId=/);
 
   await navigation.click();
   await page.setViewportSize({ width: 1280, height: 844 });

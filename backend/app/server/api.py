@@ -28,6 +28,7 @@ from app.beidou.client import BeidouApiError
 from app.config import Settings, get_settings
 from app.inspection.runner import run_inspection
 from app.server.messages import project_message, project_state
+from app.server.investigations import investigation_record
 from app.server.stations import TIMELINE_WINDOW_DAYS, find_station, load_station_series
 from app.server.storage import SessionStorage, connection_pool
 
@@ -277,6 +278,23 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         task.add_done_callback(active_inspections.discard)
         return {"id": inspection_id}
 
+    @app.get("/stations")
+    async def station_directory():
+        try:
+            async with (inspection_client_factory or _build_client)() as client:
+                stations = await client.get_stations()
+                return [
+                    {
+                        "station_uuid": station.station_uuid,
+                        "station_name": station.station_name,
+                        "group_name": station.group_name,
+                    }
+                    for station in stations
+                ]
+        except (BeidouApiError, httpx.HTTPError):
+            logger.warning("station directory request failed", exc_info=True)
+            raise HTTPException(502, "测点列表尚未载入。") from None
+
     @app.get("/stations/{station_uuid}/timeline")
     async def station_timeline(station_uuid: str, days: int = 90):
         if days not in TIMELINE_WINDOW_DAYS:
@@ -386,6 +404,10 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                         if report is not None:
                             tool_call_id, data = report
                             await app.state.storage.record_conclusions(key, tool_call_id, data["stations"])
+                        if status == "success" and final_values:
+                            record = investigation_record(final_values["messages"])
+                            if record is not None:
+                                await app.state.storage.record_investigation(key, record)
                         await app.state.storage.finish_run(control.id, status)
                     finally:
                         active_runs.pop(key, None)

@@ -54,7 +54,7 @@ const stationTimeline = {
   station_uuid: '测试点 A', station_name: '测试点 A', group_name: 'K3 分组',
   series: gnssResult('timeline', '2026-11-01 00:00:00').artifact.data,
   records: [{
-    session_id: 'report-session', session_name: '测试分组巡检', status: '需人工复核',
+    session_id: 'report-session', anchor_id: 'report-call', session_name: '测试分组巡检', status: '需人工复核',
     reason: '长期同向变化', created_at: '2026-11-08T00:00:00Z',
   }],
 };
@@ -82,6 +82,7 @@ const inspection = {
 };
 
 async function mockApi(page: Page) {
+  await page.route('**/api/stations', (route) => route.fulfill({ json: inspection.stations.map(({ station_uuid, station_name, group_name }) => ({ station_uuid, station_name, group_name })) }));
   await page.route('**/api/inspections/latest', (route) => route.fulfill({
     json: { running: null, latest_attempt: null, inspection: null, stations: [] },
   }));
@@ -94,6 +95,136 @@ async function mockApi(page: Page) {
 }
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
+
+for (const scenario of ['单点', '全部平稳', '资料有限']) {
+  test(`简报状态：${scenario}`, async ({ page }, testInfo) => {
+    await mockApi(page);
+    const variant = structuredClone(report);
+    if (scenario === '单点') {
+      variant.stations = [report.stations[1]!];
+      variant.conclusion = '测试点 A 的长期同向变化需要复核。';
+    } else if (scenario === '全部平稳') {
+      variant.conclusion = '本次两个测点均未见明显变化。';
+      variant.stations = report.stations.map((station) => ({ ...station, status: '未见明显变化', reason: '三个方向均无持续变化', acceleration: '未见持续加速', data_quality: '数据完整' }));
+      variant.findings = [];
+      variant.next_steps = [];
+    } else {
+      variant.conclusion = '测试点 A 最近 48 小时缺少监测记录。';
+      variant.stations = [{ ...report.stations[1]!, status: '数据不足', reason: '最近 48 小时没有数据', data_quality: '缺少近期记录' }];
+      variant.findings = [];
+      variant.next_steps = ['检查测点采集与传输记录'];
+    }
+    const history = messages.map((message) => message.id === 'report-result'
+      ? { ...message, artifact: { version: 1, kind: 'investigation_report', status: 'success', data: variant } }
+      : message);
+    await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/?threadId=report-session');
+    const reportRegion = page.getByRole('region', { name: '调查简报' });
+    await expect(reportRegion.getByText(variant.conclusion)).toBeVisible();
+    if (scenario === '全部平稳') {
+      await expect(reportRegion.locator('summary')).toHaveText('2 个测点未见明显变化');
+      await reportRegion.locator('summary').click();
+      await expect(reportRegion.getByText('三个方向均无持续变化')).toHaveCount(2);
+    } else {
+      await expect(reportRegion.locator('summary')).toHaveCount(0);
+      await expect(reportRegion.getByRole('heading', { name: '查看 测试点 A 的依据' })).toBeVisible();
+    }
+    await expect(reportRegion.getByText('无法判断', { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+    await page.locator('[data-slot=aui_thread-viewport]').evaluate((element) => { element.scrollTop = 0; });
+    await page.screenshot({ path: testInfo.outputPath(`简报-${scenario}.png`), fullPage: true });
+  });
+}
+
+for (const anchor of ['report-call', 'plain-answer']) {
+  test(`调查记录定位 ${anchor}，而不是会话末尾`, async ({ page }) => {
+    await mockApi(page);
+    const history = [
+      ...messages,
+      { type: 'human', id: 'followup', content: '接下来观察什么？' },
+      { type: 'ai', id: 'plain-answer', content: '继续观察北向趋势。' },
+      { type: 'human', id: 'latest-question', content: '展开说明' },
+      { type: 'ai', id: 'latest-answer', content: Array.from({ length: 50 }, (_, index) => `${index + 1}. 后续分析内容`).join('\n') },
+    ];
+    await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
+    await page.route('**/api/stations/*/timeline*', (route) => route.fulfill({ json: {
+      ...stationTimeline, records: [{ ...stationTimeline.records[0], anchor_id: anchor }],
+    } }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/?station=测试点 A');
+    await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
+    await expect(page).toHaveURL(new RegExp(`result=${anchor}`));
+    const target = anchor === 'report-call' ? page.getByText(report.conclusion) : page.getByText('继续观察北向趋势。');
+    await expect(target).toBeInViewport();
+  });
+}
+
+test('未巡检也可浏览测点，进入详情返回保留搜索与会话', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/stations/*/timeline*', (route) => route.fulfill({ json: stationTimeline }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?page=stations&threadId=report-session');
+  const search = page.getByRole('searchbox', { name: '搜索测点' });
+  await search.fill('点 A');
+  const rows = page.getByRole('list', { name: '测点列表' }).getByRole('listitem');
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText('未巡检');
+  await rows.first().getByRole('button').click();
+  await expect(page).toHaveURL(/threadId=report-session/);
+  await page.getByRole('button', { name: '返回', exact: true }).click();
+  await expect(search).toHaveValue('点 A');
+  await expect(rows).toHaveCount(1);
+});
+
+test('窄屏切换调查保留数据滚动、图表选区与追问草稿', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/stations/*/timeline*', (route) => route.fulfill({ json: stationTimeline }));
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.goto('/?station=测试点 A');
+  const data = page.getByRole('region', { name: '测点数据' });
+  const canvas = data.locator('canvas').first();
+  await expect(canvas).toBeVisible();
+  await canvas.scrollIntoViewIfNeeded();
+  const box = (await canvas.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.3, box.y + 140);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + 140, { steps: 8 });
+  await page.mouse.up();
+  const ask = data.getByRole('button', { name: '追问这段' });
+  await expect(ask).toBeVisible();
+  const originalCanvas = await canvas.elementHandle();
+  const scrollTop = await data.evaluate((element) => element.scrollTop);
+  await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
+  await page.getByRole('textbox', { name: '输入监测问题' }).fill('也看一下东向');
+  await page.getByRole('radio', { name: '数据', exact: true }).click();
+  await expect(ask).toBeVisible();
+  expect(await data.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+  expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);
+  await ask.click();
+  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue(/^也看一下东向[\s\S]*测试点 A[\s\S]*这段发生了什么/);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
+for (const width of [320, 390, 1440]) {
+  test(`${width}px 简报重点与引用触控区域`, async ({ page }, testInfo) => {
+    await mockApi(page);
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: width === 390 ? 'dark' : 'light' });
+    await page.goto('/?threadId=report-session');
+    const reportRegion = page.getByRole('region', { name: '调查简报' });
+    await expect(reportRegion.getByText(report.conclusion)).toBeVisible();
+    const focused = reportRegion.locator('.report-station').first();
+    await expect(focused).toContainText('北向净变化约 2 mm');
+    await expect(focused).toContainText('长期趋势仍在延续');
+    await expect(reportRegion.getByText('三个方向均无持续变化')).not.toBeVisible();
+    const citation = await reportRegion.getByRole('button', { name: /查看依据 1/ }).first().boundingBox();
+    expect(citation!.width).toBeGreaterThanOrEqual(32);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    await page.locator('[data-slot=aui_thread-viewport]').evaluate((element) => { element.scrollTop = 0; });
+    await page.screenshot({ path: testInfo.outputPath(`简报-${width}px.png`), fullPage: true });
+  });
+}
 
 test('普通 AI 消息的标题、列表和长表格在窄屏保持可读', async ({ page }) => {
   await mockApi(page);
@@ -136,15 +267,17 @@ test('简报分层、复制及依据时间窗口定位', async ({ page, context 
   const reportRegion = page.getByRole('region', { name: '调查简报' });
   await expect(reportRegion.getByText(report.conclusion)).toBeVisible();
   await expect(reportRegion.getByRole('button', { name: /查看 测试点/ }).first()).toHaveAccessibleName('查看 测试点 A 的依据');
-  for (const heading of ['观测事实', '分析判断', '专业推断', '建议']) {
-    await expect(reportRegion.getByRole('heading', { name: heading })).toBeVisible();
-  }
+  await expect(reportRegion.getByRole('heading', { name: '建议' })).toBeVisible();
+  await expect(reportRegion.getByText('三个方向均无持续变化')).not.toBeVisible();
+  await reportRegion.locator('summary').click();
+  await expect(reportRegion.getByText('三个方向均无持续变化')).toBeVisible();
+  await expect(reportRegion.getByText('推断', { exact: true })).toBeVisible();
   await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /已调查 1 个测点 · 2 项查询/ })).toBeVisible();
 
   const copy = page.locator('[data-role="assistant"]').last().getByRole('button', { name: '复制', exact: true });
   await copy.click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('## 专业推断');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('## 测试点 A');
   await page.getByRole('button', { name: /查看依据 1：/ }).first().click();
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
   await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
@@ -203,10 +336,11 @@ test('历史巡检全部缺测时不暗示正常，数据问题在测点列表�
   } }));
   await page.setViewportSize({ width: 320, height: 900 });
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: '1 个测点，没有建议调查的' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '1 个测点的数据待核查' })).toBeVisible();
   await expect(page.getByText('未见明显变化')).toHaveCount(0);
   await page.getByRole('button', { name: /1 个数据待核查/ }).click();
   await expect(page).toHaveURL(/page=stations/);
+  await page.getByRole('radio', { name: '数据待核查' }).click();
   await expect(page.getByRole('list', { name: '测点列表' }).getByRole('listitem')).toHaveCount(1);
 });
 

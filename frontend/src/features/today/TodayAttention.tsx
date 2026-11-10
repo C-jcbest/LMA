@@ -86,7 +86,7 @@ export const TodayAttention: FC = () => {
   } else if (hasResults && quietCount === stations.length) {
     headline = <>{stations.length} 个测点未见明显变化</>;
   } else if (hasResults) {
-    headline = <>{stations.length} 个测点，没有建议调查的</>;
+    headline = <>{unavailableCount} 个测点的数据待核查</>;
   }
 
   return (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLangGraphRuntime } from '@assistant-ui/react-langgraph';
 import { AssistantRuntimeProvider, useAuiState } from '@assistant-ui/react';
 import type { LmaClient } from '@/services/api';
@@ -8,6 +8,17 @@ import { FocusStationContext, LmaClientContext } from './LmaClientContext';
 const getUrlThreadId = () => new URL(window.location.href).searchParams.get('threadId') || undefined;
 
 type RecoveryError = 'history' | 'run' | null;
+const RequestedSessionContext = createContext<string | undefined>(undefined);
+
+/** URL 选中的历史会话尚未接管 Runtime 时，不能向临时的新会话发送。 */
+export function useConversationLoading() {
+  const requestedId = useContext(RequestedSessionContext);
+  return useAuiState((state) => {
+    const selected = state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId);
+    return state.thread.isLoading || state.threads.isLoading
+      || Boolean(requestedId && selected?.remoteId !== requestedId);
+  });
+}
 
 function RecoveryNotice({ error, runtime }: { error: RecoveryError; runtime: ReturnType<typeof useLangGraphRuntime> }) {
   const messages = useAuiState((state) => state.thread.messages);
@@ -111,7 +122,9 @@ export function AssistantProvider({ client, children }: { client: LmaClient; chi
     <AssistantRuntimeProvider runtime={runtime}>
       <RecoveryNotice error={error} runtime={runtime} />
       <LmaClientContext.Provider value={client}>
-        <FocusStationContext.Provider value={setFocusStation}>{children}</FocusStationContext.Provider>
+        <RequestedSessionContext.Provider value={threadId}>
+          <FocusStationContext.Provider value={setFocusStation}>{children}</FocusStationContext.Provider>
+        </RequestedSessionContext.Provider>
       </LmaClientContext.Provider>
     </AssistantRuntimeProvider>
   );

@@ -61,6 +61,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     vi.restoreAllMocks();
     localStorage.clear();
     mockClient = {
+      listStations: vi.fn().mockResolvedValue([]),
       getLatestInspection: vi.fn().mockResolvedValue({ running: null, latest_attempt: null, inspection: null, stations: [] }),
       listSessions: vi.fn().mockResolvedValue([]),
       listSessionConclusions: vi.fn().mockResolvedValue([]),
@@ -134,6 +135,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     expect(input).toHaveAttribute('placeholder', '询问监测数据、变化趋势、降雨关联或场地环境…');
     expect(screen.queryByLabelText('推荐业务提问')).not.toBeInTheDocument();
     expect(screen.queryByText('ZJ-MS10 2025年10月监测数据稳定性如何')).not.toBeInTheDocument();
+    await waitFor(() => expect(input).toBeEnabled());
     await userEvent.type(input, '查看这个测点近期的变化');
     expect(input).toHaveValue('查看这个测点近期的变化');
   });
@@ -143,6 +145,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       throw new Error('PRIVATE_STREAM_DIAGNOSTIC');
     })());
     render(<App />);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '输入监测问题' })).toBeEnabled());
     await userEvent.type(screen.getByRole('textbox', { name: '输入监测问题' }), '查看近期变化');
     await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
     expect(await screen.findByText('本次回答未完成。')).toBeInTheDocument();
@@ -160,6 +163,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       yield { event: 'error', data: { message: 'PRIVATE_RUNTIME_DIAGNOSTIC' } };
     })());
     render(<App />);
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '输入监测问题' })).toBeEnabled());
     await userEvent.type(screen.getByRole('textbox', { name: '输入监测问题' }), '查看近期变化');
     await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
     expect(await screen.findByText('本次回答未完成，请重试。')).toBeInTheDocument();

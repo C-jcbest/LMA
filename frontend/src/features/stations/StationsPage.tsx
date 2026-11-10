@@ -1,4 +1,5 @@
-import { useMemo, useState, type FC } from 'react';
+import { useEffect, useMemo, useState, type FC } from 'react';
+import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { useNavigation } from '@/app/navigation';
 import { Input } from '@/components/ui/input';
 import { Segmented } from '@/components/ui/segmented';
@@ -6,7 +7,11 @@ import { useInspection } from '@/features/inspection/InspectionContext';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
-import type { InspectionStation, Screening } from '@/services/api';
+import type { InspectionStation, Screening, StationDirectoryEntry } from '@/services/api';
+
+interface StationListItem extends Omit<InspectionStation, 'screening'> {
+  screening: Screening | null;
+}
 
 type Filter = 'all' | 'attention' | 'unavailable';
 
@@ -24,7 +29,7 @@ const SCREENING_ORDER: Record<Screening, number> = {
   未见明显变化: 2,
 };
 
-const matchesFilter = (station: InspectionStation, filter: Filter) => {
+const matchesFilter = (station: StationListItem, filter: Filter) => {
   if (filter === 'attention') {
     return station.screening === '建议调查';
   }
@@ -34,7 +39,7 @@ const matchesFilter = (station: InspectionStation, filter: Filter) => {
   return true;
 };
 
-const StationRow: FC<{ station: InspectionStation }> = ({ station }) => {
+const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
   const { openStation } = useNavigation();
   const change = largestChange(station);
   const isAttention = station.screening === '建议调查';
@@ -53,7 +58,7 @@ const StationRow: FC<{ station: InspectionStation }> = ({ station }) => {
         </span>
         <span className="station-row-trend"><TrendLine values={station.trend} emphasized={isAttention} className="h-7" /></span>
         <span className="station-row-note text-muted-foreground min-w-0 truncate text-sm">
-          {station.reasons[0] ?? investigationStatusLabel(station.screening)}
+          {station.reasons[0] ?? (station.screening ? investigationStatusLabel(station.screening) : '未巡检')}
         </span>
         <span className="text-end text-sm tabular-nums">
           {change ? `${formatMillimeters(change.millimeters)} mm` : <span className="text-muted-foreground">—</span>}
@@ -65,11 +70,42 @@ const StationRow: FC<{ station: InspectionStation }> = ({ station }) => {
 
 /** 全部测点：按是否需要看排序，点一行进入测点页。 */
 export const StationsPage: FC = () => {
-  const { latest, isLoading, hasLoadError, reload } = useInspection();
+  const { latest } = useInspection();
+  const client = useLmaClient();
+  const [directory, setDirectory] = useState<StationDirectoryEntry[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasLoadError, setHasLoadError] = useState(false);
+  const [reloadCount, setReloadCount] = useState(0);
+  const reload = () => setReloadCount((count) => count + 1);
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
+    setHasLoadError(false);
+    client.listStations(controller.signal).then((stations) => {
+      if (!controller.signal.aborted) {
+        setDirectory(stations);
+      }
+    }, () => {
+      if (!controller.signal.aborted) {
+        setHasLoadError(true);
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) {
+        setIsLoading(false);
+      }
+    });
+    return () => controller.abort();
+  }, [client, reloadCount]);
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
 
-  const stations = latest?.stations;
+  const stations = useMemo<StationListItem[]>(() => {
+    const inspections = new Map(latest?.stations.map((station) => [station.station_uuid, station]));
+    return directory.map((station) => ({
+      reasons: [], metrics: {}, trend: [], previous_screening: null, last_conclusion: null, screening: null,
+      ...inspections.get(station.station_uuid), ...station,
+    }));
+  }, [directory, latest]);
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (stations ?? [])
@@ -80,7 +116,7 @@ export const StationsPage: FC = () => {
         || station.group_name.toLowerCase().includes(query)
       ))
       .sort((a, b) => (
-        SCREENING_ORDER[a.screening] - SCREENING_ORDER[b.screening]
+        (a.screening ? SCREENING_ORDER[a.screening] : 3) - (b.screening ? SCREENING_ORDER[b.screening] : 3)
         || a.station_name.localeCompare(b.station_name, 'zh-CN')
       ));
   }, [stations, filter, search]);
@@ -111,7 +147,7 @@ export const StationsPage: FC = () => {
           </p>
         )}
         {!hasStations && !isLoading && !hasLoadError && (
-          <p className="text-muted-foreground mt-4 text-sm">还没有巡检结果。回到今日页开始一次巡检后，这里会列出全部测点。</p>
+          <p className="text-muted-foreground mt-4 text-sm">暂无测点。</p>
         )}
 
         {hasStations && (

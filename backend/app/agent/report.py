@@ -42,6 +42,7 @@ class ReportFinding(BaseModel):
         )
     )
     text: str = Field(min_length=1, max_length=300)
+    station_names: list[str] = Field(default_factory=list, description="这条发现对应的测点；跨点综合判断可列多个，未针对具体测点时省略")
     evidence_ids: list[str] = Field(
         default_factory=list, max_length=8,
         description="支撑这条发现的依据编号，来自本轮工具结果末尾的 lma_evidence 标记",
@@ -100,6 +101,8 @@ def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessag
             )
 
     for finding in report.findings:
+        if not set(finding.station_names).issubset({station.station_name for station in report.stations}):
+            raise ToolFailure("发现对应的测点必须在简报测点列表中。")
         unknown = [item for item in finding.evidence_ids if item not in tool_call_ids]
         if unknown:
             raise ToolFailure(f"依据编号 {'、'.join(unknown)} 不存在，只能引用本轮工具结果中的 lma_evidence 编号。")
@@ -134,6 +137,7 @@ async def submit_investigation_report(
             {
                 "level": finding.level,
                 "text": finding.text,
+                "station_names": finding.station_names,
                 "evidence": [tool_call_ids[item] for item in finding.evidence_ids],
             }
             for finding in report.findings

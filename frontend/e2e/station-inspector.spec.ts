@@ -50,6 +50,9 @@ const messages = [
 ];
 
 async function openInvestigation(page: Page, width: number, history: readonly unknown[] = messages) {
+  await page.route('**/api/stations', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/sessions/conclusions', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: { running: null, latest_attempt: null, inspection: null, stations: [] } }));
   await page.route('**/api/sessions?*', (route) => route.fulfill({ json: [session] }));
   await page.route('**/api/sessions/station-inspector', (route) => route.fulfill({ json: session }));
   await page.route('**/api/sessions/station-inspector/state', (route) => route.fulfill({
@@ -265,8 +268,8 @@ test('切换屏宽和会话时不残留依据，宽度不足时会话导航改�
   await page.getByRole('button', { name: '关闭依据' }).click();
   await page.getByRole('button', { name: '打开导航' }).click();
   await page.getByRole('button', { name: '今日', exact: true }).click();
-  // 首页可展示已有巡检结果；切换成功取决于旧消息清空和新输入区可用。
-  await expect(page.getByText('测试点 A 需要优先复核')).toHaveCount(0);
+  // 返回今日保留会话，只收起消息视图。
+  await expect(page.getByText('测试点 A 需要优先复核')).not.toBeVisible();
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('');
   await expect(inspector(page)).toHaveCount(0);

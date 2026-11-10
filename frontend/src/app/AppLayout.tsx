@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useAuiEvent, useAuiState } from '@assistant-ui/react';
-import { ActivityIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, Settings, SunIcon, type LucideIcon } from 'lucide-react';
+import { ActivityIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
@@ -59,9 +59,8 @@ const NavigationItem: React.FC<{
 );
 
 const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOpenSettings }) => {
-  const { page, goHome, goStations, goRecords, showConversation } = useNavigation();
+  const { page, goHome, goStations, goRecords, showConversation, startConversation } = useNavigation();
   const { latest } = useInspection();
-  const hasOpenConversation = useAuiState((state) => state.thread.messages.length > 0);
   const attentionCount = latest?.stations.filter((station) => station.screening === '建议调查').length;
 
   const go = (action: () => void) => () => {
@@ -89,7 +88,8 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
         </Button>
       </div>
       <nav aria-label="页面" className="shrink-0 space-y-0.5 px-2">
-        <NavigationItem icon={SunIcon} label="今日" isCurrent={page === 'home' && !hasOpenConversation} badge={attentionCount} onClick={go(goHome)} />
+        <NavigationItem icon={PlusIcon} label="新调查" isCurrent={false} onClick={go(startConversation)} />
+        <NavigationItem icon={SunIcon} label="今日" isCurrent={page === 'home'} badge={attentionCount} onClick={go(goHome)} />
         <NavigationItem icon={ActivityIcon} label="测点" isCurrent={page === 'stations' || page === 'station'} onClick={go(goStations)} />
         <NavigationItem icon={ListIcon} label="记录" isCurrent={page === 'records'} onClick={go(goRecords)} />
       </nav>
@@ -143,20 +143,21 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
 const AppLayoutShell: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
   const { page } = useNavigation();
   return (
-    <StationInspectorProvider canSplit={page === 'home'}>
+    <StationInspectorProvider canSplit={page === 'conversation'}>
       <AppLayoutContent onOpenSettings={onOpenSettings} />
     </StationInspectorProvider>
   );
 };
 
 const PAGE_TITLES: Record<Exclude<Page, 'home'>, string> = {
+  conversation: '调查',
   stations: '测点',
   station: '测点',
   records: '调查记录',
 };
 
 const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
-  const { page, stationUuid } = useNavigation();
+  const { page, stationUuid, showConversation } = useNavigation();
   const { selection, isSplit, closeInspector } = useStationInspector();
   const isDesktop = useMediaQuery('(min-width: 768px)');
   const hasRoomForThreeColumns = useMediaQuery('(min-width: 1680px)');
@@ -182,7 +183,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
   });
   const navigationButtonRef = useRef<HTMLButtonElement>(null);
   const threadTitle = useAuiState((state) => (
-    state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.title || '今日'
+    state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.title || '新调查'
   ));
 
   // 宽度放不下三栏时，导航让位给依据或测点页的对话，改由抽屉打开。依据面板比测点页的对话栏宽，需要更多空间。
@@ -214,6 +215,11 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
     setIsDrawerOpen(false);
     closeInspector();
   });
+  useAuiEvent('thread.runStart', () => {
+    if (page === 'home') {
+      showConversation();
+    }
+  });
 
   const openSettings = onOpenSettings ? () => {
     setIsDrawerOpen(false);
@@ -221,7 +227,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
   } : undefined;
 
   const navigationLabel = canDockSidebar ? '展开侧边栏' : '打开导航';
-  const headerTitle = page === 'home' ? threadTitle : PAGE_TITLES[page];
+  const headerTitle = page === 'conversation' ? threadTitle : page === 'home' ? '今日' : PAGE_TITLES[page];
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background">
@@ -303,8 +309,8 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
         )}
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">
-          {page === 'home' && <Thread autoFocus={isDesktop} welcome={<TodayAttention />} />}
-          {page === 'stations' && <StationsPage />}
+          {(page === 'home' || page === 'conversation') && <Thread autoFocus={isDesktop} overview={page === 'home' ? <TodayAttention /> : undefined} />}
+          <div className="h-full" hidden={page !== 'stations'}><StationsPage /></div>
           {page === 'records' && <RecordsPage />}
           {page === 'station' && stationUuid && <StationPage key={stationUuid} stationUuid={stationUuid} />}
         </div>

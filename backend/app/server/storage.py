@@ -58,6 +58,19 @@ CREATE INDEX IF NOT EXISTS lma_inspections_recent ON lma_inspections (started_at
 CREATE INDEX IF NOT EXISTS lma_station_conclusions_recent ON lma_station_conclusions (station_name, created_at DESC);
 CREATE INDEX IF NOT EXISTS lma_sessions_recent ON lma_sessions (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS lma_runs_session ON lma_runs (session_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS lma_station_investigations (
+    session_id uuid NOT NULL REFERENCES lma_sessions(id) ON DELETE CASCADE,
+    anchor_id text NOT NULL,
+    station_name text NOT NULL,
+    report_tool_call_id text,
+    question text NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (session_id, anchor_id, station_name)
+);
+CREATE INDEX IF NOT EXISTS lma_station_investigations_recent ON lma_station_investigations (station_name, created_at DESC);
+INSERT INTO lma_station_investigations (session_id, anchor_id, station_name, report_tool_call_id, question, created_at)
+SELECT session_id, tool_call_id, station_name, tool_call_id, reason, created_at FROM lma_station_conclusions
+ON CONFLICT DO NOTHING;
 """
 
 
@@ -181,18 +194,29 @@ class SessionStorage:
             return await cursor.fetchall()
 
     async def station_records(self, station_name: str, limit: int = 20) -> Sequence[dict]:
-        """一个测点历次调查的结论，最近的在前。"""
+        """一个测点历次完成的调查；自然回答没有结构化状态。"""
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
-                """SELECT conclusion.session_id, session.name AS session_name,
-                          conclusion.status, conclusion.reason, conclusion.created_at
-                   FROM lma_station_conclusions conclusion
-                   JOIN lma_sessions session ON session.id = conclusion.session_id
-                   WHERE conclusion.station_name = %s
-                   ORDER BY conclusion.created_at DESC LIMIT %s""",
+                """SELECT investigation.session_id, investigation.anchor_id, session.name AS session_name,
+                          conclusion.status, COALESCE(conclusion.reason, investigation.question) AS reason, investigation.created_at
+                   FROM lma_station_investigations investigation
+                   JOIN lma_sessions session ON session.id = investigation.session_id
+                   LEFT JOIN lma_station_conclusions conclusion ON conclusion.session_id = investigation.session_id
+                     AND conclusion.tool_call_id = investigation.report_tool_call_id AND conclusion.station_name = investigation.station_name
+                   WHERE investigation.station_name = %s
+                   ORDER BY investigation.created_at DESC LIMIT %s""",
                 (station_name, limit),
             )
             return await cursor.fetchall()
+
+    async def record_investigation(self, session_id: str, record: dict) -> None:
+        async with self.pool.connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.executemany(
+                    """INSERT INTO lma_station_investigations (session_id, anchor_id, station_name, report_tool_call_id, question)
+                       VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                    [(session_id, record["anchor_id"], name, record["report_tool_call_id"], record["question"]) for name in record["station_names"]],
+                )
 
     async def start_inspection(self, inspection_id: str) -> None:
         async with self.pool.connection() as connection:

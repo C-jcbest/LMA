@@ -288,6 +288,7 @@ class ReportStationArtifact(ArtifactModel):
 class ReportFindingArtifact(ArtifactModel):
     level: Literal["fact", "analysis", "inference"]
     text: str
+    station_names: list[str] = Field(default_factory=list)
     evidence: list[str]
 
 

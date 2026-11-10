@@ -15,6 +15,8 @@ import { useStationInspector } from "@/features/monitoring/StationInspectorConte
 import { findReport } from "@/features/monitoring/investigation";
 import { cn } from "@/lib/utils";
 import { useSessionMetadata } from "@/lib/session-metadata";
+import { useNavigation } from "@/app/navigation";
+import { useConversationLoading } from "@/app/providers/AssistantProvider";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -38,7 +40,7 @@ import {
   RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
-import { useState, type FC, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FC, type ReactNode } from "react";
 
 const messageGroupBy = groupPartByType({
   "tool-call": ["group-investigation"],
@@ -48,6 +50,7 @@ export type ThreadProps = {
   autoFocus?: boolean | undefined;
   /** 还没有消息时显示的内容：首页是今日关注，测点页是针对该测点的提示。 */
   welcome?: ReactNode;
+  overview?: ReactNode;
   placeholder?: string | undefined;
 };
 
@@ -87,10 +90,40 @@ const ThreadHistorySkeleton: FC = () => (
   </div>
 );
 
-export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, placeholder = DEFAULT_PLACEHOLDER }) => {
+export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, placeholder = DEFAULT_PLACEHOLDER }) => {
+  const { resultAnchor } = useNavigation();
+  const messages = useAuiState((state) => state.thread.messages);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const positionedAnchor = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!resultAnchor) {
+      positionedAnchor.current = undefined;
+    }
+    if (!resultAnchor || overview || positionedAnchor.current === resultAnchor) {
+      return;
+    }
+    const message = messages.find((item) => item.id === resultAnchor || item.content.some((part) => part.type === 'tool-call' && part.toolCallId === resultAnchor));
+    if (!message) {
+      return;
+    }
+    const frame = requestAnimationFrame(() => {
+      const element = rootRef.current?.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`);
+      if (element) {
+        const target = element.querySelector('[data-slot="investigation-report"]') ?? element;
+        target.scrollIntoView({ block: 'start' });
+        positionedAnchor.current = resultAnchor;
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [resultAnchor, messages, overview]);
   return (
     <ThreadPrimitive.Root
-      className="aui-root aui-thread-root bg-background @container flex h-full min-h-0 min-w-0 flex-col font-sans"
+      ref={rootRef}
+      className={cn(
+        "aui-root aui-thread-root bg-background @container flex h-full min-h-0 min-w-0 flex-col font-sans",
+        // 定位历史结果时需要实际段落高度，不能使用离屏消息的估算高度。
+        resultAnchor && "[&_[data-message-id]]:[content-visibility:visible]",
+      )}
       style={{
         ["--thread-max-width" as string]: "52rem",
         ["--composer-radius" as string]: "1.25rem",
@@ -98,20 +131,24 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, placeholder
     >
       <ThreadPrimitive.Viewport
         turnAnchor="top"
+        scrollToBottomOnInitialize={!resultAnchor}
+        scrollToBottomOnThreadSwitch={!resultAnchor}
         data-slot="aui_thread-viewport"
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto overflow-y-auto [scrollbar-gutter:stable] [overflow-anchor:none]"
       >
         <div
           className="mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-4 pt-6 sm:px-6 sm:pt-8"
         >
-          <AuiIf condition={isNewChatView}>{welcome}</AuiIf>
-          <AuiIf condition={isHistoryLoadingView}>
+          {overview}
+          {!overview && <AuiIf condition={isNewChatView}>{welcome}</AuiIf>}
+          {!overview && <AuiIf condition={isHistoryLoadingView}>
             <ThreadHistorySkeleton />
-          </AuiIf>
+          </AuiIf>}
 
           <div
             data-slot="aui_message-group"
-            className="mb-10 flex flex-col gap-y-8 empty:hidden"
+            hidden={Boolean(overview)}
+            className={overview ? 'hidden' : 'mb-10 flex flex-col gap-y-8 empty:hidden'}
           >
             <ThreadPrimitive.Messages components={{ Message: ThreadMessage, EditComposer }} />
           </div>
@@ -124,7 +161,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, placeholder
               "before:from-background before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t",
             )}
           >
-            <ThreadScrollToBottom />
+            {!overview && <ThreadScrollToBottom />}
             <Composer autoFocus={autoFocus} placeholder={placeholder} />
           </ThreadPrimitive.ViewportFooter>
         </div>
@@ -233,6 +270,7 @@ const ThreadScrollToBottom: FC = () => {
 
 const Composer: FC<{ autoFocus: boolean; placeholder: string }> = ({ autoFocus, placeholder }) => {
   const { composerInputRef } = useStationInspector();
+  const isLoading = useConversationLoading();
 
   return (
     <ComposerPrimitive.Root
@@ -241,6 +279,7 @@ const Composer: FC<{ autoFocus: boolean; placeholder: string }> = ({ autoFocus, 
     >
       <ComposerPrimitive.Input
         ref={composerInputRef}
+        disabled={isLoading}
         placeholder={placeholder}
         className="aui-composer-input caret-primary placeholder:text-muted-foreground max-h-48 min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 outline-none"
         rows={1}
@@ -248,7 +287,7 @@ const Composer: FC<{ autoFocus: boolean; placeholder: string }> = ({ autoFocus, 
         enterKeyHint="send"
         aria-label="输入监测问题"
       />
-      <ComposerAction />
+      <ComposerAction isLoading={isLoading} />
     </ComposerPrimitive.Root>
   );
 };
@@ -258,12 +297,12 @@ const ComposerContextUsage: FC = () => {
   return <ContextUsageElement usage={contextUsage} />;
 };
 
-const ComposerAction: FC = () => {
+const ComposerAction: FC<{ isLoading: boolean }> = ({ isLoading }) => {
   return (
     <div className="aui-composer-action-wrapper flex h-8 shrink-0 items-center gap-1.5">
       <ComposerContextUsage />
       <AuiIf condition={(s) => !s.thread.isRunning}>
-        <ComposerPrimitive.Send asChild>
+        <ComposerPrimitive.Send asChild disabled={isLoading}>
           <TooltipIconButton
             tooltip="发送消息"
             side="bottom"
@@ -305,8 +344,10 @@ const MessageError: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  const messageId = useAuiState((state) => state.message.id);
   return (
     <MessagePrimitive.Root
+      data-message-id={messageId}
       data-slot="aui_assistant-message-root"
       data-role="assistant"
       className="fade-in slide-in-from-bottom-1 animate-in relative duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
@@ -386,8 +427,10 @@ const AssistantActionBar: FC = () => {
 };
 
 const UserMessage: FC = () => {
+  const messageId = useAuiState((state) => state.message.id);
   return (
     <MessagePrimitive.Root
+      data-message-id={messageId}
       data-slot="aui_user-message-root"
       className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
