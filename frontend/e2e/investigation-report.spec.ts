@@ -692,5 +692,8 @@ test('调查记录写出涉及的测点和结论，点击回到那次对话', as
   await records.getByText('测试分组巡检').click();
   await expect(page).toHaveURL(/threadId=report-session/);
   await expect(page).not.toHaveURL(/page=records/);
+  await expect(page).not.toHaveURL(/[?&]result=/);
+  await expect(page.getByText(report.conclusion)).toBeVisible();
+  await page.reload();
   await expect(page.getByText(report.conclusion)).toBeVisible();
 });
