@@ -25,6 +25,14 @@ const STATION_LIST_EMPTY = '未查询到符合条件的监测点。';
 export const REPORT_TOOL_NAME = 'submit_investigation_report';
 
 const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
+  compare_investigation_evidence: {
+    kind: 'numerical', running: '正在比较已有证据…', complete: '已比较原证据的共同有效时段',
+    failed: '原证据比较失败', cancelled: '已取消原证据比较', emptyNotice: '原证据没有共同有效观测。',
+  },
+  analyze_gnss_numerically: {
+    kind: 'numerical', running: '正在复核数值证据…', complete: '已取得数值证据',
+    failed: '数值复核失败', cancelled: '已取消数值复核', emptyNotice: '该时段没有有效数值证据。',
+  },
   [REPORT_TOOL_NAME]: {
     kind: 'investigation_report',
     running: '正在整理调查简报…',
@@ -100,6 +108,7 @@ export interface StationEvidence {
   name: string;
   status?: string | null;
   group?: string | null;
+  numerical: Located<'numerical'>[];
   series: Located<'gnss_series'>[];
   weather: Located<'weather'>[];
   vision: Located<'vision'>[];
@@ -133,6 +142,7 @@ const hasChartableData = (envelope: ToolArtifactEnvelope) => {
 
 const stationNameOf = (envelope: ToolArtifactEnvelope): string | null => {
   switch (envelope.kind) {
+    case 'numerical':
     case 'gnss_series':
     case 'vision':
       return envelope.data.station_name;
@@ -171,11 +181,14 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
 
     let station = stations.get(name);
     if (!station) {
-      station = { name, series: [], weather: [], vision: [], site: [] };
+      station = { name, numerical: [], series: [], weather: [], vision: [], site: [] };
       stations.set(name, station);
     }
     const toolCallId = part.toolCallId;
     switch (envelope.kind) {
+      case 'numerical':
+        station.numerical.push({ ...envelope, toolCallId });
+        break;
       case 'gnss_series':
         station.series.push({ ...envelope, toolCallId });
         break;
@@ -223,6 +236,7 @@ export const formatDateRange = (begin: string, end: string) =>
 
 const stepDetail = (envelope: ToolArtifactEnvelope): string | undefined => {
   switch (envelope.kind) {
+    case 'numerical':
     case 'gnss_series':
     case 'vision':
       return `${envelope.data.station_name} · ${formatDateRange(envelope.data.begin_time, envelope.data.end_time)}`;

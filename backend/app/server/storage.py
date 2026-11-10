@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import get_settings
+from app.server.investigation_models import InvestigationProgress
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lma_sessions (
@@ -18,6 +19,21 @@ CREATE TABLE IF NOT EXISTS lma_sessions (
     archived boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS lma_investigations (
+    id uuid PRIMARY KEY,
+    session_id uuid NOT NULL REFERENCES lma_sessions(id) ON DELETE CASCADE,
+    progress jsonb NOT NULL,
+    status text NOT NULL CHECK (status IN ('running','paused','completed','interrupted','cancelled','error')),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS lma_evidence (
+    id uuid PRIMARY KEY,
+    session_id uuid NOT NULL REFERENCES lma_sessions(id) ON DELETE CASCADE,
+    tool_call_id text NOT NULL,
+    snapshot jsonb NOT NULL,
+    acquired_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (session_id, tool_call_id)
 );
 CREATE TABLE IF NOT EXISTS lma_runs (
     id uuid PRIMARY KEY,
@@ -98,6 +114,101 @@ class SessionStorage:
     def __init__(self, pool: AsyncConnectionPool):
         self.pool = pool
 
+    async def save_progress(self, session_id: str, investigation_id: str, progress: dict) -> dict:
+        validated = InvestigationProgress.model_validate(progress)
+        progress = validated.model_dump(mode="json")
+        previous = await self.investigation(session_id, investigation_id)
+        if previous is not None and not validated.scope_change_reason.strip():
+            previous_targets = {target["target_id"]: target for target in previous["progress"]["targets"]}
+            current_targets = {target["target_id"]: target for target in progress["targets"]}
+            changed = not previous_targets.keys() <= current_targets.keys()
+            for target_id in previous_targets.keys() & current_targets.keys():
+                for field in ("station_uuid", "begin_time", "end_time", "question"):
+                    if previous_targets[target_id][field] != current_targets[target_id][field]:
+                        changed = True
+            if not set(previous["progress"]["covered"]).issubset(validated.covered):
+                changed = True
+            if changed:
+                raise ValueError("更改原调查范围或撤回已覆盖状态时必须说明原因")
+        for target in validated.targets:
+            for evidence_id in target.evidence_ids:
+                item = await self.evidence_item(session_id, str(evidence_id))
+                if item is None:
+                    raise ValueError("调查引用的证据不属于当前会话或不存在")
+                data = item["snapshot"].get("data", {})
+                identity = data.get("station_uuid") or data.get("center_station", {}).get("station_uuid") or data.get("location", {}).get("station_uuid")
+                if identity != str(target.station_uuid):
+                    raise ValueError("调查对象与证据测点不一致")
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                """INSERT INTO lma_investigations (id, session_id, progress, status)
+                   VALUES (%s,%s,%s,%s) ON CONFLICT (id) DO UPDATE
+                   SET progress=EXCLUDED.progress, status=EXCLUDED.status, updated_at=now()
+                   WHERE lma_investigations.session_id=EXCLUDED.session_id RETURNING *""",
+                (investigation_id, session_id, Jsonb({key: value for key, value in progress.items() if key != "status"}), progress["status"]),
+            )
+            record = await cursor.fetchone()
+            if record is None:
+                raise ValueError("调查不属于当前会话")
+            return record
+
+    async def investigation(self, session_id: str, investigation_id: str) -> dict | None:
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM lma_investigations WHERE id=%s AND session_id=%s",
+                (investigation_id, session_id),
+            )
+            return await cursor.fetchone()
+
+    async def investigations(self, session_id: str) -> list[dict]:
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM lma_investigations WHERE session_id=%s ORDER BY updated_at DESC", (session_id,),
+            )
+            return await cursor.fetchall()
+
+    async def save_evidence(self, session_id: str, tool_call_id: str, snapshot: dict) -> None:
+        from uuid import uuid4
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                """INSERT INTO lma_evidence (id,session_id,tool_call_id,snapshot)
+                   VALUES (%s,%s,%s,%s) ON CONFLICT (session_id,tool_call_id) DO NOTHING""",
+                (str(uuid4()), session_id, tool_call_id, Jsonb(snapshot)),
+            )
+
+    async def evidence(self, session_id: str) -> list[dict]:
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM lma_evidence WHERE session_id=%s ORDER BY acquired_at", (session_id,),
+            )
+            return await cursor.fetchall()
+
+    async def evidence_item(self, session_id: str, evidence_id: str) -> dict | None:
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM lma_evidence WHERE session_id=%s AND id=%s",
+                (session_id, evidence_id),
+            )
+            return await cursor.fetchone()
+
+    async def evidence_identifiers(self, session_id: str) -> dict[str, str]:
+        """模型投影只需编号，不为关联新证据重复读取完整快照。"""
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT tool_call_id, id FROM lma_evidence WHERE session_id=%s", (session_id,),
+            )
+            return {row["tool_call_id"]: str(row["id"]) for row in await cursor.fetchall()}
+
+    async def pause_investigations(self, session_id: str, reason: str, stage_conclusion: str = "") -> None:
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                """UPDATE lma_investigations SET status=%s, updated_at=now(),
+                   progress=jsonb_set(jsonb_set(progress, '{end_reason}', to_jsonb(%s::text)), '{stage_conclusion}',
+                       CASE WHEN %s::text = '' THEN COALESCE(progress->'stage_conclusion', '""'::jsonb) ELSE to_jsonb(%s::text) END)
+                   WHERE session_id=%s AND status='running'""",
+                ("paused" if reason in {"success", "budget"} else reason, reason, stage_conclusion, stage_conclusion, session_id),
+            )
+
     async def list(self, limit: int, offset: int, station_uuid: str | None = None) -> list[dict]:
         async with self.pool.connection() as connection:
             if station_uuid is not None:
@@ -170,6 +281,7 @@ class SessionStorage:
 
     async def interrupt_previous_runs(self) -> None:
         async with self.pool.connection() as connection:
+            await connection.execute("UPDATE lma_investigations SET status='interrupted', updated_at=now() WHERE status='running'")
             await connection.execute(
                 "UPDATE lma_runs SET status = 'interrupted', ended_at = now() WHERE status = 'running'",
             )

@@ -3,6 +3,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
+  'numerical',
   'investigation_report',
   'station_list',
   'gnss_series',
@@ -79,11 +80,26 @@ const isVisionData = (value: unknown) => {
 const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
   if (!isRecord(value)) return false;
   switch (kind) {
+    case 'numerical':
+      return typeof value.station_uuid === 'string' && typeof value.station_name === 'string'
+        && typeof value.begin_time === 'string' && typeof value.end_time === 'string'
+        && ['hourly', 'daily'].includes(String(value.sampling)) && isRecord(value.features)
+        && isRecord(value.comparisons) && Array.isArray(value.points);
     case 'investigation_report':
       return (
         typeof value.conclusion === 'string' &&
         Array.isArray(value.stations) &&
+        value.stations.every((station) => isRecord(station) && typeof station.station_name === 'string'
+          && typeof station.status === 'string' && typeof station.reason === 'string') &&
         Array.isArray(value.findings) &&
+        value.findings.every((finding) => isRecord(finding) && typeof finding.text === 'string'
+          && ['fact', 'analysis', 'inference'].includes(String(finding.level))
+          && isStringArray(finding.evidence) && Array.isArray(finding.supports)
+          && finding.supports.every((support) => isRecord(support)
+            && typeof support.evidence_id === 'string' && typeof support.station_uuid === 'string'
+            && typeof support.rationale === 'string' && typeof support.claim === 'string'
+            && (support.begin_time == null || typeof support.begin_time === 'string')
+            && (support.end_time == null || typeof support.end_time === 'string'))) &&
         isStringArray(value.next_steps)
       );
     case 'station_list': {

@@ -36,10 +36,13 @@ async def load_station_series(client: BeidouClient, station: Station, days: int)
     )
 
     return {
+        "station_uuid": station.station_uuid,
         "station_name": station.station_name,
         "begin_time": begin_time,
         "end_time": end_time,
         "timezone": BUSINESS_TIMEZONE,
+        "coordinate_unit": "m",
+        "summary_unit": "m",
         "total_points": len(points),
         "returned_points": len(points),
         "downsampled": False,

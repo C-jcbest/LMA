@@ -161,7 +161,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             # 本服务固定一个 worker；进程终止的 Run 显式标记中断，不自动重放外部请求。
             await storage.interrupt_previous_runs()
             checkpointer = AsyncPostgresSaver(pool)
-            factory = agent_factory or (lambda saver: create_lma_agent(_get_llm(), checkpointer=saver))
+            factory = agent_factory or (lambda saver: create_lma_agent(_get_llm(), checkpointer=saver, investigation_storage=storage))
             app.state.agent = factory(checkpointer)
             app.state.storage = storage
             app.state.checkpointer = checkpointer
@@ -254,6 +254,31 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             "values": project_state(snapshot.values),
             "latest_run": await app.state.storage.latest_run(str(session_id)),
         }
+
+    @app.get("/sessions/{session_id}/investigations")
+    async def list_investigations(session_id: UUID):
+        await require_session(session_id)
+        return await app.state.storage.investigations(str(session_id))
+
+    @app.get("/sessions/{session_id}/evidence")
+    async def list_evidence(session_id: UUID):
+        await require_session(session_id)
+        return await app.state.storage.evidence(str(session_id))
+
+    @app.post("/sessions/{session_id}/investigations/{investigation_id}/resume")
+    async def resume_investigation(session_id: UUID, investigation_id: UUID):
+        await require_session(session_id)
+        require_idle(session_id)
+        record = await app.state.storage.investigation(str(session_id), str(investigation_id))
+        if record is None:
+            raise HTTPException(404, "调查不存在")
+        if record["status"] == "completed":
+            raise HTTPException(409, "调查已完成；当前问题应新建调查")
+        progress = record["progress"]
+        text = (f"请续查调查 {investigation_id}。先读取原调查及证据，核查获取时间和窗口对当前目标的适用性。"
+                "仅处理待解决问题；已覆盖对象不重复查询，除非当前问题需要刷新，并明确记录刷新理由。"
+                f"待解决：{json.dumps(progress['unresolved'], ensure_ascii=False)}")
+        return await stream_run(session_id, RunInput(messages=[UserInput(type="human", id=str(uuid4()), content=text)]))
 
     @app.post("/sessions/{session_id}/checkpoint")
     async def find_checkpoint(session_id: UUID, body: CheckpointInput):
@@ -372,6 +397,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             # 客户端断开也可能直接关闭生成器；只有图完整结束才记录成功。
             status = "cancelled"
             final_values = None
+            persisted_calls = {message.tool_call_id for message in snapshot.values.get("messages", [])
+                               if isinstance(message, ToolMessage)}
             try:
                 with anyio.CancelScope() as cancel_scope:
                     control.cancel_scope = cancel_scope
@@ -389,6 +416,12 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                             }]
                         else:
                             final_values = data
+                            for completed in data.get("messages", []):
+                                if (isinstance(completed, ToolMessage) and isinstance(completed.artifact, dict)
+                                        and completed.name != "reuse_investigation_evidence"
+                                        and completed.tool_call_id not in persisted_calls):
+                                    await app.state.storage.save_evidence(key, completed.tool_call_id, completed.artifact)
+                                    persisted_calls.add(completed.tool_call_id)
                             payload = project_state(data)
                         yield {"event": mode, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
                     status = "success"
@@ -412,6 +445,21 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                             record = investigation_record(final_values["messages"])
                             if record is not None:
                                 await app.state.storage.record_investigation(key, record)
+                        stage_conclusion = ""
+                        reason = status
+                        if final_values:
+                            turn_messages = final_values.get("messages", [])
+                            last_user = next((index for index in range(len(turn_messages) - 1, -1, -1)
+                                              if isinstance(turn_messages[index], HumanMessage)), -1)
+                            answers = [message for message in turn_messages[last_user + 1:]
+                                       if isinstance(message, AIMessage) and not message.tool_calls]
+                            if answers:
+                                stage_conclusion = answers[-1].text[:3000]
+                            if report is not None:
+                                stage_conclusion = report[1]["conclusion"]
+                            if final_values.get("run_model_call_count", 0) >= settings.agent_model_run_limit:
+                                reason = "budget"
+                        await app.state.storage.pause_investigations(key, reason, stage_conclusion)
                         await app.state.storage.finish_run(control.id, status)
                     finally:
                         active_runs.pop(key, None)

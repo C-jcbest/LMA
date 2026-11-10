@@ -74,7 +74,7 @@ async def _fetch_json(endpoint: str, params: dict) -> dict:
 
 async def _resolve_coordinates(
     station_name_or_uuid: str | None, latitude: float | None, longitude: float | None
-) -> tuple[float, float, str | None]:
+) -> tuple[float, float, str | None, str | None]:
     """把“站点名/UUID”或经纬度解析为坐标，失败时抛出受控业务异常。"""
     if station_name_or_uuid:
         async with _build_client() as client:
@@ -90,10 +90,10 @@ async def _resolve_coordinates(
             lat, lon = lon, lat
         if not -90 <= lat <= 90 or not -180 <= lon <= 180:
             raise ToolFailure("监测点未登记有效经纬度，无法查询天气。")
-        return lat, lon, station.station_name
+        return lat, lon, station.station_name, station.station_uuid
 
     if latitude is not None and longitude is not None:
-        return float(latitude), float(longitude), None
+        return float(latitude), float(longitude), None, None
 
     raise ValueError("weather coordinates not supplied after schema validation")
 
@@ -177,7 +177,7 @@ async def query_weather(
     不等同于现场雨量计实测。
     """
     resolved = await _resolve_coordinates(station_name_or_uuid, latitude, longitude)
-    lat, lon, station_name = resolved
+    lat, lon, station_name, station_uuid = resolved
 
     # 历史窗口：默认最近 7 天（截止昨天）
     now = business_now()
@@ -242,6 +242,7 @@ async def query_weather(
         {
             "ok": True,
             "location": {
+                "station_uuid": station_uuid,
                 "station_name": station_name,
                 "latitude": round(lat, 4),
                 "longitude": round(lon, 4),

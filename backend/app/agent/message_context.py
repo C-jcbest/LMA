@@ -52,7 +52,7 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
     return message.model_copy(update={"content": content, "additional_kwargs": kwargs})
 
 
-def model_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+def model_messages(messages: list[BaseMessage], *, persistent_evidence: dict[str, str] | None = None) -> list[BaseMessage]:
     projected = []
     for message in messages:
         context = message.additional_kwargs.get("lma_context")
@@ -60,6 +60,9 @@ def model_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
             projected.append(_with_message_context(message, context))
         elif is_evidence(message) and isinstance(message.content, str):
             label = f'<lma_evidence id="{evidence_id(message.tool_call_id)}"/>'
+            persisted_uuid = (persistent_evidence or {}).get(message.tool_call_id)
+            if persisted_uuid is not None:
+                label += f'\n<lma_persisted_evidence uuid="{persisted_uuid}"/>'
             projected.append(message.model_copy(update={"content": f"{message.content}\n\n{label}"}))
         else:
             projected.append(message)

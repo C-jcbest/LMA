@@ -1,4 +1,5 @@
 """生产工具协议：错误状态、请求前校验、部分证据与不可公开诊断。"""
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -131,6 +132,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.artifact["data"]["total_points"], 0)
         self.assertEqual(message.artifact["data"]["points"], [])
         self.assertEqual(message.artifact["data"]["summary"]["n"]["count"], 0)
+        self.assertEqual(message.artifact["data"]["coordinate_unit"], "m")
+        self.assertEqual(json.loads(message.content)["summary_unit"], "m")
         self.assertNotIn("message", message.artifact["data"])
         self.assertEqual(client.get_daily_data.await_count, 1)
 
@@ -281,6 +284,7 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 {"station_name": "测试站", "net_change_mm": 2},
                 kind="vision",
                 display={
+                    "station_uuid": "11111111-1111-1111-1111-111111111111",
                     "station_name": "测试站",
                     "begin_time": "2026-09-21 00:00:00",
                     "end_time": "2026-09-21 01:00:00",

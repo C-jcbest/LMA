@@ -19,19 +19,23 @@ from runtime_fixtures import ScriptedModel
 @tool(response_format="content_and_artifact")
 async def fake_gnss() -> tuple[str, dict]:
     """测试用 GNSS 工具。"""
-    return tool_result(
-        {
-            "station_name": "测试点 A", "begin_time": "2026-11-01 00:00:00", "end_time": "2026-11-08 00:00:00",
-            "timezone": "Asia/Shanghai", "total_points": 0, "returned_points": 0, "downsampled": False,
-            "points": [],
-            "summary": {"n": {"count": 0}, "e": {"count": 0}, "u": {"count": 0}, "gaps": []},
-        },
-        kind="gnss_series",
-    )
+    return tool_result({
+        "station_uuid": "11111111-1111-1111-1111-111111111111", "station_name": "测试点 A",
+        "begin_time": "2026-11-01 00:00:00", "end_time": "2026-11-08 00:00:00",
+        "sampling": "hourly", "points": [], "comparisons": {},
+        "features": {"n": {"count": 2, "net_change_mm": -2, "begin_time": "2026-11-01 00:00:00", "end_time": "2026-11-08 00:00:00"}},
+    }, kind="numerical")
+
 
 
 def gnss_call():
     return AIMessage(id="ai-gnss", content="", tool_calls=[{"id": "gnss-1", "name": "fake_gnss", "args": {}}])
+
+
+def support():
+    return {"evidence_id": evidence_id("gnss-1"), "station_uuid": "11111111-1111-1111-1111-111111111111",
+            "begin_time": "2026-11-01 00:00:00", "end_time": "2026-11-08 00:00:00",
+            "claim": "numeric_change", "axis": "n", "rationale": "窗口净变化数值支持"}
 
 
 def report_call(call_id="report-1", **overrides):
@@ -42,8 +46,8 @@ def report_call(call_id="report-1", **overrides):
             "acceleration": "未见持续加速", "data_quality": "数据完整",
         }],
         "findings": [
-            {"level": "fact", "text": "北向净变化 -2 mm", "evidence_ids": [evidence_id("gnss-1")]},
-            {"level": "inference", "text": "可能与坡体缓慢变形有关", "evidence_ids": []},
+            {"supports": [support()], "level": "fact", "text": "北向净变化 -2 mm"},
+            {"supports": [support()], "level": "inference", "text": "可能与坡体缓慢变形有关"},
         ],
         "next_steps": ["核查观测墩"],
         **overrides,
@@ -87,13 +91,14 @@ class InvestigationReportTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_report_returns_to_model_for_correction(self):
         cases = {
-            "编造依据": report_call("bad", findings=[{"level": "fact", "text": "x", "evidence_ids": ["Efake00"]}]),
-            "事实无依据": report_call("bad", findings=[{"level": "fact", "text": "x", "evidence_ids": []}]),
+            "编造依据": report_call("bad", findings=[{"level": "fact", "text": "x", "supports": [{**support(), "evidence_id": "Efake00"}]}]),
+            "事实无依据": report_call("bad", findings=[{"level": "fact", "text": "x", "supports": []}]),
+            "旧引用字段": report_call("bad", findings=[{"level": "fact", "text": "x", "supports": [support()], "evidence_ids": [evidence_id("gnss-1")]}]),
             "未调查测点": report_call("bad", stations=[{
                 "station_name": "不存在的点", "status": "持续关注", "reason": "r",
                 "acceleration": "无法判断", "data_quality": "q",
             }]),
-            "超出能力": report_call("bad", conclusion="测试点 A 已经发生滑坡"),
+            "时间窗不匹配": report_call("bad", findings=[{"supports": [{**support(), "end_time": "2027-01-01 00:00:00"}], "level": "fact", "text": "变化"}]),
         }
         for name, bad_report in cases.items():
             with self.subTest(name):
@@ -105,7 +110,7 @@ class InvestigationReportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(report_in_last_turn(result["messages"])[0], "good")
 
     async def test_inference_accepts_natural_wording_without_required_keywords(self):
-        finding = {"level": "inference", "text": "从变化形态看，更倾向于坡体缓慢变形。", "evidence_ids": []}
+        finding = {"supports": [support()], "level": "inference", "text": "从变化形态看，更倾向于坡体缓慢变形。"}
         result, model = await self.run_agent(gnss_call(), report_call(findings=[finding]))
         self.assertEqual(len(model.inputs), 2)
         self.assertEqual(result["messages"][-1].status, "success")

@@ -24,6 +24,7 @@ import {
 } from './timeline';
 import type { ChartRange } from './TimelineChart';
 import { GnssResultView } from './tools/GnssResultView';
+import { NumericalResultView } from './tools/NumericalResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
 import { StationStatus } from './tools/StationResultView';
 import { VisionResultView } from './tools/VisionResultView';
@@ -193,7 +194,7 @@ const DetailSection: FC<{ title: string; children: ReactNode }> = ({ title, chil
 );
 
 const EvidenceNotes: FC<{ station: StationEvidence }> = ({ station }) => {
-  const envelopes = [...station.series, ...station.weather, ...station.vision, ...station.site];
+  const envelopes = [...station.numerical, ...station.series, ...station.weather, ...station.vision, ...station.site];
   const limitations = [...new Set(envelopes.flatMap((envelope) => envelope.limitations ?? []))];
   const sourcesByLabel = new Map<string, EvidenceSource>();
   for (const source of envelopes.flatMap((envelope) => envelope.sources ?? [])) {
@@ -327,6 +328,11 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
                 <GnssResultView data={seriesList[selectedIndex]!} />
               </DetailSection>
             )}
+            {station.numerical.map((item) => (
+              <DetailSection key={item.toolCallId} title="数值复核（mm、mm/day）">
+                <NumericalResultView data={item.data} />
+              </DetailSection>
+            ))}
             {station.vision.map((item, index) => (
               <DetailSection key={index} title="位移曲线复核">
                 <VisionResultView data={item.data} />

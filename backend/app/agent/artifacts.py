@@ -100,6 +100,9 @@ class GnssSamplingArtifact(ArtifactModel):
 
 
 class GnssArtifactData(ArtifactModel):
+    coordinate_unit: Literal["m"] = "m"
+    summary_unit: Literal["m"] = "m"
+    station_uuid: str
     station_name: str
     begin_time: str
     end_time: str
@@ -113,6 +116,7 @@ class GnssArtifactData(ArtifactModel):
 
 
 class WeatherLocationArtifact(ArtifactModel):
+    station_uuid: str | None = None
     station_name: str | None = None
     latitude: float
     longitude: float
@@ -223,6 +227,7 @@ class ChartPointArtifact(ArtifactModel):
 
 
 class VisionArtifactData(ArtifactModel):
+    station_uuid: str
     station_name: str
     begin_time: str
     end_time: str
@@ -286,6 +291,7 @@ class ReportStationArtifact(ArtifactModel):
 
 
 class ReportFindingArtifact(ArtifactModel):
+    supports: list[dict[str, JsonValue]]
     level: Literal["fact", "analysis", "inference"]
     text: str
     station_names: list[str] = Field(default_factory=list)
@@ -299,7 +305,19 @@ class InvestigationReportArtifactData(ArtifactModel):
     next_steps: list[str]
 
 
+class NumericalArtifactData(ArtifactModel):
+    station_uuid: str
+    station_name: str
+    begin_time: str
+    end_time: str
+    sampling: Literal["hourly", "daily"]
+    features: dict[str, JsonValue]
+    comparisons: dict[str, JsonValue]
+    points: list[GnssPointArtifact]
+
+
 ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {
+    "numerical": NumericalArtifactData,
     "investigation_report": InvestigationReportArtifactData,
     "station_list": StationListArtifactData,
     "gnss_series": GnssArtifactData,
@@ -364,8 +382,14 @@ class InvestigationReportArtifactEnvelope(ArtifactEnvelopeBase):
     data: InvestigationReportArtifactData
 
 
+class NumericalArtifactEnvelope(ArtifactEnvelopeBase):
+    kind: Literal["numerical"]
+    data: NumericalArtifactData
+
+
 ToolArtifactEnvelope = Annotated[
-    InvestigationReportArtifactEnvelope
+    NumericalArtifactEnvelope
+    | InvestigationReportArtifactEnvelope
     | StationListArtifactEnvelope
     | GnssArtifactEnvelope
     | WeatherArtifactEnvelope

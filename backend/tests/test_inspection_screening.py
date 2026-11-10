@@ -45,6 +45,55 @@ def screen(long_points, recent_points=None):
 
 
 class ScreeningTests(unittest.TestCase):
+    def test_hourly_terminal_jump_survives_quiet_or_short_history(self):
+        recent = hourly()
+        recent[-1] = point(NOW, 100.1)
+        for days in (90, 30):
+            with self.subTest(days=days):
+                result = screen(daily(lambda i: 0, days=days), recent)
+                self.assertEqual(result.screening, "建议调查")
+                self.assertTrue(any("待观察" in reason for reason in result.reasons))
+                self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+
+    def test_daily_terminal_jump_is_not_persistence(self):
+        result = screen(daily(lambda i: 0 if i < 89 else 30, noise_mm=0))
+        self.assertEqual(result.screening, "建议调查")
+        self.assertTrue(any("待观察" in reason for reason in result.reasons))
+        self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+
+    def test_hourly_trend_survives_short_history(self):
+        recent = [point(NOW - timedelta(hours=168-i), 100 + i * 0.0001) for i in range(168)]
+        result = screen(daily(lambda i: 0, days=30), recent)
+        self.assertEqual(result.screening, "建议调查")
+        self.assertTrue(any("近期小时序列" in reason and "持续同向" in reason for reason in result.reasons))
+
+    def test_duplicate_timestamps_do_not_inflate_coverage(self):
+        recent = [hourly()[0]] * 168
+        result = screen(daily(lambda i: 0), recent)
+        self.assertEqual(result.screening, "数据不足")
+        self.assertEqual(result.metrics["recent_completeness"], 0)
+
+    def test_invalid_axis_does_not_hide_other_axis_motion(self):
+        recent = [point(NOW - timedelta(hours=168-i), 100 + i * 0.0001, east="") for i in range(168)]
+        result = screen(daily(lambda i: 0), recent)
+        self.assertEqual(result.screening, "建议调查")
+        self.assertEqual(result.metrics["recent_completeness"], 0)
+
+    def test_gap_is_not_a_persistent_step(self):
+        recent = hourly()
+        recent = recent[:60] + [point(NOW - timedelta(hours=168-i), 100.03) for i in range(100, 168)]
+        result = screen(daily(lambda i: 0), recent)
+        self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+        self.assertTrue(any("缺测" in reason for reason in result.reasons))
+
+    def test_gap_after_candidate_does_not_confirm_persistence(self):
+        recent = hourly()
+        for i in range(60, 168):
+            recent[i] = point(NOW - timedelta(hours=168-i), 100.03)
+        del recent[62:100]
+        result = screen(daily(lambda i: 0), recent)
+        self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+
     def test_theil_sen_ignores_outliers(self):
         days = [float(i) for i in range(20)]
         values = [0.5 * day for day in days]

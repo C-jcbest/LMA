@@ -24,7 +24,6 @@ import json
 import math
 import logging
 import re
-import statistics
 from datetime import datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
@@ -36,6 +35,7 @@ from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.prompting import VISION_PROMPT
+from app.agent.numerical import axis_features as _axis_features
 from app.agent.retry import is_transient_error
 from app.business_time import BUSINESS_TIMEZONE
 from app.agent.tools import (
@@ -377,95 +377,6 @@ def _axis_detail(pairs: list[tuple[str, float | None]]) -> dict:
     }
 
 
-# 跳后持续性判定容差：水平差超过 max(绝对容差mm, 比例×跳变幅度) 视为"回落"
-_PERSIST_ABS_TOL_MM = 2.0
-_PERSIST_REL_TOL = 0.2
-# 鲁棒斜率计算的抽样上限：Theil–Sen 两两斜率为 O(n²)，等间隔抽样控制计算量
-_SLOPE_SAMPLE_LIMIT = 300
-
-
-def _axis_features(
-    times: list[str], values: list[float | None], base: float | None
-) -> dict:
-    """单方向子窗口数值特征（位移单位 mm，相对基线 base；base 为 None 时相对窗口首点）。
-
-    - 累计位移 cum_start_mm/cum_end_mm：窗口首/末有效点相对基线的累计位移；
-    - 窗口净变化 net_change_mm：首有效点 → 末有效点之差；
-    - 鲁棒斜率 robust_slope_mm_day：Theil–Sen 估计（等间隔抽样后取两两斜率中位数），
-      对台阶/毛刺稳健，是识别持续形变的主要数值依据；
-    - 最大单步变化 max_step_mm 及其时刻（仅统计相邻采样点之间的单步）；
-    - 跳后持续性：以最大单步为跳变点，跳变前后各至多 6 点中位数之差为 level_shift_mm，
-      跳变后剩余点整体中位数偏离紧邻跳变后水平超过容差判为"回落"，否则"持续"。
-    """
-    idx = [i for i, v in enumerate(values) if v is not None]
-    if len(idx) < 2:
-        return {"count": len(idx)}
-    vals = [values[i] for i in idx]
-    valid_times = [times[i] for i in idx]
-    if base is None:
-        base = vals[0]
-    mm = [(v - base) * 1000.0 for v in vals]
-
-    # 鲁棒斜率（Theil–Sen）：等间隔抽样 ≤300 点后计算两两斜率的中位数
-    step = max(1, math.ceil(len(mm) / _SLOPE_SAMPLE_LIMIT))
-    sub = list(range(0, len(mm), step))
-    if sub[-1] != len(mm) - 1:
-        sub.append(len(mm) - 1)
-    times_sec = []
-    for t in valid_times:
-        parsed = _parse_time(t)
-        times_sec.append(parsed.timestamp() if parsed else 0.0)
-    pair_slopes = []
-    for a in range(len(sub)):
-        for b in range(a + 1, len(sub)):
-            dt_days = (times_sec[sub[b]] - times_sec[sub[a]]) / 86400
-            if dt_days > 0:
-                pair_slopes.append((mm[sub[b]] - mm[sub[a]]) / dt_days)
-    robust_slope = (
-        sorted(pair_slopes)[len(pair_slopes) // 2] if pair_slopes else None
-    )
-
-    # 最大单步变化（相邻采样点之间）与跳后持续性
-    max_step, max_step_idx, max_step_time = 0.0, -1, ""
-    for k in range(len(idx) - 1):
-        if idx[k + 1] == idx[k] + 1:  # 仅统计真正相邻的采样点，跨缺测的差值不可信
-            step_value = abs(vals[k + 1] - vals[k]) * 1000.0
-            if step_value > max_step:
-                max_step, max_step_idx = step_value, k
-                max_step_time = valid_times[k + 1]
-
-    level_shift: float | None = None
-    persistence = "样本不足"
-    if max_step_idx >= 0:
-        j = max_step_idx  # 跳变发生在 vals[j] -> vals[j+1]
-        pre_n = min(6, j + 1)
-        post_n = min(6, len(vals) - (j + 1))
-        if pre_n >= 1 and post_n >= 1:
-            pre = statistics.median(vals[j + 1 - pre_n : j + 1])
-            post = statistics.median(vals[j + 1 : j + 1 + post_n])
-            level_shift = (post - pre) * 1000.0
-            tail = vals[j + 1 + post_n :]
-            if len(tail) >= 3:
-                tolerance = max(_PERSIST_ABS_TOL_MM, _PERSIST_REL_TOL * abs(level_shift))
-                persistence = (
-                    "持续"
-                    if abs((statistics.median(tail) - post) * 1000.0) <= tolerance
-                    else "回落"
-                )
-
-    return {
-        "count": len(vals),
-        "cum_start_mm": round(mm[0], 3),
-        "cum_end_mm": round(mm[-1], 3),
-        "net_change_mm": round(mm[-1] - mm[0], 3),
-        "robust_slope_mm_day": round(robust_slope, 4) if robust_slope is not None else None,
-        "max_step_mm": round(max_step, 3),
-        "max_step_time": max_step_time,
-        "level_shift_mm": round(level_shift, 3) if level_shift is not None else None,
-        "jump_persistence": persistence,
-    }
-
-
 def _window_features(
     points: list, baseline: tuple[float, float, float] | None
 ) -> dict:
@@ -600,6 +511,7 @@ async def analyze_gnss_chart(
         )
 
         base_result = {
+            "station_uuid": station.station_uuid,
             "station_name": station.station_name,
             "begin_time": begin_time,
             "end_time": end_time,

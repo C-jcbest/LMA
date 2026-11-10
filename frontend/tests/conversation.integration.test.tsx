@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { decodeToolArtifact } from '../src/features/monitoring/artifacts';
 import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView';
+import { NumericalResultView } from '../src/features/monitoring/tools/NumericalResultView';
 import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
 import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
 import { WeatherResultView } from '../src/features/monitoring/tools/WeatherResultView';
@@ -62,6 +63,42 @@ const visionData = (fields: Record<string, unknown> = {}) => ({
 });
 
 describe('会话关键路径集成回归', () => {
+  it('数值复核展示两窗口和共同覆盖，缺失速度不显示为零', () => {
+    const feature = { count: 4, net_change_mm: 3, robust_slope_mm_day: null,
+      begin_time: '2026-11-02 00:00:00', end_time: '2026-11-03 00:00:00',
+      jump_persistence: '待观察', method: 'Theil–Sen', limitations: [] };
+    render(<NumericalResultView data={{
+      station_uuid: 'a', station_name: '测点A', sampling: 'hourly', points: [],
+      begin_time: '2026-11-01 00:00:00', end_time: '2026-11-04 00:00:00',
+      features: { n: feature }, comparisons: {
+        n: { first: feature, second: feature, velocity_difference_mm_day: null, speed_ratio: null, limitation: '倍率不构成加速结论' },
+        station_names: { b: '测点B' }, common_period: { n: { b: feature } },
+      },
+    }} />);
+    expect(screen.getByText('两个窗口比较')).toBeVisible();
+    expect(screen.getByText('同组共同有效时段')).toBeVisible();
+    expect(screen.getByText('测点B')).toBeVisible();
+    expect(screen.getAllByText('趋势速度 未知 mm/day')).toHaveLength(4);
+    expect(screen.getByText('速度差 未知 mm/day · 速度倍率 未知')).toBeVisible();
+  });
+
+  it('报告缺少支持关系时拒绝渲染，不让旧或畸形字段使界面崩溃', () => {
+    const artifact = {
+      version: 1, kind: 'investigation_report', status: 'success',
+      data: {
+        conclusion: '待核实', stations: [], next_steps: [],
+        findings: [{ level: 'fact', text: '没有完整支持关系', evidence: ['evidence-1'] }],
+      },
+    };
+    expect(decodeToolArtifact('investigation_report', artifact)).toBeUndefined();
+    const complete = structuredClone(artifact);
+    Object.assign(complete.data.findings[0]!, { supports: [{
+      evidence_id: 'evidence-1', station_uuid: 'station-1',
+      claim: 'trend', rationale: '数值工具提供趋势',
+    }] });
+    expect(decodeToolArtifact('investigation_report', complete)?.kind).toBe('investigation_report');
+  });
+
   it('领域 Renderer 将标准空结构展示为暂无数据', () => {
     const { rerender } = render(
       <StationResultView

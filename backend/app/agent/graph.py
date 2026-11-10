@@ -26,7 +26,7 @@ from app.agent.context import build_context_usage
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
-from app.agent.report import REPORT_TOOL_NAME
+from app.agent.report import REPORT_TOOL_NAME, submit_investigation_report
 from app.agent.retry import is_transient_error
 from app.agent.models import create_chat_model, model_max_input_tokens
 from app.agent.site import inspect_site_environment
@@ -36,12 +36,13 @@ from app.agent.tools import (
     list_station_groups,
     list_stations,
 )
+from app.agent.numerical_tool import analyze_gnss_numerically
 from app.agent.vision import analyze_gnss_chart
 from app.agent.weather import query_weather
 from app.config import get_settings
 
 tools = [list_station_groups, list_stations, get_daily_gnss_data,
-         query_weather, analyze_gnss_chart, inspect_site_environment]
+         query_weather, analyze_gnss_chart, inspect_site_environment, analyze_gnss_numerically, submit_investigation_report]
 logger = logging.getLogger(__name__)
 
 
@@ -70,7 +71,11 @@ class QueryCallLimitMiddleware(ToolCallLimitMiddleware):
     """
 
     def _matches_tool_filter(self, tool_call) -> bool:
-        return tool_call["name"] != REPORT_TOOL_NAME
+        return tool_call["name"] not in {
+            REPORT_TOOL_NAME, "record_investigation_progress",
+            "read_investigation_record", "reuse_investigation_evidence",
+            "compare_investigation_evidence",
+        }
 
 
 _FINAL_MODEL_CALL_NOTICE = (
@@ -100,8 +105,9 @@ def _get_llm():
 class LmaMiddleware(AgentMiddleware):
     state_schema = AgentState
 
-    def __init__(self, model, *, model_run_limit: int):
+    def __init__(self, model, *, model_run_limit: int, investigation_storage=None):
         self.model_run_limit = model_run_limit
+        self.investigation_storage = investigation_storage
         self.max_input_tokens = model_max_input_tokens(model)
         self.model_name = (
             getattr(model, "model_name", None)
@@ -130,7 +136,12 @@ class LmaMiddleware(AgentMiddleware):
         return None
 
     async def awrap_model_call(self, request, handler):
-        request = request.override(messages=model_messages(request.messages))
+        persistent_evidence = None
+        execution = request.runtime.execution_info
+        session_id = execution.thread_id if execution is not None else None
+        if self.investigation_storage is not None and session_id is not None:
+            persistent_evidence = await self.investigation_storage.evidence_identifiers(session_id)
+        request = request.override(messages=model_messages(request.messages, persistent_evidence=persistent_evidence))
         # 模型调用超限会让整轮报错、已取得的证据无法交付；最后一次调用撤掉工具，让模型直接作答。
         completed_model_calls = request.state.get("run_model_call_count", 0)
         if completed_model_calls >= self.model_run_limit - 1:
@@ -176,10 +187,13 @@ class LmaMiddleware(AgentMiddleware):
         }
 
 
-def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None):
+def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None, investigation_storage=None):
     """生产与回归测试共用同一个官方 Agent 工厂。"""
     settings = get_settings()
     bound_tools = tools if agent_tools is None else agent_tools
+    if investigation_storage is not None:
+        from app.agent.investigation_tools import investigation_tools
+        bound_tools = [*bound_tools, *investigation_tools(investigation_storage)]
     for agent_tool in bound_tools:
         agent_tool.handle_validation_error = describe_validation_error
     return create_agent(
@@ -187,7 +201,7 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
-            LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit),
+            LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit, investigation_storage=investigation_storage),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,
             ),

@@ -1,6 +1,7 @@
 /** LMA 工具产物版本化协议信封（Version 1）。 */
 
 export type ToolArtifactKind =
+  | 'numerical'
   | 'investigation_report'
   | 'station_list'
   | 'gnss_series'
@@ -76,6 +77,7 @@ export interface GapArtifact {
 }
 
 export interface GnssArtifactData {
+  station_uuid: string;
   station_name: string;
   begin_time: string;
   end_time: string;
@@ -200,6 +202,7 @@ export interface VisionObservationsArtifact {
 }
 
 export interface VisionArtifactData {
+  station_uuid: string;
   station_name: string;
   begin_time: string;
   end_time: string;
@@ -255,6 +258,7 @@ export interface ReportStationArtifact {
 export type FindingLevel = 'fact' | 'analysis' | 'inference';
 
 export interface ReportFindingArtifact {
+  supports: Array<{ evidence_id: string; station_uuid: string; begin_time?: string; end_time?: string; axis?: string; weather_period?: string; claim: string; rationale: string }>;
   station_names?: string[];
   level: FindingLevel;
   text: string;
@@ -269,7 +273,19 @@ export interface InvestigationReportArtifactData {
   next_steps: string[];
 }
 
+export interface NumericalArtifactData {
+  station_uuid: string;
+  station_name: string;
+  begin_time: string;
+  end_time: string;
+  sampling: 'hourly' | 'daily';
+  features: Record<string, Record<string, unknown>>;
+  comparisons: Record<string, unknown>;
+  points: GnssPointArtifact[];
+}
+
 export interface ArtifactDataByKind {
+  numerical: NumericalArtifactData;
   investigation_report: InvestigationReportArtifactData;
   station_list: StationListArtifactData;
   gnss_series: GnssArtifactData;

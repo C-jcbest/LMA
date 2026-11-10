@@ -101,6 +101,37 @@ class SelfHostedApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.client.get(f"/sessions/{self.session_id}").json()["name"], "API 回归")
 
+    def test_resume_investigation_is_explicit_and_session_scoped(self):
+        investigation_id = str(uuid4())
+
+        async def seed():
+            await self.app.state.storage.save_progress(self.session_id, investigation_id, {
+                'goal': '复核测点', 'targets': [{
+                    'target_id': 'A', 'station_uuid': str(uuid4()), 'question': '复核北向变化',
+                    'begin_time': '2026-11-01T00:00:00', 'end_time': '2026-11-02T00:00:00',
+                    'evidence_ids': [],
+                }],
+                'covered': [], 'unresolved': ['A尚未复核'], 'stage_conclusion': '尚未完成',
+                'status': 'paused', 'end_reason': 'budget',
+            })
+
+        self.client.portal.call(seed)
+        records = self.client.get(f'/sessions/{self.session_id}/investigations').json()
+        self.assertEqual(records[0]['status'], 'paused')
+        self.assertEqual(self.model.inputs, [])
+        other_session = self.client.post('/sessions', json={'name': '其他会话'}).json()['id']
+        try:
+            rejected = self.client.post(f'/sessions/{other_session}/investigations/{investigation_id}/resume')
+            self.assertEqual(rejected.status_code, 404)
+        finally:
+            self.client.delete(f'/sessions/{other_session}')
+        response = self.client.post(f'/sessions/{self.session_id}/investigations/{investigation_id}/resume')
+        self.assertEqual(response.status_code, 200, response.text)
+        question = self.state()['values']['messages'][0]['content']
+        self.assertIn(investigation_id, question)
+        self.assertIn('A尚未复核', question)
+        self.assertEqual(self.state()['latest_run']['status'], 'success')
+
     def test_stream_and_history_keep_reasoning_and_message_context_private(self):
         self.model.script = [AIMessage(
             content=[{"type": "reasoning", "reasoning": "PRIVATE_CHAIN"},

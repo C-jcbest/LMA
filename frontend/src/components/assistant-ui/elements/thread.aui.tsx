@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { useSessionMetadata } from "@/lib/session-metadata";
 import { useNavigation } from "@/app/navigation";
 import { useConversationLoading } from "@/app/providers/AssistantProvider";
+import { InvestigationRecords } from "@/app/providers/InvestigationRecords";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -145,6 +146,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, p
           {!overview && <AuiIf condition={isHistoryLoadingView}>
             <ThreadHistorySkeleton />
           </AuiIf>}
+          {!overview && <InvestigationRecords />}
 
           <div
             data-slot="aui_message-group"

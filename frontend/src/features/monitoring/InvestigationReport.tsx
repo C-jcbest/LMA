@@ -40,6 +40,15 @@ const FindingRow: FC<{
   <li className="wrap-anywhere">
     {finding.level === 'inference' && <span className="me-2 text-xs text-muted-foreground">推断</span>}
     {finding.text}
+    <details className="mt-1 text-sm text-muted-foreground">
+      <summary>判断依据说明</summary>
+      {finding.supports.map((support, index) => (
+        <p key={index}>
+          {support.begin_time && support.end_time ? `${support.begin_time} 至 ${support.end_time}` : '场地背景快照'}
+          {' · '}{support.rationale}
+        </p>
+      ))}
+    </details>
     {finding.evidence.map((toolCallId) => {
       const number = citationNumbers.get(toolCallId);
       const description = describe(toolCallId);

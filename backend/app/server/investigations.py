@@ -38,7 +38,7 @@ def investigation_record(messages: list[BaseMessage]) -> dict | None:
             artifact = message.artifact
             data = artifact.get("data", {})
             name = None
-            if artifact.get("kind") in {"gnss_series", "vision"}:
+            if artifact.get("kind") in {"gnss_series", "vision", "numerical"}:
                 name = data.get("station_name")
             elif artifact.get("kind") == "weather":
                 name = data.get("location", {}).get("station_name")

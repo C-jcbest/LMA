@@ -70,6 +70,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
         id, name: '会话 ' + id, archived: false,
         created_at: '2026-09-18T10:00:00Z', updated_at: '2026-09-18T10:00:00Z',
       })),
+      listInvestigations: vi.fn().mockResolvedValue([]),
       getState: vi.fn().mockResolvedValue({ values: { messages: [] }, latest_run: null }),
       updateSession: vi.fn().mockResolvedValue({}), deleteSession: vi.fn().mockResolvedValue(undefined),
       streamRun: vi.fn().mockImplementation(() => (async function* () {})()),

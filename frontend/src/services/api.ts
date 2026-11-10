@@ -5,6 +5,18 @@ import { BytesLineDecoder, IterableReadableStream, SSEDecoder } from '@langchain
 const STORAGE_KEY_CONFIG = 'lma_api_url';
 const DEFAULT_API_URL = '/api';
 
+export interface InvestigationRecord {
+  id: string;
+  status: string;
+  progress: {
+    goal: string;
+    targets: Array<{ target_id: string; station_uuid: string; question: string; begin_time: string; end_time: string; evidence_ids: string[] }>;
+    covered: string[];
+    unresolved: string[];
+    stage_conclusion: string;
+  };
+}
+
 export interface Session {
   id: string;
   name: string;
@@ -128,6 +140,10 @@ export class LmaClient {
 
   async deleteSession(id: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async listInvestigations(id: string, signal?: AbortSignal): Promise<InvestigationRecord[]> {
+    return (await this.request(`/sessions/${encodeURIComponent(id)}/investigations`, { signal })).json();
   }
 
   async getState(id: string, signal?: AbortSignal): Promise<SessionState> {

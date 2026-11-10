@@ -6,7 +6,7 @@
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from statistics import median
 from typing import Literal, Sequence
 
@@ -44,6 +44,7 @@ _AXIS_NAMES = {"n": "北向", "e": "东向", "u": "垂直"}
 class AxisSeries:
     days: list[float]
     values: list[float]
+    cadence_days: float = 1.0
 
 
 @dataclass
@@ -67,7 +68,7 @@ def _point_time(point: GnssDataPoint) -> datetime:
     return datetime.strptime(point.data_time, TIME_FORMAT)
 
 
-def _axis_series(points: Sequence[GnssDataPoint], axis: str) -> AxisSeries:
+def _axis_series(points: Sequence[GnssDataPoint], axis: str, cadence_days: float = 1.0) -> AxisSeries:
     """相对该方向首个有效值的变化（mm）；缺测点不进入序列。"""
     if not points:
         return AxisSeries([], [])
@@ -82,7 +83,7 @@ def _axis_series(points: Sequence[GnssDataPoint], axis: str) -> AxisSeries:
         first = value if first is None else first
         days.append((_point_time(point) - start).total_seconds() / 86400)
         values.append((value - first) * _MILLIMETERS_PER_METER)
-    return AxisSeries(days, values)
+    return AxisSeries(days, values, cadence_days)
 
 
 def theil_sen_slope(days: Sequence[float], values: Sequence[float]) -> float:
@@ -143,14 +144,25 @@ def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str],
             flags.append(f"{name}近 {ACCELERATION_WINDOW_DAYS} 天变化快于此前")
 
     steps = [series.values[i + 1] - series.values[i] for i in range(len(series.values) - 1)]
-    if steps:
-        step_noise = _robust_sigma(steps)
-        largest_index = max(range(len(steps)), key=lambda index: abs(steps[index]))
+    adjacent = [i for i in range(len(steps))
+                if 0 < series.days[i + 1] - series.days[i] <= series.cadence_days * 1.5]
+    if len(adjacent) != len(steps):
+        notes.append(f"{name}存在缺测跨越，跨越差值不作为单步跳变或保持证据")
+    for index, change in enumerate(steps):
+        if index not in adjacent and abs(change) > _STEP_NOISE_MULTIPLE * noise:
+            flags.append(f"{name}缺测两端相差约 {change:+.1f} mm，变化过程待观察")
+    if adjacent:
+        step_noise = _robust_sigma([steps[i] for i in adjacent])
+        largest_index = max(adjacent, key=lambda index: abs(steps[index]))
         largest = steps[largest_index]
         if abs(largest) > _STEP_NOISE_MULTIPLE * step_noise:
             before = series.values[max(0, largest_index - _STEP_PERSISTENCE_POINTS + 1):largest_index + 1]
             after = series.values[largest_index + 1:largest_index + 1 + _STEP_PERSISTENCE_POINTS]
-            if abs(median(after) - median(before)) > abs(largest) / 2:
+            followup_end = largest_index + len(after)
+            continuous = all(i in adjacent for i in range(largest_index, followup_end))
+            if len(after) < _STEP_PERSISTENCE_POINTS or not continuous:
+                flags.append(f"{name}出现约 {largest:+.1f} mm 的末端跳变，是否保持待观察")
+            elif abs(median(after) - median(before)) > abs(largest) / 2:
                 flags.append(f"{name}出现约 {largest:+.1f} mm 的台阶并保持")
             else:
                 notes.append(f"{name}有一次约 {largest:+.1f} mm 的孤立跳变，随后恢复")
@@ -178,6 +190,18 @@ def _horizontal_trend(north: AxisSeries, east: AxisSeries) -> list[float | None]
     ]
 
 
+def _window_points(points: Sequence[GnssDataPoint], start: datetime, end: datetime) -> tuple[list[GnssDataPoint], int]:
+    """重复时间无法确定哪个观测可信，整个时间戳剔除，不以输入顺序选值。"""
+    by_time: dict[datetime, list[GnssDataPoint]] = {}
+    for point in points:
+        moment = _point_time(point)
+        if start <= moment <= end:
+            by_time.setdefault(moment, []).append(point)
+    duplicates = sum(len(items) - 1 for items in by_time.values())
+    unique = [items[0] for _, items in sorted(by_time.items()) if len(items) == 1]
+    return unique, duplicates
+
+
 def screen_station(
     long_points: Sequence[GnssDataPoint],
     recent_points: Sequence[GnssDataPoint],
@@ -185,22 +209,28 @@ def screen_station(
     now: datetime,
 ) -> ScreeningResult:
     """long_points 为每日固定时刻序列，recent_points 为近期小时序列。"""
+    long_points, long_duplicates = _window_points(long_points, now - timedelta(days=LONG_WINDOW_DAYS), now)
+    recent_points, recent_duplicates = _window_points(recent_points, now - timedelta(days=RECENT_WINDOW_DAYS), now)
     series = {axis: _axis_series(long_points, axis) for axis in _AXIS_NAMES}
     valid_days = min(len(item.values) for item in series.values())
     completeness = round(valid_days / LONG_WINDOW_DAYS, 2)
     metrics: dict = {"valid_days": valid_days, "completeness": completeness}
 
-    if valid_days < _MIN_VALID_DAYS or completeness < _MIN_COMPLETENESS:
-        return ScreeningResult(
-            "数据不足", [f"近 {LONG_WINDOW_DAYS} 天仅有 {valid_days} 天有效数据，无法判断长期趋势"], metrics,
-        )
-
     flags: list[str] = []
     notes: list[str] = []
+    history_insufficient = valid_days < _MIN_VALID_DAYS or completeness < _MIN_COMPLETENESS
+    if history_insufficient:
+        notes.append(f"近 {LONG_WINDOW_DAYS} 天仅有 {valid_days} 天有效数据，无法判断长期趋势")
+    if long_duplicates or recent_duplicates:
+        notes.append(f"重复时间已剔除：长期 {long_duplicates} 条，近期 {recent_duplicates} 条")
     directions: dict[str, int] = {}
     metrics["net_change_mm"] = {}
     metrics["slope_mm_per_day"] = {}
     for axis in _AXIS_NAMES:
+        if len(series[axis].values) < max(_MIN_VALID_DAYS, LONG_WINDOW_DAYS * _MIN_COMPLETENESS):
+            metrics["net_change_mm"][axis] = None
+            metrics["slope_mm_per_day"][axis] = None
+            continue
         axis_flags, axis_notes, direction, slope, _ = _axis_findings(series[axis], axis)
         flags += axis_flags
         notes += axis_notes
@@ -209,21 +239,31 @@ def screen_station(
         metrics["slope_mm_per_day"][axis] = round(slope, 3)
     metrics["cumulative_offset_mm"] = _cumulative_offset(long_points, reference)
 
+    for axis in _AXIS_NAMES:
+        recent_series = _axis_series(recent_points, axis, 1 / 24)
+        if len(recent_series.values) < 2:
+            continue
+        axis_flags, axis_notes, _, _, _ = _axis_findings(recent_series, axis)
+        flags.extend(f"近期小时序列：{reason}" for reason in axis_flags)
+        notes.extend(f"近期小时序列：{reason}" for reason in axis_notes)
+
     expected_hours = RECENT_WINDOW_DAYS * 24
-    recent_completeness = round(min(len(recent_points) / expected_hours, 1.0), 2)
+    recent_completeness = round(min(min(len(_axis_series(recent_points, axis).values) for axis in _AXIS_NAMES) / expected_hours, 1.0), 2)
     metrics["recent_completeness"] = recent_completeness
     latest_time = max((_point_time(point) for point in recent_points), default=None)
     is_stale = latest_time is None or (now - latest_time).total_seconds() > _STALE_AFTER_HOURS * 3600
     data_problems = []
+    if long_duplicates or recent_duplicates:
+        data_problems.append("存在重复时间，需核查数据来源")
     if is_stale:
         data_problems.append(f"最近 {_STALE_AFTER_HOURS} 小时没有数据")
     elif recent_completeness < _MIN_COMPLETENESS:
         data_problems.append(f"近 {RECENT_WINDOW_DAYS} 天数据完整度 {recent_completeness:.0%}")
 
-    trend = _horizontal_trend(series["n"], series["e"])
+    trend = [] if history_insufficient else _horizontal_trend(series["n"], series["e"])
     if flags:
         return ScreeningResult("建议调查", [*flags, *data_problems, *notes], metrics, trend, directions)
-    if data_problems:
+    if data_problems or history_insufficient:
         return ScreeningResult("数据不足", [*data_problems, *notes], metrics, trend, directions)
     return ScreeningResult("未见明显变化", notes, metrics, trend, directions)
 

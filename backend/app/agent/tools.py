@@ -76,13 +76,14 @@ def _axis_summary(values: list[str]) -> dict:
 
 
 def _detect_gaps(points) -> list[dict]:
-    """检测缺失时段：间隔超过中位间隔 3 倍视为缺测，最多报告 20 段。"""
+    """按观测的典型采样间隔识别缺测；缺失时长不包含两端正常采样间隔。"""
     times = []
     for p in points:
         try:
             times.append(datetime.strptime(p.data_time, _TIME_FORMAT))
         except (TypeError, ValueError):
             return []
+    times = sorted(set(times))
     if len(times) < 3:
         return []
     intervals = [
@@ -93,12 +94,12 @@ def _detect_gaps(points) -> list[dict]:
         return []
     gaps = []
     for i, sec in enumerate(intervals):
-        if sec >= median * 3:
+        if sec > median * 1.5:
             gaps.append(
                 {
                     "from": times[i].strftime(_TIME_FORMAT),
                     "to": times[i + 1].strftime(_TIME_FORMAT),
-                    "missing_hours": round(sec / 3600, 1),
+                    "missing_hours": round((sec - median) / 3600, 1),
                 }
             )
     return gaps[:20]
@@ -253,7 +254,7 @@ async def get_daily_gnss_data(
     数据量自动控制：预计超过 1500 条时自动调整采样间隔（固定时刻模式按天抽稀），
     仍超出时等间隔降采样（时间范围仍完整覆盖），调整方式记录在 sampling 字段；
     并附 summary 统计摘要（各方向首末值/变化量/极值及缺失时段）。
-    趋势斜率、最大单步变化等形态特征不在本工具返回，由图表复核工具提供。
+    趋势斜率、最大单步变化等形态特征不在本工具返回，由独立数值复核工具提供；图表工具用于形态候选。
     """
     normalized_sample_times = sample_times
 
@@ -330,8 +331,11 @@ async def get_daily_gnss_data(
         {
             "station_name": station.station_name,
             "begin_time": begin_time,
+            "station_uuid": station.station_uuid,
             "end_time": end_time,
             "timezone": BUSINESS_TIMEZONE,
+            "coordinate_unit": "m",
+            "summary_unit": "m",
             "total_points": total_points,
             "returned_points": len(points_to_return),
             "downsampled": downsampled or day_stride > 1,
