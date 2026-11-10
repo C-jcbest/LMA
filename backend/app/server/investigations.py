@@ -5,7 +5,34 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from app.agent.report import report_in_last_turn
 
 
-def investigation_record(messages: list[BaseMessage]) -> dict | None:
+def station_identities(messages: list[BaseMessage]) -> dict[str, str]:
+    """只从实际成功的证据读取稳定标识，不用当前目录猜测历史名称。"""
+    stations = {}
+    for message in messages:
+        if not isinstance(message, ToolMessage) or message.status == "error" or not isinstance(message.artifact, dict):
+            continue
+        artifact = message.artifact
+        data = artifact.get("data", {})
+        if artifact.get("kind") in {"gnss_series", "vision", "numerical"}:
+            station = data
+        elif artifact.get("kind") == "weather":
+            station = data.get("location", {})
+        elif artifact.get("kind") == "site_environment":
+            station = data.get("center_station", {})
+        else:
+            continue
+        identifier = station.get("station_uuid")
+        name = station.get("station_name")
+        if identifier and name:
+            stations[str(identifier)] = name
+        if artifact.get("kind") == "numerical":
+            for identifier, name in data.get("comparisons", {}).get("station_names", {}).items():
+                if identifier and name:
+                    stations[str(identifier)] = name
+    return stations
+
+
+def investigation_record(messages: list[BaseMessage], focused_station: dict | None = None) -> dict | None:
     question_index = next((
         index for index in range(len(messages) - 1, -1, -1)
         if isinstance(messages[index], HumanMessage)
@@ -15,11 +42,12 @@ def investigation_record(messages: list[BaseMessage]) -> dict | None:
     question = messages[question_index]
     turn = messages[question_index + 1:]
     report = report_in_last_turn(messages)
-    names: set[str] = set()
+    stations = station_identities(turn)
     report_call_id = None
     if report is not None:
         report_call_id, data = report
-        names.update(station["station_name"] for station in data["stations"])
+        report_names = {station["station_name"] for station in data["stations"]}
+        stations = {identifier: name for identifier, name in stations.items() if name in report_names}
         anchor_id = report_call_id
     else:
         answer = next((
@@ -29,28 +57,13 @@ def investigation_record(messages: list[BaseMessage]) -> dict | None:
         if answer is None or not answer.id:
             return None
         anchor_id = answer.id
-        focus = question.additional_kwargs.get("lma_context", {}).get("focus_station")
-        if focus:
-            names.add(focus)
-        for message in turn:
-            if not isinstance(message, ToolMessage) or message.status == "error" or not isinstance(message.artifact, dict):
-                continue
-            artifact = message.artifact
-            data = artifact.get("data", {})
-            name = None
-            if artifact.get("kind") in {"gnss_series", "vision", "numerical"}:
-                name = data.get("station_name")
-            elif artifact.get("kind") == "weather":
-                name = data.get("location", {}).get("station_name")
-            elif artifact.get("kind") == "site_environment":
-                name = data.get("center_station", {}).get("station_name")
-            if name:
-                names.add(name)
-    if not names:
+        if focused_station:
+            stations[focused_station["station_uuid"]] = focused_station["station_name"]
+    if not stations:
         return None
     return {
         "anchor_id": anchor_id,
         "report_tool_call_id": report_call_id,
-        "station_names": sorted(names),
+        "stations": [{"station_uuid": identifier, "station_name": name} for identifier, name in sorted(stations.items())],
         "question": question.text[:300],
     }

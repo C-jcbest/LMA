@@ -22,6 +22,9 @@ def stamp_user_message(message: HumanMessage) -> HumanMessage:
     focus_station = kwargs.pop(FOCUS_STATION_KEY, None)
     if focus_station:
         context["focus_station"] = focus_station
+    resume_id = kwargs.pop("lma_resume_investigation_id", None)
+    if resume_id:
+        context["resume_investigation_id"] = resume_id
     return message.model_copy(update={"additional_kwargs": {**kwargs, "lma_context": context}})
 
 
@@ -39,6 +42,10 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
     lines = [f"sent_at: {context['sent_at']}", f"timezone: {context['timezone']}"]
     if context.get("focus_station"):
         lines.append(f"focus_station: {context['focus_station']}")
+    if context.get("resume_investigation_id"):
+        lines.append(f"resume_investigation_id: {context['resume_investigation_id']}")
+        lines.append("用户明确续查此调查。先读取原调查及证据，核查获取时间与覆盖窗口，"
+                     "只处理剩余问题；已覆盖对象不重复查询，确需刷新时记录理由并保留旧证据。")
     metadata = "<lma_message_context>\n" + "\n".join(lines) + "\n</lma_message_context>"
     content = message.content
     if isinstance(content, str):

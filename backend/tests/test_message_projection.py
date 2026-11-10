@@ -12,6 +12,19 @@ from app.server.messages import project_message, project_state
 
 
 class MessageProjectionTests(unittest.TestCase):
+    def test_resume_context_is_stable_model_only_metadata(self):
+        message = HumanMessage(id='resume', content='继续调查', additional_kwargs={
+            'lma_resume_investigation_id': '44444444-4444-4444-4444-444444444444',
+        })
+        stamped = message_context.stamp_user_message(message)
+        first = message_context.model_messages([stamped])[0]
+        second = message_context.model_messages([stamped])[0]
+        self.assertEqual(first.content, second.content)
+        self.assertIn('44444444-4444-4444-4444-444444444444', first.content)
+        public = project_message(stamped)
+        self.assertEqual(public['content'], '继续调查')
+        self.assertNotIn('44444444', json.dumps(public))
+
     def test_visible_evidence_matches_model_marker_without_mutating_checkpoint(self):
         message = ToolMessage(content="监测结果", tool_call_id="query-1", artifact={"version": 1, "kind": "gnss_series", "data": {}})
         public = project_message(message)

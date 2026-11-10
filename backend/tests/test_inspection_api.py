@@ -30,7 +30,7 @@ DATABASE_URI = os.environ.get("LMA_TEST_DATABASE_URI", "")
 
 def station(name, station_type=3):
     return Station(
-        StationGroupUUID="group", StationGroupName="K3", StationUUID=f"uuid-{name}", StationName=name,
+        StationGroupUUID="group", StationGroupName="K3", StationUUID="11111111-1111-1111-1111-111111111111" if name == "测试点 A" else f"uuid-{name}", StationName=name,
         StationType=station_type, StationN0="100", StationE0="200", StationU0="300",
     )
 
@@ -59,7 +59,7 @@ class FakeBeidou:
         now = business_now().replace(tzinfo=None, microsecond=0)
         count = 90 if sample_times else 168
         step = timedelta(days=1) if sample_times else timedelta(hours=1)
-        rate = 0.0002 if station_uuid == "uuid-测试点 A" and sample_times else 0
+        rate = 0.0002 if station_uuid == "11111111-1111-1111-1111-111111111111" and sample_times else 0
         return [
             GnssDataPoint(
                 DataTime=(now - step * (count - i)).strftime("%Y-%m-%d %H:%M:%S"),
@@ -143,7 +143,7 @@ class InspectionApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("PRIVATE_UPSTREAM", response.text)
 
-    def test_existing_report_records_are_migrated_once(self):
+    def test_legacy_records_without_original_evidence_stay_in_global_records(self):
         session_id = self.client.post("/sessions", json={"name": "历史简报迁移"}).json()["id"]
         self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
         storage = self.client.app.state.storage
@@ -152,21 +152,60 @@ class InspectionApiTests(unittest.TestCase):
         ])
         self.client.portal.call(migrate_database, DATABASE_URI)
         self.client.portal.call(migrate_database, DATABASE_URI)
-        records = self.client.portal.call(storage.station_records, "测试点 A")
+        records = self.client.portal.call(storage.station_records, "11111111-1111-1111-1111-111111111111")
         migrated = [row for row in records if str(row["session_id"]) == session_id]
-        self.assertEqual(len(migrated), 1)
-        self.assertEqual(migrated[0]["anchor_id"], "old-report")
-        self.assertEqual(migrated[0]["reason"], "历史判断")
+        self.assertEqual(migrated, [])
+        self.assertEqual(self.client.get(f"/sessions/{session_id}").status_code, 200)
+        conclusions = self.client.get('/sessions/conclusions').json()
+        self.assertTrue(any(row['session_id'] == session_id for row in conclusions))
+
+    def test_record_links_use_uuid_even_when_names_match(self):
+        storage = self.client.app.state.storage
+        session_id = self.client.post('/sessions', json={'name': '同名测点'}).json()['id']
+        self.addCleanup(lambda: self.client.delete(f'/sessions/{session_id}'))
+        record = {
+            'anchor_id': 'answer', 'report_tool_call_id': None, 'question': '对比测点',
+            'stations': [{'station_uuid': 'uuid-one', 'station_name': '同名'},
+                         {'station_uuid': 'uuid-two', 'station_name': '同名'}],
+        }
+        self.client.portal.call(storage.record_investigation, session_id, record)
+        for identifier in ['uuid-one', 'uuid-two']:
+            records = self.client.portal.call(storage.station_records, identifier)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]['anchor_id'], 'answer')
+        self.assertEqual(self.client.portal.call(storage.station_records, '同名'), [])
+        self.assertEqual(self.client.portal.call(storage.station_records, 'uuid-three'), [])
+
+    def test_legacy_links_are_restored_from_checkpoint_evidence_idempotently(self):
+        session_id = self.client.post('/sessions', json={'name': '证据迁移'}).json()['id']
+        self.addCleanup(lambda: self.client.delete(f'/sessions/{session_id}'))
+        response = self.client.post(f'/sessions/{session_id}/runs', json={
+            'messages': [{'type': 'human', 'id': str(uuid4()), 'content': '调查测点 A'}],
+        })
+        self.assertEqual(response.status_code, 200)
+        storage = self.client.app.state.storage
+
+        async def remove_links():
+            async with storage.pool.connection() as connection:
+                await connection.execute('DELETE FROM lma_station_record_links WHERE session_id = %s', (session_id,))
+
+        self.client.portal.call(remove_links)
+        self.client.portal.call(migrate_database, DATABASE_URI)
+        self.client.portal.call(migrate_database, DATABASE_URI)
+        records = self.client.portal.call(storage.station_records, '11111111-1111-1111-1111-111111111111')
+        own = [record for record in records if str(record['session_id']) == session_id]
+        self.assertEqual(len(own), 1)
+        self.assertEqual(own[0]['anchor_id'], 'report-1')
 
     def test_plain_answer_is_recorded_with_answer_anchor_without_inventing_status(self):
         self.model.script[:] = [AIMessage(id="plain-answer", content="可以继续观察北向的变化。")]
-        session_id = self.client.post("/sessions", json={"name": "自然回答记录"}).json()["id"]
+        session_id = self.client.post("/sessions", json={"name": "自然回答记录", "station_uuid": "11111111-1111-1111-1111-111111111111"}).json()["id"]
         self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
         self.client.post(f"/sessions/{session_id}/runs", json={
             "messages": [{"type": "human", "id": str(uuid4()), "content": "下一步看什么？"}],
             "focus_station": "测试点 A",
         })
-        records = self.client.get("/stations/uuid-测试点 A/timeline").json()["records"]
+        records = self.client.get("/stations/11111111-1111-1111-1111-111111111111/timeline").json()["records"]
         record = next(row for row in records if row["session_id"] == session_id)
         self.assertEqual(record["anchor_id"], "plain-answer")
         self.assertIsNone(record["status"])
@@ -209,7 +248,7 @@ class InspectionApiTests(unittest.TestCase):
         })
         calls_after_run = len(self.model.script)
 
-        timeline = self.client.get("/stations/uuid-测试点 A/timeline", params={"days": 30}).json()
+        timeline = self.client.get("/stations/11111111-1111-1111-1111-111111111111/timeline", params={"days": 30}).json()
         self.assertEqual(timeline["station_name"], "测试点 A")
         self.assertEqual(timeline["group_name"], "K3")
         self.assertEqual(timeline["series"]["sampling"]["mode"], "sample_times")
@@ -222,7 +261,7 @@ class InspectionApiTests(unittest.TestCase):
 
         self.assertIsNone(self.client.get("/stations/uuid-基准站 R/timeline").json()["series"])
         self.assertEqual(self.client.get("/stations/uuid-不存在/timeline").status_code, 404)
-        self.assertEqual(self.client.get("/stations/uuid-测试点 A/timeline", params={"days": 5}).status_code, 422)
+        self.assertEqual(self.client.get("/stations/11111111-1111-1111-1111-111111111111/timeline", params={"days": 5}).status_code, 422)
 
         self.beidou.unavailable = True
         failed = self.client.get("/stations/uuid-测试点 B/timeline")

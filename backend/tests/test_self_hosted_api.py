@@ -128,8 +128,9 @@ class SelfHostedApiTests(unittest.TestCase):
         response = self.client.post(f'/sessions/{self.session_id}/investigations/{investigation_id}/resume')
         self.assertEqual(response.status_code, 200, response.text)
         question = self.state()['values']['messages'][0]['content']
-        self.assertIn(investigation_id, question)
-        self.assertIn('A尚未复核', question)
+        self.assertEqual(question, '继续调查')
+        self.assertNotIn(investigation_id, response.text)
+        self.assertIn(investigation_id, str(self.model.inputs))
         self.assertEqual(self.state()['latest_run']['status'], 'success')
 
     def test_stream_and_history_keep_reasoning_and_message_context_private(self):

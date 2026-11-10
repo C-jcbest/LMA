@@ -1,6 +1,6 @@
 import type { PartState } from '@assistant-ui/react';
 import { describe, expect, it } from 'vitest';
-import { buildSteps, collectStations } from '../src/features/monitoring/investigation';
+import { answerToMarkdown, buildSteps, collectStations } from '../src/features/monitoring/investigation';
 
 const complete = { type: 'complete' } as const;
 
@@ -32,6 +32,23 @@ const gnssEnvelope = (stationName: string, points: unknown[] = [{ time: '2026-11
 });
 
 const stepsOf = (parts: PartState[]) => buildSteps(parts, collectStations(parts));
+
+it('复制与导出的正文引用保留测点、完整窗口和来源，不输出内部锚点', () => {
+  const parts = [
+    toolPart('get_daily_gnss_data', { artifact: {
+      ...gnssEnvelope('测点 A'), evidence_id: 'E123abc',
+      sources: [{ provider: '监测平台', name: 'GNSS观测', observed_at: '2026-11-08' }],
+    } }),
+    { type: 'text', text: '北向持续变化。[2](#evidence-E123abc) 再次引用[2](#evidence-E123abc)' } as PartState,
+  ];
+  const markdown = answerToMarkdown(parts);
+  expect(markdown).toContain('北向持续变化。[1]');
+  expect(markdown).toContain('测点 A；2026-11-01 00:00:00 至 2026-11-08 00:00:00');
+  expect(markdown).toContain('监测平台');
+  expect(markdown).not.toContain('#evidence-');
+  expect(markdown).not.toContain('E123abc');
+  expect(markdown.match(/## 依据/g)).toHaveLength(1);
+});
 
 describe('调查过程由官方 tool part 派生', () => {
   it('同一测点的多次查询归为一个依据入口', () => {

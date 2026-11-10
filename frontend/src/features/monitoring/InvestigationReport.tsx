@@ -12,7 +12,7 @@ import {
   groupReportFindings,
   investigationStatusLabel,
   reportStationDetails,
-  reportToMarkdown,
+  answerToMarkdown,
   STATUS_PRIORITY,
 } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
@@ -40,15 +40,6 @@ const FindingRow: FC<{
   <li className="wrap-anywhere">
     {finding.level === 'inference' && <span className="me-2 text-xs text-muted-foreground">推断</span>}
     {finding.text}
-    <details className="mt-1 text-sm text-muted-foreground">
-      <summary>判断依据说明</summary>
-      {finding.supports.map((support, index) => (
-        <p key={index}>
-          {support.begin_time && support.end_time ? `${support.begin_time} 至 ${support.end_time}` : '场地背景快照'}
-          {' · '}{support.rationale}
-        </p>
-      ))}
-    </details>
     {finding.evidence.map((toolCallId) => {
       const number = citationNumbers.get(toolCallId);
       const description = describe(toolCallId);
@@ -163,12 +154,10 @@ export const InvestigationReport: FC = () => {
 };
 
 /** 官方复制和导出只读取消息正文，简报需要自己生成文本。 */
-export const ReportActions: FC = () => {
+export const AnswerActions: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
   const { isCopied, copyToClipboard } = useCopyToClipboard();
-  const report = findReport(parts);
-  if (!report) return null;
-  const markdown = reportToMarkdown(report, buildSteps(parts, collectStations(parts)));
+  const markdown = answerToMarkdown(parts);
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));

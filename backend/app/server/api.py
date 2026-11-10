@@ -75,6 +75,7 @@ class RunInput(ApiInput):
     checkpoint_id: str | None = Field(default=None, max_length=200)
     # 用户提问时正在查看的测点；只作为模型可见的上下文，不改变消息正文。
     focus_station: str | None = Field(default=None, min_length=1, max_length=100)
+    resume_investigation_id: UUID | None = None
 
 
 class CheckpointInput(ApiInput):
@@ -274,11 +275,10 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             raise HTTPException(404, "调查不存在")
         if record["status"] == "completed":
             raise HTTPException(409, "调查已完成；当前问题应新建调查")
-        progress = record["progress"]
-        text = (f"请续查调查 {investigation_id}。先读取原调查及证据，核查获取时间和窗口对当前目标的适用性。"
-                "仅处理待解决问题；已覆盖对象不重复查询，除非当前问题需要刷新，并明确记录刷新理由。"
-                f"待解决：{json.dumps(progress['unresolved'], ensure_ascii=False)}")
-        return await stream_run(session_id, RunInput(messages=[UserInput(type="human", id=str(uuid4()), content=text)]))
+        return await stream_run(session_id, RunInput(
+            messages=[UserInput(type="human", id=str(uuid4()), content="继续调查")],
+            resume_investigation_id=investigation_id,
+        ))
 
     @app.post("/sessions/{session_id}/checkpoint")
     async def find_checkpoint(session_id: UUID, body: CheckpointInput):
@@ -343,7 +343,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             "station_name": station.station_name,
             "group_name": station.group_name,
             "series": series,
-            "records": await app.state.storage.station_records(station.station_name),
+            "records": await app.state.storage.station_records(station.station_uuid),
         }
 
     @app.post("/title")
@@ -367,7 +367,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
 
     @app.post("/sessions/{session_id}/runs")
     async def stream_run(session_id: UUID, body: RunInput):
-        await require_session(session_id)
+        session = await require_session(session_id)
         require_idle(session_id)
         key = str(session_id)
         control = ActiveRun(id=str(uuid4()))
@@ -379,6 +379,17 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                 raise HTTPException(404, "checkpoint 不存在。")
             latest_run = await app.state.storage.latest_run(key)
             messages = prepare_messages(body, snapshot, latest_run)
+            if body.resume_investigation_id is not None:
+                record = await app.state.storage.investigation(key, str(body.resume_investigation_id))
+                if record is None:
+                    raise HTTPException(404, "调查不存在。")
+                if record["status"] == "completed":
+                    raise HTTPException(409, "该调查已完成。")
+                for message in messages:
+                    if isinstance(message, HumanMessage):
+                        if message.text != "继续调查":
+                            raise HTTPException(422, "续查操作与消息不匹配。")
+                        message.additional_kwargs["lma_resume_investigation_id"] = str(body.resume_investigation_id)
             if any(isinstance(message, ToolCancellation) for message in body.messages):
                 # 并行 ToolNode 被停止时，已完成工具可能仍在 pending writes 中。
                 # 用官方 update_state 提交这些真实结果及用户的取消确认，避免新输入丢弃 pending writes。
@@ -442,7 +453,10 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                             tool_call_id, data = report
                             await app.state.storage.record_conclusions(key, tool_call_id, data["stations"])
                         if status == "success" and final_values:
-                            record = investigation_record(final_values["messages"])
+                            focused_station = None
+                            if session.get("station_uuid") and body.focus_station:
+                                focused_station = {"station_uuid": session["station_uuid"], "station_name": body.focus_station}
+                            record = investigation_record(final_values["messages"], focused_station)
                             if record is not None:
                                 await app.state.storage.record_investigation(key, record)
                         stage_conclusion = ""

@@ -11,13 +11,12 @@ import {
   InvestigationIndicator,
   InvestigationProcess,
 } from "@/features/monitoring/InvestigationProcess";
-import { InvestigationReport, ReportActions } from "@/features/monitoring/InvestigationReport";
+import { InvestigationReport, AnswerActions } from "@/features/monitoring/InvestigationReport";
 import { useStationInspector } from "@/features/monitoring/StationInspectorContext";
-import { findReport } from "@/features/monitoring/investigation";
 import { cn } from "@/lib/utils";
 import { useSessionMetadata } from "@/lib/session-metadata";
 import { useNavigation } from "@/app/navigation";
-import { useConversationLoading } from "@/app/providers/AssistantProvider";
+import { RecoveryNotice, useConversationLoading } from "@/app/providers/AssistantProvider";
 import { InvestigationRecords } from "@/app/providers/InvestigationRecords";
 import {
   ActionBarPrimitive,
@@ -37,7 +36,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   CopyIcon,
-  DownloadIcon,
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
@@ -165,6 +163,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, p
             )}
           >
             {!overview && <ThreadScrollToBottom />}
+            <RecoveryNotice />
             <Composer autoFocus={autoFocus} placeholder={placeholder} />
           </ThreadPrimitive.ViewportFooter>
         </div>
@@ -391,7 +390,6 @@ const AssistantMessage: FC = () => {
 };
 
 const AssistantActionBar: FC = () => {
-  const hasReport = useAuiState((s) => findReport(s.message.parts) !== undefined);
 
   return (
     <ActionBarPrimitive.Root
@@ -399,32 +397,12 @@ const AssistantActionBar: FC = () => {
       autohide="not-last"
       className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in -ms-1 flex gap-1 duration-200"
     >
-      {hasReport ? (
-        <ReportActions />
-      ) : (
-        <ActionBarPrimitive.Copy asChild>
-          <TooltipIconButton tooltip="复制">
-            <AuiIf condition={(s) => s.message.isCopied}>
-              <CheckIcon className="animate-in zoom-in-50 fade-in duration-200 ease-out" />
-            </AuiIf>
-            <AuiIf condition={(s) => !s.message.isCopied}>
-              <CopyIcon className="animate-in zoom-in-75 fade-in duration-150" />
-            </AuiIf>
-          </TooltipIconButton>
-        </ActionBarPrimitive.Copy>
-      )}
+      <AnswerActions />
       <ActionBarPrimitive.Reload asChild>
         <TooltipIconButton tooltip="重新生成">
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
-      {!hasReport && (
-        <ActionBarPrimitive.ExportMarkdown asChild>
-          <TooltipIconButton tooltip="导出为 Markdown">
-            <DownloadIcon />
-          </TooltipIconButton>
-        </ActionBarPrimitive.ExportMarkdown>
-      )}
     </ActionBarPrimitive.Root>
   );
 };

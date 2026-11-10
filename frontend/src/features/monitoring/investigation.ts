@@ -227,6 +227,7 @@ export interface InvestigationStep {
   /** 能归到测点的步骤打开时间轴，其余结果在步骤内展开。 */
   stationName?: string;
   inlineEnvelope?: ToolArtifactEnvelope;
+  envelope?: ToolArtifactEnvelope;
 }
 
 const shortDate = (value: string) => value.slice(5, 10);
@@ -304,6 +305,7 @@ export function buildSteps(
     steps.push({
       toolCallId: part.toolCallId,
       evidenceId: envelope?.evidence_id,
+      envelope,
       state,
       label,
       detail: envelope ? stepDetail(envelope) : undefined,
@@ -381,7 +383,16 @@ export function groupReportFindings(report: InvestigationReportArtifactData, ste
 /** 简报存放在工具结果里，消息没有正文可复制，这里生成可分享的文本。 */
 export function reportToMarkdown(report: InvestigationReportArtifactData, steps: readonly InvestigationStep[] = []): string {
   const { byStation, shared } = groupReportFindings(report, steps);
-  const findingText = (finding: ReportFindingArtifact) => `- ${finding.level === 'inference' ? '推断：' : ''}${finding.text}`;
+  const cited = new Map<string, number>();
+  const findingText = (finding: ReportFindingArtifact) => {
+    const citations = finding.evidence.map((id) => {
+      if (!cited.has(id)) {
+        cited.set(id, cited.size + 1);
+      }
+      return `[${cited.get(id)}]`;
+    }).join(' ');
+    return `- ${finding.level === 'inference' ? '推断：' : ''}${finding.text} ${citations}`.trimEnd();
+  };
   const sections = [
     report.conclusion,
     [...report.stations]
@@ -398,5 +409,85 @@ export function reportToMarkdown(report: InvestigationReportArtifactData, steps:
       ? [`## 建议\n\n${report.next_steps.map((step) => `- ${step}`).join('\n')}`]
       : []),
   ];
+  if (cited.size > 0) {
+    const evidence = [...cited].map(([id, number]) => {
+      const step = steps.find((item) => item.toolCallId === id);
+      const supports = report.findings.flatMap((finding) => finding.supports)
+        .filter((support) => support.evidence_id === step?.evidenceId);
+      const reasons = [...new Set(supports.map((support) => support.rationale))].filter(Boolean);
+      return `[${number}] ${evidenceDescription(step)}${reasons.length ? `；${reasons.join('；')}` : ''}`;
+    });
+    sections.push(`## 依据\n\n${evidence.join('\n\n')}`);
+  }
   return sections.join('\n\n');
+}
+
+/** 导出提供可读的来源与观测范围，不保留只能在当前页面打开的内部锚点。 */
+export function evidenceDescription(step: InvestigationStep | undefined): string {
+  const envelope = step?.envelope;
+  if (!envelope || step?.state !== 'complete') {
+    return '原始依据未随本次结果提供';
+  }
+  const details: string[] = [];
+  switch (envelope.kind) {
+    case 'numerical':
+    case 'gnss_series':
+    case 'vision':
+      details.push(envelope.data.station_name, `${envelope.data.begin_time} 至 ${envelope.data.end_time}`);
+      if (envelope.kind === 'numerical') {
+        details.push(envelope.data.sampling === 'daily' ? '每日15:00采样' : '小时采样');
+      }
+      break;
+    case 'weather':
+      details.push(envelope.data.location.station_name ?? '天气资料');
+      details.push(`历史天气：${envelope.data.query.history_start_date} 至 ${envelope.data.query.history_end_date}`);
+      if (envelope.data.current?.time) {
+        details.push(`当前观测：${envelope.data.current.time}`);
+      }
+      if (envelope.data.forecast) {
+        details.push(`含未来 ${envelope.data.query.forecast_days} 天预报，非历史实测`);
+      }
+      break;
+    case 'site_environment':
+      details.push(envelope.data.center_station.station_name, `场地快照：${envelope.data.observed_at}`);
+      break;
+    default:
+      details.push(step.detail ?? step.label);
+  }
+  for (const source of envelope.sources ?? []) {
+    const description = [source.name, source.provider, source.observed_at].filter(Boolean).join(' · ');
+    if (description) {
+      details.push(description);
+    }
+    if (source.url && /^https?:\/\//.test(source.url)) {
+      details.push(source.url);
+    }
+  }
+  details.push(...(envelope.limitations ?? []));
+  return [...new Set(details)].join('；');
+}
+
+export function answerToMarkdown(parts: readonly PartState[]): string {
+  const steps = buildSteps(parts, collectStations(parts));
+  const report = findReport(parts);
+  if (report) {
+    return reportToMarkdown(report, steps);
+  }
+  const cited = new Map<string, number>();
+  const text = parts.filter((part) => part.type === 'text').map((part) => part.text).join('\n\n');
+  const body = text.replace(/\[([^\]]+)\]\(#evidence-([A-Za-z0-9]+)\)/g, (_match, label: string, id: string) => {
+    const step = steps.find((item) => item.evidenceId === id && item.state === 'complete');
+    if (!step) {
+      return `${label}（原始依据未随本次结果提供）`;
+    }
+    if (!cited.has(id)) {
+      cited.set(id, cited.size + 1);
+    }
+    return `[${cited.get(id)}]`;
+  });
+  if (!cited.size) {
+    return body;
+  }
+  const evidence = [...cited].map(([id, number]) => `[${number}] ${evidenceDescription(steps.find((step) => step.evidenceId === id))}`);
+  return `${body}\n\n## 依据\n\n${evidence.join('\n\n')}`;
 }

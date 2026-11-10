@@ -11,6 +11,8 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import get_settings
 from app.server.investigation_models import InvestigationProgress
+from app.server.investigations import station_identities
+from langchain_core.messages import HumanMessage, ToolMessage
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lma_sessions (
@@ -89,6 +91,16 @@ CREATE INDEX IF NOT EXISTS lma_station_investigations_recent ON lma_station_inve
 INSERT INTO lma_station_investigations (session_id, anchor_id, station_name, report_tool_call_id, question, created_at)
 SELECT session_id, tool_call_id, station_name, tool_call_id, reason, created_at FROM lma_station_conclusions
 ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS lma_station_record_links (
+    session_id uuid NOT NULL,
+    anchor_id text NOT NULL,
+    station_name text NOT NULL,
+    station_uuid text NOT NULL,
+    PRIMARY KEY (session_id, anchor_id, station_uuid),
+    FOREIGN KEY (session_id, anchor_id, station_name)
+        REFERENCES lma_station_investigations(session_id, anchor_id, station_name) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS lma_station_record_links_station ON lma_station_record_links(station_uuid);
 """
 
 
@@ -108,6 +120,46 @@ async def migrate_database(uri: str) -> None:
         await AsyncPostgresSaver(pool).setup()
         async with pool.connection() as connection:
             await connection.execute(SCHEMA, prepare=False)
+        await migrate_station_links(pool)
+
+
+async def migrate_station_links(pool: AsyncConnectionPool) -> None:
+    """仅恢复原回答所在轮的证据归属；无证据、同名歧义或已压缩的旧记录不推测。"""
+    saver = AsyncPostgresSaver(pool)
+    async with pool.connection() as connection:
+        cursor = await connection.execute(
+            """SELECT record.* FROM lma_station_investigations record
+               WHERE NOT EXISTS (SELECT 1 FROM lma_station_record_links link
+                   WHERE link.session_id = record.session_id AND link.anchor_id = record.anchor_id
+                     AND link.station_name = record.station_name)
+               ORDER BY record.session_id""",
+        )
+        records = await cursor.fetchall()
+    session_id = None
+    messages = []
+    for record in records:
+        if record["session_id"] != session_id:
+            session_id = record["session_id"]
+            checkpoint = await saver.aget_tuple({"configurable": {"thread_id": str(session_id)}})
+            messages = checkpoint.checkpoint.get("channel_values", {}).get("messages", []) if checkpoint else []
+        anchor = next((index for index, message in enumerate(messages)
+                       if message.id == record["anchor_id"] or
+                       isinstance(message, ToolMessage) and message.tool_call_id == record["anchor_id"]), None)
+        if anchor is None:
+            continue
+        start = next((index for index in range(anchor, -1, -1) if isinstance(messages[index], HumanMessage)), None)
+        if start is None:
+            continue
+        identities = station_identities(messages[start:anchor + 1])
+        candidates = [identifier for identifier, name in identities.items() if name == record["station_name"]]
+        if len(candidates) != 1:
+            continue
+        async with pool.connection() as connection:
+            await connection.execute(
+                """INSERT INTO lma_station_record_links (session_id, anchor_id, station_name, station_uuid)
+                   VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                (session_id, record["anchor_id"], record["station_name"], candidates[0]),
+            )
 
 
 class SessionStorage:
@@ -314,19 +366,20 @@ class SessionStorage:
             )
             return await cursor.fetchall()
 
-    async def station_records(self, station_name: str, limit: int = 20) -> Sequence[dict]:
+    async def station_records(self, station_uuid: str, limit: int = 20) -> Sequence[dict]:
         """一个测点历次完成的调查；自然回答没有结构化状态。"""
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
                 """SELECT investigation.session_id, investigation.anchor_id, session.name AS session_name,
                           conclusion.status, COALESCE(conclusion.reason, investigation.question) AS reason, investigation.created_at
                    FROM lma_station_investigations investigation
+                   JOIN lma_station_record_links link USING (session_id, anchor_id, station_name)
                    JOIN lma_sessions session ON session.id = investigation.session_id
                    LEFT JOIN lma_station_conclusions conclusion ON conclusion.session_id = investigation.session_id
                      AND conclusion.tool_call_id = investigation.report_tool_call_id AND conclusion.station_name = investigation.station_name
-                   WHERE investigation.station_name = %s
+                   WHERE link.station_uuid = %s
                    ORDER BY investigation.created_at DESC LIMIT %s""",
-                (station_name, limit),
+                (station_uuid, limit),
             )
             return await cursor.fetchall()
 
@@ -336,7 +389,12 @@ class SessionStorage:
                 await cursor.executemany(
                     """INSERT INTO lma_station_investigations (session_id, anchor_id, station_name, report_tool_call_id, question)
                        VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
-                    [(session_id, record["anchor_id"], name, record["report_tool_call_id"], record["question"]) for name in record["station_names"]],
+                    [(session_id, record["anchor_id"], station["station_name"], record["report_tool_call_id"], record["question"]) for station in record["stations"]],
+                )
+                await cursor.executemany(
+                    """INSERT INTO lma_station_record_links (session_id, anchor_id, station_name, station_uuid)
+                       VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+                    [(session_id, record["anchor_id"], station["station_name"], station["station_uuid"]) for station in record["stations"]],
                 )
 
     async def start_inspection(self, inspection_id: str) -> None:
@@ -415,13 +473,16 @@ class SessionStorage:
                 )
                 previous = {row["station_uuid"]: row["screening"] for row in await cursor.fetchall()}
             cursor = await connection.execute(
-                """SELECT DISTINCT ON (station_name) station_name, status, reason, session_id, created_at
-                   FROM lma_station_conclusions
-                   WHERE station_name = ANY(%s)
-                   ORDER BY station_name, created_at DESC""",
-                ([row["station_name"] for row in stations],),
+                """SELECT DISTINCT ON (link.station_uuid) link.station_uuid, conclusion.station_name,
+                          conclusion.status, conclusion.reason, conclusion.session_id, conclusion.created_at
+                   FROM lma_station_conclusions conclusion
+                   JOIN lma_station_record_links link ON link.session_id = conclusion.session_id
+                     AND link.anchor_id = conclusion.tool_call_id AND link.station_name = conclusion.station_name
+                   WHERE link.station_uuid = ANY(%s)
+                   ORDER BY link.station_uuid, conclusion.created_at DESC""",
+                ([row["station_uuid"] for row in stations],),
             )
-            conclusions = {row["station_name"]: row for row in await cursor.fetchall()}
+            conclusions = {row["station_uuid"]: row for row in await cursor.fetchall()}
 
         return {
             "running": running,
@@ -431,7 +492,7 @@ class SessionStorage:
                 {
                     **row,
                     "previous_screening": previous.get(row["station_uuid"]),
-                    "last_conclusion": conclusions.get(row["station_name"]),
+                    "last_conclusion": conclusions.get(row["station_uuid"]),
                 }
                 for row in stations
             ],
