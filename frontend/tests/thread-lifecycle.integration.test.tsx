@@ -165,8 +165,9 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     })());
     render(<App />);
     await waitFor(() => expect(screen.getByRole('textbox', { name: '输入监测问题' })).toBeEnabled());
-    await userEvent.type(screen.getByRole('textbox', { name: '输入监测问题' }), '查看近期变化');
-    await userEvent.click(screen.getByRole('button', { name: '发送消息' }));
+    // 本例验证连续到达的回答与错误；发送后直接观察UI，不让交互等待包住流式更新。
+    fireEvent.change(screen.getByRole('textbox', { name: '输入监测问题' }), { target: { value: '查看近期变化' } });
+    fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
     expect(await screen.findByText('本次回答未完成，请重试。')).toBeInTheDocument();
     expect(screen.queryByText('本次回答未完成。')).not.toBeInTheDocument();
     expect(screen.queryByText('PRIVATE_RUNTIME_DIAGNOSTIC')).not.toBeInTheDocument();
