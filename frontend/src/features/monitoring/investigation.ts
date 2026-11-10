@@ -25,6 +25,13 @@ const STATION_LIST_EMPTY = '未查询到符合条件的监测点。';
 export const REPORT_TOOL_NAME = 'submit_investigation_report';
 
 const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
+  reuse_investigation_evidence: {
+    running: '正在读取原调查依据…',
+    complete: '已读取原调查依据',
+    failed: '原调查依据未能读取',
+    cancelled: '已取消读取原调查依据',
+    emptyNotice: '原调查没有可展示的依据。',
+  },
   compare_investigation_evidence: {
     kind: 'numerical', running: '正在比较已有证据…', complete: '已比较原证据的共同有效时段',
     failed: '原证据比较失败', cancelled: '已取消原证据比较', emptyNotice: '原证据没有共同有效观测。',
@@ -128,11 +135,24 @@ const isToolCall = <T extends { type: string }>(part: T): part is T & ToolCallLi
   part.type === 'tool-call';
 
 const decodeToolPart = (part: ToolCallLike): ToolArtifactEnvelope | undefined => {
+  if (part.toolName === 'reuse_investigation_evidence'
+      && typeof part.artifact === 'object' && part.artifact !== null
+      && 'kind' in part.artifact && typeof part.artifact.kind === 'string') {
+    // 复用保留原快照类型；仍通过统一校验，不把任意对象直接当作展示数据。
+    return decodeToolArtifact(part.artifact.kind as ToolArtifactKind, part.artifact);
+  }
+  if (typeof part.artifact === 'object' && part.artifact !== null && 'kind' in part.artifact
+      && part.artifact.kind === 'acquisition_failure') {
+    return decodeToolArtifact('acquisition_failure', part.artifact);
+  }
   const kind = presentationOf(part.toolName).kind;
   return kind ? decodeToolArtifact(kind, part.artifact) : undefined;
 };
 
 const hasChartableData = (envelope: ToolArtifactEnvelope) => {
+  if (envelope.kind === 'acquisition_failure') {
+    return false;
+  }
   if (envelope.kind === 'gnss_series') {
     return envelope.data.points.length > 0;
   }
@@ -144,6 +164,7 @@ const hasChartableData = (envelope: ToolArtifactEnvelope) => {
 
 const stationNameOf = (envelope: ToolArtifactEnvelope): string | null => {
   switch (envelope.kind) {
+    case 'acquisition_failure':
     case 'numerical':
     case 'gnss_series':
     case 'vision':
@@ -160,6 +181,7 @@ const stationNameOf = (envelope: ToolArtifactEnvelope): string | null => {
 
 const stationUuidOf = (envelope: ToolArtifactEnvelope): string | null => {
   switch (envelope.kind) {
+    case 'acquisition_failure':
     case 'numerical':
     case 'gnss_series':
     case 'vision':
@@ -257,6 +279,8 @@ export const formatDateRange = (begin: string, end: string) =>
 
 const stepDetail = (envelope: ToolArtifactEnvelope): string | undefined => {
   switch (envelope.kind) {
+    case 'acquisition_failure':
+      return envelope.data.station_name;
     case 'numerical':
     case 'gnss_series':
     case 'vision':
@@ -334,7 +358,8 @@ export function buildSteps(
       notice: isEmpty ? presentation.emptyNotice || undefined : undefined,
       stationName,
       stationId,
-      inlineEnvelope: envelope && !stationName && !isEmpty ? envelope : undefined,
+      inlineEnvelope: envelope && !stationName && !isEmpty
+        && (envelope.kind === 'station_list' || envelope.kind === 'weather') ? envelope : undefined,
     });
   }
   return steps.reverse();
@@ -375,7 +400,7 @@ export const reportStationDetails = (station: ReportStationArtifact): string[] =
 };
 
 /** 页面与导出共用测点归属；跨测点的发现保留为综合判断。 */
-export function groupReportFindings(report: InvestigationReportArtifactData, _steps: readonly InvestigationStep[] = []) {
+export function groupReportFindings(report: InvestigationReportArtifactData) {
   const byStation = new Map<string, ReportFindingArtifact[]>(report.stations.map((station) => [station.station_uuid, []]));
   const shared: ReportFindingArtifact[] = [];
   for (const finding of report.findings) {
@@ -393,7 +418,7 @@ export function groupReportFindings(report: InvestigationReportArtifactData, _st
 
 /** 简报存放在工具结果里，消息没有正文可复制，这里生成可分享的文本。 */
 export function reportToMarkdown(report: InvestigationReportArtifactData, steps: readonly InvestigationStep[] = []): string {
-  const { byStation, shared } = groupReportFindings(report, steps);
+  const { byStation, shared } = groupReportFindings(report);
   const cited = new Map<string, number>();
   const findingText = (finding: ReportFindingArtifact) => {
     const citations = finding.evidence.map((id) => {
@@ -425,7 +450,10 @@ export function reportToMarkdown(report: InvestigationReportArtifactData, steps:
       const step = steps.find((item) => item.toolCallId === id);
       const supports = report.findings.flatMap((finding) => finding.supports)
         .filter((support) => support.evidence_id === step?.evidenceId);
-      const reasons = [...new Set(supports.map((support) => support.rationale))].filter(Boolean);
+      const reasons = [...new Set(supports.map((support) => {
+        const fact = support.fact ? formatSupportFact(support.fact) : '';
+        return [support.rationale, fact].filter(Boolean).join('；');
+      }))].filter(Boolean);
       return `[${number}] ${evidenceDescription(step)}${reasons.length ? `；${reasons.join('；')}` : ''}`;
     });
     sections.push(`## 依据\n\n${evidence.join('\n\n')}`);
@@ -436,21 +464,49 @@ export function reportToMarkdown(report: InvestigationReportArtifactData, steps:
 
 export function formatSupportFact(fact: Record<string, unknown>): string {
   const text = [];
-  if (typeof fact.count === 'number') text.push('有效点 ' + fact.count);
-  if (typeof fact.net_change_mm === 'number') text.push('净变化 ' + fact.net_change_mm.toLocaleString('zh-CN', { maximumSignificantDigits: 5 }) + ' mm');
-  if (typeof fact.robust_slope_mm_day === 'number') text.push('描述斜率 ' + fact.robust_slope_mm_day.toLocaleString('zh-CN', { maximumSignificantDigits: 5 }) + ' mm/day');
-  if (typeof fact.limitation === 'string') text.push(fact.limitation);
+  const sample = fact.sample_set;
+  if (typeof sample === 'object' && sample !== null && 'scope' in sample) {
+    const scopeLabels: Record<string, string> = { window: '单站全窗', common_period: '共同有效样本', first_window: '前窗', second_window: '后窗' };
+    text.push(scopeLabels[String(sample.scope)] ?? String(sample.scope));
+  }
+  if (typeof fact.count === 'number') {
+    text.push('有效点 ' + fact.count);
+  }
+  if (typeof fact.net_change_mm === 'number') {
+    text.push('净变化 ' + fact.net_change_mm.toLocaleString('zh-CN', { maximumSignificantDigits: 5 }) + ' mm');
+  }
+  if (typeof fact.robust_slope_mm_day === 'number') {
+    text.push('描述斜率 ' + fact.robust_slope_mm_day.toLocaleString('zh-CN', { maximumSignificantDigits: 5 }) + ' mm/day');
+  }
+  if (typeof fact.limitation === 'string') {
+    text.push(fact.limitation);
+  }
   return text.join('；');
 }
+
+const hasRetainedEvidence = (step: InvestigationStep | undefined) =>
+  Boolean(step?.envelope && (step.state === 'complete' || step.state === 'failed'));
 
 /** 导出提供可读的来源与观测范围，不保留只能在当前页面打开的内部锚点。 */
 export function evidenceDescription(step: InvestigationStep | undefined): string {
   const envelope = step?.envelope;
-  if (!envelope || step?.state !== 'complete') {
+  if (!envelope || !hasRetainedEvidence(step)) {
     return '原始依据未随本次结果提供';
   }
   const details: string[] = [];
+  if (envelope.observedAt) {
+    details.push(`依据获取时间：${envelope.observedAt}`);
+  }
+  if (envelope.error) {
+    details.push(`查询未完成：${envelope.error.message}`);
+  }
   switch (envelope.kind) {
+    case 'acquisition_failure':
+      details.push(envelope.data.station_name, envelope.data.message);
+      if (envelope.data.begin_time && envelope.data.end_time) {
+        details.push(`${envelope.data.begin_time} 至 ${envelope.data.end_time}`);
+      }
+      break;
     case 'numerical':
     case 'gnss_series':
     case 'vision':
@@ -473,7 +529,7 @@ export function evidenceDescription(step: InvestigationStep | undefined): string
       details.push(envelope.data.center_station.station_name, `场地快照：${envelope.data.observed_at}`);
       break;
     default:
-      details.push(step.detail ?? step.label);
+      details.push(step?.detail ?? step?.label ?? '已保存的查询结果');
   }
   for (const source of envelope.sources ?? []) {
     const description = [source.name, source.provider, source.observed_at].filter(Boolean).join(' · ');
@@ -491,13 +547,25 @@ export function evidenceDescription(step: InvestigationStep | undefined): string
 export function answerToMarkdown(parts: readonly PartState[]): string {
   const steps = buildSteps(parts, collectStations(parts));
   const report = findReport(parts);
+  let textParts = parts;
   if (report) {
-    return reportToMarkdown(report, steps);
+    let reportIndex = -1;
+    for (let index = parts.length - 1; index >= 0; index -= 1) {
+      const part = parts[index];
+      if (part?.type === 'tool-call' && part.toolName === REPORT_TOOL_NAME) {
+        const envelope = decodeToolArtifact('investigation_report', part.artifact);
+        if (envelope?.kind === 'investigation_report' && envelope.status !== 'error') {
+          reportIndex = index;
+          break;
+        }
+      }
+    }
+    textParts = parts.slice(reportIndex + 1);
   }
   const cited = new Map<string, number>();
-  const text = parts.filter((part) => part.type === 'text').map((part) => part.text).join('\n\n');
+  const text = textParts.filter((part) => part.type === 'text').map((part) => part.text).join('\n\n');
   const body = text.replace(/\[([^\]]+)\]\(#evidence-([A-Za-z0-9]+)\)/g, (_match, label: string, id: string) => {
-    const step = steps.find((item) => item.evidenceId === id && item.state === 'complete');
+    const step = steps.find((item) => item.evidenceId === id && hasRetainedEvidence(item));
     if (!step) {
       return `${label}（原始依据未随本次结果提供）`;
     }
@@ -506,9 +574,14 @@ export function answerToMarkdown(parts: readonly PartState[]): string {
     }
     return `[${cited.get(id)}]`;
   });
-  if (!cited.size) {
-    return body;
+  let markdown = body;
+  if (cited.size > 0) {
+    const evidence = [...cited].map(([id, number]) => `[${number}] ${evidenceDescription(steps.find((step) => step.evidenceId === id))}`);
+    markdown += `\n\n## 依据\n\n${evidence.join('\n\n')}`;
   }
-  const evidence = [...cited].map(([id, number]) => `[${number}] ${evidenceDescription(steps.find((step) => step.evidenceId === id))}`);
-  return `${body}\n\n## 依据\n\n${evidence.join('\n\n')}`;
+  if (report) {
+    const reportMarkdown = reportToMarkdown(report, steps);
+    return markdown.trim() ? `${reportMarkdown}\n\n## 后续说明\n\n${markdown}` : reportMarkdown;
+  }
+  return markdown;
 }

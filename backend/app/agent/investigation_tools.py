@@ -126,6 +126,20 @@ def investigation_tools(storage):
         return json.dumps(record, ensure_ascii=False, default=str)
 
     @tool
+    async def withdraw_investigation_target(investigation_id: UUID, target_id: str, reason: str,
+                                            source: Literal['user_request', 'analysis'], revision: int, runtime: ToolRuntime) -> str:
+        """明确撤回一个目标，保留原问题、结果和范围变更原因；不得用撤回来伪装问题已回答。"""
+        if not reason.strip():
+            raise ToolFailure("撤回目标须说明原因")
+        user = next(message for message in reversed(runtime.state['messages']) if message.type == 'human')
+        try:
+            record = await storage.withdraw_target(runtime.config['configurable']['thread_id'], str(investigation_id), target_id,
+                                                   reason=reason, source=source, message_id=user.id, expected_revision=revision)
+        except ValueError as exc:
+            raise ToolFailure(str(exc)) from exc
+        return json.dumps(record, ensure_ascii=False, default=str)
+
+    @tool
     async def finish_investigation(investigation_id: UUID, conclusion: str, revision: int, runtime: ToolRuntime) -> str:
         """结束目标已逐项处理的调查；允许如实交付不足或阻塞，执行结束不代表测点稳定。"""
         try:
@@ -168,4 +182,4 @@ def investigation_tools(storage):
             'snapshot': facts,
         }, ensure_ascii=False), snapshot
 
-    return [start_investigation, record_target_result, add_investigation_targets, finish_investigation, read_investigation_record, reuse_investigation_evidence, compare_investigation_evidence]
+    return [start_investigation, record_target_result, add_investigation_targets, withdraw_investigation_target, finish_investigation, read_investigation_record, reuse_investigation_evidence, compare_investigation_evidence]

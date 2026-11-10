@@ -203,6 +203,12 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
         </CollapsibleContent>
       </Collapsible>
 
+      {steps.filter((step) => step.state === 'failed' && step.envelope?.error).map((step) => (
+        <p key={step.toolCallId} className="text-sm leading-relaxed text-muted-foreground wrap-anywhere">
+          {step.detail && <span>{step.detail}： </span>}{step.envelope!.error!.message}
+        </p>
+      ))}
+
       {/* 有简报时由简报的测点行作为入口，避免同一入口出现两次。 */}
       {!isRunning && !hasReport && stations.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">

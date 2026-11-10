@@ -4,9 +4,10 @@ from uuid import UUID
 
 import anyio
 from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.business_time import business_now
+from app.agent.artifacts import validate_artifact_envelope
 
 
 def _origin(messages, tool_call_id):
@@ -37,17 +38,22 @@ async def _commit_completed(storage, session_id, origin, message):
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
-        await asyncio.shield(task)
+        with anyio.CancelScope(shield=True):
+            await asyncio.shield(task)
         raise
 
 
 def _failure_artifact(request, result):
     args = request.tool_call['args']
     requested = args.get('station_name_or_uuid')
-    if not requested or not args.get('begin_time') or not args.get('end_time'):
+    if not requested:
         return None
     known = {}
     for message in request.state.get('messages', []):
+        if isinstance(message, HumanMessage):
+            focus = message.additional_kwargs.get('lma_context', {}).get('focus_identity')
+            if focus:
+                known[focus['station_uuid']] = focus['station_name']
         if not isinstance(message, ToolMessage) or not isinstance(message.artifact, dict):
             continue
         data = message.artifact.get('data', {})
@@ -62,14 +68,15 @@ def _failure_artifact(request, result):
         candidates = [identifier for identifier, name in known.items() if name == requested]
         if len(candidates) == 1:
             identifier = candidates[0]
-    return {
+    return validate_artifact_envelope({
         'version': 1, 'kind': 'acquisition_failure', 'status': 'error',
         'data': {'station_uuid': identifier, 'station_name': known.get(identifier, requested),
-                 'begin_time': args['begin_time'], 'end_time': args['end_time'],
+                 'begin_time': args.get('begin_time') or args.get('start_date'),
+                 'end_time': args.get('end_time') or args.get('end_date'),
                  'message': result.text, 'requested_station': requested},
         'error': {'code': 'unavailable', 'category': 'business', 'message': result.text, 'retryable': False},
         'observedAt': business_now().isoformat(),
-    }
+    })
 
 
 class EvidenceMiddleware(AgentMiddleware):

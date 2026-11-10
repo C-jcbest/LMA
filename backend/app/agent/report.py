@@ -20,7 +20,7 @@ class EvidenceSupport(BaseModel):
     station_uuid: UUID
     begin_time: datetime | None = None
     end_time: datetime | None = None
-    axis: Literal["n", "e", "u", "h", "d"] | None = Field(default=None, description="数值变化、趋势或跳变必须指定n/e/u；数据质量无需指定")
+    axis: Literal["n", "e", "u", "h", "d"] | None = Field(default=None, description="数值变化、趋势或跳变指定方向n/e/u或合成量h/d；数据质量无需指定")
     scope: Literal["window", "common_period", "first_window", "second_window"] = "window"
     weather_period: Literal["history", "forecast", "current"] | None = None
     weather_variable: str | None = Field(default=None, max_length=80, description="气象判断实际引用的字段，如precipitation_sum或wind_speed_10m")
@@ -64,6 +64,8 @@ def _business_time(value: datetime | str) -> datetime:
 def _validate_support(support: EvidenceSupport, artifact: dict) -> str:
     """校验对象、证据种类及实际覆盖；不尝试用关键词替代专业语义判断。"""
     data = artifact["data"]
+    if support.claim == "data_quality" and support.scope != "window":
+        raise ToolFailure("数据质量引用本测点完整查询窗口，不能套用共同样本或分窗范围")
     if artifact.get("status") == "error" and support.claim not in {"data_quality", "unavailable"}:
         raise ToolFailure("失败证据只能说明缺失或限制，不能支持成功数值判断")
     if support.claim == "unavailable":
@@ -135,8 +137,8 @@ def _validate_support(support: EvidenceSupport, artifact: dict) -> str:
                 day += timedelta(days=1)
         return identity["station_name"]
     if support.claim == "data_quality":
-        if start < _business_time(data["begin_time"]) or end > _business_time(data["end_time"]):
-            raise ToolFailure("数据质量判断时间窗超出查询范围")
+        if start != _business_time(data["begin_time"]) or end != _business_time(data["end_time"]):
+            raise ToolFailure("数据质量统计适用于完整查询窗口；不能给子窗口套用全窗数量，请按所需窗口重新查询")
         return identity["station_name"]
     if support.axis is None:
         raise ToolFailure("数值支持关系必须指定方向")
@@ -171,7 +173,7 @@ class ReportFinding(BaseModel):
             "可以自然表达推测，不要求固定措辞或重复免责声明"
         )
     )
-    text: str = Field(min_length=1, max_length=300)
+    text: str = Field(default="", max_length=300, description="分析或推断的解释；fact观测事实正文由服务端从supports生成，无需重填数值")
     station_uuids: list[UUID] = Field(default_factory=list, description="这条发现实际分析的测点UUID；每个对象均须有自身支持，背景对象不要列入")
 
 
@@ -202,22 +204,83 @@ def _support_feature(support: EvidenceSupport, artifact: dict):
     return data.get("features", {}).get(support.axis, {})
 
 
+def _covers_target_window(feature, start, end):
+    if not feature.get('trend_supported'):
+        return False
+    span = (_business_time(feature['end_time']) - _business_time(feature['begin_time'])).total_seconds()
+    target_span = (end - start).total_seconds()
+    expected = target_span / (feature.get('cadence_hours', 1) * 3600) + 1
+    return span >= target_span / 2 and feature['count'] / expected >= .5
+
+
 def project_support(support: EvidenceSupport, artifact: dict):
     """数值由实际计算结果投影；模型只负责引用及解释。"""
     projected = support.model_dump(mode="json")
+    data = artifact["data"]
     feature = _support_feature(support, artifact)
-    if feature:
+    if support.claim == "data_quality":
+        projected["fact"] = data.get("quality", {})
+    elif support.claim == "unavailable":
+        projected["fact"] = {"limitation": data["message"]}
+    elif support.claim == "weather":
+        period = data.get(support.weather_period) or {}
+        projected["fact"] = {
+            "period": support.weather_period, "variable": support.weather_variable,
+            "values": period.get("daily", period),
+        }
+    elif support.claim == "site":
+        projected["fact"] = {"observed_at": data["observed_at"], "scope": "获取时场地背景快照"}
+    elif feature:
         projected["fact"] = {key: feature.get(key) for key in (
             "count", "net_change_mm", "robust_slope_mm_day", "max_step_mm", "max_step_time",
             "cum_start_mm", "cum_end_mm", "baseline", "begin_time", "end_time", "cadence_hours",
             "effective_span_hours", "trend_supported", "units",
+            "metric_name",
+            "events", "event_count",
         )}
         projected["fact"]["sample_set"] = {key: value for key, value in feature.get("sample_set", {}).items() if key != "timestamps"}
-    elif support.claim == "data_quality":
-        projected["fact"] = artifact["data"].get("quality", {})
-    elif support.claim == "unavailable":
-        projected["fact"] = {"limitation": artifact["data"]["message"]}
     return projected
+
+
+def fact_text(supports, evidence_by_id):
+    """观测事实不再由模型复述数字；页面、导出和存证使用同一投影。"""
+    statements = []
+    scopes = {"window": "单站窗口", "common_period": "共同有效样本",
+              "first_window": "前窗", "second_window": "后窗"}
+    axes = {"n": "北向", "e": "东向", "u": "垂向", "h": "水平合成量H", "d": "三维合成量D"}
+    for support in supports:
+        artifact = evidence_by_id[support.evidence_id]
+        name = _validate_support(support, artifact)
+        fact = project_support(support, artifact).get("fact", {})
+        prefix = f"{name}（{support.station_uuid}）"
+        if support.claim in {"numeric_change", "trend", "jump"}:
+            prefix += f" · {axes[support.axis]} · {scopes[support.scope]} · {fact['begin_time']} 至 {fact['end_time']}"
+            details = [f"有效点 {fact['count']}"]
+            for key, label, unit in (("net_change_mm", "净变化", "mm"),
+                                     ("robust_slope_mm_day", "描述斜率", "mm/day"),
+                                     ("cum_end_mm", "末点固定参考累计偏移", "mm")):
+                value = fact.get(key)
+                if value is not None:
+                    details.append(f"{label} {value:.6g} {unit}")
+            if support.claim == "jump":
+                details.append(f"最大相邻变化 {fact['max_step_mm']:.6g} mm，时刻 {fact['max_step_time']}")
+                for event in fact.get("events") or []:
+                    details.append(f"候选 {event['time']}：{event['status']}；已观察保持至 {event['held_until']}，{event['held_hours']:.6g} 小时")
+            if not fact.get("trend_supported"):
+                details.append("样本或跨度不足以支持持续趋势")
+        elif support.claim == "data_quality":
+            prefix += f" · {fact.get('requested_begin', support.begin_time.isoformat())} 至 {fact.get('requested_end', support.end_time.isoformat())}"
+            details = [f"请求日历预期 {fact.get('expected', '未知')} 点"]
+            for axis, quality in fact.get("axes", {}).items():
+                details.append(f"{axes[axis]}有效 {quality['valid']} 点，缺 {quality['missing']} 点")
+        elif support.claim == "unavailable":
+            details = [fact["limitation"].rstrip("。")]
+        elif support.claim == "site":
+            details = [f"场地背景快照，获取时刻 {fact['observed_at']}，不证明历史变化"]
+        else:
+            details = [f"气象资料类型 {support.weather_period}，字段 {support.weather_variable}，范围 {support.begin_time.isoformat()} 至 {support.end_time.isoformat()}；数值见对应气象证据"]
+        statements.append(prefix + "：" + "；".join(details))
+    return "。".join(dict.fromkeys(statements)) + "。"
 
 
 def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessage]) -> dict[str, str]:
@@ -240,7 +303,8 @@ def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessag
         if start >= end:
             raise ToolFailure("单站结论目标窗口必须正向")
         observed = False
-        trend_scopes = set()
+        stable_window_covered = False
+        trend_scopes = {}
         for support in station.supports:
             if support.station_uuid != station.station_uuid:
                 raise ToolFailure("单站结论必须引用该站UUID的证据，不能用其他测点代替")
@@ -251,15 +315,36 @@ def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessag
                 raise ToolFailure("单站支持窗口必须包含于目标窗口")
             feature = _support_feature(support, artifact)
             if artifact.get("kind") == "numerical" and artifact.get("status") != "error":
-                observed = observed or feature.get("trend_supported", False) or (support.claim == "jump" and feature.get("event_count", 0) > 0)
+                if station.status == '未见明显变化' and (_business_time(artifact['data']['begin_time']) > start or _business_time(artifact['data']['end_time']) < end):
+                    raise ToolFailure("单站结论的数值查询须覆盖目标窗口；短窗不能冒充整个长期调查")
+                if support.claim in {"numeric_change", "trend", "jump"}:
+                    observed = observed or feature.get("trend_supported", False) or (support.claim == "jump" and feature.get("event_count", 0) > 0)
+                if station.status == '未见明显变化' and support.claim in {'numeric_change', 'trend'}:
+                    if not _covers_target_window(feature, start, end):
+                        raise ToolFailure("有效跨度或覆盖不足，不能把局部短窗表述为目标窗口未见变化")
+                if (station.status == '未见明显变化' and support.scope == 'window'
+                        and artifact['data']['station_uuid'] == str(station.station_uuid)):
+                    stable_window_covered = stable_window_covered or all(
+                        _covers_target_window(artifact['data'].get('features', {}).get(axis, {}), start, end)
+                        for axis in ('n', 'e', 'u')
+                    )
                 if support.claim == "trend":
-                    trend_scopes.add(support.scope)
+                    key = (support.evidence_id, support.axis)
+                    trend_scopes.setdefault(key, set()).add(support.scope)
         if station.status not in {"数据不足", "暂无法分析"} and not observed:
             raise ToolFailure("该站缺少适用且充分的观测事实；台账、失败或两点斜率不能支持已调查稳定结论，可如实交付数据不足")
-        if station.acceleration not in (None, "无法判断") and not {"first_window", "second_window"} <= trend_scopes:
+        if station.status == '未见明显变化' and not stable_window_covered:
+            raise ToolFailure("整站未见明显变化须有N/E/U三方向的单站目标窗充分观测；方向缺失时如实交付数据不足，单方向结果仍可自由解释")
+        has_comparable_trends = any(
+            {"first_window", "second_window"} <= scopes
+            for scopes in trend_scopes.values()
+        )
+        if station.acceleration not in (None, "无法判断") and not has_comparable_trends:
             raise ToolFailure("加速判断须有该站两个适用窗口的充分趋势证据，不能仅凭单窗或两点斜率")
 
     for finding in report.findings:
+        if finding.level != "fact" and not finding.text.strip():
+            raise ToolFailure("分析和推断须说明解释；观测事实正文由服务端生成")
         supported = set()
         for support in finding.supports:
             validate(support)
@@ -289,7 +374,6 @@ async def submit_investigation_report(
     tool_call_ids = _validate_report(report, evidence)
     evidence_by_id = {evidence_id(message.tool_call_id): message.artifact for message in evidence}
 
-    facts = report.model_dump(mode="json")
     display = {
         "conclusion": report.conclusion,
         "stations": [{**station.model_dump(mode="json"),
@@ -299,7 +383,7 @@ async def submit_investigation_report(
             {
                 "supports": [project_support(support, evidence_by_id[support.evidence_id]) for support in finding.supports],
                 "level": finding.level,
-                "text": finding.text,
+                "text": fact_text(finding.supports, evidence_by_id) if finding.level == "fact" else finding.text,
                 "station_uuids": [str(identifier) for identifier in finding.station_uuids] or list(dict.fromkeys(str(support.station_uuid) for support in finding.supports)),
                 "evidence": list(dict.fromkeys(tool_call_ids[support.evidence_id] for support in finding.supports)),
             }
@@ -307,7 +391,7 @@ async def submit_investigation_report(
         ],
         "next_steps": report.next_steps,
     }
-    return tool_result(facts, kind="investigation_report", display=display)
+    return tool_result(display, kind="investigation_report", display=display)
 
 
 def report_in_last_turn(messages: list[BaseMessage]) -> tuple[str, dict] | None:

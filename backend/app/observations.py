@@ -132,7 +132,8 @@ def observation_quality(points, begin_time, end_time, *, frequency_minutes=60, s
         gaps.append({
             "from": expected[first - 1] if first > 0 else begin_time,
             "to": expected[last + 1] if last + 1 < len(expected) else end_time,
-            "missing_hours": (last - first + 1) * (frequency_minutes / 60 if not sample_times else 24 / len(sample_times)),
+            # 不均匀的每日固定时刻只证明缺点，不能换算连续失联小时数。
+            "missing_hours": None if sample_times else (last - first + 1) * frequency_minutes / 60,
             "missing_count": last - first + 1, "boundary": boundary,
             "first_missing_time": expected[first], "last_missing_time": expected[last],
         })

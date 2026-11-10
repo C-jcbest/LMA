@@ -32,7 +32,7 @@ class MessageProjectionTests(unittest.TestCase):
         self.assertIn(identifier, message_context.model_messages([message])[0].content)
         self.assertNotIn("evidence_id", message.artifact)
         message.status = "error"
-        self.assertNotIn("evidence_id", project_message(message)["artifact"])
+        self.assertEqual(project_message(message)["artifact"]["evidence_id"], identifier)
 
     def test_time_snapshot_is_immutable_and_never_changes_user_body(self):
         original = HumanMessage(id="question", content="今天如何？")

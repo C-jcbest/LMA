@@ -177,19 +177,35 @@ def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str],
 
 
 def _cumulative_offset(points: Sequence[GnssDataPoint], reference: dict[str, float | None]) -> dict | None:
-    """相对平台登记的固定初始坐标；缺少基准时不用首点代替，避免混淆两种口径。"""
-    if any(finite_number(reference.get(axis)) is None for axis in _AXIS_NAMES):
+    """各方向使用自身最新有效观测；合成量只使用同刻有效的分量。"""
+    ordered = sorted(points, key=lambda point: point.data_time, reverse=True)
+    offsets = {}
+    observed_at = {}
+    components_by_metric = {
+        'n': ('n',), 'e': ('e',), 'u': ('u',),
+        'h': ('n', 'e'), 'd': ('n', 'e', 'u'),
+    }
+    for metric, components in components_by_metric.items():
+        offsets[metric] = None
+        observed_at[metric] = None
+        if any(finite_number(reference.get(axis)) is None for axis in components):
+            continue
+        latest = next((point for point in ordered
+                       if all(_to_float(getattr(point, axis)) is not None for axis in components)), None)
+        if latest is None:
+            continue
+        changes = [(_to_float(getattr(latest, axis)) - finite_number(reference[axis])) * 1000
+                   for axis in components]
+        value = changes[0] if len(components) == 1 else math.sqrt(sum(change ** 2 for change in changes))
+        offsets[metric] = round(value, 1)
+        observed_at[metric] = latest.data_time
+    valid_times = [time for time in observed_at.values() if time is not None]
+    if not valid_times:
         return None
-    latest_point = next((point for point in sorted(points, key=lambda point: point.data_time, reverse=True)
-                         if all(_to_float(getattr(point, axis)) is not None for axis in _AXIS_NAMES)), None)
-    if latest_point is None:
-        return None
-    latest = {axis: round((_to_float(getattr(latest_point, axis)) - reference[axis]) * 1000, 1) for axis in _AXIS_NAMES}
-    latest["h"] = round(math.hypot(latest["n"], latest["e"]), 1)
-    latest["d"] = round(math.sqrt(sum(latest[axis] ** 2 for axis in _AXIS_NAMES)), 1)
-    latest["observed_at"] = latest_point.data_time
-    latest["baseline"] = "获取时平台登记的固定初始坐标；未提供历史变更时间"
-    return latest
+    return {
+        **offsets, 'observed_at': max(valid_times), 'observed_at_by_metric': observed_at,
+        'baseline': '获取时平台登记的固定初始坐标；未提供历史变更时间',
+    }
 
 
 def _horizontal_trend(north: AxisSeries, east: AxisSeries) -> list[float | None]:
@@ -216,8 +232,16 @@ def screen_station(
     long_points, long_duplicates = _window_points(long_points, now - timedelta(days=LONG_WINDOW_DAYS), now)
     recent_points, recent_duplicates = _window_points(recent_points, now - timedelta(days=RECENT_WINDOW_DAYS), now)
     series = {axis: _axis_series(long_points, axis) for axis in _AXIS_NAMES}
-    valid_days = min(len(item.values) for item in series.values())
-    completeness = round(valid_days / LONG_WINDOW_DAYS, 2)
+    long_quality = observation_quality(
+        long_points, (now - timedelta(days=LONG_WINDOW_DAYS)).strftime(TIME_FORMAT),
+        now.strftime(TIME_FORMAT), sample_times=["15:00"],
+    )
+    recent_quality = observation_quality(
+        recent_points, (now - timedelta(days=RECENT_WINDOW_DAYS)).strftime(TIME_FORMAT),
+        now.strftime(TIME_FORMAT),
+    )
+    valid_days = min(axis['valid'] for axis in long_quality['axes'].values())
+    completeness = round(valid_days / max(long_quality['expected'], 1), 2)
     metrics: dict = {"valid_days": valid_days, "completeness": completeness}
 
     flags: list[str] = []
@@ -251,11 +275,11 @@ def screen_station(
         flags.extend(f"近期小时序列：{reason}" for reason in axis_flags)
         notes.extend(f"近期小时序列：{reason}" for reason in axis_notes)
 
-    expected_hours = RECENT_WINDOW_DAYS * 24
-    recent_completeness = round(min(min(len(_axis_series(recent_points, axis).values) for axis in _AXIS_NAMES) / expected_hours, 1.0), 2)
+    valid_hours = min(axis['valid'] for axis in recent_quality['axes'].values())
+    recent_completeness = round(valid_hours / max(recent_quality['expected'], 1), 2)
     metrics["recent_completeness"] = recent_completeness
-    metrics["recent_quality"] = observation_quality(recent_points, (now - timedelta(days=RECENT_WINDOW_DAYS)).strftime(TIME_FORMAT), now.strftime(TIME_FORMAT))
-    metrics["long_quality"] = observation_quality(long_points, (now - timedelta(days=LONG_WINDOW_DAYS)).strftime(TIME_FORMAT), now.strftime(TIME_FORMAT), sample_times=["15:00"])
+    metrics["recent_quality"] = recent_quality
+    metrics["long_quality"] = long_quality
     latest_time = max((_point_time(point) for point in recent_points if any(_to_float(getattr(point, axis)) is not None for axis in _AXIS_NAMES)), default=None)
     is_stale = latest_time is None or (now - latest_time).total_seconds() > _STALE_AFTER_HOURS * 3600
     data_problems = []

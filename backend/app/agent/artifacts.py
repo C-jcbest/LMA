@@ -77,7 +77,7 @@ class AxisSummaryArtifact(ArtifactModel):
 class GapArtifact(ArtifactModel):
     from_: str = Field(alias="from")
     to: str
-    missing_hours: float
+    missing_hours: float | None
     missing_count: int | None = None
     boundary: str | None = None
     first_missing_time: str | None = None
@@ -290,6 +290,15 @@ class SiteEnvironmentArtifactData(ArtifactModel):
     layer_sources: LayerSourcesArtifact
 
 
+class AcquisitionFailureArtifactData(ArtifactModel):
+    station_uuid: str | None = None
+    station_name: str
+    requested_station: str
+    begin_time: str | None = None
+    end_time: str | None = None
+    message: str
+
+
 class ReportStationArtifact(ArtifactModel):
     station_uuid: str
     begin_time: str
@@ -332,6 +341,7 @@ class NumericalArtifactData(ArtifactModel):
 
 
 ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {
+    "acquisition_failure": AcquisitionFailureArtifactData,
     "numerical": NumericalArtifactData,
     "investigation_report": InvestigationReportArtifactData,
     "station_list": StationListArtifactData,
@@ -397,13 +407,19 @@ class InvestigationReportArtifactEnvelope(ArtifactEnvelopeBase):
     data: InvestigationReportArtifactData
 
 
+class AcquisitionFailureArtifactEnvelope(ArtifactEnvelopeBase):
+    kind: Literal["acquisition_failure"]
+    data: AcquisitionFailureArtifactData
+
+
 class NumericalArtifactEnvelope(ArtifactEnvelopeBase):
     kind: Literal["numerical"]
     data: NumericalArtifactData
 
 
 ToolArtifactEnvelope = Annotated[
-    NumericalArtifactEnvelope
+    AcquisitionFailureArtifactEnvelope
+    | NumericalArtifactEnvelope
     | InvestigationReportArtifactEnvelope
     | StationListArtifactEnvelope
     | GnssArtifactEnvelope

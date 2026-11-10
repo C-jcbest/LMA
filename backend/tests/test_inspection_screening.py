@@ -28,7 +28,7 @@ def point(moment: datetime, north, east=200.0, up=300.0) -> GnssDataPoint:
 def daily(north_mm, days=LONG_WINDOW_DAYS, noise_mm=1.5, seed=7):
     """north_mm(i) 给出第 i 天的北向位移（mm），叠加可复现的观测噪声。"""
     rng = random.Random(seed)
-    start = NOW - timedelta(days=days)
+    start = (NOW - timedelta(days=days - 1)).replace(hour=15)
     return [
         point(start + timedelta(days=i), 100 + (north_mm(i) + rng.gauss(0, noise_mm)) / 1000,
               200 + rng.gauss(0, noise_mm) / 1000, 300 + rng.gauss(0, noise_mm) / 1000)
@@ -149,10 +149,32 @@ class ScreeningTests(unittest.TestCase):
         self.assertIn("最近 48 小时没有数据", result.reasons)
 
     def test_cumulative_offset_uses_fixed_reference_only(self):
-        result = screen(daily(lambda i: 12, noise_mm=0.5))
+        recent = [point(NOW - timedelta(hours=167 - index), 100.012) for index in range(168)]
+        result = screen(daily(lambda i: 12, noise_mm=0.5), recent)
         self.assertAlmostEqual(result.metrics["cumulative_offset_mm"]["n"], 12, delta=2)
+        self.assertEqual(result.metrics["cumulative_offset_mm"]["observed_at"], NOW.strftime("%Y-%m-%d %H:%M:%S"))
         missing = screen_station(daily(lambda i: 12), hourly(), {"n": None, "e": 200.0, "u": 300.0}, NOW)
-        self.assertIsNone(missing.metrics["cumulative_offset_mm"])
+        offset = missing.metrics["cumulative_offset_mm"]
+        self.assertIsNone(offset['n'])
+        self.assertIsNone(offset['h'])
+        self.assertEqual(offset['e'], 0)
+
+    def test_screening_coverage_uses_the_same_requested_calendar_as_quality(self):
+        recent = hourly()
+        result = screen(daily(lambda i: 0), recent)
+        quality = result.metrics['recent_quality']
+        self.assertEqual(quality['expected'], 169)
+        self.assertEqual(result.metrics['recent_completeness'], round(168 / 169, 2))
+        self.assertEqual(result.metrics['valid_days'], 90)
+        self.assertEqual(result.metrics['long_quality']['axes']['n']['valid'], 90)
+
+    def test_partial_latest_observations_do_not_make_other_axis_cumulative_values_stale(self):
+        recent = [point(NOW - timedelta(hours=1), 100.001), point(NOW, 100.012, east='')]
+        offset = screen([], recent).metrics['cumulative_offset_mm']
+        self.assertEqual(offset['n'], 12)
+        self.assertEqual(offset['observed_at_by_metric']['n'], NOW.strftime('%Y-%m-%d %H:%M:%S'))
+        self.assertEqual(offset['h'], 1)
+        self.assertEqual(offset['observed_at_by_metric']['h'], (NOW - timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S'))
 
     def test_common_mode_points_to_shared_cause(self):
         moving = [ScreeningResult("建议调查", ["x"], trend_directions={"n": -1, "e": 0, "u": 0}) for _ in range(3)]

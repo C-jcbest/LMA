@@ -6,6 +6,88 @@ from app.agent.tools import _detect_gaps
 from test_inspection_screening import NOW, point
 
 class NumericalTests(unittest.TestCase):
+    def test_daily_calendar_missing_points_do_not_invent_continuous_outage_duration(self):
+        from app.observations import normalize_observations, observation_quality
+        start = NOW.replace(hour=0)
+        end = start + timedelta(days=1)
+        samples = [point(start + timedelta(hours=1), 100)]
+        points, _ = normalize_observations(samples)
+        quality = observation_quality(points, start.strftime('%Y-%m-%d %H:%M:%S'),
+                                      end.strftime('%Y-%m-%d %H:%M:%S'), sample_times=['00:00', '01:00'])
+        self.assertEqual(quality['expected'], 3)
+        self.assertEqual(quality['missing'], 2)
+        self.assertEqual([gap['missing_count'] for gap in quality['gaps']], [1, 1])
+        self.assertTrue(all(gap['missing_hours'] is None for gap in quality['gaps']))
+
+    def test_calendar_quality_catches_regular_and_boundary_missing_values(self):
+        from app.observations import normalize_observations, observation_quality
+        start = NOW.replace(hour=0)
+        points = [point(start + timedelta(hours=hour), 100) for hour in (2, 4, 6, 8, 10)]
+        normalized, cleaning = normalize_observations(list(reversed(points)), start.strftime('%Y-%m-%d %H:%M:%S'), (start + timedelta(hours=12)).strftime('%Y-%m-%d %H:%M:%S'))
+        quality = observation_quality(normalized, start.strftime('%Y-%m-%d %H:%M:%S'), (start + timedelta(hours=12)).strftime('%Y-%m-%d %H:%M:%S'), cleaning=cleaning)
+        self.assertEqual(quality['expected'], 13)
+        self.assertEqual(quality['missing'], 8)
+        self.assertEqual(quality['gaps'][0]['boundary'], 'leading')
+        self.assertEqual(quality['gaps'][-1]['boundary'], 'trailing')
+        self.assertEqual(quality['axes']['n']['valid'], 5)
+
+    def test_normalized_raw_and_numerical_paths_agree_on_nonfinite_and_duplicates(self):
+        from app.observations import normalize_observations
+        from app.agent.tools import _axis_summary
+        points = [point(NOW + timedelta(hours=hour), value) for hour, value in ((2, 100.002), (0, 100), (1, 'nan'), (3, 100.003), (3, 99))]
+        normalized, cleaning = normalize_observations(points)
+        summary = _axis_summary([item.n for item in normalized])
+        feature = axis_features([item.data_time for item in normalized], [item.n for item in normalized])
+        self.assertEqual(summary['count'], feature['count'])
+        self.assertAlmostEqual(summary['change'] * 1000, feature['net_change_mm'])
+        self.assertAlmostEqual(feature['net_change_mm'], 2)
+        self.assertEqual(cleaning['duplicate_timestamps'], 1)
+        self.assertEqual(cleaning['invalid_values']['n'], 1)
+
+    def test_observed_step_persistence_survives_later_unknown_interval(self):
+        times = [(NOW + timedelta(days=day)).strftime('%Y-%m-%d %H:%M:%S') for day in range(26)]
+        values = [100 if day < 5 else 100.01 for day in range(26)]
+        original = axis_features(times, values, cadence_hours=24)
+        extended = axis_features([*times, (NOW + timedelta(days=28)).strftime('%Y-%m-%d %H:%M:%S')], [*values, 100.01], cadence_hours=24)
+        self.assertEqual(original['jump_persistence'], '持续')
+        self.assertEqual(extended['jump_persistence'], '持续')
+        self.assertEqual(extended['events'][0]['held_until'], times[-1])
+        self.assertEqual(extended['events'][0]['held_hours'], 20 * 24)
+        self.assertEqual(len(extended['events'][0]['later_unknown_intervals']), 1)
+
+    def test_multiple_steps_are_separate_from_smooth_drift(self):
+        times = [(NOW + timedelta(hours=hour)).strftime('%Y-%m-%d %H:%M:%S') for hour in range(40)]
+        values = [100 + (0 if hour < 8 else .01) - (0 if hour < 24 else .006) for hour in range(40)]
+        features = axis_features(times, values)
+        self.assertEqual(features['event_count'], 2)
+        self.assertGreater(features['events'][0]['step_mm'], 0)
+        self.assertLess(features['events'][1]['step_mm'], 0)
+        self.assertFalse(axis_features(times[:2], values[:2])['trend_supported'])
+
+    def test_common_sample_sets_are_axis_specific(self):
+        stations = {
+            'A': [point(NOW + timedelta(hours=hour), 100 + hour * .001, up='' if hour == 1 else 300) for hour in range(3)],
+            'B': [point(NOW + timedelta(hours=hour), 100, up=300) for hour in (1, 2)],
+        }
+        self.assertEqual(common_period_features(stations, 'n')['A']['count'], 2)
+        self.assertEqual(common_period_features(stations, 'u')['A']['count'], 1)
+
+    def test_fixed_reference_and_resultant_have_distinct_window_changes(self):
+        from app.agent.numerical import window_features
+        from types import SimpleNamespace
+        station = SimpleNamespace(station_uuid='A', station_n0=100, station_e0=200, station_u0=300)
+        points = [point(NOW + timedelta(hours=hour), 100 + .003 * (hour + 1), 200 + .004 * (hour + 1), 300) for hour in range(2)]
+        features = window_features(points, station, points[0].data_time, points[-1].data_time)
+        self.assertAlmostEqual(features['h']['cum_end_mm'], 10)
+        self.assertAlmostEqual(features['h']['net_change_mm'], 5)
+        self.assertAlmostEqual(features['n']['cum_end_mm'], 6)
+        self.assertAlmostEqual(features['n']['net_change_mm'], 3)
+        station.station_n0 = None
+        missing = window_features(points, station, points[0].data_time, points[-1].data_time)
+        self.assertIsNone(missing['n']['cum_end_mm'])
+        self.assertAlmostEqual(missing['n']['net_change_mm'], 3)
+        self.assertEqual(missing['h']['count'], 0)
+
     def test_missing_hours_excludes_observed_boundary_interval(self):
         for hours, expected in (((0, 1, 2, 6, 7, 8), 3), ((0, 1, 3, 4, 5), 1)):
             with self.subTest(hours=hours):

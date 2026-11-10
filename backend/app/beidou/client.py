@@ -4,7 +4,11 @@
 不封装实时数据接口（getGNSSDataInfo.php）。
 """
 
+import asyncio
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -13,6 +17,25 @@ from app.beidou.schemas import GnssDataPoint, Station, StationGroup
 # SessionUUID 有效期 8 小时，提前一点刷新留出余量
 _SESSION_TTL_SECONDS = 8 * 3600
 _SESSION_REFRESH_AHEAD = 10 * 60
+
+
+@dataclass
+class _StationCatalog:
+    results: dict = field(default_factory=dict)
+    locks: dict = field(default_factory=dict)
+
+
+_run_catalog: ContextVar[_StationCatalog | None] = ContextVar("monitoring_run_catalog", default=None)
+
+
+@contextmanager
+def station_catalog_scope():
+    """一轮执行复用台账；退出即释放，不跨会话、账号或刷新保留。"""
+    token = _run_catalog.set(_StationCatalog())
+    try:
+        yield
+    finally:
+        _run_catalog.reset(token)
 
 
 class BeidouApiError(Exception):
@@ -39,6 +62,7 @@ class BeidouClient:
         self._client = httpx.AsyncClient(base_url=base_url, timeout=30.0)
         self._session_uuid: str | None = None
         self._session_time: float = 0.0
+        self._session_lock = asyncio.Lock()
 
     async def __aenter__(self) -> "BeidouClient":
         return self
@@ -76,14 +100,15 @@ class BeidouClient:
         self._session_time = time.monotonic()
         return self._session_uuid
 
-    async def _ensure_session(self, force: bool = False) -> str:
-        expired = (
-            self._session_uuid is None
-            or time.monotonic() - self._session_time
-            > _SESSION_TTL_SECONDS - _SESSION_REFRESH_AHEAD
-        )
-        if force or expired:
-            await self._login()
+    async def _ensure_session(self, expired_session: str | None = None) -> str:
+        async with self._session_lock:
+            expired = (
+                self._session_uuid is None
+                or time.monotonic() - self._session_time
+                > _SESSION_TTL_SECONDS - _SESSION_REFRESH_AHEAD
+            )
+            if expired or (expired_session is not None and expired_session == self._session_uuid):
+                await self._login()
         assert self._session_uuid is not None
         return self._session_uuid
 
@@ -92,7 +117,7 @@ class BeidouClient:
         payload = {**payload, "SessionUUID": await self._ensure_session()}
         resp = await self._post(path, payload)
         if resp.get("ResponseCode") == "400101":
-            payload["SessionUUID"] = await self._ensure_session(force=True)
+            payload["SessionUUID"] = await self._ensure_session(expired_session=payload["SessionUUID"])
             resp = await self._post(path, payload)
         return self._ensure_ok(resp)
 
@@ -114,6 +139,24 @@ class BeidouClient:
         station_name: str | None = None,
         station_status: int | None = None,
     ) -> list[Station]:
+        catalog = _run_catalog.get()
+        if catalog is None:
+            return await self._load_stations(group_uuid, station_name, station_status)
+        account = (str(self._client.base_url), self._username)
+        full_key = (*account, None, None, None)
+        if full_key in catalog.results:
+            return [station for station in catalog.results[full_key]
+                    if (group_uuid is None or station.group_uuid == group_uuid)
+                    and (station_name is None or station_name in station.station_name)
+                    and (station_status is None or station.station_status == station_status)]
+        key = (*account, group_uuid, station_name, station_status)
+        lock = catalog.locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            if key not in catalog.results:
+                catalog.results[key] = await self._load_stations(group_uuid, station_name, station_status)
+            return catalog.results[key]
+
+    async def _load_stations(self, group_uuid, station_name, station_status) -> list[Station]:
         """获取监测点列表（PageSize=-1 一次取全量，避免分页遗漏）。"""
         payload: dict = {
             "PageInfo": {"PageFlag": "StationNameAsc", "PageNumber": 1, "PageSize": -1}

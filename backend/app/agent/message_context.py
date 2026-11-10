@@ -2,7 +2,7 @@
 
 import hashlib
 
-from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from app.business_time import BUSINESS_TIMEZONE, business_now
 
@@ -61,12 +61,25 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
     return message.model_copy(update={"content": content, "additional_kwargs": kwargs})
 
 
-def model_messages(messages: list[BaseMessage], *, persistent_evidence: dict[str, str] | None = None) -> list[BaseMessage]:
+def model_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     projected = []
     for message in messages:
         context = message.additional_kwargs.get("lma_context")
         if isinstance(message, HumanMessage) and context is not None:
             projected.append(_with_message_context(message, context))
+        elif isinstance(message, AIMessage) and message.invalid_tool_calls:
+            # 无法解析的调用未执行，不能发给供应商成为没有结果配对的工具请求。
+            # 原始输出仍留在checkpoint；模型只收到受控纠错说明及可执行的调用。
+            notice = '上一条回复包含无法解析的工具参数，该部分调用未执行。请重新生成合法JSON参数，或依据已有证据直接回答。'
+            content = message.content
+            if isinstance(content, str):
+                content = f'{content}\n\n{notice}'.strip()
+            else:
+                content = [*content, {'type': 'text', 'text': notice}]
+            kwargs = {key: value for key, value in message.additional_kwargs.items() if key != 'tool_calls'}
+            projected.append(message.model_copy(update={
+                'content': content, 'invalid_tool_calls': [], 'additional_kwargs': kwargs,
+            }))
         elif is_evidence(message) and isinstance(message.content, str):
             label = f'<lma_evidence id="{evidence_id(message.tool_call_id)}"/>'
             persisted_uuid = message.additional_kwargs.get("lma_evidence_uuid")

@@ -48,10 +48,10 @@ class SelfHostedApiTests(unittest.TestCase):
             return "真实工具结果", {"version": 1, "kind": "station_list", "status": "success",
                 "data": {"total": 0, "stations": []}}
 
-        def agent_factory(saver):
+        def agent_factory(saver, storage):
             return create_lma_agent(
                 self.model, agent_tools=[station], checkpointer=saver,
-                summary_model=ScriptedModel(script=[]), retry_delay=0,
+                summary_model=ScriptedModel(script=[]), retry_delay=0, investigation_storage=storage,
             )
 
         self.agent_factory = agent_factory

@@ -54,7 +54,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
     if (!range) {
       return;
     }
-    appendToComposerDraft(aui, rangeQuestion(stationName, range));
+    appendToComposerDraft(aui, rangeQuestion(`${stationName}（UUID：${data.station_uuid}）`, range));
     onAsk();
     requestAnimationFrame(() => composerInputRef.current?.focus());
   };
@@ -75,7 +75,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
       <ErrorBoundary fallbackTitle="时间轴渲染异常">
         <Suspense fallback={<Skeleton className="h-96 w-full" />}>
           <TimelineChart
-            viewKey={`${data.station_name}:${data.begin_time}:${data.end_time}`}
+            viewKey={`${data.station_uuid}:${data.begin_time}:${data.end_time}`}
             option={option}
             label={`${stationName} 位移时间轴`}
             resetSignal={resetSignal}
@@ -98,7 +98,14 @@ const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (record: Stati
     <div>
     {hasError && <p role="alert" className="text-sm text-muted-foreground">这次调查尚未打开，请重试。</p>}
     <ul className="-mx-3">
-      {records.map((record) => (
+      {records.map((record) => {
+        let statusLabel = '调查';
+        if (record.status) {
+          statusLabel = investigationStatusLabel(record.status);
+        } else if (record.validated === false) {
+          statusLabel = '历史结果待复核';
+        }
+        return (
         <li key={`${record.session_id}:${record.anchor_id}`}>
           <button
             type="button"
@@ -118,12 +125,13 @@ const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (record: Stati
           >
             <span className="text-muted-foreground tabular-nums">{formatRecordDate(record.created_at)}</span>
             <span className="inline-flex items-center gap-2 whitespace-nowrap">
-              <StatusDot status={record.status} />{record.status ? investigationStatusLabel(record.status) : '调查'}
+              <StatusDot status={record.status} />{statusLabel}
             </span>
             <span className="text-muted-foreground min-w-0 truncate">{record.reason}</span>
           </button>
         </li>
-      ))}
+        );
+      })}
     </ul>
     </div>
   );

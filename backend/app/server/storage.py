@@ -151,6 +151,19 @@ async def migrate_domain_records(pool):
             progress = {**previous, "targets": targets, "covered": [], "unresolved": [target["question"] for target in targets],
                         "changes": [{"source": "contract_migration", "reason": "保留原进度，旧覆盖需核验证据适用性", "previous_progress": previous, "previous_status": row["status"]}]}
             await connection.execute("UPDATE lma_investigations SET progress=%s, status=CASE WHEN status='completed' THEN 'paused' ELSE status END, contract_version=2 WHERE id=%s", (Jsonb(progress), row["id"]))
+        cursor = await connection.execute("SELECT to_regclass('public.lma_station_record_links') AS relation")
+        if (await cursor.fetchone())['relation'] is not None:
+            # 已发布版本建立的UUID关联是已有身份事实，即使旧消息已摘要也不丢弃。
+            await connection.execute("""INSERT INTO lma_station_records(session_id,anchor_id,station_uuid,station_name,report_tool_call_id,question,created_at)
+                SELECT r.session_id,r.anchor_id,l.station_uuid,r.station_name,r.report_tool_call_id,r.question,r.created_at
+                FROM lma_station_investigations r JOIN lma_station_record_links l USING(session_id,anchor_id,station_name)
+                ON CONFLICT DO NOTHING""")
+            await connection.execute("""INSERT INTO lma_station_results(session_id,tool_call_id,station_uuid,station_name,status,reason,detail,validated,created_at)
+                SELECT c.session_id,c.tool_call_id,min(l.station_uuid),c.station_name,c.status,c.reason,'{}'::jsonb,false,c.created_at
+                FROM lma_station_conclusions c JOIN lma_station_record_links l
+                    ON l.session_id=c.session_id AND l.anchor_id=c.tool_call_id AND l.station_name=c.station_name
+                GROUP BY c.session_id,c.tool_call_id,c.station_name,c.status,c.reason,c.created_at
+                HAVING count(DISTINCT l.station_uuid)=1 ON CONFLICT DO NOTHING""")
         cursor = await connection.execute("""SELECT DISTINCT session_id FROM lma_station_investigations
                                             UNION SELECT DISTINCT session_id FROM lma_evidence WHERE execution_id='manual'""")
         sessions = await cursor.fetchall()
@@ -294,6 +307,24 @@ class SessionStorage:
         progress = {**record["progress"], "status": "completed", "stage_conclusion": conclusion, "unresolved": []}
         return await self.save_progress(session_id, investigation_id, progress, expected_revision=expected_revision)
 
+    async def withdraw_target(self, session_id, investigation_id, target_id, *, reason, source, message_id, expected_revision):
+        record = await self.investigation(session_id, investigation_id)
+        if record is None:
+            raise ValueError("当前会话不存在该调查")
+        progress = record['progress']
+        target = next((target for target in progress['targets'] if target['target_id'] == target_id), None)
+        if target is None:
+            raise ValueError("调查中不存在该目标")
+        previous = dict(target)
+        target.update(outcome='withdrawn', result=reason)
+        progress.setdefault('changes', []).append({
+            'source': source, 'message_id': message_id, 'reason': reason, 'withdrawn': target_id, 'previous_target': previous,
+        })
+        progress['covered'] = [target['target_id'] for target in progress['targets'] if target.get('outcome') == 'answered']
+        progress['unresolved'] = [target['question'] for target in progress['targets'] if target.get('outcome', 'pending') == 'pending']
+        progress['status'] = 'running'
+        return await self.save_progress(session_id, investigation_id, progress, expected_revision=expected_revision)
+
     async def investigation(self, session_id: str, investigation_id: str) -> dict | None:
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
@@ -356,7 +387,7 @@ class SessionStorage:
             return await cursor.fetchone()
 
     async def evidence_catalog(self, session_id, *, limit=30, offset=0, investigation_id=None):
-        """目录不读取原始序列、图像或完整snapshot；调查筛选只覆盖目标对象与窗口。"""
+        """目录不读取原始序列、图像或完整snapshot；按调查对象筛选，窗口适用性由引用时校验。"""
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
                 """SELECT e.id, e.tool_call_id, e.execution_id, e.acquired_at,
@@ -381,7 +412,7 @@ class SessionStorage:
     async def pause_investigations(self, session_id: str, reason: str, stage_conclusion: str = "") -> None:
         async with self.pool.connection() as connection:
             await connection.execute(
-                """UPDATE lma_investigations SET status=%s, updated_at=now(),
+                """UPDATE lma_investigations SET status=%s, updated_at=now(), revision=revision+1,
                    progress=jsonb_set(jsonb_set(progress, '{end_reason}', to_jsonb(%s::text)), '{stage_conclusion}',
                        CASE WHEN %s::text = '' THEN COALESCE(progress->'stage_conclusion', '""'::jsonb) ELSE to_jsonb(%s::text) END)
                    WHERE session_id=%s AND status='running'""",
@@ -460,7 +491,7 @@ class SessionStorage:
 
     async def interrupt_previous_runs(self) -> None:
         async with self.pool.connection() as connection:
-            await connection.execute("UPDATE lma_investigations SET status='interrupted', updated_at=now() WHERE status='running'")
+            await connection.execute("UPDATE lma_investigations SET status='interrupted', updated_at=now(), revision=revision+1 WHERE status='running'")
             await connection.execute(
                 "UPDATE lma_runs SET status = 'interrupted', ended_at = now() WHERE status = 'running'",
             )

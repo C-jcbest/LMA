@@ -1,5 +1,7 @@
 """业务模型评测的合成监测平台；不访问真实站点或外部数据服务。"""
 from datetime import datetime, timedelta
+import math
+import httpx
 
 from app.beidou.schemas import GnssDataPoint, Station, StationGroup
 from app.business_time import TIME_FORMAT
@@ -12,7 +14,8 @@ NEW_STATION = "33333333-3333-3333-3333-333333333333"
 
 
 class MonitoringFixture:
-    def __init__(self):
+    def __init__(self, scenario='default'):
+        self.scenario = scenario
         self.requests = []
         self.stations = [
             Station(station_uuid=identifier, station_name=name, station_type=3,
@@ -20,6 +23,13 @@ class MonitoringFixture:
                     station_n0="100", station_e0="200", station_u0="300")
             for identifier, name in ((STATION_A, "评测点A"), (STATION_B, "评测点B"), (NEW_STATION, "评测新站"))
         ]
+        if scenario == 'reference_missing':
+            self.stations[0].station_n0 = None
+        if scenario == 'same_name':
+            self.stations[0].station_name = '同名测点'
+            self.stations[1].station_name = '同名测点'
+            self.stations[1].group_uuid = 'other-evaluation-group'
+            self.stations[1].group_name = '另一评测组'
 
     async def __aenter__(self):
         return self
@@ -28,7 +38,9 @@ class MonitoringFixture:
         return False
 
     async def get_station_groups(self):
-        return [StationGroup(group_uuid="evaluation-group", group_name="合成评测组", station_count=3)]
+        groups = {station.group_uuid: station.group_name for station in self.stations}
+        return [StationGroup(group_uuid=identifier, group_name=name, station_count=sum(station.group_uuid == identifier for station in self.stations))
+                for identifier, name in groups.items()]
 
     async def get_stations(self, group_uuid=None, station_name=None, station_status=None):
         return [station for station in self.stations
@@ -42,6 +54,8 @@ class MonitoringFixture:
             "end_time": end_time, "sample_times": sample_times,
             "sampling_frequency": sampling_frequency,
         })
+        if self.scenario == 'partial_failure' and station_uuid == STATION_B:
+            raise httpx.ReadTimeout('合成平台超时')
         start = max(datetime.strptime(begin_time, TIME_FORMAT), NOW - timedelta(days=90))
         end = min(datetime.strptime(end_time, TIME_FORMAT), NOW)
         if station_uuid == NEW_STATION:
@@ -55,6 +69,10 @@ class MonitoringFixture:
         while moment <= end:
             # B每日缺三小时；A和新站末端单点突变，尚无保持证据。
             missing = station_uuid == STATION_B and moment.hour in {3, 4, 5}
+            if self.scenario == 'quality_calendar':
+                missing = moment.hour % 2 == 1 or moment < start + timedelta(hours=2) or moment > end - timedelta(hours=2)
+            if self.scenario == 'events' and moment.date() in {datetime(2026, 11, 8).date(), datetime(2026, 11, 9).date()}:
+                missing = True
             selected = not sample_times or moment.strftime("%H:%M") in sample_times
             if not sample_times and frequency_minutes:
                 elapsed_minutes = (moment - first_sample).total_seconds() / 60
@@ -64,8 +82,16 @@ class MonitoringFixture:
                 north = 100 + age_days * 0.0002 if station_uuid == STATION_B else 100.0
                 if station_uuid != STATION_B and moment == NOW:
                     north += 0.1
+                if self.scenario == 'events':
+                    north = 100 + (.01 if moment >= datetime(2026, 11, 3) else 0) - (.004 if moment >= datetime(2026, 11, 6) else 0)
+                if self.scenario == 'weak_trend':
+                    north = 100 + .002 * math.sin(moment.hour * math.tau / 24)
                 points.append(GnssDataPoint(
                     data_time=moment.strftime(TIME_FORMAT), n=str(north), e="200", u="300",
                 ))
             moment += timedelta(hours=1)
+        if self.scenario == 'quality_calendar' and len(points) >= 3:
+            points[1].u = 'nan'
+            points.append(points[2].model_copy())
+            points.reverse()
         return points

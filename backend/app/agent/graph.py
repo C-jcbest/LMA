@@ -139,6 +139,14 @@ class LmaMiddleware(AgentMiddleware):
         if any(message.status == "error" for message in latest_results):
             return None
         if any(message.name == REPORT_TOOL_NAME and message.status != "error" for message in latest_results):
+            if self.investigation_storage is not None:
+                execution = runtime.execution_info
+                session_id = execution.thread_id if execution is not None else None
+                if session_id is not None:
+                    investigations = await self.investigation_storage.investigations(session_id)
+                    if any(record["status"] == "running" for record in investigations):
+                        # 阶段简报不替代目标结果；让模型处理尚未结束的调查或明确交付缺口。
+                        return None
             return {"jump_to": "end"}
         return None
 
@@ -159,13 +167,24 @@ class LmaMiddleware(AgentMiddleware):
                     **message.additional_kwargs,
                     "created_at": business_now().isoformat(timespec="seconds"),
                 }
+                if completed_model_calls >= self.model_run_limit - 1:
+                    metadata['lma_budget_exhausted'] = True
                 message = message.model_copy(update={"id": message.id or str(uuid4()), "additional_kwargs": metadata})
             stamped.append(message)
         return replace(response, result=stamped)
 
+    @hook_config(can_jump_to=["model"])
     async def aafter_model(self, state, runtime):
         index = next(i for i in range(len(state["messages"]) - 1, -1, -1) if state["messages"][i].type == "ai")
         message = state["messages"][index]
+        updates = {}
+        if message.invalid_tool_calls and not message.tool_calls:
+            if state.get('run_model_call_count', 0) >= self.model_run_limit:
+                raise ValueError('模型在本轮预算内未能给出有效工具调用或回答')
+            # 使用官方模型节点纠错并计入本轮调用预算，不解析或执行损坏的参数。
+            updates['jump_to'] = 'model'
+        elif not message.tool_calls and not message.text.strip():
+            raise ValueError('模型未返回可用回答；已取得的证据保留')
         usage = getattr(message, "usage_metadata", None) or {}
         input_tokens = usage.get("input_tokens")
         if not (
@@ -174,19 +193,18 @@ class LmaMiddleware(AgentMiddleware):
             and input_tokens >= 0
         ):
             logger.warning("model response did not include input token usage; preserve previous context_usage")
-            return None
+            return updates or None
         if self.max_input_tokens is None:
             logger.warning(
                 "model profile does not include max_input_tokens; preserve previous context_usage"
             )
-            return None
-        return {
-            "context_usage": build_context_usage(
-                usage,
-                max_input_tokens=self.max_input_tokens,
-                model=self.model_name,
-            )
-        }
+            return updates or None
+        updates['context_usage'] = build_context_usage(
+            usage,
+            max_input_tokens=self.max_input_tokens,
+            model=self.model_name,
+        )
+        return updates
 
 
 def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None, investigation_storage=None):

@@ -10,7 +10,7 @@ export interface InvestigationRecord {
   status: string;
   progress: {
     goal: string;
-    targets: Array<{ target_id: string; station_uuid: string; question: string; begin_time: string; end_time: string; evidence_ids: string[] }>;
+    targets: Array<{ target_id: string; station_uuid: string; question: string; begin_time: string; end_time: string; evidence_ids: string[]; outcome: 'pending' | 'answered' | 'insufficient' | 'blocked' | 'withdrawn'; result: string }>;
     covered: string[];
     unresolved: string[];
     stage_conclusion: string;
@@ -66,6 +66,8 @@ export interface StationDirectoryEntry {
 }
 
 export interface StationRecord {
+  validated?: boolean;
+  historical_status?: string | null;
   anchor_id: string;
   session_id: string;
   session_name: string;

@@ -12,6 +12,10 @@ const statusLabels: Record<string, string> = {
   error: '执行失败',
 };
 
+const outcomeLabels: Record<string, string> = {
+  pending: '待调查', answered: '已回答', insufficient: '证据不足', blocked: '外部阻塞', withdrawn: '已撤回',
+};
+
 export function InvestigationRecords() {
   const client = useLmaClient();
   const aui = useAui();
@@ -68,15 +72,17 @@ export function InvestigationRecords() {
     <details className="mb-4 rounded border p-3 text-sm wrap-break-word">
       <summary>调查进度</summary>
       {records.map((record) => {
-        const remaining = record.progress.targets.filter((target) => !record.progress.covered.includes(target.target_id));
         return (
           <div key={record.id} className="my-3 space-y-2">
             <p>{record.progress.goal} · {statusLabels[record.status] ?? '状态未知'}</p>
             <p>{record.progress.stage_conclusion}</p>
             <p>已覆盖：{record.progress.covered.length} / {record.progress.targets.length} 项</p>
             <ul>
-              {remaining.map((target) => (
-                <li key={target.target_id}>待调查：{target.question}（{target.begin_time} 至 {target.end_time}）</li>
+              {record.progress.targets.map((target) => (
+                <li key={target.target_id}>
+                  {outcomeLabels[target.outcome] ?? '待调查'}：{target.question}（{target.begin_time} 至 {target.end_time}）
+                  {target.result && <p className="text-muted-foreground">{target.result}</p>}
+                </li>
               ))}
             </ul>
             {record.progress.unresolved.length > 0 && <p>待解决：{record.progress.unresolved.join('；')}</p>}

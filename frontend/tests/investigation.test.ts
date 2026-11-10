@@ -20,6 +20,7 @@ const gnssEnvelope = (stationName: string, points: unknown[] = [{ time: '2026-11
   status: 'success',
   data: {
     station_name: stationName,
+    station_uuid: stationName === '测试点 B' ? 'uuid-B' : 'uuid-A',
     begin_time: '2026-11-01 00:00:00',
     end_time: '2026-11-08 00:00:00',
     timezone: 'Asia/Shanghai',
@@ -32,6 +33,43 @@ const gnssEnvelope = (stationName: string, points: unknown[] = [{ time: '2026-11
 });
 
 const stepsOf = (parts: PartState[]) => buildSteps(parts, collectStations(parts));
+
+it('历史复用依据可按原UUID打开和导出，保留原获取时间', () => {
+  const parts = [
+    toolPart('reuse_investigation_evidence', { artifact: {
+      ...gnssEnvelope('测试点 A'),
+      evidence_id: 'Ehistory',
+      observedAt: '2026-11-08T01:00:00+08:00',
+    } }),
+    { type: 'text', text: '这是原调查的观测。[1](#evidence-Ehistory)' } as PartState,
+  ];
+  const stations = collectStations(parts);
+  expect(stations.map((station) => station.id)).toEqual(['uuid-A']);
+  expect(buildSteps(parts, stations)[0]).toMatchObject({
+    stationId: 'uuid-A', evidenceId: 'Ehistory', label: '已读取原调查依据',
+  });
+  const markdown = answerToMarkdown(parts);
+  expect(markdown).toContain('2026-11-08T01:00:00+08:00');
+  expect(markdown).toContain('2026-11-01 00:00:00 至 2026-11-08 00:00:00');
+  expect(markdown).not.toContain('原始依据未随本次结果提供');
+});
+
+it('简报后的并行进度失败说明保留在复制和导出中', () => {
+  const parts = [
+    { type: 'text', text: '正在整理本轮结果' } as PartState,
+    toolPart('submit_investigation_report', { artifact: {
+      version: 1, kind: 'investigation_report', status: 'success',
+      data: { conclusion: '阶段结果', stations: [], findings: [], next_steps: [] },
+    } }),
+    toolPart('record_target_result', { isError: true }),
+    { type: 'text', text: '目标更新失败，调查尚未完成。' } as PartState,
+  ];
+  const markdown = answerToMarkdown(parts);
+  expect(markdown).toContain('阶段结果');
+  expect(markdown).toContain('目标更新失败，调查尚未完成。');
+  expect(markdown).not.toContain('正在整理本轮结果');
+  expect(stepsOf(parts).at(-1)?.state).toBe('failed');
+});
 
 it('复制与导出的正文引用保留测点、完整窗口和来源，不输出内部锚点', () => {
   const parts = [
@@ -50,7 +88,39 @@ it('复制与导出的正文引用保留测点、完整窗口和来源，不输�
   expect(markdown.match(/## 依据/g)).toHaveLength(1);
 });
 
+it('失败查询快照作为限制依据导出，保留对象、窗口及失败原因', () => {
+  const parts = [
+    toolPart('analyze_gnss_numerically', { isError: true, artifact: {
+      version: 1, kind: 'acquisition_failure', status: 'error', evidence_id: 'Efailure',
+      data: {
+        station_uuid: 'uuid-B', station_name: '测试点 B', requested_station: 'uuid-B',
+        begin_time: '2026-11-01 00:00:00', end_time: '2026-11-08 00:00:00',
+        message: '监测平台拒绝本次查询。',
+      },
+      error: { code: 'unavailable', category: 'business', message: '监测平台拒绝本次查询。', retryable: false },
+    } }),
+    { type: 'text', text: 'B本次暂无法分析。[1](#evidence-Efailure)' } as PartState,
+  ];
+  const markdown = answerToMarkdown(parts);
+  expect(markdown).toContain('B本次暂无法分析。[1]');
+  expect(markdown).toContain('测试点 B；监测平台拒绝本次查询。');
+  expect(markdown).toContain('2026-11-01 00:00:00 至 2026-11-08 00:00:00');
+  expect(markdown).not.toContain('原始依据未随本次结果提供');
+  expect(stepsOf(parts)[0]?.inlineEnvelope).toBeUndefined();
+});
+
 describe('调查过程由官方 tool part 派生', () => {
+  it('同名不同UUID不合并，同UUID改名保留同一对象', () => {
+    const first = gnssEnvelope('同名');
+    const second = { ...gnssEnvelope('同名'), data: { ...first.data, station_uuid: 'uuid-other' } };
+    const renamed = { ...first, data: { ...first.data, station_name: '更名后的测点' } };
+    const parts = [first, second, renamed].map((artifact) => toolPart('get_daily_gnss_data', { artifact }));
+    const stations = collectStations(parts);
+    expect(stations).toHaveLength(2);
+    expect(stations[0]!.series).toHaveLength(2);
+    expect(stations[1]!.series).toHaveLength(1);
+    expect(stations.map((station) => station.id)).toEqual(['uuid-A', 'uuid-other']);
+  });
   it('同一测点的多次查询归为一个依据入口', () => {
     const parts = [
       toolPart('get_daily_gnss_data', { artifact: gnssEnvelope('测试点 A') }),
@@ -63,7 +133,7 @@ describe('调查过程由官方 tool part 派生', () => {
           status: 'success',
           data: {
             total: 1,
-            stations: [{ station_name: '测试点 A', coordinate_system: 'WGS84', station_status: '告警', group_name: 'K3' }],
+            stations: [{ station_uuid: 'uuid-A', station_name: '测试点 A', coordinate_system: 'WGS84', station_status: '告警', group_name: 'K3' }],
           },
         },
       }),

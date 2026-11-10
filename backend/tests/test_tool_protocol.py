@@ -112,8 +112,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
     async def test_exact_station_name_wins_over_longer_names_containing_it(self):
         client = AsyncMock()
         client.get_stations.return_value = [
-            SimpleNamespace(station_name="MS10", station_uuid="uuid-10"),
-            SimpleNamespace(station_name="MS1", station_uuid="uuid-1"),
+            SimpleNamespace(station_name="MS10", station_uuid="uuid-10", group_name="测试组"),
+            SimpleNamespace(station_name="MS1", station_uuid="uuid-1", group_name="测试组"),
         ]
         station = await tools._resolve_station(client, "MS1")
         self.assertEqual(station.station_uuid, "uuid-1")

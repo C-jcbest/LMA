@@ -75,7 +75,10 @@ class InvestigationContractTests(unittest.TestCase):
     def test_raw_gnss_supports_quality_but_not_numeric_trend(self):
         artifact = self.numerical()
         artifact['kind'] = 'gnss_series'
-        self.assertEqual(_validate_support(self.support(claim='data_quality', axis=None), artifact), '测点A')
+        full_window = self.support(claim='data_quality', axis=None, begin_time='2026-11-01T00:00:00', end_time='2026-11-08T00:00:00')
+        self.assertEqual(_validate_support(full_window, artifact), '测点A')
+        with self.assertRaises(ToolFailure):
+            _validate_support(self.support(claim='data_quality', axis=None), artifact)
         with self.assertRaises(ToolFailure):
             _validate_support(self.support(claim='trend'), artifact)
         with self.assertRaises(ToolFailure):

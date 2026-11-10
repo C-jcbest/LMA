@@ -18,6 +18,7 @@ const gnssResult = (id: string, beginTime: string) => ({
   artifact: {
     version: 1, kind: 'gnss_series', status: 'success',
     data: {
+      station_uuid: support.station_uuid,
       station_name: '测试点 A', begin_time: beginTime, end_time: '2026-11-03 00:00:00', timezone: 'Asia/Shanghai',
       total_points: 2, returned_points: 2, downsampled: false,
       points: [{ time: beginTime, n: 100, e: 200, u: 300 }, { time: '2026-11-03 00:00:00', n: 100.002, e: 200, u: 300 }],
@@ -29,8 +30,8 @@ const gnssResult = (id: string, beginTime: string) => ({
 const report = {
   conclusion: '测试点 A 需要优先复核，测试点 B 未见明显变化。',
   stations: [
-    { station_name: '测试点 B', status: '未见明显变化', reason: '三个方向均无持续变化', acceleration: '未见持续加速', data_quality: '数据完整' },
-    { station_name: '测试点 A', status: '需人工复核', reason: '长期同向变化', acceleration: '无法判断', data_quality: '一次缺测' },
+    { station_uuid: '22222222-2222-2222-2222-222222222222', begin_time: support.begin_time, end_time: support.end_time, supports: [{ ...support, station_uuid: '22222222-2222-2222-2222-222222222222' }], station_name: '测试点 B', status: '未见明显变化', reason: '三个方向均无持续变化', acceleration: '未见持续加速', data_quality: '数据完整' },
+    { station_uuid: support.station_uuid, begin_time: support.begin_time, end_time: support.end_time, supports: [support], station_name: '测试点 A', status: '需人工复核', reason: '长期同向变化', acceleration: '无法判断', data_quality: '一次缺测' },
   ],
   findings: [
     { level: 'fact', text: '北向净变化约 2 mm', supports: [support], evidence: ['gnss-short'] },
@@ -221,6 +222,7 @@ test('调查进度保留覆盖范围，继续调查由用户点击后发送且�
       goal: '复核两个测点', covered: ['A'], unresolved: ['B尚未复核'], stage_conclusion: 'A已完成',
       targets: ['A', 'B'].map((key) => ({
         target_id: key, station_uuid: key, question: `复核测点${key}`, evidence_ids: [],
+        outcome: key === 'A' ? 'answered' : 'pending', result: key === 'A' ? 'A已完成' : '',
         begin_time: '2026-11-01T00:00:00', end_time: '2026-11-08T00:00:00',
       })),
     },

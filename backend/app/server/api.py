@@ -26,7 +26,7 @@ from app.agent.report import report_in_last_turn
 from app.agent.evidence import reconcile_evidence
 from app.agent.title import generate_title_node
 from app.agent.tools import _build_client
-from app.beidou.client import BeidouApiError
+from app.beidou.client import BeidouApiError, station_catalog_scope
 from app.config import Settings, get_settings
 from app.inspection.runner import run_inspection
 from app.server.messages import project_message, project_state
@@ -157,6 +157,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
     active_runs: dict[str, ActiveRun] = {}
     state_locks = WeakValueDictionary()
     active_inspections: set[asyncio.Task] = set()
+    inspection_start_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -318,15 +319,16 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
 
     @app.post("/inspections", status_code=202)
     async def start_inspection():
-        if active_inspections:
-            raise HTTPException(409, "巡检正在进行，请等待完成。")
-        inspection_id = str(uuid4())
-        await app.state.storage.start_inspection(inspection_id)
-        task = asyncio.create_task(run_inspection(
-            app.state.storage, inspection_id, inspection_client_factory or _build_client,
-        ))
-        active_inspections.add(task)
-        task.add_done_callback(active_inspections.discard)
+        async with inspection_start_lock:
+            if active_inspections:
+                raise HTTPException(409, "巡检正在进行，请等待完成。")
+            inspection_id = str(uuid4())
+            await app.state.storage.start_inspection(inspection_id)
+            task = asyncio.create_task(run_inspection(
+                app.state.storage, inspection_id, inspection_client_factory or _build_client,
+            ))
+            active_inspections.add(task)
+            task.add_done_callback(active_inspections.discard)
         return {"id": inspection_id}
 
     @app.get("/stations")
@@ -444,7 +446,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             status = "cancelled"
             final_values = None
             try:
-                with anyio.CancelScope() as cancel_scope:
+                with anyio.CancelScope() as cancel_scope, station_catalog_scope():
                     control.cancel_scope = cancel_scope
                     if control.stop_requested:
                         return
@@ -488,7 +490,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                                 stage_conclusion = answers[-1].text[:3000]
                             if report is not None:
                                 stage_conclusion = report[1]["conclusion"]
-                            if final_values.get("run_model_call_count", 0) >= settings.agent_model_run_limit:
+                            if any(message.additional_kwargs.get('lma_budget_exhausted') for message in answers):
                                 reason = "budget"
                         await app.state.storage.pause_investigations(key, reason, stage_conclusion)
                         await app.state.storage.finish_run(control.id, status)

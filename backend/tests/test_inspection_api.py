@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import unittest
+import httpx
 from datetime import timedelta
 from unittest.mock import patch
 from uuid import uuid4
@@ -19,6 +20,7 @@ from app.agent.report import submit_investigation_report
 from app.beidou.client import BeidouApiError
 from app.beidou.schemas import GnssDataPoint, Station
 from app.business_time import business_now
+from app.observations import sampling_calendar
 from app.config import Settings
 from app.server.api import create_app
 from app.server.storage import migrate_database
@@ -56,16 +58,14 @@ class FakeBeidou:
     async def get_daily_data(self, station_uuid, begin_time, end_time, sampling_frequency=None, sample_times=None):
         if self.unavailable and station_uuid == "uuid-测试点 B":
             raise BeidouApiError("500", "PRIVATE_UPSTREAM")
-        now = business_now().replace(tzinfo=None, microsecond=0)
-        count = 90 if sample_times else 168
-        step = timedelta(days=1) if sample_times else timedelta(hours=1)
+        moments = sampling_calendar(begin_time, end_time, sample_times=sample_times)
         rate = 0.0002 if station_uuid == "11111111-1111-1111-1111-111111111111" and sample_times else 0
         return [
             GnssDataPoint(
-                DataTime=(now - step * (count - i)).strftime("%Y-%m-%d %H:%M:%S"),
+                DataTime=moment,
                 PJKInfoN=str(100 - i * rate), PJKInfoE="200", PJKInfoU="300",
             )
-            for i in range(count)
+            for i, moment in enumerate(moments)
         ]
 
 
@@ -94,9 +94,9 @@ class InspectionApiTests(unittest.TestCase):
         self.model = ScriptedModel(script=[gnss_call(), report_call()])
         app = create_app(
             settings,
-            agent_factory=lambda saver: create_lma_agent(
+            agent_factory=lambda saver, storage: create_lma_agent(
                 self.model, agent_tools=[fake_gnss, submit_investigation_report],
-                summary_model=ScriptedModel(tags=["nostream"], script=[]), checkpointer=saver,
+                summary_model=ScriptedModel(tags=["nostream"], script=[]), checkpointer=saver, investigation_storage=storage,
             ),
             inspection_client_factory=lambda: self.beidou,
         )
@@ -115,6 +115,33 @@ class InspectionApiTests(unittest.TestCase):
 
     def by_name(self, latest):
         return {row["station_name"]: row for row in latest["stations"]}
+
+    def test_simultaneous_inspection_requests_start_only_one_scan(self):
+        async def scenario():
+            release = asyncio.Event()
+            original_start = self.client.app.state.storage.start_inspection
+            original_stations = self.beidou.get_stations
+
+            async def save_start(identifier):
+                await asyncio.sleep(.02)
+                await original_start(identifier)
+
+            async def held_stations():
+                await release.wait()
+                return await original_stations()
+
+            transport = httpx.ASGITransport(app=self.client.app)
+            with patch.object(self.client.app.state.storage, 'start_inspection', side_effect=save_start) as start, \
+                    patch.object(self.beidou, 'get_stations', side_effect=held_stations):
+                try:
+                    async with httpx.AsyncClient(transport=transport, base_url='http://test') as client:
+                        results = await asyncio.gather(client.post('/inspections'), client.post('/inspections'))
+                    self.assertEqual(sorted(response.status_code for response in results), [202, 409])
+                    self.assertEqual(start.await_count, 1)
+                finally:
+                    release.set()
+
+        self.client.portal.call(scenario)
 
     def test_station_sessions_are_explicitly_scoped_and_latest_unarchived_first(self):
         sessions = []
@@ -147,9 +174,10 @@ class InspectionApiTests(unittest.TestCase):
         session_id = self.client.post("/sessions", json={"name": "历史简报迁移"}).json()["id"]
         self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
         storage = self.client.app.state.storage
-        self.client.portal.call(storage.record_conclusions, session_id, "old-report", [
-            {"station_name": "测试点 A", "status": "持续关注", "reason": "历史判断"},
-        ])
+        async def seed_legacy():
+            async with storage.pool.connection() as connection:
+                await connection.execute("INSERT INTO lma_station_conclusions(session_id,tool_call_id,station_name,status,reason) VALUES (%s,'old-report','测试点 A','持续关注','历史判断')", (session_id,))
+        self.client.portal.call(seed_legacy)
         self.client.portal.call(migrate_database, DATABASE_URI)
         self.client.portal.call(migrate_database, DATABASE_URI)
         records = self.client.portal.call(storage.station_records, "11111111-1111-1111-1111-111111111111")
@@ -157,7 +185,7 @@ class InspectionApiTests(unittest.TestCase):
         self.assertEqual(migrated, [])
         self.assertEqual(self.client.get(f"/sessions/{session_id}").status_code, 200)
         conclusions = self.client.get('/sessions/conclusions').json()
-        self.assertTrue(any(row['session_id'] == session_id for row in conclusions))
+        self.assertFalse(any(row['session_id'] == session_id for row in conclusions))
 
     def test_record_links_use_uuid_even_when_names_match(self):
         storage = self.client.app.state.storage
@@ -187,7 +215,10 @@ class InspectionApiTests(unittest.TestCase):
 
         async def remove_links():
             async with storage.pool.connection() as connection:
-                await connection.execute('DELETE FROM lma_station_record_links WHERE session_id = %s', (session_id,))
+                await connection.execute("INSERT INTO lma_station_conclusions(session_id,tool_call_id,station_name,status,reason) VALUES (%s,'report-1','测试点 A','需人工复核','历史判断')", (session_id,))
+                await connection.execute("INSERT INTO lma_station_investigations(session_id,anchor_id,station_name,report_tool_call_id,question) VALUES (%s,'report-1','测试点 A','report-1','原问题')", (session_id,))
+                await connection.execute('DELETE FROM lma_station_records WHERE session_id = %s', (session_id,))
+                await connection.execute('DELETE FROM lma_station_results WHERE session_id = %s', (session_id,))
 
         self.client.portal.call(remove_links)
         self.client.portal.call(migrate_database, DATABASE_URI)
@@ -196,6 +227,8 @@ class InspectionApiTests(unittest.TestCase):
         own = [record for record in records if str(record['session_id']) == session_id]
         self.assertEqual(len(own), 1)
         self.assertEqual(own[0]['anchor_id'], 'report-1')
+        self.assertIsNone(own[0]['status'])
+        self.assertEqual(own[0]['historical_status'], '需人工复核')
 
     def test_plain_answer_is_recorded_with_answer_anchor_without_inventing_status(self):
         self.model.script[:] = [AIMessage(id="plain-answer", content="可以继续观察北向的变化。")]

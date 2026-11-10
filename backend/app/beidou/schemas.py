@@ -22,16 +22,16 @@ class Station(BaseModel):
     station_name: str = Field(alias="StationName")
     # 初始坐标（平台登记的北向/东向坐标与海拔，单位 m）：
     # 累计偏移仅使用固定参考；缺失时只计算窗口变化，不用首点补造参考
-    station_n0: str = Field(default="", alias="StationN0")
-    station_e0: str = Field(default="", alias="StationE0")
-    station_u0: str = Field(default="", alias="StationU0")
+    station_n0: str | float | None = Field(default=None, alias="StationN0")
+    station_e0: str | float | None = Field(default=None, alias="StationE0")
+    station_u0: str | float | None = Field(default=None, alias="StationU0")
     station_type: int = Field(default=0, alias="StationType")
     station_status: int = Field(default=0, alias="StationStatus")
     location: str = Field(default="", alias="StationLocation")
     description: str = Field(default="", alias="StationDesc")
-    latitude: str = Field(default="", alias="Latitude")
-    longitude: str = Field(default="", alias="Longitude")
-    altitude: str = Field(default="", alias="Altitude")
+    latitude: str | float | None = Field(default=None, alias="Latitude")
+    longitude: str | float | None = Field(default=None, alias="Longitude")
+    altitude: str | float | None = Field(default=None, alias="Altitude")
 
 
 class GnssDataPoint(BaseModel):
@@ -39,6 +39,6 @@ class GnssDataPoint(BaseModel):
 
     data_time: str = Field(alias="DataTime")
     data_timestamp: int = Field(default=0, alias="DataTimestamp")
-    n: str = Field(alias="PJKInfoN")
-    e: str = Field(alias="PJKInfoE")
-    u: str = Field(alias="PJKInfoU")
+    n: str | float | None = Field(default=None, alias="PJKInfoN")
+    e: str | float | None = Field(default=None, alias="PJKInfoE")
+    u: str | float | None = Field(default=None, alias="PJKInfoU")

@@ -59,14 +59,15 @@ async def analyze_gnss_numerically(
     raw_points = {}
     quality = {}
     async with _build_client() as client:
-        station = await _resolve_station(client, station_name_or_uuid)
+        catalog = await client.get_stations() if compare_station_uuids else None
+        station = await _resolve_station(client, station_name_or_uuid, stations=catalog)
         if station.station_type == 1:
             return "基准站不适用移动站形变分析。", None
         requested = [station.station_uuid, *dict.fromkeys(compare_station_uuids or [])]
         for station_uuid in dict.fromkeys(requested):
             other = station
             if station_uuid != station.station_uuid:
-                other = await _resolve_station(client, station_uuid)
+                other = await _resolve_station(client, station_uuid, stations=catalog)
                 if not station.group_uuid or other.group_uuid != station.group_uuid or other.station_type == 1:
                     raise ToolFailure("共同有效时段比较只接受已确认同组的移动站")
             station_objects[other.station_uuid] = other
@@ -98,7 +99,6 @@ async def analyze_gnss_numerically(
                 comparison_points[other.station_uuid] = []
 
     points = comparison_points[station.station_uuid]
-    times = [point.data_time for point in points]
     features = window_features(points, station, begin_time, end_time, cadence_hours)
     comparisons = {}
     first = [point for point in points if split_time and point.data_time < split_time]
@@ -135,8 +135,6 @@ async def analyze_gnss_numerically(
         }
         data["comparisons"]["quality"] = quality
     # 原始快照留作复核；模型只需计算结果，避免多站完整序列占满上下文。
-    facts = {key: value for key, value in data.items() if key not in {"points", "raw_points", "comparisons"}}
-    facts["comparisons"] = {key: value for key, value in comparisons.items() if key != "snapshots"}
     return tool_result(
         numerical_model_data(data), kind="numerical", display=data, observed_at=business_now().isoformat(),
         limitations=["仅描述数值证据；阈值未经真实场景校准，不构成灾害判断"],

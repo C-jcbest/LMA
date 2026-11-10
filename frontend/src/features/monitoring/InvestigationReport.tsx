@@ -101,7 +101,7 @@ export const InvestigationReport: FC = () => {
     }
   };
   const orderedStations = [...report.stations].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
-  const { byStation: findingsByStation, shared: sharedFindings } = groupReportFindings(report, steps);
+  const { byStation: findingsByStation, shared: sharedFindings } = groupReportFindings(report);
   const quiet = orderedStations.filter((item) => item.status === '未见明显变化');
   const focused = orderedStations.filter((item) => item.status !== '未见明显变化');
   const showAll = report.stations.length === 1;

@@ -7,6 +7,14 @@ from app.business_time import TIME_FORMAT
 from app.inspection.screening import theil_sen_slope
 from app.observations import finite_number, observation_time, station_reference
 
+METRIC_NAMES = {
+    'n': '北向相对位移N',
+    'e': '东向相对位移E',
+    'u': '垂向相对位移U',
+    'h': '水平合成偏移模长H',
+    'd': '三维合成偏移模长D',
+}
+
 
 def _candidate_events(moments, mm, adjacent):
     steps = [mm[index + 1] - mm[index] for index in sorted(adjacent)]
@@ -88,6 +96,7 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
         'cadence_hours': cadence_hours, 'effective_span_hours': 0,
         'baseline': '固定初始坐标' if base is not None else '固定参考缺失；仅计算窗口变化',
         'reference_value_m': base, 'trend_supported': False, 'events': [], 'limitations': [],
+        'residual_noise_mm': None,
     }
     if any(count > 1 for count in counts.values()):
         result['limitations'].append('重复时间已剔除')
@@ -109,6 +118,10 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     result.update(net_change_mm=mm[-1],
                   robust_slope_mm_day=theil_sen_slope([days[i] for i in indices], [mm[i] for i in indices]),
                   slope_sample_count=len(indices))
+    residuals = [value - result['robust_slope_mm_day'] * day for day, value in zip(days, mm)]
+    residual_center = median(residuals)
+    result['residual_noise_mm'] = 1.4826 * median(abs(value - residual_center) for value in residuals)
+    result['limitations'].append('残差MAD仅描述本窗离散，不代表传感器精度；周期、台阶及基准变化仍需分别核查')
     expected = max(1, round(days[-1] * 24 / cadence_hours) + 1)
     result['trend_supported'] = len(valid) >= 7 and days[-1] * 24 >= cadence_hours * 6 and len(valid) / expected >= .5
     if not result['trend_supported']:
@@ -162,6 +175,7 @@ def common_period_features(stations, axis, cadence_hours=1.0):
     result = {}
     for station, values in aligned.items():
         feature = axis_features(common, [values[time] for time in common], cadence_hours=cadence_hours)
+        feature['metric_name'] = METRIC_NAMES[axis]
         feature['sample_set'] = {'scope': 'common_period', 'station_uuid': station, 'axis': axis,
                                  'station_uuids': list(stations), 'timestamps': common}
         result[station] = feature
@@ -187,6 +201,7 @@ def window_features(points, station, begin_time, end_time, cadence_hours=1.0, sc
                     values.append(math.sqrt(sum((float(getattr(point, key)) - reference[key]) ** 2 for key in components)))
             base = 0 if all(reference[key] is not None for key in components) else None
         feature = axis_features(times, values, base=base, cadence_hours=cadence_hours)
+        feature['metric_name'] = METRIC_NAMES[axis]
         feature['sample_set'] = {'scope': scope, 'station_uuid': station.station_uuid, 'axis': axis,
                                  'requested_begin': begin_time, 'requested_end': end_time,
                                  'timestamps': [time for time, value in zip(times, values) if finite_number(value) is not None]}

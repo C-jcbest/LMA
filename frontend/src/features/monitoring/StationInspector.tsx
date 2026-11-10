@@ -114,7 +114,8 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
 
   const askAboutRange = () => {
     if (!range) return;
-    appendToComposerDraft(aui, rangeQuestion(station.name, range));
+    const stationIdentity = station.uuid ? `${station.name}（UUID：${station.uuid}）` : station.name;
+    appendToComposerDraft(aui, rangeQuestion(stationIdentity, range));
     if (isSplit) {
       composerInputRef.current?.focus();
     } else {
@@ -171,7 +172,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
         <ErrorBoundary fallbackTitle="时间轴渲染异常">
           <Suspense fallback={<Skeleton className="h-96 w-full" />}>
             <TimelineChart
-              viewKey={`${data.station_name}:${data.begin_time}:${data.end_time}:${mode}`}
+              viewKey={`${station.id}:${data.begin_time}:${data.end_time}:${mode}`}
               option={option}
               label={`${station.name} ${seriesLabel(data)} 位移时间轴`}
               resetSignal={resetSignal}
@@ -235,7 +236,7 @@ interface InspectorBodyProps {
   stations: readonly StationEvidence[];
   title: ReactNode;
   supportNotes: string[];
-  onSelectStation: (name: string) => void;
+  onSelectStation: (stationId: string) => void;
   onClose: () => void;
 }
 
@@ -286,10 +287,10 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
         <div className="flex shrink-0 items-center">
           {stations.length > 1 && (
             <>
-              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!previousStation} aria-label="上一个测点" onClick={() => onSelectStation(previousStation!.name)}>
+              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!previousStation} aria-label="上一个测点" onClick={() => onSelectStation(previousStation!.id)}>
                 <ChevronLeftIcon className="size-4" />
               </Button>
-              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!nextStation} aria-label="下一个测点" onClick={() => onSelectStation(nextStation!.name)}>
+              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!nextStation} aria-label="下一个测点" onClick={() => onSelectStation(nextStation!.id)}>
                 <ChevronRightIcon className="size-4" />
               </Button>
             </>

@@ -67,7 +67,7 @@ def _axis_summary(values: list[str]) -> dict:
         "count": len(nums),
         "first": nums[0],
         "last": nums[-1],
-        "change": round(nums[-1] - nums[0], 4),
+        "change": nums[-1] - nums[0],
         "min": min(nums),
         "max": max(nums),
     }
@@ -119,11 +119,12 @@ def _station_to_dict(station: Station) -> dict:
 
 
 async def _resolve_station(
-    client: BeidouClient, station_name_or_uuid: str
+    client: BeidouClient, station_name_or_uuid: str, *, stations: list[Station] | None = None
 ) -> Station:
     """把站名或 UUID 解析为唯一站点；无法唯一确定时抛出受控业务异常。"""
     if _UUID_PATTERN.match(station_name_or_uuid):
-        stations = await client.get_stations()
+        if stations is None:
+            stations = await client.get_stations()
         for station in stations:
             if station.station_uuid == station_name_or_uuid:
                 return station
@@ -131,7 +132,10 @@ async def _resolve_station(
             "未找到指定 UUID 对应的监测点，请确认站点。",
         )
 
-    stations = await client.get_stations(station_name=station_name_or_uuid)
+    if stations is None:
+        stations = await client.get_stations(station_name=station_name_or_uuid)
+    else:
+        stations = [station for station in stations if station_name_or_uuid in station.station_name]
     if not stations:
         raise ToolFailure(
             f"未找到名称包含“{station_name_or_uuid}”的监测点",
@@ -141,7 +145,7 @@ async def _resolve_station(
     if len(exact) == 1:
         return exact[0]
     if len(stations) > 1:
-        names = [item.station_name for item in stations[:20]]
+        names = [f'{item.station_name}（{item.group_name}，{item.station_uuid}）' for item in stations[:20]]
         raise ToolFailure(
             f"匹配到 {len(stations)} 个监测点，请确认具体站点：" + "、".join(names),
         )

@@ -33,6 +33,49 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    async def test_malformed_tool_arguments_are_corrected_without_executing_or_losing_evidence(self):
+        invocations = []
+
+        @tool
+        def station() -> str:
+            """读取测点事实。"""
+            invocations.append('station')
+            return '已取得事实'
+
+        malformed = AIMessage(content='', invalid_tool_calls=[{
+            'type': 'invalid_tool_call', 'id': 'malformed', 'name': 'station',
+            'args': '{broken', 'error': 'Invalid JSON',
+        }])
+        malformed.additional_kwargs['tool_calls'] = [{'id': 'malformed', 'type': 'function',
+            'function': {'name': 'station', 'arguments': '{broken'}}]
+        model = ScriptedModel(script=[call(), malformed, AIMessage(content='根据已取得事实作答')])
+        agent = graph.create_lma_agent(model, agent_tools=[station], retry_delay=0)
+        result = await agent.ainvoke({'messages': [HumanMessage(content='读取并解释')]})
+        self.assertEqual(invocations, ['station'])
+        self.assertEqual(result['messages'][-1].text, '根据已取得事实作答')
+        self.assertEqual(len(model.inputs), 3)
+        self.assertTrue(result['messages'][-2].invalid_tool_calls)
+        self.assertFalse(model.inputs[-1][-1].invalid_tool_calls)
+        self.assertNotIn('tool_calls', model.inputs[-1][-1].additional_kwargs)
+        self.assertIn('该部分调用未执行', model.inputs[-1][-1].text)
+
+    async def test_empty_model_output_is_an_explicit_failure(self):
+        agent = graph.create_lma_agent(ScriptedModel(script=[AIMessage(content='')]), agent_tools=[], retry_delay=0)
+        with self.assertRaisesRegex(ValueError, '未返回可用回答'):
+            await agent.ainvoke({'messages': [HumanMessage(content='解释当前情况')]})
+
+    async def test_malformed_calls_cannot_bypass_model_budget(self):
+        self.settings.agent_model_run_limit = 2
+        malformed = AIMessage(content='', invalid_tool_calls=[{
+            'type': 'invalid_tool_call', 'id': 'malformed', 'name': 'station',
+            'args': '{broken', 'error': 'Invalid JSON',
+        }])
+        model = ScriptedModel(script=[malformed, malformed.model_copy()])
+        agent = graph.create_lma_agent(model, agent_tools=[], retry_delay=0)
+        with self.assertRaisesRegex(ValueError, '预算'):
+            await agent.ainvoke({'messages': [HumanMessage(content='读取并解释')]})
+        self.assertEqual(len(model.inputs), 2)
+
     async def test_production_loop_checkpoint_metadata_usage_and_time(self):
         @tool
         def station() -> str:

@@ -3,6 +3,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
+  'acquisition_failure',
   'numerical',
   'investigation_report',
   'station_list',
@@ -80,6 +81,9 @@ const isVisionData = (value: unknown) => {
 const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
   if (!isRecord(value)) return false;
   switch (kind) {
+    case 'acquisition_failure':
+      return typeof value.station_name === 'string' && typeof value.message === 'string'
+        && typeof value.requested_station === 'string';
     case 'numerical':
       return typeof value.station_uuid === 'string' && typeof value.station_name === 'string'
         && typeof value.begin_time === 'string' && typeof value.end_time === 'string'

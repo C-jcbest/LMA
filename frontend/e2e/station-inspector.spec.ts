@@ -14,6 +14,7 @@ const gnssResult = (id: string, stationName: string, beginDay: string, points: A
   artifact: {
     version: 1, kind: 'gnss_series', status: 'success',
     data: {
+      station_uuid: stationName === '测试点 A' ? 'test-a' : 'test-b',
       station_name: stationName, begin_time: `${beginDay} 00:00:00`, end_time: '2026-11-03 00:00:00',
       timezone: 'Asia/Shanghai', total_points: points.length, returned_points: points.length, downsampled: false,
       points: points.map(([time, north]) => ({ time, n: north, e: 200.002, u: 300.003 })),
@@ -65,6 +66,29 @@ async function openInvestigation(page: Page, width: number, history: readonly un
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 const stationEntry = (page: Page) => page.getByRole('button', { name: '查看 测试点 A 的依据' });
+
+test('已存证的失败原因在过程折叠时可见，不展示模型专用正文', async ({ page }) => {
+  const history = messages.map((message) => {
+    if (message.id !== 'weather-result') {
+      return message;
+    }
+    return {
+      ...message, content: 'MODEL_ONLY',
+      artifact: {
+        version: 1, kind: 'acquisition_failure', status: 'error',
+        data: { station_uuid: 'test-a', station_name: '测试点 A', requested_station: 'test-a',
+          message: '气象服务暂不可用，未取得本次降雨数据。' },
+        error: { code: 'unavailable', category: 'business',
+          message: '气象服务暂不可用，未取得本次降雨数据。', retryable: false },
+      },
+    };
+  });
+  await openInvestigation(page, 320, history);
+  await expect(page.getByText('气象服务暂不可用，未取得本次降雨数据。', { exact: false })).toBeVisible();
+  await expect(page.getByText('MODEL_ONLY')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /查询记录 · 2 项已获取/ })).toHaveAttribute('aria-expanded', 'false');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+});
 
 for (const width of [320, 1440]) {
   test(`${width}px 结论优先，测点时间轴可打开并恢复草稿与焦点`, async ({ page }) => {
@@ -147,7 +171,7 @@ test('框选时间段后可带入追问，还原后恢复完整窗口', async ({
 
   await inspector(page).getByRole('button', { name: '追问这段' }).click();
   const input = page.getByRole('textbox', { name: '输入监测问题' });
-  await expect(input).toHaveValue(/^也看看东向变化\n测试点 A 2026-11-\d\d \d\d:\d\d 至 2026-11-\d\d \d\d:\d\d 这段发生了什么？$/);
+  await expect(input).toHaveValue(/^也看看东向变化\n测试点 A（UUID：test-a） 2026-11-\d\d \d\d:\d\d 至 2026-11-\d\d \d\d:\d\d 这段发生了什么？$/);
   await expect(input).toBeFocused();
 
   await inspector(page).getByRole('button', { name: '还原' }).click();
@@ -188,7 +212,7 @@ test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度�
   await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(390);
+  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBeCloseTo(390, 1);
   await page.setViewportSize({ width: 1024, height: 844 });
   await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(664);
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();

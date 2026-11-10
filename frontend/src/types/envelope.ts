@@ -1,6 +1,7 @@
 /** LMA 工具产物版本化协议信封（Version 1）。 */
 
 export type ToolArtifactKind =
+  | 'acquisition_failure'
   | 'numerical'
   | 'investigation_report'
   | 'station_list'
@@ -73,7 +74,7 @@ export interface AxisSummaryArtifact {
 export interface GapArtifact {
   from: string;
   to: string;
-  missing_hours: number;
+  missing_hours: number | null;
 }
 
 export interface GnssArtifactData {
@@ -292,6 +293,7 @@ export interface NumericalArtifactData {
 }
 
 export interface ArtifactDataByKind {
+  acquisition_failure: { station_uuid?: string; station_name: string; requested_station: string; begin_time?: string; end_time?: string; message: string };
   numerical: NumericalArtifactData;
   investigation_report: InvestigationReportArtifactData;
   station_list: StationListArtifactData;
