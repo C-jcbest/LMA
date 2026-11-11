@@ -4,8 +4,8 @@
 
 项目内使用说明：
 
-- 本文件保留外部接口原始含义和样例，不作为本项目运行配置的唯一来源。
-- 项目当前集成基址以 `.env.example` 中的 `BEIDOU_API_BASE_URL` 为准：`http://39.96.80.62/bdjc-api/v2/API`。
+- 本文保留接口契约。地址、账号、密码、会话与测点标识、位置和观测值均为虚构示例。
+- 示例集成基址见 `backend/.env.example` 的 `BEIDOU_API_BASE_URL`：`https://beidou.example.invalid/bdjc-api/v2/API`。
 - 运行时不配置全局北斗账号；普通用户查询、Agent 工具、邮件订阅和定时分析必须使用当前用户或订阅所属用户绑定的北斗凭据。
 - 审计日志可记录凭据使用主体和失败原因，但不得记录明文用户名密码。
 
@@ -94,7 +94,7 @@ API 接口主要包含以下核心功能：
 
 ### 请求 URL
 
-POST [http://39.96.80.62/bdjc-api/API/UserLogin/doLogin.php](http://39.96.80.62/bdjc-api/API/UserLogin/doLogin.php)
+POST [https://beidou.example.invalid/bdjc-api/API/UserLogin/doLogin.php](https://beidou.example.invalid/bdjc-api/API/UserLogin/doLogin.php)
 
 ### 请求参数
 
@@ -133,9 +133,9 @@ POST [http://39.96.80.62/bdjc-api/API/UserLogin/doLogin.php](http://39.96.80.62/
 ```
 {
 
- "Username": "<INVALID_USERNAME>",
+ "Username": "demoUser01",
 
- "Password": "<INVALID_PASSWORD>"
+ "Password": "INVALID_EXAMPLE_PASSWORD"
 
 }
 ```
@@ -149,25 +149,37 @@ POST [http://39.96.80.62/bdjc-api/API/UserLogin/doLogin.php](http://39.96.80.62/
 
    "ResponseMsg": "操作成功",
 
-   "SessionUUID": "<INVALID_SESSION_UUID>"
+   "SessionUUID": "00000000-0000-4000-8000-000000000001"
 
 }
 ```
 
 ### Python 示例
 
-```
+独立运行示例前，在脚本环境中设置实际平台基址和凭据。后续示例共用这里的请求配置。
+
+```python
+import json
+import os
+
+import requests
+
+BASE_URL = os.environ["BEIDOU_API_BASE_URL"].rstrip("/")
+HEADERS = {"Content-Type": "application/json"}
+
+
 def login():
 
    url = f"{BASE_URL}/UserLogin/doLogin.php"
 
-   # 将用户名和密码替换为自己的用户名和密码
-
-   payload = {"Username": "<INVALID_USERNAME>", "Password": "<INVALID_PASSWORD>"}
+   payload = {
+       "Username": os.environ["BEIDOU_USERNAME"],
+       "Password": os.environ["BEIDOU_PASSWORD"],
+   }
 
    r = requests.post(url, headers=HEADERS, json=payload)
 
-   print("登录结果：", json.dumps(r.json(), ensure_ascii=False, indent=2))
+   r.raise_for_status()
 
    return r.json().get("SessionUUID")
 ```
@@ -180,7 +192,7 @@ def login():
 
 ### 请求 URL
 
-POST [http://39.96.80.62/bdjc-api/API/Station/getStationGroupListInfo.php](http://39.96.80.62/bdjc-api/API/Station/getStationGroupListInfo.php)
+POST [https://beidou.example.invalid/bdjc-api/API/Station/getStationGroupListInfo.php](https://beidou.example.invalid/bdjc-api/API/Station/getStationGroupListInfo.php)
 
 ### 请求参数
 
@@ -224,7 +236,7 @@ POST [http://39.96.80.62/bdjc-api/API/Station/getStationGroupListInfo.php](http:
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>"
+ "SessionUUID": "00000000-0000-4000-8000-000000000001"
 
 }
 ```
@@ -242,13 +254,13 @@ POST [http://39.96.80.62/bdjc-api/API/Station/getStationGroupListInfo.php](http:
 
    {
 
-     "StationGroupUUID": "bba7b810-9dad-11d1-80b4-00c04fd430c8",
+     "StationGroupUUID": "00000000-0000-4000-8000-000000000002",
 
-     "StationGroupName": "北京监测组",
+     "StationGroupName": "演示分组 A",
 
-     "StationCount": 2,
+     "StationCount": 1,
 
-     "StationGroupDesc": "北京市GNSS监测点分组"
+     "StationGroupDesc": "虚构分组，仅用于接口演示"
 
    }
 
@@ -283,7 +295,7 @@ def get_station_group_list_info(session_uuid):
 
 ### 请求 URL
 
-POST [http://39.96.80.62/bdjc-api/API/Station/getStationListInfo.php](http://39.96.80.62/bdjc-api/API/Station/getStationListInfo.php)
+POST [https://beidou.example.invalid/bdjc-api/API/Station/getStationListInfo.php](https://beidou.example.invalid/bdjc-api/API/Station/getStationListInfo.php)
 
 ### 请求参数
 
@@ -376,11 +388,11 @@ POST [http://39.96.80.62/bdjc-api/API/Station/getStationListInfo.php](http://39.
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>",
+ "SessionUUID": "00000000-0000-4000-8000-000000000001",
 
- "StationGroupUUID": "8ba7b810-9dad-11d1-80b4-00c04fd430c8",
+ "StationGroupUUID": "00000000-0000-4000-8000-000000000002",
 
- "StationName": "北京监测点",
+ "StationName": "DEMO-ST01",
 
  "StationStatus": 10,
 
@@ -426,39 +438,39 @@ POST [http://39.96.80.62/bdjc-api/API/Station/getStationListInfo.php](http://39.
 
    {
 
-     "StationGroupUUID": "8ba7b810-9dad-11d1-80b4-00c04fd430c8",
+     "StationGroupUUID": "00000000-0000-4000-8000-000000000002",
 
-     "StationGroupName": "北京设备组",
+     "StationGroupName": "演示分组 A",
 
-     "StationUUID": "aba7b810-9dad-11d1-80b4-00c04fd430c8",
+     "StationUUID": "00000000-0000-4000-8000-000000000003",
 
-     "DeviceUUID": "aba7b810-9dad-11d1-80b4-00c04fd430c8",
+     "DeviceUUID": "00000000-0000-4000-8000-000000000004",
 
-     "StationName": "北京监测点001",
+     "StationName": "DEMO-ST01",
 
-     "StationN0": "4421290.4231",
+     "StationN0": "1000.000",
 
-     "StationE0": "198942.5203",
+     "StationE0": "2000.000",
 
-     "StationU0": "17.2676",
+     "StationU0": "50.000",
 
      "StationType": 1,
 
-     "StationLocation": "北京市海淀区",
+     "StationLocation": "示例区域",
 
      "StationStatus": 10,
 
-     "StationDesc": "北京市海淀区GNSS监测点",
+     "StationDesc": "虚构测点，仅用于接口演示",
 
-     "BaseStationUUID": "cba7b810-9dad-11d1-80b4-00c04fd430c8",
+     "BaseStationUUID": "00000000-0000-4000-8000-000000000005",
 
-     "BaseStationName": "北京基准站001",
+     "BaseStationName": "DEMO-BASE01",
 
-     "Latitude": "39.759630522",
+     "Latitude": "0.000000",
 
-     "Longitude": "116.986252277",
+     "Longitude": "0.000000",
 
-     "Altitude": "44.2287"
+     "Altitude": "50.000"
 
    }
 
@@ -507,7 +519,7 @@ def get_station_list_info(session_uuid):
 
 ### 请求 URL
 
-POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php)
+POST [https://beidou.example.invalid/bdjc-api/API/GNSSData/getGNSSDataInfo.php](https://beidou.example.invalid/bdjc-api/API/GNSSData/getGNSSDataInfo.php)
 
 ### 请求参数
 
@@ -566,15 +578,15 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>",
+ "SessionUUID": "00000000-0000-4000-8000-000000000001",
 
- "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
+ "StationUUID": "00000000-0000-4000-8000-000000000003",
 
  "DataType":1,
 
- "BeginTime": "2025-02-10 00:00:00",
+ "BeginTime": "2030-01-15 08:00:00",
 
- "EndTime": "2025-02-10 00:02:59"
+ "EndTime": "2030-01-15 10:00:00"
 
 }
 ```
@@ -584,15 +596,15 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>",
+ "SessionUUID": "00000000-0000-4000-8000-000000000001",
 
- "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
+ "StationUUID": "00000000-0000-4000-8000-000000000003",
 
  "DataType": 1,
 
- "BeginTime": "2025-02-10 00:00:00",
+ "BeginTime": "2030-01-15 08:00:00",
 
- "EndTime": "2025-02-10 23:59:59",
+ "EndTime": "2030-01-15 10:00:00",
 
  "SamplingFrequency": "1h"
 
@@ -604,15 +616,15 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>",
+ "SessionUUID": "00000000-0000-4000-8000-000000000001",
 
- "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
+ "StationUUID": "00000000-0000-4000-8000-000000000003",
 
  "DataType": 1,
 
- "BeginTime": "2025-02-10 00:00:00",
+ "BeginTime": "2030-01-15 08:00:00",
 
- "EndTime": "2025-02-10 23:59:59",
+ "EndTime": "2030-01-15 10:00:00",
 
  "SampleTimes": ["daily 03:00", "daily 15:00"]
 
@@ -632,43 +644,43 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getGNSSDataInfo.php](http://39.96
 
        {
 
-           "DataTime":"2025-08-18 00:01:00",
+           "DataTime":"2030-01-15 08:00:00",
 
-           "DataTimestamp":1755446460,
+           "DataTimestamp":1894665600,
 
-           "PJKInfoN":"3533124.543",
+           "PJKInfoN":"1000.000",
 
-           "PJKInfoE":"380614.993",
+           "PJKInfoE":"2000.000",
 
-           "PJKInfoU":"213.655"
-
-       },
-
-       {
-
-           "DataTime":"2025-08-18 00:02:00",
-
-           "DataTimestamp":1755446520,
-
-           "PJKInfoN":"3533124.550",
-
-           "PJKInfoE":"380615.007",
-
-           "PJKInfoU":"213.599"
+           "PJKInfoU":"50.000"
 
        },
 
        {
 
-           "DataTime":"2025-08-18 00:03:00",
+           "DataTime":"2030-01-15 08:01:00",
 
-           "DataTimestamp":1755446580,
+           "DataTimestamp":1894665660,
 
-           "PJKInfoN":"3533124.550",
+           "PJKInfoN":"1000.001",
 
-           "PJKInfoE":"380615.005",
+           "PJKInfoE":"2000.000",
 
-           "PJKInfoU":"213.576"
+           "PJKInfoU":"50.001"
+
+       },
+
+       {
+
+           "DataTime":"2030-01-15 08:02:00",
+
+           "DataTimestamp":1894665720,
+
+           "PJKInfoN":"1000.002",
+
+           "PJKInfoE":"2000.001",
+
+           "PJKInfoU":"50.001"
 
        }
 
@@ -692,9 +704,9 @@ def get_gnss_data(session_uuid, station_uuid, sampling_frequency=None, sample_ti
 
        "DataType": 1,
 
-       "BeginTime": "2025-02-10 00:00:00",
+       "BeginTime": "2030-01-15 08:00:00",
 
-       "EndTime": "2025-02-10 00:02:59"
+       "EndTime": "2030-01-15 10:00:00"
 
    }
 
@@ -721,7 +733,7 @@ def get_gnss_data(session_uuid, station_uuid, sampling_frequency=None, sample_ti
 
 ### 请求 URL
 
-POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php)
+POST [https://beidou.example.invalid/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](https://beidou.example.invalid/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php)
 
 ### 请求参数
 
@@ -782,13 +794,13 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>",
+ "SessionUUID": "00000000-0000-4000-8000-000000000001",
 
- "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
+ "StationUUID": "00000000-0000-4000-8000-000000000003",
 
- "BeginTime": "2025-02-10 00:00:00",
+ "BeginTime": "2030-01-15 08:00:00",
 
- "EndTime": "2025-02-10 02:59:59"
+ "EndTime": "2030-01-17 18:00:00"
 
 }
 ```
@@ -798,13 +810,13 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>",
+ "SessionUUID": "00000000-0000-4000-8000-000000000001",
 
- "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
+ "StationUUID": "00000000-0000-4000-8000-000000000003",
 
- "BeginTime": "2025-02-10 00:00:00",
+ "BeginTime": "2030-01-15 08:00:00",
 
- "EndTime": "2025-02-10 23:59:59",
+ "EndTime": "2030-01-17 18:00:00",
 
  "SamplingFrequency": "6h"
 
@@ -816,13 +828,13 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://
 ```
 {
 
- "SessionUUID": "<INVALID_SESSION_UUID>",
+ "SessionUUID": "00000000-0000-4000-8000-000000000001",
 
- "StationUUID": "24db1004-b58f-4965-a9bc-5ae0bdaf0c6f",
+ "StationUUID": "00000000-0000-4000-8000-000000000003",
 
- "BeginTime": "2025-02-10 00:00:00",
+ "BeginTime": "2030-01-15 08:00:00",
 
- "EndTime": "2025-02-12 23:59:59",
+ "EndTime": "2030-01-17 18:00:00",
 
  "SampleTimes": ["daily 03:00", "daily 15:00"]
 
@@ -842,43 +854,43 @@ POST [http://39.96.80.62/bdjc-api/API/GNSSData/getDailyGNSSDataInfo.php](http://
 
        {
 
-           "DataTime":"2025-02-10 00:00:00",
+           "DataTime":"2030-01-15 08:00:00",
 
-           "DataTimestamp":1739116800,
+           "DataTimestamp":1894665600,
 
-           "PJKInfoN":"3269234.5775",
+           "PJKInfoN":"1000.000",
 
-           "PJKInfoE":"572757.6600",
+           "PJKInfoE":"2000.000",
 
-           "PJKInfoU":"44.0022"
-
-       },
-
-       {
-
-           "DataTime":"2025-02-10 01:00:00",
-
-           "DataTimestamp":1739120400,
-
-           "PJKInfoN":"3269234.5761",
-
-           "PJKInfoE":"572757.6587",
-
-           "PJKInfoU":"43.9995"
+           "PJKInfoU":"50.000"
 
        },
 
        {
 
-           "DataTime":"2025-02-10 02:00:00",
+           "DataTime":"2030-01-15 09:00:00",
 
-           "DataTimestamp":1739124000,
+           "DataTimestamp":1894669200,
 
-           "PJKInfoN":"3269234.5781",
+           "PJKInfoN":"1000.001",
 
-           "PJKInfoE":"572757.6577",
+           "PJKInfoE":"2000.000",
 
-           "PJKInfoU":"43.9992"
+           "PJKInfoU":"50.001"
+
+       },
+
+       {
+
+           "DataTime":"2030-01-15 10:00:00",
+
+           "DataTimestamp":1894672800,
+
+           "PJKInfoN":"1000.002",
+
+           "PJKInfoE":"2000.001",
+
+           "PJKInfoU":"50.001"
 
        }
 
@@ -900,9 +912,9 @@ def get_daily_gnss_data(session_uuid, station_uuid, sampling_frequency=None, sam
 
        "StationUUID": station_uuid,
 
-       "BeginTime": "2025-02-10 00:00:00",
+       "BeginTime": "2030-01-15 08:00:00",
 
-       "EndTime": "2025-02-10 02:59:59"
+       "EndTime": "2030-01-17 18:00:00"
 
    }
 

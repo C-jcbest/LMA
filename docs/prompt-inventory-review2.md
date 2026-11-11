@@ -2,6 +2,8 @@
 
 此清单替代首审清单作为当前审查入口。固定原文、工具声明与动态模板分开列出；代码块中的控制流不是全部发送给模型的文字。业务数据的实际值随调用变化。未读取 .env 或凭据，未调用模型或数据服务。
 
+文中的示例测点编号已替换为虚构编号。
+
 ## system 完整原文
 
 来源：[backend/app/agent/prompts/system.md:1](../backend/app/agent/prompts/system.md)
@@ -190,7 +192,7 @@ Title guidelines:
 - Express the user's primary intent or topic, not an answer to the request.
 - Use the same language as the user.
 - Prefer a natural, specific phrase. Keep it short enough for a conversation list, but do not force a fixed character template.
-- Preserve distinguishing names or identifiers (e.g. a full station name like ZJ-MS10-LONG) when they help recognize the conversation. Never cut an identifier in half.
+- Preserve distinguishing names or identifiers (e.g. a full station name like DEMO-ST01-LONG) when they help recognize the conversation. Never cut an identifier in half.
 - Return only the title, with no quotes, prefix, explanation, or trailing punctuation.
 """
 ```

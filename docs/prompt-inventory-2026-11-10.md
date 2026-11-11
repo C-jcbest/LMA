@@ -4,6 +4,8 @@
 
 本文件用于集中审查，不是提示词编辑源。分析见 [审查报告](prompt-audit-2026-11-10.md)。动态值保留源码模板；代码中的注释和控制流不是全部都会发给模型，保留它们是为了看清触发条件。未读取 .env 或任何凭据。
 
+文中的示例测点编号已替换为虚构编号。
+
 ## system 完整提示词
 
 来源：[backend/app/agent/prompts/system.md:1](../backend/app/agent/prompts/system.md)
@@ -270,7 +272,7 @@ Title guidelines:
 - Express the user's primary intent or topic, not an answer to the request.
 - Use the same language as the user.
 - Prefer a natural, specific phrase. Keep it short enough for a conversation list, but do not force a fixed character template.
-- Preserve distinguishing names or identifiers (e.g. a full station name like ZJ-MS10-LONG) when they help recognize the conversation. Never cut an identifier in half.
+- Preserve distinguishing names or identifiers (e.g. a full station name like DEMO-ST01-LONG) when they help recognize the conversation. Never cut an identifier in half.
 - Return only the title, with no quotes, prefix, explanation, or trailing punctuation.
 """
 ```

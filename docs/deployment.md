@@ -12,7 +12,7 @@
 
 ## 腾讯云入口与文件
 
-- 入口：https://82.157.57.59 ，HTTPS + Nginx Basic Auth；访问口令不进 Git。
+- 入口示例：https://lma.example.invalid ，HTTPS + Nginx Basic Auth；实际地址和访问口令由部署管理员提供，不进 Git。
 - 主机网关：/etc/nginx/sites-available/lma，模板见 ops/nginx.conf。
 - 生产配置：/opt/lma/shared/.env，权限 600，仅由服务器读取；修改后重新部署。
 - 代码版本：/opt/lma/releases/＜commit SHA＞；/opt/lma/current 指向最近成功版本。
