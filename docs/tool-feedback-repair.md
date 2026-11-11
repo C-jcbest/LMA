@@ -24,4 +24,10 @@
 
 ## 发布与线上核验
 
-以最新 main 的 8799b47 为基础实施，主工作区保持干净，保护此前新调查与测点面板交互改动。按 main 正常 CI 后自动部署，不跳过门禁。最终发布 SHA、CI 和线上只读回执在部署完成后补录。
+以最新 main 的 8799b47 为基础实施，核对主工作区干净后安全快进，保护此前新调查与测点面板交互改动。修复提交及生产版本为 `ef5ccb9969a9229967a2dd5296ad61842b82dfa3`，分支 `cindy/proud-ritchie`，已进入 main。
+
+- [CI 42960496897](https://github.com/C-jcbest/LMA/actions/runs/42960496897) 完整通过：后端 187、Vitest 56、Chromium 52、生产构建及正常自动部署。部署回执时间为 2026-11-11 12:43:29（Asia/Shanghai）。
+- 12:44 通过已配置的腾讯云连接只读确认：current、last-successful-release、后端及前端镜像均为上述完整 SHA；API healthy，公开 HTTPS 无凭据访问为 401；发布前备份 5,822,954 字节，保留于既有 backups 目录。
+- 用户原调查仍为同一条成功 Run、12 条消息和同一最终回答。历史接口的旧错误现在投影为 tool_feedback，技术校验原文不再返回前端；可用证据目录由 6 项变为 5 项，排除了原误分类项。原始 checkpoint ID、全体消息、最终回答及 6 份数据库证据的 SHA-256 均与发布前完全一致，没有追加消息、删会话或改写历史。
+- 生产浏览器直接访问遇到 `ERR_INVALID_AUTH_CREDENTIALS`，尚未完成该页面直接刷新后的渲染核验；需恢复现有站点 Basic Auth 登录。服务器实际历史投影已验证，修复前端的流式/刷新渲染已通过隔离浏览器回归，不将两者替代声称为生产页面目测通过。
+- 本地证据（忽略入库）：backend/revision-feedback-backend.log、revision-feedback-focused.log、revision-feedback-ci.log、revision-feedback-production.log、revision-feedback-production-receipt.log；frontend/revision-feedback-vitest.log、revision-feedback-browser.log、revision-feedback-build.log。
