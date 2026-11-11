@@ -13,6 +13,7 @@ from psycopg_pool import AsyncConnectionPool
 from app.config import get_settings
 from app.server.investigation_models import InvestigationProgress
 from app.server.investigations import station_identities
+from app.agent.tool_feedback import is_feedback_record
 from langchain_core.messages import HumanMessage, ToolMessage
 
 SCHEMA = """
@@ -231,10 +232,12 @@ class SessionStorage:
         if target.outcome in {"pending", "withdrawn"}:
             return
         for identifier in target.evidence_ids:
-            cursor = await connection.execute("SELECT snapshot FROM lma_evidence WHERE id=%s AND session_id=%s", (str(identifier), session_id))
+            cursor = await connection.execute("SELECT snapshot,message,tool_call_id FROM lma_evidence WHERE id=%s AND session_id=%s", (str(identifier), session_id))
             item = await cursor.fetchone()
             if item is None:
                 raise ValueError("调查引用的证据不属于当前会话或不存在")
+            if is_feedback_record(item):
+                raise ValueError("工具参数纠错未执行取数，不能作为调查结果证据")
             snapshot = item["snapshot"]
             data = snapshot.get("data", {})
             identity = data.get("station_uuid") or data.get("center_station", {}).get("station_uuid") or data.get("location", {}).get("station_uuid")
@@ -395,14 +398,15 @@ class SessionStorage:
                 "SELECT * FROM lma_evidence WHERE session_id=%s AND execution_id=%s AND tool_call_id=%s",
                 (session_id, execution_id, tool_call_id),
             )
-            return await cursor.fetchone()
+            record = await cursor.fetchone()
+            return None if record is not None and is_feedback_record(record) else record
 
     async def evidence(self, session_id: str) -> list[dict]:
         async with self.pool.connection() as connection:
             cursor = await connection.execute(
                 "SELECT * FROM lma_evidence WHERE session_id=%s ORDER BY acquired_at", (session_id,),
             )
-            return await cursor.fetchall()
+            return [record for record in await cursor.fetchall() if not is_feedback_record(record)]
 
     async def evidence_item(self, session_id: str, evidence_id: str) -> dict | None:
         async with self.pool.connection() as connection:
@@ -410,7 +414,8 @@ class SessionStorage:
                 "SELECT * FROM lma_evidence WHERE session_id=%s AND id=%s",
                 (session_id, evidence_id),
             )
-            return await cursor.fetchone()
+            record = await cursor.fetchone()
+            return None if record is not None and is_feedback_record(record) else record
 
     async def evidence_catalog(self, session_id, *, limit=30, offset=0, investigation_id=None):
         """目录不读取原始序列、图像或完整snapshot；按调查对象筛选，窗口适用性由引用时校验。"""
@@ -423,7 +428,9 @@ class SessionStorage:
                           COALESCE(e.snapshot->'data'->>'station_name', e.snapshot->'data'->'center_station'->>'station_name',
                                    e.snapshot->'data'->'location'->>'station_name') AS station_name,
                           e.snapshot->'data'->>'begin_time' AS begin_time, e.snapshot->'data'->>'end_time' AS end_time,
-                          e.snapshot->'limitations' AS limitations
+                          e.snapshot->'limitations' AS limitations,
+                          CASE WHEN e.snapshot->>'kind'='acquisition_failure' THEN e.snapshot END AS feedback_snapshot,
+                          CASE WHEN e.snapshot->>'kind'='acquisition_failure' THEN e.message END AS feedback_message
                    FROM lma_evidence e WHERE e.session_id=%s AND
                        (%s::uuid IS NULL OR EXISTS (
                            SELECT 1 FROM lma_investigations i, jsonb_array_elements(i.progress->'targets') t
@@ -433,7 +440,14 @@ class SessionStorage:
                 (session_id, investigation_id, investigation_id, limit + 1, offset),
             )
             records = await cursor.fetchall()
-            return {"items": records[:limit], "next_offset": offset + limit if len(records) > limit else None}
+            items = []
+            for record in records[:limit]:
+                snapshot = record.pop("feedback_snapshot")
+                message = record.pop("feedback_message")
+                if snapshot is not None and is_feedback_record({"snapshot": snapshot, "message": message, "tool_call_id": record['tool_call_id']}):
+                    continue
+                items.append(record)
+            return {"items": items, "next_offset": offset + limit if len(records) > limit else None}
 
     async def pause_investigations(self, session_id: str, reason: str, stage_conclusion: str = "") -> None:
         async with self.pool.connection() as connection:

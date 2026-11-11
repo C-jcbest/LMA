@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.business_time import business_now
 from app.agent.artifacts import validate_artifact_envelope
+from app.agent.tool_feedback import is_tool_feedback
 
 
 def _origin(messages, tool_call_id):
@@ -120,7 +121,7 @@ class EvidenceMiddleware(AgentMiddleware):
             if restored is not None:
                 return restored
         result = await handler(request)
-        if not isinstance(result, ToolMessage):
+        if not isinstance(result, ToolMessage) or is_tool_feedback(result):
             return result
         if result.status == 'error' and result.artifact is None:
             artifact = _failure_artifact(request, result)
@@ -143,7 +144,7 @@ async def reconcile_evidence(storage, session_id, messages):
                    if isinstance(message, ToolMessage) and message.additional_kwargs.get('lma_evidence_uuid')]
     existing = await storage.existing_evidence_ids(session_id, identifiers)
     for index, message in enumerate(messages):
-        if (isinstance(message, ToolMessage) and isinstance(message.artifact, dict) and message.name != 'reuse_investigation_evidence'
+        if (isinstance(message, ToolMessage) and not is_tool_feedback(message) and isinstance(message.artifact, dict) and message.name != 'reuse_investigation_evidence'
                 and message.additional_kwargs.get('lma_evidence_uuid') not in existing):
             origin = _origin(messages[:index + 1], message.tool_call_id)
             report_record = _report_record(messages[:index], message)

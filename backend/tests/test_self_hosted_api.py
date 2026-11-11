@@ -69,6 +69,28 @@ class SelfHostedApiTests(unittest.TestCase):
     def state(self):
         return self.client.get(f"/sessions/{self.session_id}/state").json()
 
+    def test_parameter_feedback_is_sanitized_in_sse_and_restored_history(self):
+        from app.agent.numerical_tool import analyze_gnss_numerically
+        from test_tool_feedback import query, INVALID_WINDOW
+
+        self.model.script = [query('invalid-sse-window', INVALID_WINDOW), AIMessage(content='未取得观测，不能判断趋势。')]
+        self.app.state.agent = create_lma_agent(
+            self.model, agent_tools=[analyze_gnss_numerically], checkpointer=self.app.state.checkpointer,
+            investigation_storage=self.app.state.storage, summary_model=ScriptedModel(script=[]),
+        )
+        response = self.run_message()
+        self.assertIn('event: values', response.text)
+        self.assertIn('tool_feedback', response.text)
+        self.assertNotIn('Value error', response.text)
+        self.assertNotIn('365个每日15:00', response.text)
+        state = self.state()
+        self.assertEqual(state['latest_run']['status'], 'success')
+        message = next(item for item in state['values']['messages'] if item['type'] == 'tool')
+        self.assertEqual(message['status'], 'error')
+        self.assertEqual(message['artifact']['kind'], 'tool_feedback')
+        self.assertEqual(self.client.get(f'/sessions/{self.session_id}/evidence').json()['items'], [])
+        self.assertIn('365个每日15:00', self.model.inputs[-1][-1].text)
+
     def test_suggestions_do_not_create_sessions_or_messages(self):
         before = self.client.get('/sessions').json()
         original = self.state()

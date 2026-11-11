@@ -2,12 +2,13 @@
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from app.agent.report import report_in_last_turn
+from app.agent.message_context import is_evidence
 
 
 def station_identities(messages):
     stations = {}
     for message in messages:
-        if not isinstance(message, ToolMessage) or not isinstance(message.artifact, dict):
+        if not is_evidence(message) or not isinstance(message.artifact, dict):
             continue
         artifact = message.artifact
         if message.status == 'error' and artifact.get('kind') != 'acquisition_failure':

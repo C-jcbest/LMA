@@ -11,12 +11,12 @@ from app.agent.tools import _build_client, _resolve_station
 from app.agent.tool_inputs import TimeWindowInput
 from app.agent.tool_protocol import tool_result, ToolFailure
 from app.business_time import TIME_FORMAT, business_now
-from app.observations import normalize_observations, observation_quality, raw_snapshot, station_reference
+from app.observations import normalize_observations, observation_quality, raw_snapshot, station_reference, sampling_calendar
 
 
 class NumericalInput(TimeWindowInput):
     sampling: Literal["hourly", "daily"] = Field(
-        default="hourly", description="hourly用于近期细节；daily按每日15:00取样用于长期背景",
+        default="hourly", description="hourly用于近期细节，单次窗口最多62天；daily按每日15:00取样，单次最多365个预期采样时刻；更长目标分多次查询，split_time不拆分请求",
     )
     compare_station_uuids: list[str] = Field(
         default_factory=list, max_length=8, description="同组比较对象UUID；仅用所有对象共同有效时间计算",
@@ -27,9 +27,13 @@ class NumericalInput(TimeWindowInput):
     def validate_window(self):
         start = datetime.strptime(self.begin_time, TIME_FORMAT)
         end = datetime.strptime(self.end_time, TIME_FORMAT)
-        max_days = 62 if self.sampling == "hourly" else 365
-        if end - start > timedelta(days=max_days):
-            raise ValueError(f"{self.sampling}数值回查单次不超过{max_days}天，请分窗或选择每日采样")
+        if self.sampling == "hourly":
+            if end - start > timedelta(days=62):
+                raise ValueError("hourly数值回查单次窗口不超过62天；请分多次查询或改用daily每日15:00采样")
+        else:
+            # 先用宽松跨度上界限制日历枚举；真正的资源限制是闭区间内每日15:00的采样数量。
+            if end - start >= timedelta(days=366) or len(sampling_calendar(self.begin_time, self.end_time, sample_times=["15:00"])) > 365:
+                raise ValueError("daily单次最多365个每日15:00预期采样时刻；请分多次查询，split_time只划分分析窗口，不拆分请求")
         if self.split_time:
             split = datetime.strptime(self.split_time, TIME_FORMAT)
             if not start < split < end:
@@ -48,7 +52,8 @@ async def analyze_gnss_numerically(
 ):
     """独立数值复核：趋势净变化、最大候选跳变和保持情况，可比较两个窗口速度及同组共同有效时段。
 
-    小时采样用于近期变化，每日15:00采样用于长期背景；无需图像或视觉模型，按问题自主选择。
+    小时采样单次最多62天；每日15:00采样单次最多365个预期时刻。更长目标分多次查询，split_time不拆分取数。
+    无需图像或视觉模型，按问题自主选择。
     返回实际覆盖、方法和限制；不存在的观测不插值，不把倍率直接认定为加速。
     """
     cadence_hours = 24.0 if sampling == "daily" else 1.0
@@ -81,7 +86,7 @@ async def analyze_gnss_numerically(
                     sample_times=sample_times,
                 )
             if len(samples) > 1600:
-                raise ToolFailure("回查返回超过1600点，请缩小窗口或改用每日采样；未裁剪数据")
+                raise ToolFailure("回查返回超过1600点，请缩小窗口并分多次查询；未裁剪数据")
             points_in_window, cleaning = normalize_observations(samples, begin_time, end_time)
             comparison_points[other.station_uuid] = points_in_window
             raw_points[other.station_uuid] = raw_snapshot(samples)

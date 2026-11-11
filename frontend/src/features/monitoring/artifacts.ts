@@ -2,6 +2,10 @@ import type { ToolArtifactEnvelope, ToolArtifactKind } from '@/types/envelope';
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** 服务端投影的内部参数纠错；保留官方 error 配对，不当作业务取数结果。 */
+export const isToolFeedback = (value: unknown): boolean =>
+  isRecord(value) && value.version === 1 && value.kind === 'tool_feedback' && value.category === 'input_validation';
+
 const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
   'acquisition_failure',
   'numerical',

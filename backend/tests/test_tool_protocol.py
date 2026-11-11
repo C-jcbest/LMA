@@ -41,6 +41,25 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("tool_call_id", schema.get("properties", {}))
                 self.assertNotIn("tool_call_id", schema.get("required", []))
 
+    async def test_upstream_data_validation_is_not_classified_as_model_input_feedback(self):
+        from pydantic import BaseModel
+        from app.agent.tool_feedback import is_tool_feedback
+        from app.server.messages import project_message
+
+        class PlatformData(BaseModel):
+            coordinate: float
+
+        @tool
+        def read_platform_data() -> str:
+            """读取平台返回的数据。"""
+            PlatformData.model_validate({'coordinate': 'PRIVATE_PLATFORM_VALUE'})
+            return 'unreachable'
+
+        message, _ = await self.run_tool(read_platform_data, {})
+        self.assertEqual(message.status, 'error')
+        self.assertFalse(is_tool_feedback(message))
+        self.assertNotIn('PRIVATE_PLATFORM_VALUE', str(project_message(message)))
+
     def test_partial_error_envelope_keeps_canonical_error_status(self):
         message, artifact = tool_error_result(
             "仅取得部分证据",

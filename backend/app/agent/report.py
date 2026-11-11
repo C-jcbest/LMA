@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent.message_context import evidence_id, is_evidence
-from app.agent.tool_protocol import ToolFailure, tool_result
+from app.agent.tool_protocol import ToolInputError, tool_result
 
 REPORT_TOOL_NAME = "submit_investigation_report"
 
@@ -65,64 +65,64 @@ def _validate_support(support: EvidenceSupport, artifact: dict) -> str:
     """校验对象、证据种类及实际覆盖；不尝试用关键词替代专业语义判断。"""
     data = artifact["data"]
     if support.claim == "data_quality" and support.scope != "window":
-        raise ToolFailure("数据质量引用本测点完整查询窗口，不能套用共同样本或分窗范围")
+        raise ToolInputError("数据质量引用本测点完整查询窗口，不能套用共同样本或分窗范围")
     if artifact.get("status") == "error" and support.claim not in {"data_quality", "unavailable"}:
-        raise ToolFailure("失败证据只能说明缺失或限制，不能支持成功数值判断")
+        raise ToolInputError("失败证据只能说明缺失或限制，不能支持成功数值判断")
     if support.claim == "unavailable":
         if artifact["kind"] != "acquisition_failure":
-            raise ToolFailure("未取得数据必须引用对应查询失败，而非其他站的结果或台账")
+            raise ToolInputError("未取得数据必须引用对应查询失败，而非其他站的结果或台账")
         if data.get("station_uuid") != str(support.station_uuid):
-            raise ToolFailure("失败查询与测点UUID不一致")
+            raise ToolInputError("失败查询与测点UUID不一致")
         if support.begin_time is None or support.end_time is None:
-            raise ToolFailure("失败查询须说明目标窗口")
+            raise ToolInputError("失败查询须说明目标窗口")
         if _business_time(support.begin_time) != _business_time(data["begin_time"]) or _business_time(support.end_time) != _business_time(data["end_time"]):
-            raise ToolFailure("失败查询与目标窗口不一致")
+            raise ToolInputError("失败查询与目标窗口不一致")
         return data["station_name"]
     identity = data
     if support.claim == "site":
         if artifact["kind"] != "site_environment":
-            raise ToolFailure("场地判断需要场地证据")
+            raise ToolInputError("场地判断需要场地证据")
         identity = data["center_station"]
     elif support.claim == "weather":
         if artifact["kind"] != "weather":
-            raise ToolFailure("气象判断需要天气证据")
+            raise ToolInputError("气象判断需要天气证据")
         identity = data["location"]
     elif support.claim == "data_quality" and artifact["kind"] in {"gnss_series", "vision"}:
         if support.scope != "window":
-            raise ToolFailure("原始数据质量仅支持该查询窗口")
+            raise ToolInputError("原始数据质量仅支持该查询窗口")
     elif artifact["kind"] != "numerical":
-        raise ToolFailure("数值判断需要独立数值分析证据")
+        raise ToolInputError("数值判断需要独立数值分析证据")
     elif support.scope == "common_period":
         names = data.get("comparisons", {}).get("station_names", {})
         name = names.get(str(support.station_uuid))
         if name is None:
-            raise ToolFailure("该测点不在共同有效时段比较中")
+            raise ToolInputError("该测点不在共同有效时段比较中")
         identity = {"station_uuid": str(support.station_uuid), "station_name": name}
     if identity.get("station_uuid") != str(support.station_uuid):
-        raise ToolFailure("判断测点UUID与证据不匹配")
+        raise ToolInputError("判断测点UUID与证据不匹配")
     if support.claim == "site":
         if support.begin_time is not None or support.end_time is not None:
-            raise ToolFailure("场地资料为获取时的背景快照，不能宣称历史时间窗覆盖")
+            raise ToolInputError("场地资料为获取时的背景快照，不能宣称历史时间窗覆盖")
         return identity["station_name"]
     if support.begin_time is None or support.end_time is None:
-        raise ToolFailure("该判断必须说明时间窗")
+        raise ToolInputError("该判断必须说明时间窗")
     start, end = _business_time(support.begin_time), _business_time(support.end_time)
     if start >= end:
-        raise ToolFailure("判断窗口必须正向")
+        raise ToolInputError("判断窗口必须正向")
     if support.claim == "weather":
         period = support.weather_period
         variable = support.weather_variable
         if period not in {"history", "forecast", "current"}:
-            raise ToolFailure("须区分历史气象、当前观测和预报")
+            raise ToolInputError("须区分历史气象、当前观测和预报")
         if not variable or variable == "time":
-            raise ToolFailure("气象支持关系须指定实际引用的观测字段")
+            raise ToolInputError("气象支持关系须指定实际引用的观测字段")
         if period == "current":
             current = data.get("current") or {}
             if not current.get("time") or current.get(variable) is None:
-                raise ToolFailure("没有可用的当前天气观测")
+                raise ToolInputError("没有可用的当前天气观测")
             moment = _business_time(current["time"])
             if not start <= moment <= end or end - start > timedelta(hours=1):
-                raise ToolFailure("单次天气观测不能支持整段历史或日累计判断")
+                raise ToolInputError("单次天气观测不能支持整段历史或日累计判断")
         else:
             daily = data.get(period, {}).get("daily", {})
             valid_days = set()
@@ -133,15 +133,15 @@ def _validate_support(support: EvidenceSupport, artifact: dict) -> str:
             day = start.date()
             while day <= (end - timedelta(microseconds=1)).date():
                 if day not in valid_days:
-                    raise ToolFailure("判断窗口存在未取得有效天气数据的日期")
+                    raise ToolInputError("判断窗口存在未取得有效天气数据的日期")
                 day += timedelta(days=1)
         return identity["station_name"]
     if support.claim == "data_quality":
         if start != _business_time(data["begin_time"]) or end != _business_time(data["end_time"]):
-            raise ToolFailure("数据质量统计适用于完整查询窗口；不能给子窗口套用全窗数量，请按所需窗口重新查询")
+            raise ToolInputError("数据质量统计适用于完整查询窗口；不能给子窗口套用全窗数量，请按所需窗口重新查询")
         return identity["station_name"]
     if support.axis is None:
-        raise ToolFailure("数值支持关系必须指定方向")
+        raise ToolInputError("数值支持关系必须指定方向")
     feature = data.get("features", {}).get(support.axis, {})
     if support.scope == "common_period":
         feature = data.get("comparisons", {}).get("common_period", {}).get(support.axis, {}).get(str(support.station_uuid), {})
@@ -150,17 +150,17 @@ def _validate_support(support: EvidenceSupport, artifact: dict) -> str:
         feature = data.get("comparisons", {}).get(support.axis, {}).get(key, {})
     bounds = feature
     if feature.get("count", 0) < 2 or not feature.get("begin_time") or not feature.get("end_time"):
-        raise ToolFailure("有效样本不足以支持变化判断")
+        raise ToolInputError("有效样本不足以支持变化判断")
     if support.claim == "jump" and feature.get("max_step_time") is None:
-        raise ToolFailure("没有连续有效观测支持单步变化")
+        raise ToolInputError("没有连续有效观测支持单步变化")
     if support.claim == "trend" and not feature.get("trend_supported", False):
-        raise ToolFailure("没有有效趋势计算结果")
+        raise ToolInputError("没有有效趋势计算结果")
     if start < _business_time(bounds["begin_time"]) or end > _business_time(bounds["end_time"]):
-        raise ToolFailure("判断时间窗超出实际证据覆盖")
+        raise ToolInputError("判断时间窗超出实际证据覆盖")
     if support.claim in {"numeric_change", "trend"} and (start != _business_time(bounds["begin_time"]) or end != _business_time(bounds["end_time"])):
-        raise ToolFailure("窗口净变化只支持计算窗口，请对所需子窗口重新计算")
+        raise ToolInputError("窗口净变化只支持计算窗口，请对所需子窗口重新计算")
     if support.claim == "jump" and not start <= _business_time(feature["max_step_time"]) <= end:
-        raise ToolFailure("候选跳变时刻不在判断窗口内")
+        raise ToolInputError("候选跳变时刻不在判断窗口内")
     return identity["station_name"]
 
 
@@ -189,7 +189,7 @@ def _current_turn_evidence(messages: list[BaseMessage]) -> list[ToolMessage]:
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             break
-        if isinstance(message, ToolMessage) and message.artifact is not None and message.name != REPORT_TOOL_NAME:
+        if is_evidence(message) and message.name != REPORT_TOOL_NAME:
             evidence.append(message)
     return evidence
 
@@ -288,40 +288,40 @@ def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessag
     tool_call_ids = {evidence_id(message.tool_call_id): message.tool_call_id for message in evidence}
     declared = {str(station.station_uuid) for station in report.stations}
     if len(declared) != len(report.stations):
-        raise ToolFailure("简报测点UUID不能重复；同名站分别使用各自UUID")
+        raise ToolInputError("简报测点UUID不能重复；同名站分别使用各自UUID")
 
     def validate(support):
         artifact = evidence_by_id.get(support.evidence_id)
         if artifact is None:
-            raise ToolFailure(f"依据编号 {support.evidence_id} 不在本轮查询结果中，只能引用本轮 lma_evidence 编号。")
+            raise ToolInputError(f"依据编号 {support.evidence_id} 不在本轮查询结果中，只能引用本轮 lma_evidence 编号。")
         if str(support.station_uuid) not in declared:
-            raise ToolFailure("支持关系中的测点必须列入报告")
+            raise ToolInputError("支持关系中的测点必须列入报告")
         return _validate_support(support, artifact), artifact
 
     for station in report.stations:
         start, end = _business_time(station.begin_time), _business_time(station.end_time)
         if start >= end:
-            raise ToolFailure("单站结论目标窗口必须正向")
+            raise ToolInputError("单站结论目标窗口必须正向")
         observed = False
         stable_window_covered = False
         trend_scopes = {}
         for support in station.supports:
             if support.station_uuid != station.station_uuid:
-                raise ToolFailure("单站结论必须引用该站UUID的证据，不能用其他测点代替")
+                raise ToolInputError("单站结论必须引用该站UUID的证据，不能用其他测点代替")
             name, artifact = validate(support)
             if name != station.station_name:
-                raise ToolFailure("测点名称须使用该UUID的证据展示名称")
+                raise ToolInputError("测点名称须使用该UUID的证据展示名称")
             if support.begin_time is not None and (not start <= _business_time(support.begin_time) < _business_time(support.end_time) <= end):
-                raise ToolFailure("单站支持窗口必须包含于目标窗口")
+                raise ToolInputError("单站支持窗口必须包含于目标窗口")
             feature = _support_feature(support, artifact)
             if artifact.get("kind") == "numerical" and artifact.get("status") != "error":
                 if station.status == '未见明显变化' and (_business_time(artifact['data']['begin_time']) > start or _business_time(artifact['data']['end_time']) < end):
-                    raise ToolFailure("单站结论的数值查询须覆盖目标窗口；短窗不能冒充整个长期调查")
+                    raise ToolInputError("单站结论的数值查询须覆盖目标窗口；短窗不能冒充整个长期调查")
                 if support.claim in {"numeric_change", "trend", "jump"}:
                     observed = observed or feature.get("trend_supported", False) or (support.claim == "jump" and feature.get("event_count", 0) > 0)
                 if station.status == '未见明显变化' and support.claim in {'numeric_change', 'trend'}:
                     if not _covers_target_window(feature, start, end):
-                        raise ToolFailure("有效跨度或覆盖不足，不能把局部短窗表述为目标窗口未见变化")
+                        raise ToolInputError("有效跨度或覆盖不足，不能把局部短窗表述为目标窗口未见变化")
                 if (station.status == '未见明显变化' and support.scope == 'window'
                         and artifact['data']['station_uuid'] == str(station.station_uuid)):
                     stable_window_covered = stable_window_covered or all(
@@ -332,25 +332,25 @@ def _validate_report(report: InvestigationReportInput, evidence: list[ToolMessag
                     key = (support.evidence_id, support.axis)
                     trend_scopes.setdefault(key, set()).add(support.scope)
         if station.status not in {"数据不足", "暂无法分析"} and not observed:
-            raise ToolFailure("该站缺少适用且充分的观测事实；台账、失败或两点斜率不能支持已调查稳定结论，可如实交付数据不足")
+            raise ToolInputError("该站缺少适用且充分的观测事实；台账、失败或两点斜率不能支持已调查稳定结论，可如实交付数据不足")
         if station.status == '未见明显变化' and not stable_window_covered:
-            raise ToolFailure("整站未见明显变化须有N/E/U三方向的单站目标窗充分观测；方向缺失时如实交付数据不足，单方向结果仍可自由解释")
+            raise ToolInputError("整站未见明显变化须有N/E/U三方向的单站目标窗充分观测；方向缺失时如实交付数据不足，单方向结果仍可自由解释")
         has_comparable_trends = any(
             {"first_window", "second_window"} <= scopes
             for scopes in trend_scopes.values()
         )
         if station.acceleration not in (None, "无法判断") and not has_comparable_trends:
-            raise ToolFailure("加速判断须有该站两个适用窗口的充分趋势证据，不能仅凭单窗或两点斜率")
+            raise ToolInputError("加速判断须有该站两个适用窗口的充分趋势证据，不能仅凭单窗或两点斜率")
 
     for finding in report.findings:
         if finding.level != "fact" and not finding.text.strip():
-            raise ToolFailure("分析和推断须说明解释；观测事实正文由服务端生成")
+            raise ToolInputError("分析和推断须说明解释；观测事实正文由服务端生成")
         supported = set()
         for support in finding.supports:
             validate(support)
             supported.add(str(support.station_uuid))
         if not {str(identifier) for identifier in finding.station_uuids}.issubset(supported):
-            raise ToolFailure("发现列出的每个测点都必须有自身适用事实，不能跨站借用支持")
+            raise ToolInputError("发现列出的每个测点都必须有自身适用事实，不能跨站借用支持")
     return tool_call_ids
 
 

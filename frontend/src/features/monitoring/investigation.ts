@@ -9,7 +9,7 @@ import type {
   ToolArtifactEnvelopeFor,
   ToolArtifactKind,
 } from '@/types/envelope';
-import { decodeToolArtifact } from './artifacts';
+import { decodeToolArtifact, isToolFeedback } from './artifacts';
 
 interface ToolPresentation {
   kind?: ToolArtifactKind;
@@ -319,6 +319,7 @@ export function buildSteps(
   // 只收起同工具、同参数且随后成功的尝试，不将其他时段或测点的成功当作恢复。
   for (const part of [...parts].reverse()) {
     if (part.type !== 'tool-call') continue;
+    if (isToolFeedback(part.artifact)) continue;
     const presentation = presentationOf(part.toolName);
     const envelope = decodeToolPart(part);
     const state = stepStateOf(part, envelope);

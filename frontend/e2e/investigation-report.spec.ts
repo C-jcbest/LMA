@@ -103,6 +103,54 @@ async function mockApi(page: Page) {
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 
+test('内部纠错在流式和刷新后不显示技术错误，真实故障可收起且不会被另一站成功清除', async ({ page }) => {
+  await mockApi(page);
+  await page.setViewportSize({ width: 320, height: 844 });
+  let history: unknown[] = [];
+  const feedback = {
+    type: 'tool', id: 'parameter-feedback', tool_call_id: 'invalid-window', name: 'analyze_gnss_numerically',
+    content: '查询参数需调整，该调用未取得观测数据。', status: 'error',
+    artifact: { version: 1, kind: 'tool_feedback', category: 'input_validation' },
+  };
+  const failed = {
+    type: 'tool', id: 'real-timeout', tool_call_id: 'timeout-query', name: 'get_daily_gnss_data', status: 'error', content: '服务不可用',
+    artifact: { version: 1, kind: 'acquisition_failure', status: 'error',
+      data: { station_uuid: '22222222-2222-2222-2222-222222222222', station_name: '测试点 B', requested_station: '测试点 B',
+        begin_time: '2026-10-01 00:00:00', end_time: '2026-10-31 00:00:00', message: '数据服务暂不可用。' },
+      error: { code: 'unavailable', category: 'business', message: '数据服务暂不可用。', retryable: false } },
+  };
+  await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: history.length ? { id: 'feedback-run', status: 'success' } : null } }));
+  await page.route('**/api/sessions/report-session/runs', async (route) => {
+    const user = route.request().postDataJSON().messages[0];
+    const interim = [user, { type: 'ai', id: 'invalid-attempt', content: [], tool_calls: [
+      { id: 'invalid-window', name: 'analyze_gnss_numerically', args: { begin_time: '2024-01-01 00:00:00', sampling: 'daily' } },
+    ] }, feedback];
+    history = [...interim, { type: 'ai', id: 'corrected-attempt', content: [], tool_calls: [
+      { id: 'corrected-query', name: 'get_daily_gnss_data', args: { begin_time: '2026-11-01 00:00:00' } },
+      { id: 'timeout-query', name: 'get_daily_gnss_data', args: { station_name_or_uuid: '测试点 B', begin_time: '2026-10-01 00:00:00' } },
+    ] }, gnssResult('corrected-query', '2026-11-01 00:00:00'), failed,
+    { type: 'ai', id: 'feedback-answer', content: 'A站已有观测，B站原窗口仍未取得数据。' }];
+    const event = (messages: unknown[]) => 'event: values\ndata: ' + JSON.stringify({ messages }) + '\n\n';
+    await route.fulfill({ contentType: 'text/event-stream', body: event(interim) + event(history) });
+  });
+  await page.goto('/?threadId=report-session');
+  await page.getByRole('textbox', { name: '输入监测问题' }).fill('查看两站趋势');
+  await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect(page.getByText('A站已有观测，B站原窗口仍未取得数据。', { exact: true })).toBeVisible();
+  await expect(page.getByText('数据服务暂不可用。', { exact: false })).toBeVisible();
+  await expect(page.getByText('查询参数需调整，该调用未取得观测数据。')).toHaveCount(0);
+  await expect(page.getByText(/Value error|工具参数不符合要求/)).toHaveCount(0);
+  const failureSummary = page.getByRole('button', { name: '1 项查询未完成' });
+  await failureSummary.click();
+  await expect(page.getByText('数据服务暂不可用。', { exact: false })).not.toBeVisible();
+  await expect(failureSummary).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('A站已有观测，B站原窗口仍未取得数据。', { exact: true })).toBeVisible();
+  await expect(page.getByText('数据服务暂不可用。', { exact: false })).toBeVisible();
+  await expect(page.getByText('查询参数需调整，该调用未取得观测数据。')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test('今日列表按页面宽度排列测点、趋势和变化量', async ({ page }) => {
   await mockApi(page);
   await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: inspection }));

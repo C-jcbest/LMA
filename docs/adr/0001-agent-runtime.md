@@ -43,6 +43,8 @@
 
 普通业务失败抛出 `ToolFailure`，由官方错误 middleware 转换；已有可展示证据的失败使用 `tool_error_result` 返回官方错误 ToolMessage 和 artifact。瞬时异常由官方 retry 处理，最终错误才进入安全边界。错误原因无需展开即可见，已有证据与缺失并列说明；不建立独立的工具错误生命周期。
 
+助手输入及报告引用校验使用 `ToolInputError`，由官方工具包装边界保留 error ToolMessage 和模型反馈，跳过取数存证。SSE 与历史将其投影为明确的 `tool_feedback` 分类，前端不作为业务故障展示；真实失败仍显示限制并可收起。用户已遇到的旧数值跨度校验错误只在读取时按严格来源识别，原 checkpoint 和证据不改写；具体范围见[修复记录](../tool-feedback-repair.md)。
+
 正常请求返回标准 success 结构，空集合由领域 Renderer 显示“暂无数据”。GNSS 与视觉工具识别基准站后仅返回适用性说明及 `artifact=None`，不生成卡片。部分场地资料不可用时保留已取得证据并标注 `limitations`。
 
 前端通过 [monitoring toolkit](../../frontend/src/features/monitoring/toolkit.tsx) 集中校验 artifact，领域组件只消费对应的 `data`。持久化 ToolMessage 是刷新恢复的权威来源；流式生命周期与 artifact 传递由官方栈负责，不解析自定义 tools channel 协议。artifact 会发送客户端，不能承载秘密、请求 URL 或原始异常。

@@ -34,6 +34,27 @@ const gnssEnvelope = (stationName: string, points: unknown[] = [{ time: '2026-11
 
 const stepsOf = (parts: PartState[]) => buildSteps(parts, collectStations(parts));
 
+it('内部参数与报告纠错不冒充查询失败，保留其他站和其他窗口的真正失败', () => {
+  const feedback = { version: 1, kind: 'tool_feedback', category: 'input_validation' };
+  const failure = {
+    version: 1, kind: 'acquisition_failure', status: 'error',
+    data: { station_uuid: 'uuid-B', station_name: '测试点 B', requested_station: 'uuid-B', message: '数据服务暂不可用。',
+      begin_time: '2026-10-01 00:00:00', end_time: '2026-10-31 00:00:00' },
+    error: { code: 'unavailable', category: 'business', message: '数据服务暂不可用。', retryable: false },
+  };
+  const parts = [
+    toolPart('analyze_gnss_numerically', { isError: true, args: { begin_time: 'too-long' }, artifact: feedback }),
+    toolPart('analyze_gnss_numerically', { isError: true, args: { begin_time: 'still-too-long' }, artifact: feedback }),
+    toolPart('submit_investigation_report', { isError: true, artifact: feedback }),
+    toolPart('get_daily_gnss_data', { isError: true, args: { station: 'uuid-B', window: 'October' }, artifact: failure }),
+    toolPart('get_daily_gnss_data', { args: { station: 'uuid-A', window: 'November' }, artifact: gnssEnvelope('测试点 A') }),
+    toolPart('get_daily_gnss_data', { args: { station: 'uuid-B', window: 'November' }, artifact: gnssEnvelope('测试点 B') }),
+  ];
+  expect(stepsOf(parts).map((step) => step.state)).toEqual(['failed', 'complete', 'complete']);
+  expect(stepsOf(parts)[0]?.envelope?.error?.message).toBe('数据服务暂不可用。');
+  expect(stepsOf(parts.slice(0, 3))).toEqual([]);
+});
+
 it('历史复用依据可按原UUID打开和导出，保留原获取时间', () => {
   const parts = [
     toolPart('reuse_investigation_evidence', { artifact: {

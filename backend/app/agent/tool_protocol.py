@@ -14,6 +14,17 @@ class ToolFailure(ToolException):
         self.content = message
 
 
+class ToolInputError(ToolFailure):
+    """助手可修正的工具参数或报告结构反馈，不是数据源取数失败。"""
+
+
+def raise_tool_validation_error(error, *, schema_name: str):
+    # BaseTool 的回调也会收到工具内部的数据解析异常，不能把上游坏数据当成模型参数错误。
+    if error.title != schema_name:
+        raise ValueError("工具返回数据未通过结构校验") from error
+    raise ToolInputError(describe_validation_error(error)) from error
+
+
 def tool_error_result(
     message: str,
     *,

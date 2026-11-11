@@ -166,10 +166,12 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
   const isRunning = useAuiState(isMessageRunning);
   const { selection, openStation } = useStationInspector();
   const [isExpanded, setIsExpanded] = useState(false);
+  const [showFailures, setShowFailures] = useState(true);
 
   const stations = useMemo(() => collectStations(parts), [parts]);
   const hasReport = useMemo(() => findReport(parts) !== undefined, [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
+  const failures = steps.filter((step) => step.state === 'failed' && step.envelope?.error);
 
   const isFirstToolGroup = firstPartIndex === parts.findIndex((part) => part.type === 'tool-call');
   if (!isFirstToolGroup || steps.length === 0) return null;
@@ -203,11 +205,22 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
         </CollapsibleContent>
       </Collapsible>
 
-      {steps.filter((step) => step.state === 'failed' && step.envelope?.error).map((step) => (
-        <p key={step.toolCallId} className="text-sm leading-relaxed text-muted-foreground wrap-anywhere">
-          {step.detail && <span>{step.detail}： </span>}{step.envelope!.error!.message}
-        </p>
-      ))}
+      {failures.length > 0 && (
+        <Collapsible open={showFailures} onOpenChange={setShowFailures}>
+          <CollapsibleTrigger className="group/failures flex min-h-9 items-center gap-2 text-start text-sm text-muted-foreground">
+            {failures.length} 项查询未完成
+            <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]/failures:rotate-90" aria-hidden />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-2 text-sm leading-relaxed text-muted-foreground">
+            {failures.map((step) => (
+              <p key={step.toolCallId} className="wrap-anywhere">
+                {step.detail && <span>{step.detail}： </span>}{step.envelope!.error!.message}
+              </p>
+            ))}
+            <p>可重新生成本轮回答，或继续提问补查；已取得的依据仍保留。</p>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {/* 有简报时由简报的测点行作为入口，避免同一入口出现两次。 */}
       {!isRunning && !hasReport && stations.length > 0 && (

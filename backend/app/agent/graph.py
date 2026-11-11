@@ -7,7 +7,7 @@ LMA middleware 维护消息上下文和用量；官方 SummarizationMiddleware �
 import logging
 from uuid import uuid4
 from dataclasses import replace
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from langchain.agents import AgentState as BaseAgentState, create_agent
 from langchain.agents.middleware import (
@@ -22,7 +22,8 @@ from langchain.agents.middleware import (
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.beidou.client import BeidouApiError
-from app.agent.tool_protocol import ToolFailure, describe_validation_error
+from app.agent.tool_protocol import ToolFailure, ToolInputError, raise_tool_validation_error
+from app.agent.tool_feedback import ToolFeedbackMiddleware
 from app.agent.context import build_context_usage
 from app.agent.evidence import EvidenceMiddleware
 from app.agent.message_context import model_messages, stamp_user_message
@@ -48,8 +49,10 @@ tools = [list_station_groups, list_stations, get_daily_gnss_data,
 logger = logging.getLogger(__name__)
 
 
-def _on_tool_error(exc: Exception, request) -> str:
-    """官方 ToolErrorMiddleware 回调：所有最终异常统一转换为受控安全文案。"""
+def _on_tool_error(exc: Exception, request) -> str | None:
+    """实际执行失败转换为安全文案；参数纠错交给外层专用边界。"""
+    if isinstance(exc, ToolInputError):
+        return None
     if isinstance(exc, ToolFailure):
         return exc.content
     if isinstance(exc, BeidouApiError):
@@ -215,13 +218,16 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         from app.agent.investigation_tools import investigation_tools
         bound_tools = [*bound_tools, *investigation_tools(investigation_storage)]
     for agent_tool in bound_tools:
-        agent_tool.handle_validation_error = describe_validation_error
+        agent_tool.handle_validation_error = partial(
+            raise_tool_validation_error, schema_name=agent_tool.get_input_schema().__name__,
+        )
     return create_agent(
         model, tools=bound_tools,
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
             *([EvidenceMiddleware(investigation_storage)] if investigation_storage is not None else []),
+            ToolFeedbackMiddleware(),
             LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit, investigation_storage=investigation_storage),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,

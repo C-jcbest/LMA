@@ -5,6 +5,7 @@ import hashlib
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from app.business_time import BUSINESS_TIMEZONE, business_now
+from app.agent.tool_feedback import is_tool_feedback
 
 
 # 接口层写入、发送时并入快照的临时字段：用户提问时正在查看的测点。
@@ -35,7 +36,7 @@ def evidence_id(tool_call_id: str) -> str:
 
 
 def is_evidence(message: BaseMessage) -> bool:
-    return isinstance(message, ToolMessage) and message.artifact is not None
+    return isinstance(message, ToolMessage) and message.artifact is not None and not is_tool_feedback(message)
 
 
 def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
