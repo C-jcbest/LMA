@@ -18,6 +18,7 @@ import { ThemeSelector } from '@/features/settings/ThemeSelector';
 import { StationPage } from '@/features/stations/StationPage';
 import { StationsPage } from '@/features/stations/StationsPage';
 import { TodayPage } from '@/features/today/TodayPage';
+import { NewInvestigation } from '@/features/today/NewInvestigation';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { cn } from '@/lib/utils';
 import { NavigationProvider, useNavigation, type Page } from './navigation';
@@ -311,7 +312,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">
           {page === 'home' && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} />}
-          {page === 'conversation' && <Thread autoFocus={isDesktop} />}
+          {page === 'conversation' && <Thread autoFocus={isDesktop} welcome={<NewInvestigation />} />}
           <div className="h-full" hidden={page !== 'stations'}><StationsPage /></div>
           {page === 'records' && <RecordsPage />}
           {[...mountedStations].map((id) => (

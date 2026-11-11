@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC } from 'react';
-import { useAui } from '@assistant-ui/react';
-import { ArrowLeftIcon } from 'lucide-react';
+import { useAui, useAuiState } from '@assistant-ui/react';
+import { ArrowLeftIcon, Maximize2, Minimize2, PlusIcon, XIcon } from 'lucide-react';
+import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import { useNavigation } from '@/app/navigation';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { useConversationLoading } from '@/app/providers/AssistantProvider';
@@ -33,6 +34,30 @@ const WINDOW_OPTIONS: readonly { value: string; label: string }[] = [
 ];
 
 type Panel = 'data' | 'chat';
+
+function StationChatActions({ expanded, onExpand, onClose }: { expanded: boolean; onExpand?: () => void; onClose: () => void }) {
+  const aui = useAui();
+  const running = useAuiState((state) => state.thread.isRunning);
+  const [failed, setFailed] = useState(false);
+  return (
+    <div className="flex min-h-11 shrink-0 items-center gap-1 border-b px-3">
+      <span className="mr-auto text-sm font-medium">AI 调查</span>
+      {failed && <span role="alert" className="text-xs">请重试</span>}
+      <Button variant="ghost" size="icon" title="新调查" aria-label="开始新的测点调查" disabled={running} onClick={async () => {
+        setFailed(false);
+        try {
+          await aui.threads().switchToNewThread();
+        } catch {
+          setFailed(true);
+        }
+      }}><PlusIcon className="size-4" /></Button>
+      {onExpand && <Button variant="ghost" size="icon" title={expanded ? '恢复分栏' : '展开调查'} aria-label={expanded ? '恢复分栏' : '展开调查'} onClick={onExpand}>
+        {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+      </Button>}
+      <Button variant="ghost" size="icon" title="关闭调查面板" aria-label="关闭调查面板" onClick={onClose}><XIcon className="size-4" /></Button>
+    </div>
+  );
+}
 
 const formatRecordDate = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' }).format(new Date(value));
@@ -172,6 +197,14 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const [hasError, setHasError] = useState(false);
   const [reloadCount, setReloadCount] = useState(0);
   const [panel, setPanel] = useState<Panel>('data');
+  const [chatMode, setChatMode] = useState<'split' | 'closed' | 'expanded'>('split');
+  const chatRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const chatResize = usePanelResize({
+    storageKey: 'lma-station-chat-width', defaultWidth: 416, minWidth: 320, maxWidth: 1000,
+    side: 'right', panelRef: chatRef,
+    availableWidth: () => (layoutRef.current?.clientWidth ?? window.innerWidth) - 360,
+  });
   const loadedKeyRef = useRef('');
 
   // 一轮调查结束后结论可能更新，重新读取这个测点的记录。
@@ -211,6 +244,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
 
   const showChat = () => {
     setPanel('chat');
+    setChatMode('split');
   };
 
   const dataPanel = (conversationReady: boolean) => (
@@ -230,6 +264,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           <div className="ms-auto">
             <Segmented label="时间范围" value={String(days)} options={WINDOW_OPTIONS} onValueChange={(value) => setDays(Number(value) as TimelineDays)} />
           </div>
+          {isSideBySide && chatMode === 'closed' && <Button variant="outline" size="sm" onClick={showChat}>AI 调查</Button>}
         </div>
         {inspection && inspection.reasons.length > 0 && (
           <p className="text-muted-foreground mt-2 text-sm leading-relaxed wrap-anywhere">{inspection.reasons.join('；')}</p>
@@ -285,7 +320,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   }
   return (
     <StationConversation stationUuid={stationUuid} stationName={stationName} onComplete={investigationCompleted} active={active} onRunningChange={onRunningChange}>
-      {(notice) => (
         <div className="flex h-full min-h-0 flex-col">
           {!isSideBySide && <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
             <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
@@ -297,12 +331,21 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               onValueChange={(value) => setPanel(value as Panel)}
             />
           </div>}
-          <div className="flex min-h-0 flex-1">
-            <div className={cn('h-full min-w-0 flex-1', !isSideBySide && panel !== 'data' && 'hidden')}>{dataPanel(!notice)}</div>
-            <div className={cn('h-full min-w-0', isSideBySide ? 'w-[26rem] shrink-0 border-l' : 'flex-1', !isSideBySide && panel !== 'chat' && 'hidden')}>{notice ?? chatPanel}</div>
+          <div ref={layoutRef} className="flex min-h-0 flex-1">
+            <div className={cn('h-full min-w-0 flex-1', (isSideBySide ? chatMode === 'expanded' : panel !== 'data') && 'hidden')}>{dataPanel(true)}</div>
+            <div ref={chatRef} id={`station-chat-${stationUuid}`} style={isSideBySide && chatMode === 'split' ? chatResize.style : undefined}
+              className={cn('relative flex h-full min-w-0 flex-col', isSideBySide && chatMode === 'split' ? 'w-[min(var(--panel-width),calc(100%-360px))] shrink-0 border-l' : 'flex-1', (isSideBySide ? chatMode === 'closed' : panel !== 'chat') && 'hidden')}>
+              <StationChatActions expanded={chatMode === 'expanded'}
+                onExpand={isSideBySide ? () => setChatMode(chatMode === 'expanded' ? 'split' : 'expanded') : undefined}
+                onClose={() => {
+                  setChatMode('closed');
+                  setPanel('data');
+                }} />
+              {isSideBySide && chatMode === 'split' && <PanelResizeHandle label="调整数据与调查宽度" panelId={`station-chat-${stationUuid}`} edge="left" {...chatResize.handleProps} />}
+              <div className="min-h-0 flex-1">{chatPanel}</div>
+            </div>
           </div>
         </div>
-      )}
     </StationConversation>
   );
 };

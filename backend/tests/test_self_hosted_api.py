@@ -5,7 +5,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import httpx
@@ -68,6 +68,24 @@ class SelfHostedApiTests(unittest.TestCase):
 
     def state(self):
         return self.client.get(f"/sessions/{self.session_id}/state").json()
+
+    def test_suggestions_do_not_create_sessions_or_messages(self):
+        before = self.client.get('/sessions').json()
+        original = self.state()
+        with patch('app.server.api.suggest_questions', new_callable=AsyncMock) as generate:
+            generate.return_value = ['哪些测点值得关注？']
+            response = self.client.post('/suggestions')
+            self.assertEqual(response.json(), {'questions': ['哪些测点值得关注？']})
+            generate.assert_awaited_once()
+        self.assertEqual(self.client.get('/sessions').json(), before)
+        self.assertEqual(self.state(), original)
+
+    def test_suggestion_failure_returns_no_questions(self):
+        with patch('app.server.api.suggest_questions', new_callable=AsyncMock) as generate:
+            generate.side_effect = TimeoutError('private provider error')
+            response = self.client.post('/suggestions')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {'questions': []})
 
     def test_session_metadata_and_204_delete(self):
         self.assertEqual(self.client.get("/health").json(), {"ok": True, "service": "lma"})

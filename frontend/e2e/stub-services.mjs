@@ -179,6 +179,8 @@ const server = http.createServer(async (request, response) => {
   let delayMs = 0;
   if (firstText.startsWith('Create a concise conversation title')) {
     payload = chatResponse('E2E 生命周期验证');
+  } else if (firstText.startsWith('为监测调查智能体推荐')) {
+    payload = chatResponse(JSON.stringify({ questions: ['哪些测点近期值得关注？', '近期位移有什么变化？', '降雨与位移有何关联？'] }));
   } else if (userText.includes('并行工具停止验证') && !hasToolResult) {
     payload = parallelToolResponse([
       { name: 'list_stations', args: {} },

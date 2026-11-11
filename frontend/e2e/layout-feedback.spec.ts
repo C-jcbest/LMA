@@ -1,11 +1,46 @@
 import { expect, test, type Page } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/suggestions', (route) => route.fulfill({ json: { questions: [] } }));
   await page.route('**/api/stations', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/sessions/conclusions', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/inspections/latest', (route) => route.fulfill({
     json: { running: null, latest_attempt: null, inspection: null, stations: [] },
   }));
+});
+
+test('新调查静默推荐一次，填入后保留编辑权，窄屏不溢出', async ({ page }, testInfo) => {
+  await mockSessions(page);
+  let requests = 0;
+  await page.route('**/api/suggestions', async (route) => {
+    requests += 1;
+    await route.fulfill({ json: { questions: ['哪些测点近期值得关注？', '比较测点在共同有效时段的变化', '近期降雨与位移变化有关吗？'] } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?page=conversation');
+  await expect(page.getByRole('heading', { name: '从一个问题开始' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '哪些测点近期值得关注？' })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('新调查-390px.png'), animations: 'disabled' });
+  await page.getByRole('button', { name: '哪些测点近期值得关注？' }).click();
+  const input = page.getByRole('textbox', { name: '输入监测问题' });
+  await expect(input).toHaveValue('哪些测点近期值得关注？');
+  await expect(input).toBeFocused();
+  await input.fill('我自己的问题');
+  expect(requests).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('推荐失败静默收起且不阻塞输入，减少动态效果生效', async ({ page }) => {
+  await mockSessions(page);
+  await page.route('**/api/suggestions', (route) => route.fulfill({ status: 503, json: {} }));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/?page=conversation');
+  await expect(page.getByRole('heading', { name: '从一个问题开始' })).toBeVisible();
+  await expect(page.locator('.new-investigation [aria-hidden].space-y-3')).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(await page.locator('.new-investigation-intro').evaluate((element) => getComputedStyle(element).animationName)).toBe('none');
+  await page.getByRole('textbox', { name: '输入监测问题' }).fill('继续提问');
+  await expect(page.getByRole('button', { name: '发送消息' })).toBeEnabled();
 });
 
 // 只替换 HTTP 边界，实际运行页面、官方 Runtime、抽屉与列表交互。

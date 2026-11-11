@@ -166,6 +166,13 @@ export class LmaClient {
     return (await response.json()).title;
   }
 
+  async suggestQuestions(): Promise<string[]> {
+    const response = await this.request('/suggestions', {
+      method: 'POST', signal: AbortSignal.timeout(20000),
+    });
+    return (await response.json()).questions;
+  }
+
   async getLatestInspection(signal?: AbortSignal): Promise<LatestInspection> {
     return (await this.request('/inspections/latest', { signal })).json();
   }

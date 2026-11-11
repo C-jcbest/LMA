@@ -474,3 +474,17 @@
 :root .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: var(--popover); }
 :root .maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--popover); }
 :root .maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--popover); }
+@keyframes investigation-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.new-investigation-intro, .new-investigation-question {
+  animation: investigation-enter 420ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .new-investigation-intro, .new-investigation-question {
+    animation: none;
+  }
+}

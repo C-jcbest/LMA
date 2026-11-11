@@ -147,7 +147,7 @@ test('首页提问创建独立调查，原会话草稿不被覆盖', async ({ pa
   await expect(page.locator('.aui-message-error-root')).toHaveCount(0);
 });
 
-test('390px 会话加载失败不挡住测点数据，局部重试恢复调查', async ({ page }, testInfo) => {
+test('390px 旧会话目录失败不阻断数据与新调查', async ({ page }, testInfo) => {
   await mockApi(page);
   let failSessions = true;
   await page.route('**/api/sessions?*', (route) => {
@@ -164,9 +164,6 @@ test('390px 会话加载失败不挡住测点数据，局部重试恢复调查',
   await expect(page.getByRole('img', { name: '测试点 A 位移时间轴' }).locator('canvas').first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('测点局部失败-数据仍可用-390px.png') });
   await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('调查记录尚未载入');
-  failSessions = false;
-  await page.getByRole('button', { name: '重试', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeEnabled();
   await page.getByRole('radio', { name: '数据', exact: true }).click();
   await expect(page.getByText('北向净变化', { exact: true })).toBeVisible();
@@ -281,7 +278,7 @@ test('数据分析使用九月正文模板，正文引用仍可打开当前依�
   await page.screenshot({ path: testInfo.outputPath('九月模板-1440px.png'), fullPage: true });
 });
 
-test('今日切换测点只恢复各自最新调查，草稿互不串站且浏览不创建会话', async ({ page }) => {
+test('今日切换测点不恢复旧调查，草稿互不串站且浏览不创建会话', async ({ page }) => {
   await mockApi(page);
   await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: { ...inspection, stations: inspection.stations.map((row) => ({ ...row, screening: '建议调查' })) } }));
   const stationSessions = { A: { ...session, id: 'station-A', name: 'A 的调查' }, B: { ...session, id: 'station-B', name: 'B 的调查' } };
@@ -308,13 +305,13 @@ test('今日切换测点只恢复各自最新调查，草稿互不串站且浏�
   await page.goto('/?page=home&threadId=report-session');
   await page.getByRole('button', { name: '查看 测试点 A', exact: true }).click();
   await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
-  await expect(page.getByText('这是测试点 A 的最新调查')).toBeVisible();
+  await expect(page.getByText('这是测试点 A 的最新调查')).toHaveCount(0);
   await expect(page.getByText(report.conclusion)).toHaveCount(0);
   await page.getByRole('textbox', { name: '输入监测问题' }).fill('A 的草稿');
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await page.getByRole('button', { name: '查看 测试点 B', exact: true }).click();
   await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
-  await expect(page.getByText('这是测试点 B 的最新调查')).toBeVisible();
+  await expect(page.getByText('这是测试点 B 的最新调查')).toHaveCount(0);
   await expect(page.getByText('这是测试点 A 的最新调查')).toHaveCount(0);
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('');
   await page.getByRole('button', { name: '返回', exact: true }).click();
@@ -696,4 +693,30 @@ test('调查记录写出涉及的测点和结论，点击回到那次对话', as
   await expect(page.getByText(report.conclusion)).toBeVisible();
   await page.reload();
   await expect(page.getByText(report.conclusion)).toBeVisible();
+});
+
+test('桌面调查支持调宽关闭展开并保留草稿', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/stations/*/timeline?*', (route) => route.fulfill({ json: stationTimeline }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?station=A');
+  const input = page.getByRole('textbox', { name: '输入监测问题' });
+  await input.fill('保留这条测点草稿');
+  const handle = page.getByRole('separator', { name: '调整数据与调查宽度' });
+  const before = (await page.locator('#station-chat-A').boundingBox())!.width;
+  const bounds = (await handle.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + 100);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x - 80, bounds.y + 100, { steps: 5 });
+  await page.mouse.up();
+  expect((await page.locator('#station-chat-A').boundingBox())!.width).toBeGreaterThan(before + 50);
+  await page.getByRole('button', { name: '展开调查', exact: true }).click();
+  await expect(page.getByRole('region', { name: '测点数据' })).toBeHidden();
+  await expect(input).toHaveValue('保留这条测点草稿');
+  await page.getByRole('button', { name: '恢复分栏' }).click();
+  await expect(handle).toBeVisible();
+  await page.getByRole('button', { name: '关闭调查面板' }).click();
+  await expect(input).toBeHidden();
+  await page.getByRole('button', { name: 'AI 调查', exact: true }).click();
+  await expect(input).toHaveValue('保留这条测点草稿');
 });

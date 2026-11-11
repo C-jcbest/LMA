@@ -25,6 +25,7 @@ from app.agent.graph import _get_llm, create_lma_agent
 from app.agent.report import report_in_last_turn
 from app.agent.evidence import reconcile_evidence
 from app.agent.title import generate_title_node
+from app.agent.suggestions import suggest_questions
 from app.agent.tools import _build_client
 from app.beidou.client import BeidouApiError, station_catalog_scope
 from app.config import Settings, get_settings
@@ -369,6 +370,16 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             "series": series,
             "records": await app.state.storage.station_records(station.station_uuid),
         }
+
+    @app.post("/suggestions")
+    async def generate_suggestions():
+        try:
+            async with asyncio.timeout(15):
+                inspection = await app.state.storage.latest_inspection()
+                return {"questions": await suggest_questions(inspection)}
+        except Exception:
+            logger.warning("question suggestions unavailable", exc_info=True)
+            return {"questions": []}
 
     @app.post("/title")
     async def generate_title(body: TitleInput):

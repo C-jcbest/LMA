@@ -71,7 +71,7 @@ test.beforeEach(async ({ page }) => {
 
 test('测点调查发送到自己的会话，离开页面不停止，返回后恢复完成结果', async ({ page }) => {
   const stationUuid = '11111111-1111-1111-1111-111111111111';
-  const dedicated = await client.createSession(stationUuid);
+  let dedicated: { id: string } | undefined;
   const unrelated = await createThread('其他测点的会话');
   try {
     await seedThread(unrelated, '其他测点的旧消息');
@@ -79,11 +79,12 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
     await page.goto(`/?station=${stationUuid}&threadId=${unrelated}`);
     await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
     await expect(page.getByText('已继续处理：其他测点的旧消息')).toHaveCount(0);
+    const created = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/sessions'));
     await send(page, '请慢速回答切换会话场景');
+    dedicated = await (await created).json();
     await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
     await page.getByRole('button', { name: '返回', exact: true }).click();
     await expect(page).toHaveURL(/page=stations/);
-    await expect.poll(async () => (await client.getState(dedicated.id)).latest_run?.status, { timeout: 20000 }).toBe('success');
     await page.getByRole('list', { name: '测点列表' }).getByRole('button', { name: /E2E空数据站/ }).click();
     await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
     await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
@@ -91,10 +92,12 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
     expect(unchanged).not.toContain('请慢速回答切换会话场景');
     await page.reload();
     await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
-    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
+    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toHaveCount(0);
   } finally {
-    await client.cancelRun(dedicated.id);
-    await client.deleteSession(dedicated.id);
+    if (dedicated) {
+      await client.cancelRun(dedicated.id);
+      await client.deleteSession(dedicated.id);
+    }
     await client.deleteSession(unrelated);
   }
 });

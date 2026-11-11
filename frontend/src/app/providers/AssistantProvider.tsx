@@ -15,7 +15,6 @@ const StationDraftsContext = createContext<Map<string, string> | null>(null);
 export interface StationConversationScope {
   stationUuid: string;
   stationName: string;
-  initialThreadId?: string;
 }
 
 function StationDraft({ stationUuid }: { stationUuid: string }) {
@@ -76,7 +75,7 @@ export function RecoveryNotice() {
 }
 
 export function AssistantProvider({ client, children, scope }: { client: LmaClient; children: ReactNode; scope?: StationConversationScope }) {
-  const [threadId, setThreadId] = useState(() => scope ? scope.initialThreadId : getUrlThreadId());
+  const [threadId, setThreadId] = useState(() => scope ? undefined : getUrlThreadId());
   const inheritedDrafts = useContext(StationDraftsContext);
   const ownDrafts = useRef(new Map<string, string>());
   const [error, setError] = useState<RecoveryError>(null);
