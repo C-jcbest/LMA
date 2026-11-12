@@ -36,7 +36,7 @@ def serve():
             {'id': 'unfinished-observation', 'name': 'unfinished_observation', 'args': {}},
         ])])
         return create_lma_agent(model, agent_tools=[observation, unfinished_observation],
-                                checkpointer=saver, investigation_storage=storage,
+                                checkpointer=saver, storage=storage,
                                 summary_model=ScriptedModel(script=[]))
 
     uvicorn.run(
@@ -63,7 +63,7 @@ async def main():
             {'id':'observation', 'name':'observation', 'args':{}},
         ])])
         agent = create_lma_agent(model, agent_tools=[observation], checkpointer=AsyncPostgresSaver(pool),
-                                 investigation_storage=storage, summary_model=ScriptedModel(script=[]))
+                                 storage=storage, summary_model=ScriptedModel(script=[]))
         await agent.ainvoke({'messages':[HumanMessage(content='读取隔离观测')]},
                             {'configurable':{'thread_id':sys.argv[1]}}, durability='sync')
 

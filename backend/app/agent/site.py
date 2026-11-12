@@ -15,7 +15,7 @@ from langchain_core.tools import tool
 from app.agent.tool_inputs import SiteEnvironmentInput
 from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 
-from app.agent.tools import _build_client, _resolve_station, _station_to_dict
+from app.monitoring_data import monitoring, station_summary
 from app.business_time import business_now
 
 ELEVATION_ENDPOINT = "https://api.open-meteo.com/v1/elevation"
@@ -134,20 +134,19 @@ async def inspect_site_environment(
     可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差）、
     地质单元及构造线等可用公开资料，适用于需要从场地环境角度补充调查背景的任务。
     """
-    async with _build_client() as client:
-        station = await _resolve_station(client, station_name_or_uuid)
-        center = _station_to_dict(station)
-        latitude = center.get("latitude")
-        longitude = center.get("longitude")
-        if latitude is None or longitude is None:
-            message = "该监测点未登记有效的 WGS84 经纬度，无法生成场地环境地图"
-            raise ToolFailure(message)
-        group_stations = await client.get_stations(group_uuid=station.group_uuid)
+    async with monitoring() as data:
+        station = await data.resolve_station(station_name_or_uuid)
+        group_stations = [item for item in await data.stations() if item.group_uuid == station.group_uuid]
+    center = station_summary(station)
+    latitude = center.get("latitude")
+    longitude = center.get("longitude")
+    if latitude is None or longitude is None:
+        raise ToolFailure("该监测点未登记有效的 WGS84 经纬度，无法生成场地环境地图")
 
     terrain_task = _fetch_terrain(latitude, longitude)
     geology_task = _fetch_geology(latitude, longitude)
     (terrain, terrain_error), (geology, geology_error) = await asyncio.gather(terrain_task, geology_task)
-    stations = [_station_to_dict(item) for item in group_stations]
+    stations = [station_summary(item) for item in group_stations]
     map_stations = [item for item in stations if item.get("latitude") is not None and item.get("longitude") is not None]
 
     sources = [

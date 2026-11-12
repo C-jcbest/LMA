@@ -42,12 +42,14 @@ pnpm --dir frontend dev
 | --- | --- |
 | Agent 编排、middleware、隐藏消息上下文 | [graph.py](../backend/app/agent/graph.py)、[message_context.py](../backend/app/agent/message_context.py) |
 | 主业务与视觉策略 | [system.md](../backend/app/agent/prompts/system.md)、[vision.md](../backend/app/agent/prompts/vision.md) |
+| 监测数据层（测点解析、分片取数、会话缓存） | [monitoring_data.py](../backend/app/monitoring_data.py) |
 | 监测、视觉、天气与场地工具 | [tools.py](../backend/app/agent/tools.py)、[vision.py](../backend/app/agent/vision.py)、[weather.py](../backend/app/agent/weather.py)、[site.py](../backend/app/agent/site.py) |
+| 计算、结论登记、计划与以往结论 | [compute.py](../backend/app/agent/compute.py)、[compute_runner.py](../backend/app/agent/compute_runner.py)、[conclusions.py](../backend/app/agent/conclusions.py)、[session_tools.py](../backend/app/agent/session_tools.py) |
 | 平台请求与字段 | [beidou](../backend/app/beidou/)、[接口参考](reference/beidou-platform-api.md) |
 | 会话 API、Run 与存储 | [server](../backend/app/server/) |
 | 前端布局与 Runtime | [App.tsx](../frontend/src/App.tsx)、[AssistantProvider.tsx](../frontend/src/app/providers/AssistantProvider.tsx) |
 | SSE 与会话目录适配 | [api.ts](../frontend/src/services/api.ts)、[session-list-adapter.ts](../frontend/src/lib/session-list-adapter.ts) |
-| 工具展示契约 | [artifacts.py](../backend/app/agent/artifacts.py)、[envelope.ts](../frontend/src/types/envelope.ts)、[toolkit.tsx](../frontend/src/features/monitoring/toolkit.tsx) |
+| 工具展示契约 | [artifacts.py](../backend/app/agent/artifacts.py)、[envelope.ts](../frontend/src/types/envelope.ts)、[investigation.ts](../frontend/src/features/monitoring/investigation.ts) |
 | 聊天组件与领域展示 | [assistant-ui](../frontend/src/components/assistant-ui/)、[monitoring](../frontend/src/features/monitoring/) |
 
 升级 assistant-ui Elements 时，以 frontend/components.json 的官方 registry 为基准，检查本地中文文案、领域展示与交互差异。
@@ -78,7 +80,7 @@ pnpm test:gate
 
 test:gate 包含 Vitest、Playwright 和生产构建。浏览器测试需要后端依赖，使用 21420 / 25174 / 19090 独立端口和 HTTP stub，不调用真实模型或监测账号。
 
-浏览器回归保留 25 个关键场景：相同交互只覆盖 320px 窄屏与桌面代表尺寸，不再为每个中间屏宽重复整条流程；简报复制与依据定位、巡检中断与重启合并为连续操作。基准站不返回展示 artifact 由后端工具测试和前端 investigation 单元测试覆盖，不再重复跑两轮模型 stub 与刷新。成功用例不额外保存截图，失败仍保留截图和 trace。纯样式细节、开发环境设置入口不作为发布门禁。
+浏览器回归保留 25 个关键场景：相同交互只覆盖 320px 窄屏与桌面代表尺寸，不再为每个中间屏宽重复整条流程；结论状态、复制与依据定位、巡检中断与重启合并为连续操作。基准站不返回展示 artifact 由后端工具测试和前端 investigation 单元测试覆盖，不再重复跑两轮模型 stub 与刷新。成功用例不额外保存截图，失败仍保留截图和 trace。纯样式细节、开发环境设置入口不作为发布门禁。
 
 Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.ts 写入真实隔离 API，其余文件使用各自页面的 HTTP mock，因此不增加真实 Run 的并发。不要在这些文件中混入共享后端写操作。需要检查单个功能时使用 `pnpm exec playwright test e2e/对应文件.spec.ts`，无需重复执行整套门禁。
 
@@ -86,6 +88,8 @@ Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.
 | --- | --- |
 | Agent 多轮、并行、取消配对、重试与调用限额 | backend/tests/test_agent_runtime.py；验证 LMA 组装后的实际运行行为 |
 | 空数据、业务拒绝、错误脱敏与工具证据 | backend/tests/test_tool_protocol.py；不同工具的业务边界分别保留 |
+| 数据层分片与会话缓存、位移特征 | backend/tests/test_numerical.py |
+| compute 沙箱与结论登记校验 | backend/tests/test_compute_and_conclusions.py |
 | 时间、模型配置、气象与场地计算 | backend/tests/test_prompt_time.py；验证项目参数与数值规则 |
 | 摘要、失败后历史保留与 token 隔离 | backend/tests/test_context_management.py |
 | 图像生成、候选范围与模型协议 | backend/tests/test_vision_rendering.py、test_vision_model.py；后者在 HTTP 边界检验实际请求 |

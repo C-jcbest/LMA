@@ -1,53 +1,56 @@
 """真实模型、合成平台与隔离数据库评测；结果按业务标准人工审阅。"""
 import asyncio
 import argparse
-import json
 import hashlib
+import json
 import math
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-from unittest.mock import patch
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
+from app.agent.artifacts import validate_artifact_envelope
+from app.agent.compute import compute
+from app.agent.conclusions import record_conclusions
 from app.agent.graph import create_lma_agent, _get_llm
+from app.agent.session_tools import update_plan
+from app.agent.tools import find_stations, get_displacement
 from app.config import get_settings
-from app.beidou.client import station_catalog_scope
-from app.agent.numerical_tool import analyze_gnss_numerically
-from app.agent.report import submit_investigation_report
-from app.agent.tools import get_daily_gnss_data, list_stations, list_station_groups
+from app.monitoring_data import monitoring_scope
 from app.server.storage import SessionStorage, connection_pool, migrate_database
-from evaluations.fixtures import MonitoringFixture, STATION_A, STATION_B
+from evaluations.fixtures import MonitoringFixture, NEW_STATION, STATION_A, STATION_B
+
+# 评测只用合成监测平台；天气、场地和视觉依赖外部服务，不绑定这些工具。
+_EVALUATION_TOOLS = [find_stations, get_displacement, compute, update_plan, record_conclusions]
 
 
-async def seed_history(storage, session_id):
-    """用生产数值工具建立已完成A、待调查B的原调查。"""
-    original = await analyze_gnss_numerically.ainvoke({
-        "type": "tool_call", "id": "evaluation-original", "name": "analyze_gnss_numerically",
-        "args": {"station_name_or_uuid": STATION_A,
-                 "begin_time": "2026-11-01 00:00:00", "end_time": "2026-11-08 00:00:00"},
+async def seed_previous_conclusion(storage):
+    """在另一个会话中登记评测点A的以往结论，供“以往结论”场景读取。"""
+    session_id = str(uuid4())
+    await storage.create(session_id, "以往评测调查")
+    artifact = validate_artifact_envelope({
+        "version": 1, "kind": "conclusions", "status": "success",
+        "data": {"stations": [{
+            "station_uuid": STATION_A, "station_name": "评测点A", "status": "未见明显变化",
+            "reason": "2026-11-01 至 11-08 北向未见净变化", "begin_time": "2026-11-01 00:00:00",
+            "end_time": "2026-11-08 00:00:00", "evidence": [],
+        }]},
     })
-    await storage.save_evidence(session_id, original.tool_call_id, original.artifact)
-    evidence = (await storage.evidence(session_id))[0]
-    investigation_id = str(uuid4())
-    targets = [
-        {"target_id": key, "station_uuid": station, "question": f"复核评测点{key}的变化",
-         "begin_time": "2026-11-01T00:00:00", "end_time": "2026-11-08T00:00:00",
-         "evidence_ids": [str(evidence["id"])] if key == "A" else [],
-         "outcome": "answered" if key == "A" else "pending",
-         "result": "原窗口内已复核净变化" if key == "A" else ""}
-        for key, station in (("A", STATION_A), ("B", STATION_B))
-    ]
-    await storage.save_progress(session_id, investigation_id, {
-        "goal": "复核同组两个测点", "targets": targets, "covered": ["A"], "unresolved": ["B尚未复核"],
-        "stage_conclusion": "A在原窗口内未见净变化，B尚未覆盖", "status": "paused", "end_reason": "budget",
-    })
-    return investigation_id
+    await storage.save_evidence(session_id, "evaluation-previous", artifact, execution_id="evaluation")
+    return session_id
+
+
+async def clear_unrelated_history(storage):
+    """隔离库中其他测试会留下同 UUID 的巡检与结论；评测前清除，避免模型读到与合成数据无关的历史。"""
+    stations = [STATION_A, STATION_B, NEW_STATION]
+    async with storage.pool.connection() as connection:
+        await connection.execute("DELETE FROM lma_inspection_stations WHERE station_uuid = ANY(%s)", (stations,))
+        await connection.execute("DELETE FROM lma_station_results WHERE station_uuid = ANY(%s)", (stations,))
 
 
 def evaluation_version():
@@ -59,31 +62,23 @@ def evaluation_version():
         'code_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
         'working_diff_sha256': hashlib.sha256(subprocess.check_output(['git', 'diff', 'HEAD'], cwd=root)).hexdigest(),
         'model': settings.llm_model, 'provider': settings.llm_provider, 'thinking': settings.llm_thinking,
-        'model_run_limit':settings.agent_model_run_limit, 'tool_run_limit':settings.agent_tool_run_limit,
+        'model_run_limit': settings.agent_model_run_limit, 'tool_run_limit': settings.agent_tool_run_limit,
         'files': {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in files},
-        'data_version': 'synthetic-review-2026-11-11-v2',
+        'data_version': 'synthetic-review-2026-11-11-v3',
     }
 
 
 def check_deterministic_results(messages):
-    """验证程序可确定的事实与引用；自然语言解释仍需逐项业务审阅。"""
-    from app.agent.message_context import evidence_id
-    from app.agent.report import EvidenceSupport, _validate_support, project_support
-    facts = {evidence_id(message.tool_call_id): message.artifact for message in messages
-             if isinstance(message, ToolMessage) and isinstance(message.artifact, dict)}
-    checked = 0
+    """验证程序可确定的数值事实；自然语言解释仍需逐项业务审阅。"""
     failures = []
-    final_answers = [message for message in messages
-                     if message.type == 'ai' and not message.tool_calls and message.text.strip()]
-    delivered_reports = [message for message in messages if isinstance(message, ToolMessage)
-                         and message.status != 'error' and isinstance(message.artifact, dict)
-                         and message.artifact.get('kind') == 'investigation_report']
-    if not final_answers and not delivered_reports:
-        failures.append('本轮没有交付可读回答或成功报告')
     checked_metrics = 0
+    final_answers = [message for message in messages
+                     if message.type == 'ai' and message.text.strip()]
+    if not final_answers:
+        failures.append('本轮没有交付可读回答')
     for message in messages:
         artifact = getattr(message, 'artifact', None)
-        if not isinstance(artifact, dict) or artifact.get('kind') != 'numerical':
+        if not isinstance(artifact, dict) or artifact.get('kind') != 'gnss_series' or artifact.get('status') == 'error':
             continue
         data = artifact['data']
         for axis in ('n', 'e', 'u'):
@@ -111,25 +106,11 @@ def check_deterministic_results(messages):
                 if feature.get('count') != len(common_times):
                     failures.append(f'{message.tool_call_id}/{station}/{axis} 共同数量与逐站有效时刻交集不一致')
                 checked_metrics += 1
-    for message in messages:
-        if not isinstance(message, ToolMessage) or message.status == 'error' or not message.artifact:
-            continue
-        if message.artifact.get('kind') != 'investigation_report':
-            continue
-        data = message.artifact['data']
-        for item in [*data['stations'], *data['findings']]:
-            for support in item['supports']:
-                try:
-                    validated = EvidenceSupport.model_validate({key:value for key,value in support.items() if key != 'fact'})
-                    artifact = facts[validated.evidence_id]
-                    _validate_support(validated, artifact)
-                    if support.get('fact') != project_support(validated, artifact).get('fact'):
-                        raise ValueError('服务端投影事实与引用结果不一致')
-                    checked += 1
-                except (ValueError, KeyError) as exc:
-                    failures.append(str(exc))
-    return {'checked_supports': checked, 'checked_sample_metrics': checked_metrics, 'failures': failures,
-            'scope': '仅验证结构化结果的引用及事实投影；未提交报告不自动记为业务通过'}
+    conclusions = [message.artifact['data']['stations'] for message in messages
+                   if isinstance(message, ToolMessage) and isinstance(message.artifact, dict)
+                   and message.artifact.get('kind') == 'conclusions' and message.status != 'error']
+    return {'checked_sample_metrics': checked_metrics, 'conclusions': conclusions, 'failures': failures,
+            'scope': '仅验证数值特征与原始点集一致；结论措辞与推断需人工审阅'}
 
 
 async def run_scenarios(model, database_uri, *, scenario_ids=None, destination=None):
@@ -148,30 +129,23 @@ async def run_scenarios(model, database_uri, *, scenario_ids=None, destination=N
         await pool.wait()
         storage = SessionStorage(pool)
         saver = AsyncPostgresSaver(pool)
+        await clear_unrelated_history(storage)
         for scenario in scenarios:
             print(f"开始评测：{scenario['id']}", flush=True)
             fixture = MonitoringFixture(scenario['id'])
             session_id = str(uuid4())
             await storage.create(session_id, "合成模型评测")
+            previous_session = await seed_previous_conclusion(storage) if scenario['id'] == 'historical_refresh' else None
             started = time.monotonic()
             final = {}
             error = None
             try:
-                with station_catalog_scope(), patch("app.agent.tools._build_client", return_value=fixture), patch("app.agent.numerical_tool._build_client", return_value=fixture):
-                    question = scenario["question"]
-                    if scenario["id"] in {"historical_refresh", "resume_budget"}:
-                        investigation_id = await seed_history(storage, session_id)
-                        question += f" 原调查编号：{investigation_id}。"
-                    fixture.requests.clear()
-                    agent = create_lma_agent(
-                        model, agent_tools=[list_station_groups, list_stations, get_daily_gnss_data,
-                                            analyze_gnss_numerically, submit_investigation_report],
-                        checkpointer=saver, investigation_storage=storage,
-                    )
+                async with monitoring_scope(session_id, client_factory=lambda: fixture):
+                    agent = create_lma_agent(model, agent_tools=_EVALUATION_TOOLS, checkpointer=saver, storage=storage)
                     observed_calls = set()
                     async with asyncio.timeout(360):
                         async for values in agent.astream(
-                            {"messages": [HumanMessage(content=question)]},
+                            {"messages": [HumanMessage(content=scenario["question"])]},
                             {"configurable": {"thread_id": session_id}}, stream_mode="values", durability='sync',
                         ):
                             final = values
@@ -184,21 +158,11 @@ async def run_scenarios(model, database_uri, *, scenario_ids=None, destination=N
                 print(f'  评测中断：{error}，保留部分结果', flush=True)
             finally:
                 try:
-                    budget_exhausted = any(
-                        message.additional_kwargs.get('lma_budget_exhausted')
-                        for message in final.get('messages', [])
-                        if message.type == 'ai'
-                    )
-                    end_reason = 'budget' if budget_exhausted else 'success'
-                    if error:
-                        end_reason = 'error'
-                    await storage.pause_investigations(session_id, end_reason)
                     results.append({
                         **scenario, "data_source": "合成监测平台",
-                        'version':version, 'elapsed_seconds': round(time.monotonic() - started, 2), 'execution_error':error,
+                        'version': version, 'elapsed_seconds': round(time.monotonic() - started, 2), 'execution_error': error,
                         "messages": [message.model_dump(mode="json") for message in final.get("messages", [])],
-                        "requests": fixture.requests, "investigations": await storage.investigations(session_id),
-                        "evidence": await storage.evidence(session_id),
+                        "requests": fixture.requests,
                         "review": "待按criteria逐项业务审阅；执行结束不代表评测通过",
                         'deterministic': check_deterministic_results(final.get('messages', [])),
                     })
@@ -206,8 +170,9 @@ async def run_scenarios(model, database_uri, *, scenario_ids=None, destination=N
                         destination.parent.mkdir(parents=True, exist_ok=True)
                         destination.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str), encoding='utf-8')
                 finally:
-                    await storage.delete(session_id)
-                    await saver.adelete_thread(session_id)
+                    for identifier in filter(None, (session_id, previous_session)):
+                        await storage.delete(identifier)
+                        await saver.adelete_thread(identifier)
     return results
 
 

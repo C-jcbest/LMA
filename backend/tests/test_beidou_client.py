@@ -4,12 +4,13 @@ import unittest
 
 import httpx
 
-from app.beidou.client import BeidouClient, station_catalog_scope
+from app.beidou.client import BeidouClient
+from app.monitoring_data import monitoring_scope
 from app.observations import normalize_observations, station_reference
 
 
 class BeidouClientTests(unittest.IsolatedAsyncioTestCase):
-    async def test_catalog_is_shared_only_within_run_and_account(self):
+    async def test_station_catalog_is_shared_within_one_run_only(self):
         requests = []
 
         async def respond(request):
@@ -22,22 +23,18 @@ class BeidouClientTests(unittest.IsolatedAsyncioTestCase):
                 'StationGroupName': 'G', 'StationN0': None, 'StationE0': 200, 'Latitude': None,
             }]})
 
-        async def client_for(account):
-            client = BeidouClient('https://monitoring.invalid/', account, 'test-password')
-            await client.aclose()
+        def client_for():
+            client = BeidouClient('https://monitoring.invalid/', 'account-A', 'test-password')
             client._client = httpx.AsyncClient(base_url='https://monitoring.invalid/', transport=httpx.MockTransport(respond))
             return client
 
-        async with await client_for('account-A') as first, await client_for('account-A') as second, await client_for('account-B') as other:
-            with station_catalog_scope():
-                values = await asyncio.gather(first.get_stations(), second.get_stations())
-                self.assertEqual([items[0].station_uuid for items in values], ['station-A', 'station-A'])
-                self.assertIsNone(station_reference(values[0][0])['n'])
-                self.assertEqual(await second.get_stations(station_name='unknown'), [])
-                await other.get_stations()
-            with station_catalog_scope():
-                await second.get_stations()
-        self.assertEqual(sum(path.endswith('getStationListInfo.php') for path in requests), 3)
+        async with monitoring_scope(client_factory=client_for) as data:
+            values = await asyncio.gather(data.stations(), data.resolve_station('A'))
+            self.assertEqual(values[0][0].station_uuid, values[1].station_uuid)
+            self.assertIsNone(station_reference(values[1])['n'])
+        async with monitoring_scope(client_factory=client_for) as data:
+            await data.stations()
+        self.assertEqual(sum(path.endswith('getStationListInfo.php') for path in requests), 2)
 
     async def test_null_and_nonfinite_coordinates_reach_shared_quality_rules(self):
         raw = [

@@ -22,10 +22,11 @@ export const StationStatus: React.FC<{ status: unknown }> = ({ status }) => {
 const HEADER_CELL_CLASS = 'whitespace-nowrap px-3 py-2 font-medium';
 const CELL_CLASS = 'px-3 py-2';
 
+/** 测点查询同时返回分组与测点：有测点时列测点，只有分组时列分组。 */
 export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({ data }) => {
-  if (Array.isArray(data.groups)) {
+  if (data.stations.length === 0) {
     if (data.groups.length === 0) {
-      return <EmptyResultView>暂无监测点分组</EmptyResultView>;
+      return <EmptyResultView>暂无符合条件的监测点</EmptyResultView>;
     }
     return (
       <div className="overflow-x-auto rounded-lg border">
@@ -49,13 +50,6 @@ export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({
         </table>
       </div>
     );
-  }
-
-  if (!Array.isArray(data.stations)) {
-    return null;
-  }
-  if (data.stations.length === 0) {
-    return <EmptyResultView>暂无符合条件的监测点</EmptyResultView>;
   }
 
   return (

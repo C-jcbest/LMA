@@ -26,12 +26,14 @@ const station = (station_name: string, fields: Record<string, unknown> = {}) => 
 
 const stationListData = (stations: Array<Record<string, unknown>>) => ({
   total: stations.length,
+  groups: [],
   stations: stations.map((item) => station(String(item.station_name), item)),
 });
 
 const stationGroupData = (groups: Array<Record<string, unknown>>) => ({
-  total: groups.length,
+  total: 0,
   groups,
+  stations: [],
 });
 
 const gnssData = (station_name: string, points: Array<Record<string, unknown>>) => ({
@@ -63,12 +65,15 @@ const visionData = (fields: Record<string, unknown> = {}) => ({
 });
 
 describe('会话关键路径集成回归', () => {
-  it('数值复核展示两窗口和共同覆盖，缺失速度不显示为零', () => {
+  it('数值特征展示两窗口和共同覆盖，缺失速度不显示为零', () => {
     const feature = { count: 4, net_change_mm: 3, robust_slope_mm_day: null,
       begin_time: '2026-11-02 00:00:00', end_time: '2026-11-03 00:00:00',
       jump_persistence: '待观察', method: 'Theil–Sen', limitations: [] };
     render(<NumericalResultView data={{
-      station_uuid: 'a', station_name: '测点A', sampling: 'hourly', points: [],
+      station_uuid: 'a', station_name: '测点A', points: [], timezone: 'Asia/Shanghai',
+      total_points: 0, returned_points: 0, downsampled: false,
+      summary: { n: { count: 0 }, e: { count: 0 }, u: { count: 0 }, gaps: [] },
+      sampling: { mode: 'hourly', points_limit: 0 },
       begin_time: '2026-11-01 00:00:00', end_time: '2026-11-04 00:00:00',
       features: { n: feature }, comparisons: {
         n: { first: feature, second: feature, velocity_difference_mm_day: null, speed_ratio: null, limitation: '倍率不构成加速结论' },
@@ -82,30 +87,24 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('速度差 未知 mm/day · 速度倍率 未知')).toBeVisible();
   });
 
-  it('报告缺少支持关系时拒绝渲染，不让旧或畸形字段使界面崩溃', () => {
-    const artifact = {
-      version: 1, kind: 'investigation_report', status: 'success',
-      data: {
-        conclusion: '待核实', stations: [], next_steps: [],
-        findings: [{ level: 'fact', text: '没有完整支持关系', evidence: ['evidence-1'] }],
-      },
-    };
-    expect(decodeToolArtifact('investigation_report', artifact)).toBeUndefined();
+  it('结论缺少时间窗或依据时拒绝渲染，不让畸形字段使界面崩溃', () => {
+    const station = { station_uuid: 'station-1', station_name: '测点A', status: '持续关注', reason: '长期同向变化' };
+    const artifact = { version: 1, kind: 'conclusions', status: 'success', data: { stations: [station] } };
+    expect(decodeToolArtifact('conclusions', artifact)).toBeUndefined();
     const complete = structuredClone(artifact);
-    Object.assign(complete.data.findings[0]!, { supports: [{
-      evidence_id: 'evidence-1', station_uuid: 'station-1',
-      claim: 'trend', rationale: '数值工具提供趋势',
-    }] });
-    expect(decodeToolArtifact('investigation_report', complete)?.kind).toBe('investigation_report');
+    Object.assign(complete.data.stations[0]!, {
+      begin_time: '2026-11-01 00:00:00', end_time: '2026-11-08 00:00:00', evidence: ['E1'],
+    });
+    expect(decodeToolArtifact('conclusions', complete)?.kind).toBe('conclusions');
   });
 
   it('领域 Renderer 将标准空结构展示为暂无数据', () => {
     const { rerender } = render(
       <StationResultView
-        data={stationGroupData([]) as React.ComponentProps<typeof StationResultView>['data']}
+        data={stationGroupData([{ group_name: 'K3', station_count: 2 }]) as React.ComponentProps<typeof StationResultView>['data']}
       />,
     );
-    expect(screen.getByText('暂无监测点分组')).toBeInTheDocument();
+    expect(screen.getByText('K3')).toBeInTheDocument();
 
     rerender(
       <StationResultView

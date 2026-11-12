@@ -5,13 +5,19 @@ import unittest
 from langchain_core.messages import HumanMessage
 
 from app.agent.message_context import FOCUS_STATION_KEY, model_messages, stamp_user_message
+from app.monitoring_data import MonitoringData, _SeriesCache
 from app.server.stations import find_station, load_station_series
 from test_inspection_api import FakeBeidou, station
 
 
+def platform_data(client=None):
+    client = client or FakeBeidou()
+    return MonitoringData(_SeriesCache(), lambda: client)
+
+
 class StationSeriesTests(unittest.IsolatedAsyncioTestCase):
     async def test_long_window_samples_daily_and_reports_net_change(self):
-        series = await load_station_series(FakeBeidou(), station("测试点 A"), 90)
+        series = await load_station_series(platform_data(), station("测试点 A"), 90)
 
         self.assertEqual(series["station_name"], "测试点 A")
         self.assertEqual(series["sampling"]["sample_times"], ["15:00"])
@@ -20,17 +26,17 @@ class StationSeriesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(series["summary"]["gaps"], [])
 
     async def test_week_window_keeps_hourly_points(self):
-        series = await load_station_series(FakeBeidou(), station("测试点 A"), 7)
+        series = await load_station_series(platform_data(), station("测试点 A"), 7)
 
         self.assertEqual(series["sampling"]["mode"], "hourly")
         self.assertEqual(len(series["points"]), 168)
 
     async def test_base_station_has_no_displacement_series(self):
-        client = FakeBeidou()
-        base = await find_station(client, "uuid-基准站 R")
+        data = platform_data()
+        base = await find_station(data, "uuid-基准站 R")
 
-        self.assertIsNone(await load_station_series(client, base, 90))
-        self.assertIsNone(await find_station(client, "uuid-不存在"))
+        self.assertIsNone(await load_station_series(data, base, 90))
+        self.assertIsNone(await find_station(data, "uuid-不存在"))
 
 
 class FocusStationContextTests(unittest.TestCase):

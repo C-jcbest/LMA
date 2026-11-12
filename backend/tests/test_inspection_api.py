@@ -7,38 +7,57 @@ import sys
 import time
 import unittest
 import httpx
-from datetime import timedelta
+from datetime import datetime
 from unittest.mock import patch
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
-from langgraph.checkpoint.memory import InMemorySaver
 
+from app.agent.conclusions import record_conclusions
 from app.agent.graph import create_lma_agent
-from app.agent.report import submit_investigation_report
+from app.agent.tools import get_displacement
 from app.beidou.client import BeidouApiError
 from app.beidou.schemas import GnssDataPoint, Station
-from app.business_time import business_now
+from app.business_time import TIME_FORMAT
 from app.observations import sampling_calendar
 from app.config import Settings
 from app.server.api import create_app
 from app.server.storage import migrate_database
 from runtime_fixtures import ScriptedModel
-from test_investigation_report import fake_gnss, gnss_call, report_call
 
 DATABASE_URI = os.environ.get("LMA_TEST_DATABASE_URI", "")
+STATION_A_UUID = "11111111-1111-1111-1111-111111111111"
+WINDOW = {"begin_time": "2026-11-01 00:00:00", "end_time": "2026-11-08 00:00:00"}
+_RATE_ORIGIN = datetime(2026, 1, 1)
 
 
 def station(name, station_type=3):
     return Station(
-        StationGroupUUID="group", StationGroupName="K3", StationUUID="11111111-1111-1111-1111-111111111111" if name == "测试点 A" else f"uuid-{name}", StationName=name,
+        StationGroupUUID="group", StationGroupName="K3", StationUUID=STATION_A_UUID if name == "测试点 A" else f"uuid-{name}", StationName=name,
         StationType=station_type, StationN0="100", StationE0="200", StationU0="300",
     )
 
 
+def displacement_call():
+    return AIMessage(id="ai-displacement", content="", tool_calls=[{
+        "id": "displacement-1", "name": "get_displacement", "args": {"station_name_or_uuid": "测试点 A", **WINDOW},
+    }])
+
+
+def conclusions_call():
+    return AIMessage(id="ai-conclusions", content="测试点 A 近一周北向持续变化，需要人工复核。", tool_calls=[{
+        "id": "conclusions-1", "name": "record_conclusions", "args": {"stations": [{
+            "station_uuid": STATION_A_UUID, "status": "需人工复核", "reason": "北向持续同向变化", **WINDOW,
+        }]},
+    }])
+
+
 class FakeBeidou:
-    """测试点 B 的日序列在 unavailable 时报错，用于验证单点失败不影响其余测点。"""
+    """测试点 A 每日固定时刻缓慢北移；测试点 B 在 unavailable 时报错，用于验证单点失败不影响其余测点。
+
+    数值只由观测时刻决定，与请求如何分片无关。
+    """
 
     def __init__(self, unavailable=False):
         self.unavailable = unavailable
@@ -50,23 +69,26 @@ class FakeBeidou:
     async def __aexit__(self, *exc_info):
         return None
 
+    async def aclose(self):
+        return None
+
+    async def get_station_groups(self):
+        return []
+
     async def get_stations(self):
         if self.station_list_unavailable:
             raise BeidouApiError("500", "PRIVATE_UPSTREAM")
         return [station("测试点 A"), station("测试点 B"), station("基准站 R", station_type=1)]
 
-    async def get_daily_data(self, station_uuid, begin_time, end_time, sampling_frequency=None, sample_times=None):
+    async def get_daily_data(self, station_uuid, begin_time, end_time, sample_times=None):
         if self.unavailable and station_uuid == "uuid-测试点 B":
             raise BeidouApiError("500", "PRIVATE_UPSTREAM")
-        moments = sampling_calendar(begin_time, end_time, sample_times=sample_times)
-        rate = 0.0002 if station_uuid == "11111111-1111-1111-1111-111111111111" and sample_times else 0
-        return [
-            GnssDataPoint(
-                DataTime=moment,
-                PJKInfoN=str(100 - i * rate), PJKInfoE="200", PJKInfoU="300",
-            )
-            for i, moment in enumerate(moments)
-        ]
+        rate = 0.0002 if station_uuid == STATION_A_UUID and sample_times else 0
+        points = []
+        for moment in sampling_calendar(begin_time, end_time, sample_times=sample_times):
+            days = (datetime.strptime(moment, TIME_FORMAT) - _RATE_ORIGIN).days
+            points.append(GnssDataPoint(DataTime=moment, PJKInfoN=str(100 - days * rate), PJKInfoE="200", PJKInfoU="300"))
+        return points
 
 
 @unittest.skipUnless(DATABASE_URI, "需配置隔离 LMA_TEST_DATABASE_URI")
@@ -91,14 +113,14 @@ class InspectionApiTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
         self.beidou = FakeBeidou()
-        self.model = ScriptedModel(script=[gnss_call(), report_call()])
+        self.model = ScriptedModel(script=[displacement_call(), conclusions_call()])
         app = create_app(
             settings,
             agent_factory=lambda saver, storage: create_lma_agent(
-                self.model, agent_tools=[fake_gnss, submit_investigation_report],
-                summary_model=ScriptedModel(tags=["nostream"], script=[]), checkpointer=saver, investigation_storage=storage,
+                self.model, agent_tools=[get_displacement, record_conclusions],
+                summary_model=ScriptedModel(tags=["nostream"], script=[]), checkpointer=saver, storage=storage,
             ),
-            inspection_client_factory=lambda: self.beidou,
+            platform_client_factory=lambda: self.beidou,
         )
         options = {"loop_factory": asyncio.SelectorEventLoop} if sys.platform == "win32" else {}
         self.client = self.enterContext(TestClient(app, backend_options=options))
@@ -170,33 +192,12 @@ class InspectionApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 502)
         self.assertNotIn("PRIVATE_UPSTREAM", response.text)
 
-    def test_legacy_records_without_original_evidence_stay_in_global_records(self):
-        session_id = self.client.post("/sessions", json={"name": "历史简报迁移"}).json()["id"]
-        self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
-        storage = self.client.app.state.storage
-        async def seed_legacy():
-            async with storage.pool.connection() as connection:
-                await connection.execute("INSERT INTO lma_station_conclusions(session_id,tool_call_id,station_name,status,reason) VALUES (%s,'old-report','测试点 A','持续关注','历史判断')", (session_id,))
-        self.client.portal.call(seed_legacy)
-        self.client.portal.call(migrate_database, DATABASE_URI)
-        self.client.portal.call(migrate_database, DATABASE_URI)
-        records = self.client.portal.call(storage.station_records, "11111111-1111-1111-1111-111111111111")
-        migrated = [row for row in records if str(row["session_id"]) == session_id]
-        self.assertEqual(migrated, [])
-        self.assertEqual(self.client.get(f"/sessions/{session_id}").status_code, 200)
-        conclusions = self.client.get('/sessions/conclusions').json()
-        self.assertFalse(any(row['session_id'] == session_id for row in conclusions))
-
     def test_record_links_use_uuid_even_when_names_match(self):
         storage = self.client.app.state.storage
         session_id = self.client.post('/sessions', json={'name': '同名测点'}).json()['id']
         self.addCleanup(lambda: self.client.delete(f'/sessions/{session_id}'))
-        record = {
-            'anchor_id': 'answer', 'report_tool_call_id': None, 'question': '对比测点',
-            'stations': [{'station_uuid': 'uuid-one', 'station_name': '同名'},
-                         {'station_uuid': 'uuid-two', 'station_name': '同名'}],
-        }
-        self.client.portal.call(storage.record_investigation, session_id, record)
+        self.client.portal.call(storage.record_station_mentions, session_id, 'answer', '对比测点',
+                                {'uuid-one': '同名', 'uuid-two': '同名'})
         for identifier in ['uuid-one', 'uuid-two']:
             records = self.client.portal.call(storage.station_records, identifier)
             self.assertEqual(len(records), 1)
@@ -204,43 +205,18 @@ class InspectionApiTests(unittest.TestCase):
         self.assertEqual(self.client.portal.call(storage.station_records, '同名'), [])
         self.assertEqual(self.client.portal.call(storage.station_records, 'uuid-three'), [])
 
-    def test_legacy_links_are_restored_from_checkpoint_evidence_idempotently(self):
-        session_id = self.client.post('/sessions', json={'name': '证据迁移'}).json()['id']
-        self.addCleanup(lambda: self.client.delete(f'/sessions/{session_id}'))
-        response = self.client.post(f'/sessions/{session_id}/runs', json={
-            'messages': [{'type': 'human', 'id': str(uuid4()), 'content': '调查测点 A'}],
-        })
-        self.assertEqual(response.status_code, 200)
-        storage = self.client.app.state.storage
-
-        async def remove_links():
-            async with storage.pool.connection() as connection:
-                await connection.execute("INSERT INTO lma_station_conclusions(session_id,tool_call_id,station_name,status,reason) VALUES (%s,'report-1','测试点 A','需人工复核','历史判断')", (session_id,))
-                await connection.execute("INSERT INTO lma_station_investigations(session_id,anchor_id,station_name,report_tool_call_id,question) VALUES (%s,'report-1','测试点 A','report-1','原问题')", (session_id,))
-                await connection.execute('DELETE FROM lma_station_records WHERE session_id = %s', (session_id,))
-                await connection.execute('DELETE FROM lma_station_results WHERE session_id = %s', (session_id,))
-
-        self.client.portal.call(remove_links)
-        self.client.portal.call(migrate_database, DATABASE_URI)
-        self.client.portal.call(migrate_database, DATABASE_URI)
-        records = self.client.portal.call(storage.station_records, '11111111-1111-1111-1111-111111111111')
-        own = [record for record in records if str(record['session_id']) == session_id]
-        self.assertEqual(len(own), 1)
-        self.assertEqual(own[0]['anchor_id'], 'report-1')
-        self.assertIsNone(own[0]['status'])
-        self.assertEqual(own[0]['historical_status'], '需人工复核')
-
-    def test_plain_answer_is_recorded_with_answer_anchor_without_inventing_status(self):
+    def test_plain_answer_is_recorded_at_the_question_without_inventing_status(self):
         self.model.script[:] = [AIMessage(id="plain-answer", content="可以继续观察北向的变化。")]
-        session_id = self.client.post("/sessions", json={"name": "自然回答记录", "station_uuid": "11111111-1111-1111-1111-111111111111"}).json()["id"]
+        session_id = self.client.post("/sessions", json={"name": "自然回答记录", "station_uuid": STATION_A_UUID}).json()["id"]
         self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
+        question_id = str(uuid4())
         self.client.post(f"/sessions/{session_id}/runs", json={
-            "messages": [{"type": "human", "id": str(uuid4()), "content": "下一步看什么？"}],
+            "messages": [{"type": "human", "id": question_id, "content": "下一步看什么？"}],
             "focus_station": "测试点 A",
         })
-        records = self.client.get("/stations/11111111-1111-1111-1111-111111111111/timeline").json()["records"]
+        records = self.client.get(f"/stations/{STATION_A_UUID}/timeline").json()["records"]
         record = next(row for row in records if row["session_id"] == session_id)
-        self.assertEqual(record["anchor_id"], "plain-answer")
+        self.assertEqual(record["anchor_id"], question_id)
         self.assertIsNone(record["status"])
         self.assertEqual(record["reason"], "下一步看什么？")
         self.assertFalse(any(row["session_id"] == session_id for row in self.client.get("/sessions/conclusions").json()))
@@ -258,14 +234,14 @@ class InspectionApiTests(unittest.TestCase):
         self.assertEqual(second["测试点 A"]["screening"], "建议调查")
         self.assertNotIn("PRIVATE_UPSTREAM", json.dumps(second, ensure_ascii=False))
 
-    def test_submitted_report_links_conclusion_to_station(self):
+    def test_recorded_conclusion_links_to_station(self):
         session_id = self.client.post("/sessions", json={"name": "结论关联"}).json()["id"]
         self.addCleanup(lambda: self.client.delete(f"/sessions/{session_id}"))
         response = self.client.post(f"/sessions/{session_id}/runs", json={
             "messages": [{"type": "human", "id": str(uuid4()), "content": "测试点 A 最近怎么样？"}],
         })
         self.assertEqual(response.status_code, 200)
-        self.assertIn("investigation_report", response.text)
+        self.assertIn('"kind": "conclusions"', response.text)
 
         rows = self.by_name(self.inspect())
         self.assertEqual(rows["测试点 A"]["last_conclusion"]["status"], "需人工复核")

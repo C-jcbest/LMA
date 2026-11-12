@@ -9,7 +9,7 @@ const session = {
 const axisSummary = { count: 3, change: 0.002 };
 
 const gnssResult = (id: string, stationName: string, beginDay: string, points: Array<[string, number | null]>) => ({
-  type: 'tool', id: `${id}-result`, tool_call_id: id, name: 'get_daily_gnss_data',
+  type: 'tool', id: `${id}-result`, tool_call_id: id, name: 'get_displacement',
   content: '模型专用内容不得展示', status: 'success',
   artifact: {
     version: 1, kind: 'gnss_series', status: 'success',
@@ -36,8 +36,8 @@ const points: Array<[string, number | null]> = [
 const messages = [
   { type: 'human', id: 'question-1', content: '查看测试分组近期变化' },
   { type: 'ai', id: 'query-1', content: [], tool_calls: [
-    { id: 'gnss-a', name: 'get_daily_gnss_data', args: {} },
-    { id: 'gnss-b', name: 'get_daily_gnss_data', args: {} },
+    { id: 'gnss-a', name: 'get_displacement', args: {} },
+    { id: 'gnss-b', name: 'get_displacement', args: {} },
     { id: 'weather-failed', name: 'query_weather', args: {} },
   ] },
   gnssResult('gnss-a', '测试点 A', '2026-11-01', points),
@@ -137,7 +137,7 @@ test('调查过程默认折叠，展开后每一步都能定位到对应测点',
   const process = page.getByRole('button', { name: /查询记录 · 2 项已获取/ });
   await expect(page.getByText('GNSS 数据获取失败')).toHaveCount(0);
   await process.click();
-  await page.getByRole('button', { name: /已获取 GNSS 监测数据.*测试点 B/ }).click();
+  await page.getByRole('button', { name: /已获取位移数据.*测试点 B/ }).click();
   await expect(inspector(page).getByRole('heading', { name: '测试点 B' })).toBeVisible();
   await page.getByRole('button', { name: '上一个测点' }).click();
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();

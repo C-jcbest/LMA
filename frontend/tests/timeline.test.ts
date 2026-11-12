@@ -95,8 +95,8 @@ describe('测点时间轴数据', () => {
       sampling: { mode: 'sample_times', sample_times: ['15:00'], points_limit: 1500 },
     }))).toBe('11-01 至 11-11 · 每日 15:00');
     expect(seriesLabel(series({
-      sampling: { mode: 'frequency', frequency_effective: '6h', points_limit: 1500 },
-    }))).toBe('11-01 至 11-11 · 每 6 小时');
+      sampling: { mode: 'hourly', points_limit: 1500 },
+    }))).toBe('11-01 至 11-11 · 每小时');
   });
 
   it('有降雨时位移与降雨共用时间轴，缩放同时作用于两者', () => {

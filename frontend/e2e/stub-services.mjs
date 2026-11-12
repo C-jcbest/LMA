@@ -182,18 +182,19 @@ const server = http.createServer(async (request, response) => {
   } else if (firstText.startsWith('为监测调查智能体推荐')) {
     payload = chatResponse(JSON.stringify({ questions: ['哪些测点近期值得关注？', '近期位移有什么变化？', '降雨与位移有何关联？'] }));
   } else if (userText.includes('并行工具停止验证') && !hasToolResult) {
+    // 位移查询很快完成；测点查询要等待较慢的分组接口，用来验证停止时保留已完成的结果。
     payload = parallelToolResponse([
-      { name: 'list_stations', args: {} },
-      { name: 'list_station_groups', args: {} },
+      { name: 'get_displacement', args: { station_name_or_uuid: 'E2E空数据站', begin_time: '2026-09-01 00:00:00', end_time: '2026-09-02 00:00:00' } },
+      { name: 'find_stations', args: {} },
     ]);
   } else if (userText.includes('不存在监测点') && !hasToolResult) {
-    payload = toolResponse('get_daily_gnss_data', {
+    payload = toolResponse('get_displacement', {
       station_name_or_uuid: '不存在监测点',
       begin_time: '2026-09-01 00:00:00',
       end_time: '2026-09-02 00:00:00',
     });
   } else if (userText.includes('空结果监测点') && !hasToolResult) {
-    payload = toolResponse('get_daily_gnss_data', {
+    payload = toolResponse('get_displacement', {
       station_name_or_uuid: 'E2E空数据站',
       begin_time: '2026-09-01 00:00:00',
       end_time: '2026-09-02 00:00:00',

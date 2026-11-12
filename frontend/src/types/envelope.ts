@@ -2,8 +2,9 @@
 
 export type ToolArtifactKind =
   | 'acquisition_failure'
-  | 'numerical'
-  | 'investigation_report'
+  | 'conclusions'
+  | 'computation'
+  | 'plan'
   | 'station_list'
   | 'gnss_series'
   | 'weather'
@@ -51,8 +52,8 @@ export interface StationArtifact {
 
 export interface StationListArtifactData {
   total: number;
-  groups?: StationGroupArtifact[] | null;
-  stations?: StationArtifact[] | null;
+  groups: StationGroupArtifact[];
+  stations: StationArtifact[];
 }
 
 export interface GnssPointArtifact {
@@ -77,12 +78,16 @@ export interface GapArtifact {
   missing_hours: number | null;
 }
 
+/** 单个方向在本窗口的数值特征（mm、mm/day），由服务端计算。 */
+export type AxisFeature = Record<string, unknown>;
+
 export interface GnssArtifactData {
   station_uuid: string;
   station_name: string;
   begin_time: string;
   end_time: string;
   timezone: string;
+  acquired_at?: string | null;
   total_points: number;
   returned_points: number;
   downsampled: boolean;
@@ -94,13 +99,21 @@ export interface GnssArtifactData {
     gaps: GapArtifact[];
   };
   sampling?: {
-    mode: 'sample_times' | 'frequency' | 'hourly';
+    mode: 'sample_times' | 'hourly';
     sample_times?: string[] | null;
-    frequency_effective?: string | null;
-    frequency_requested?: string | null;
-    day_stride?: number | null;
     points_limit: number;
-    note?: string | null;
+  } | null;
+  quality?: Record<string, unknown>;
+  reference?: Record<string, unknown>;
+  /** n/e/u/h/d 各方向特征；测点页序列没有特征时为空对象。 */
+  features?: Record<string, AxisFeature>;
+  /** 前后分段（按方向）与同组共同时段对比。 */
+  comparisons?: Record<string, unknown>;
+  /** 取数时平台登记的测点位置；旧依据没有该字段。 */
+  location?: {
+    group_name?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
   } | null;
 }
 
@@ -129,6 +142,7 @@ export interface WeatherArtifactData {
     history_start_date: string;
     history_end_date: string;
     forecast_days: number;
+    hourly?: boolean;
   };
   units?: {
     temperature: 'celsius';
@@ -170,7 +184,7 @@ export interface WeatherArtifactData {
     forecast_max_wind_speed?: number | null;
     forecast_max_wind_gust?: number | null;
   } | null;
-  history?: { daily: WeatherDailyArtifact } | null;
+  history?: { daily: WeatherDailyArtifact; hourly?: { time: string[]; precipitation: Array<number | null> } | null } | null;
   forecast?: { daily: WeatherDailyArtifact } | null;
   source?: { provider: string } | null;
 }
@@ -249,53 +263,43 @@ export interface SiteEnvironmentArtifactData {
 
 export type InvestigationStatus = '未见明显变化' | '持续关注' | '需人工复核' | '数据不足' | '暂无法分析';
 
-export interface ReportStationArtifact {
+export interface ConclusionStationArtifact {
   station_uuid: string;
-  begin_time: string;
-  end_time: string;
-  supports: ReportFindingArtifact["supports"];
   station_name: string;
   status: InvestigationStatus;
   reason: string;
-  acceleration?: '未见持续加速' | '疑似加速' | '无法判断';
-  data_quality: string;
-}
-
-export type FindingLevel = 'fact' | 'analysis' | 'inference';
-
-export interface ReportFindingArtifact {
-  supports: Array<{ evidence_id: string; station_uuid: string; begin_time?: string; end_time?: string; axis?: string; weather_period?: string; scope?: string; claim: string; rationale: string; fact?: Record<string, unknown> }>;
-  station_uuids?: string[];
-  level: FindingLevel;
-  text: string;
-  /** 经服务端校验、属于本轮的工具调用 ID。 */
+  begin_time: string;
+  end_time: string;
+  /** 服务端关联的本会话依据编号。 */
   evidence: string[];
 }
 
-export interface InvestigationReportArtifactData {
-  conclusion: string;
-  stations: ReportStationArtifact[];
-  findings: ReportFindingArtifact[];
-  next_steps: string[];
+export interface ConclusionsArtifactData {
+  stations: ConclusionStationArtifact[];
 }
 
-export interface NumericalArtifactData {
-  quality?: Record<string, unknown>;
-  reference?: Record<string, unknown>;
-  station_uuid: string;
-  station_name: string;
-  begin_time: string;
-  end_time: string;
-  sampling: 'hourly' | 'daily';
-  features: Record<string, Record<string, unknown>>;
-  comparisons: Record<string, unknown>;
-  points: GnssPointArtifact[];
+export interface ComputationArtifactData {
+  description: string;
+  code: string;
+  inputs: Array<{ evidence_id: string; description: string }>;
+  result: unknown;
+  truncated: boolean;
+}
+
+export interface PlanItemArtifact {
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
+
+export interface PlanArtifactData {
+  items: PlanItemArtifact[];
 }
 
 export interface ArtifactDataByKind {
   acquisition_failure: { station_uuid?: string; station_name: string; requested_station: string; begin_time?: string; end_time?: string; message: string };
-  numerical: NumericalArtifactData;
-  investigation_report: InvestigationReportArtifactData;
+  conclusions: ConclusionsArtifactData;
+  computation: ComputationArtifactData;
+  plan: PlanArtifactData;
   station_list: StationListArtifactData;
   gnss_series: GnssArtifactData;
   weather: WeatherArtifactData;

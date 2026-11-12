@@ -22,16 +22,14 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sse_starlette import EventSourceResponse
 
 from app.agent.graph import _get_llm, create_lma_agent
-from app.agent.report import report_in_last_turn
 from app.agent.evidence import reconcile_evidence
 from app.agent.title import generate_title_node
 from app.agent.suggestions import suggest_questions
-from app.agent.tools import _build_client
-from app.beidou.client import BeidouApiError, station_catalog_scope
+from app.beidou.client import BeidouApiError
 from app.config import Settings, get_settings
 from app.inspection.runner import run_inspection
+from app.monitoring_data import build_platform_client, monitoring_scope
 from app.server.messages import project_message, project_state
-from app.server.investigations import investigation_record
 from app.server.stations import TIMELINE_WINDOW_DAYS, find_station, load_station_series
 from app.server.storage import SessionStorage, connection_pool
 
@@ -79,7 +77,6 @@ class RunInput(ApiInput):
     # 用户提问时正在查看的测点；只作为模型可见的上下文，不改变消息正文。
     focus_station: str | None = Field(default=None, min_length=1, max_length=100)
     focus_station_uuid: UUID | None = None
-    resume_investigation_id: UUID | None = None
 
 
 class CheckpointInput(ApiInput):
@@ -153,8 +150,14 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
     return accepted
 
 
-def create_app(settings: Settings | None = None, agent_factory=None, inspection_client_factory=None) -> FastAPI:
+# 测点页切换 7/30/90 天窗口时复用已取得的数据块。
+_STATION_PAGE_CACHE = "station-page"
+
+
+def create_app(settings: Settings | None = None, agent_factory=None, platform_client_factory=None) -> FastAPI:
     settings = settings or get_settings()
+    # 调查、巡检和测点页共用同一个平台入口；测试替换它即可替换全部平台访问。
+    platform_client_factory = platform_client_factory or build_platform_client
     active_runs: dict[str, ActiveRun] = {}
     state_locks = WeakValueDictionary()
     active_inspections: set[asyncio.Task] = set()
@@ -168,7 +171,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             # 本服务固定一个 worker；进程终止的 Run 显式标记中断，不自动重放外部请求。
             await storage.interrupt_previous_runs()
             checkpointer = AsyncPostgresSaver(pool)
-            factory = agent_factory or (lambda saver, records: create_lma_agent(_get_llm(), checkpointer=saver, investigation_storage=records))
+            factory = agent_factory or (lambda saver, records: create_lma_agent(_get_llm(), checkpointer=saver, storage=records))
             app.state.agent = factory(checkpointer, storage)
             app.state.storage = storage
             app.state.checkpointer = checkpointer
@@ -273,37 +276,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             "latest_run": await app.state.storage.latest_run(str(session_id)),
         }
 
-    @app.get("/sessions/{session_id}/investigations")
-    async def list_investigations(session_id: UUID):
-        await require_session(session_id)
-        return await app.state.storage.investigations(str(session_id))
-
-    @app.get("/sessions/{session_id}/evidence")
-    async def list_evidence(session_id: UUID, limit: int = Query(30, ge=1, le=100), offset: int = Query(0, ge=0), investigation_id: UUID | None = None):
-        await require_session(session_id)
-        return await app.state.storage.evidence_catalog(str(session_id), limit=limit, offset=offset, investigation_id=str(investigation_id) if investigation_id else None)
-
-    @app.get("/sessions/{session_id}/evidence/{evidence_id}")
-    async def evidence_detail(session_id: UUID, evidence_id: UUID):
-        await require_session(session_id)
-        item = await app.state.storage.evidence_item(str(session_id), str(evidence_id))
-        if item is None:
-            raise HTTPException(404, "证据不存在。")
-        return item
-
-    @app.post("/sessions/{session_id}/investigations/{investigation_id}/resume")
-    async def resume_investigation(session_id: UUID, investigation_id: UUID):
-        await require_session(session_id)
-        require_idle(session_id)
-        record = await app.state.storage.investigation(str(session_id), str(investigation_id))
-        if record is None:
-            raise HTTPException(404, "调查不存在")
-        if record["status"] == "completed":
-            raise HTTPException(409, "调查已完成；当前问题应新建调查")
-        return await stream_run(session_id, RunInput(
-            messages=[UserInput(type="human", id=str(uuid4()), content="继续调查")], resume_investigation_id=investigation_id,
-        ))
-
     @app.post("/sessions/{session_id}/checkpoint")
     async def find_checkpoint(session_id: UUID, body: CheckpointInput):
         await require_session(session_id)
@@ -325,9 +297,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
                 raise HTTPException(409, "巡检正在进行，请等待完成。")
             inspection_id = str(uuid4())
             await app.state.storage.start_inspection(inspection_id)
-            task = asyncio.create_task(run_inspection(
-                app.state.storage, inspection_id, inspection_client_factory or _build_client,
-            ))
+            task = asyncio.create_task(run_inspection(app.state.storage, inspection_id, platform_client_factory))
             active_inspections.add(task)
             task.add_done_callback(active_inspections.discard)
         return {"id": inspection_id}
@@ -335,7 +305,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
     @app.get("/stations")
     async def station_directory():
         try:
-            async with (inspection_client_factory or _build_client)() as client:
+            async with platform_client_factory() as client:
                 stations = await client.get_stations()
                 return [
                     {
@@ -354,11 +324,11 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         if days not in TIMELINE_WINDOW_DAYS:
             raise HTTPException(422, "请求参数不符合接口要求。")
         try:
-            async with (inspection_client_factory or _build_client)() as client:
-                station = await find_station(client, station_uuid)
+            async with monitoring_scope(_STATION_PAGE_CACHE, platform_client_factory) as data:
+                station = await find_station(data, station_uuid)
                 if station is None:
                     raise HTTPException(404, "测点不存在。")
-                series = await load_station_series(client, station, days)
+                series = await load_station_series(data, station, days)
         except (BeidouApiError, httpx.HTTPError):
             # 原始错误可能带上游地址和账号信息，只进日志。
             logger.warning("station timeline request failed", exc_info=True)
@@ -424,18 +394,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             messages = prepare_messages(body, snapshot, latest_run)
             if body.focus_station_uuid is not None and session.get("station_uuid") != str(body.focus_station_uuid):
                 raise HTTPException(422, "当前测点与会话归属不一致。")
-            if body.resume_investigation_id is not None:
-                record = await app.state.storage.investigation(key, str(body.resume_investigation_id))
-                if record is None:
-                    raise HTTPException(404, "调查不存在。")
-                if record["status"] == "completed":
-                    raise HTTPException(409, "调查已完成；当前问题应建立新目标。")
             for message in messages:
                 if isinstance(message, HumanMessage):
-                    if body.resume_investigation_id is not None:
-                        if message.text != "继续调查":
-                            raise HTTPException(422, "续查操作与消息不匹配。")
-                        message.additional_kwargs["lma_resume_investigation_id"] = str(body.resume_investigation_id)
                     if body.focus_station and session.get("station_uuid"):
                         message.additional_kwargs["lma_focus_identity"] = {"station_uuid": session["station_uuid"], "station_name": body.focus_station}
             if any(isinstance(message, ToolCancellation) for message in body.messages):
@@ -455,27 +415,27 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
         async def events():
             # 客户端断开也可能直接关闭生成器；只有图完整结束才记录成功。
             status = "cancelled"
-            final_values = None
             try:
-                with anyio.CancelScope() as cancel_scope, station_catalog_scope():
-                    control.cancel_scope = cancel_scope
-                    if control.stop_requested:
-                        return
-                    yield {"event": "metadata", "data": json.dumps({"run_id": control.id})}
-                    graph_input = {"messages": messages} if messages else None
-                    async for mode, data in app.state.agent.astream(
-                        graph_input, config, stream_mode=["messages", "values"], durability="sync",
-                    ):
-                        if mode == "messages":
-                            message, metadata = data
-                            payload = [project_message(message), {
-                                "langgraph_node": metadata.get("langgraph_node"),
-                            }]
-                        else:
-                            final_values = data
-                            payload = project_state(data)
-                        yield {"event": mode, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
-                    status = "success"
+                # 平台访问范围随本轮结束关闭连接；该会话已取得的数据块保留给后续追问。
+                async with monitoring_scope(key, platform_client_factory):
+                    with anyio.CancelScope() as cancel_scope:
+                        control.cancel_scope = cancel_scope
+                        if control.stop_requested:
+                            return
+                        yield {"event": "metadata", "data": json.dumps({"run_id": control.id})}
+                        graph_input = {"messages": messages} if messages else None
+                        async for mode, data in app.state.agent.astream(
+                            graph_input, config, stream_mode=["messages", "values"], durability="sync",
+                        ):
+                            if mode == "messages":
+                                message, metadata = data
+                                payload = [project_message(message), {
+                                    "langgraph_node": metadata.get("langgraph_node"),
+                                }]
+                            else:
+                                payload = project_state(data)
+                            yield {"event": mode, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
+                        status = "success"
             except asyncio.CancelledError:
                 status = "cancelled"
                 raise
@@ -488,22 +448,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, inspection_
             finally:
                 with anyio.CancelScope(shield=True):
                     try:
-                        report = report_in_last_turn(final_values["messages"]) if status == "success" and final_values else None
-                        stage_conclusion = ""
-                        reason = status
-                        if final_values:
-                            turn_messages = final_values.get("messages", [])
-                            last_user = next((index for index in range(len(turn_messages) - 1, -1, -1)
-                                              if isinstance(turn_messages[index], HumanMessage)), -1)
-                            answers = [message for message in turn_messages[last_user + 1:]
-                                       if isinstance(message, AIMessage) and not message.tool_calls]
-                            if answers:
-                                stage_conclusion = answers[-1].text[:3000]
-                            if report is not None:
-                                stage_conclusion = report[1]["conclusion"]
-                            if any(message.additional_kwargs.get('lma_budget_exhausted') for message in answers):
-                                reason = "budget"
-                        await app.state.storage.pause_investigations(key, reason, stage_conclusion)
                         await app.state.storage.finish_run(control.id, status)
                     finally:
                         active_runs.pop(key, None)

@@ -9,10 +9,13 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
   const rain = data.rain_summary;
   const wind = data.wind_summary || {};
   const hist = data.history?.daily;
+  const hourly = data.history?.hourly;
   const fc = data.forecast?.daily;
+  const hasForecast = Boolean(fc?.time?.length);
   const hasWeatherData = Boolean(
     data.current ||
       hist?.time?.length ||
+      hourly?.time?.length ||
       fc?.time?.length ||
       rain?.recent_24h_window?.available_hours ||
       rain?.history_total_precipitation != null ||
@@ -40,7 +43,8 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
   );
   const dates = [...new Set([...histRain.keys(), ...fcByDate.keys()])].sort();
 
-  const cells: { label: string; value: string }[] = [
+  // 只查历史时没有预报；预报类条目整组省略，避免一排“-”。
+  const cells: { label: string; value: string; forecast?: boolean }[] = [
     {
       label: '最近 24 个完整小时降雨',
       value:
@@ -61,16 +65,19 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
         : '-',
     },
     {
+      forecast: true,
       label: '预报合计降雨',
       value: rain?.forecast_total_precipitation != null ? `${rain.forecast_total_precipitation} mm` : '-',
     },
     {
+      forecast: true,
       label: '预报最大日降雨',
       value: rain?.forecast_max_daily_precipitation
         ? `${rain.forecast_max_daily_precipitation.date}: ${rain.forecast_max_daily_precipitation.value} mm`
         : '-',
     },
     {
+      forecast: true,
       label: '预报最大降水概率',
       value:
         rain?.forecast_max_precipitation_probability != null
@@ -92,6 +99,7 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
           : '-',
     },
     {
+      forecast: true,
       label: '预报最大风速 / 阵风',
       value:
         wind.forecast_max_wind_speed != null
@@ -122,7 +130,7 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
         </span>
       </div>
       <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 min-[480px]:grid-cols-2">
-        {cells.map((c, i) => (
+        {cells.filter((c) => hasForecast || !c.forecast).map((c, i) => (
           <div key={i} className="flex flex-col gap-0.5 min-w-0">
             <dt className="text-sm text-muted-foreground wrap-break-word">{c.label}</dt>
             <dd className="text-foreground text-sm wrap-break-word">{c.value}</dd>
@@ -131,14 +139,14 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
       </dl>
       {dates.length > 0 && (
         <div className="border border-border/60 rounded-lg bg-background/60 overflow-x-auto">
-          <table className="min-w-[34rem] w-full text-left text-xs border-collapse">
+          <table className={`${hasForecast ? 'min-w-[34rem]' : ''} w-full text-left text-xs border-collapse`}>
             <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
               <tr>
                 <th className="py-2 px-3 whitespace-nowrap">日期</th>
                 <th className="py-2 px-3 whitespace-nowrap">历史降雨 (mm)</th>
-                <th className="py-2 px-3 whitespace-nowrap">预报降雨 (mm)</th>
-                <th className="py-2 px-3 whitespace-nowrap">降水概率 (%)</th>
-                <th className="py-2 px-3 whitespace-nowrap">最大风速 (km/h)</th>
+                {hasForecast && <th className="py-2 px-3 whitespace-nowrap">预报降雨 (mm)</th>}
+                {hasForecast && <th className="py-2 px-3 whitespace-nowrap">降水概率 (%)</th>}
+                {hasForecast && <th className="py-2 px-3 whitespace-nowrap">最大风速 (km/h)</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/40 text-foreground text-xs">
@@ -146,9 +154,29 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
                 <tr key={d} className="hover:bg-muted/50 transition-colors">
                   <td className="py-1 px-3 text-muted-foreground whitespace-nowrap">{d}</td>
                   <td className="py-1 px-3">{histRain.get(d) ?? '-'}</td>
-                  <td className="py-1 px-3">{fcByDate.get(d)?.rain ?? '-'}</td>
-                  <td className="py-1 px-3">{fcByDate.get(d)?.prob ?? '-'}</td>
-                  <td className="py-1 px-3">{fcByDate.get(d)?.wind ?? '-'}</td>
+                  {hasForecast && <td className="py-1 px-3">{fcByDate.get(d)?.rain ?? '-'}</td>}
+                  {hasForecast && <td className="py-1 px-3">{fcByDate.get(d)?.prob ?? '-'}</td>}
+                  {hasForecast && <td className="py-1 px-3">{fcByDate.get(d)?.wind ?? '-'}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {hourly && hourly.time.length > 0 && (
+        <div className="max-h-72 overflow-y-auto rounded-lg border border-border/60 bg-background/60">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead className="sticky top-0 z-10 bg-muted/40 text-muted-foreground font-medium border-b border-border/60">
+              <tr>
+                <th className="py-2 px-3 whitespace-nowrap">时间（该时刻前一小时）</th>
+                <th className="py-2 px-3 whitespace-nowrap">降水 (mm)</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/40 text-foreground">
+              {hourly.time.map((time, index) => (
+                <tr key={time}>
+                  <td className="py-1 px-3 text-muted-foreground whitespace-nowrap tabular-nums">{time.replace('T', ' ')}</td>
+                  <td className="py-1 px-3 tabular-nums">{hourly.precipitation[index] ?? '缺测'}</td>
                 </tr>
               ))}
             </tbody>

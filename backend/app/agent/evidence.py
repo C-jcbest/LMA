@@ -1,4 +1,8 @@
-"""工具执行边界的幂等存证与checkpoint对账；不依赖HTTP流的消费。"""
+"""工具执行边界的幂等存证与 checkpoint 对账；不依赖 HTTP 流的消费。
+
+存证让中断、重启后的会话能恢复已完成的工具结果，结论登记与测点结论索引同事务写入。
+模型只看到依据编号（由工具调用 ID 派生），看不到存证记录的 UUID。
+"""
 import asyncio
 from uuid import UUID
 
@@ -6,9 +10,10 @@ import anyio
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from app.business_time import business_now
 from app.agent.artifacts import validate_artifact_envelope
+from app.agent.station_evidence import evidence_by_station
 from app.agent.tool_feedback import is_tool_feedback
+from app.business_time import business_now
 
 
 def _origin(messages, tool_call_id):
@@ -18,24 +23,22 @@ def _origin(messages, tool_call_id):
     raise ValueError('工具调用缺少对应的模型消息')
 
 
-def _message_data(message):
-    return message.model_dump(mode='json', exclude={'artifact'})
-
-
 def _restored(record):
     metadata = record['message']
     if not metadata:
         return None
-    return ToolMessage.model_validate({**metadata, 'artifact': record['snapshot'], 'additional_kwargs': {**metadata.get('additional_kwargs', {}), 'lma_evidence_uuid': str(record['id']), 'lma_execution_id': record['execution_id']}})
+    return ToolMessage.model_validate({
+        **metadata, 'artifact': record['snapshot'],
+        'additional_kwargs': {**metadata.get('additional_kwargs', {}), 'lma_evidence_uuid': str(record['id'])},
+    })
 
 
-async def _commit_completed(storage, session_id, origin, message, report_record=None):
+async def _commit_completed(storage, session_id, origin, message):
     async def commit():
         with anyio.fail_after(6, shield=True):
             return await storage.save_evidence(
                 session_id, message.tool_call_id, message.artifact,
-                execution_id=origin, message=_message_data(message),
-                report_record=report_record,
+                execution_id=origin, message=message.model_dump(mode='json', exclude={'artifact'}),
             )
     # 仅保护已完成结果的短写入，不屏蔽工具取数、模型调用或整轮调查的取消。
     task = asyncio.create_task(commit())
@@ -47,32 +50,18 @@ async def _commit_completed(storage, session_id, origin, message, report_record=
         raise
 
 
-def _report_record(messages, message):
-    if message.artifact.get('kind') != 'investigation_report' or message.status == 'error':
-        return None
-    from app.server.investigations import investigation_record
-
-    return investigation_record([*messages, message])
-
-
 def _failure_artifact(request, result):
+    """取数失败也是依据：结论可以据此如实登记“暂无法分析”。"""
     args = request.tool_call['args']
     requested = args.get('station_name_or_uuid')
     if not requested:
         return None
-    known = {}
+    known = {identifier: item.station_name for identifier, item in evidence_by_station(request.state.get('messages', [])).items()}
     for message in request.state.get('messages', []):
         if isinstance(message, HumanMessage):
             focus = message.additional_kwargs.get('lma_context', {}).get('focus_identity')
             if focus:
                 known[focus['station_uuid']] = focus['station_name']
-        if not isinstance(message, ToolMessage) or not isinstance(message.artifact, dict):
-            continue
-        data = message.artifact.get('data', {})
-        items = [data, data.get('center_station', {}), data.get('location', {}), *(data.get('stations') or [])]
-        for item in items:
-            if item.get('station_uuid') and item.get('station_name'):
-                known[item['station_uuid']] = item['station_name']
     identifier = None
     try:
         identifier = str(UUID(requested))
@@ -96,23 +85,27 @@ class EvidenceMiddleware(AgentMiddleware):
         self.storage = storage
 
     async def aafter_agent(self, state, runtime):
-        from app.agent.report import report_in_last_turn
-        from app.server.investigations import investigation_record
+        """本轮涉及的测点写入测点调查记录，测点页据此列出相关会话。"""
         execution = runtime.execution_info
         session_id = execution.thread_id if execution is not None else None
         if session_id is None:
             return None
         messages = state.get('messages', [])
-        if report_in_last_turn(messages) is not None:
+        question_index = next((index for index in range(len(messages) - 1, -1, -1) if isinstance(messages[index], HumanMessage)), None)
+        if question_index is None:
             return None
-        record = investigation_record(messages)
-        if record is not None:
-            await self.storage.record_investigation(session_id, record)
+        question = messages[question_index]
+        stations = {identifier: item.station_name for identifier, item in evidence_by_station(messages[question_index + 1:]).items()}
+        focus = question.additional_kwargs.get('lma_context', {}).get('focus_identity')
+        if focus:
+            stations[focus['station_uuid']] = focus['station_name']
+        if stations:
+            await self.storage.record_station_mentions(session_id, str(question.id), question.text[:300], stations)
         return None
 
     async def awrap_tool_call(self, request, handler):
         session_id = request.runtime.config.get('configurable', {}).get('thread_id')
-        if session_id is None or request.tool_call['name'] == 'reuse_investigation_evidence':
+        if session_id is None:
             return await handler(request)
         origin = _origin(request.state.get('messages', []), request.tool_call['id'])
         previous = await self.storage.executed_evidence(session_id, origin, request.tool_call['id'])
@@ -129,29 +122,25 @@ class EvidenceMiddleware(AgentMiddleware):
                 result = result.model_copy(update={'artifact': artifact})
         if not isinstance(result.artifact, dict):
             return result
-        report_record = _report_record(request.state.get('messages', []), result)
-        record = await _commit_completed(self.storage, session_id, origin, result, report_record)
-        return result.model_copy(update={'additional_kwargs': {
-            **result.additional_kwargs, 'lma_evidence_uuid': str(record['id']), 'lma_execution_id': origin,
-        }})
+        record = await _commit_completed(self.storage, session_id, origin, result)
+        return result.model_copy(update={'additional_kwargs': {**result.additional_kwargs, 'lma_evidence_uuid': str(record['id'])}})
 
 
 async def reconcile_evidence(storage, session_id, messages):
-    """补存checkpoint已有结果，恢复存证成功但checkpoint未提交的并行结果；不重放取数。"""
+    """补存 checkpoint 已有结果，恢复存证成功但 checkpoint 未提交的并行结果；不重放取数。"""
     completed = {message.tool_call_id for message in messages if isinstance(message, ToolMessage)}
     recovered = []
     identifiers = [message.additional_kwargs['lma_evidence_uuid'] for message in messages
                    if isinstance(message, ToolMessage) and message.additional_kwargs.get('lma_evidence_uuid')]
     existing = await storage.existing_evidence_ids(session_id, identifiers)
     for index, message in enumerate(messages):
-        if (isinstance(message, ToolMessage) and not is_tool_feedback(message) and isinstance(message.artifact, dict) and message.name != 'reuse_investigation_evidence'
+        if (isinstance(message, ToolMessage) and not is_tool_feedback(message) and isinstance(message.artifact, dict)
                 and message.additional_kwargs.get('lma_evidence_uuid') not in existing):
             origin = _origin(messages[:index + 1], message.tool_call_id)
-            report_record = _report_record(messages[:index], message)
-            record = await _commit_completed(storage, session_id, origin, message, report_record)
+            record = await _commit_completed(storage, session_id, origin, message)
             if message.additional_kwargs.get('lma_evidence_uuid') != str(record['id']):
                 recovered.append(message.model_copy(update={'additional_kwargs': {
-                    **message.additional_kwargs, 'lma_evidence_uuid': str(record['id']), 'lma_execution_id': origin,
+                    **message.additional_kwargs, 'lma_evidence_uuid': str(record['id']),
                 }}))
         if isinstance(message, AIMessage):
             for call in message.tool_calls:

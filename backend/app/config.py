@@ -39,10 +39,15 @@ class Settings(BaseSettings):
     agent_retry_initial_delay: float = Field(default=0.5, ge=0, le=10)
     # 退避基础延时上限，单位秒（0–30，默认 4）；封顶后仍有官方 ±25% 抖动，不是实际等待时间硬上限。
     agent_retry_max_delay: float = Field(default=4.0, ge=0, le=30)
-    # 每个 Run 的主模型逻辑调用上限（1–100，默认 20）；重试另算，超限停止本轮，下一轮重新计数。
-    agent_model_run_limit: int = Field(default=20, ge=1, le=100)
-    # 每个 Run 的工具逻辑调用上限（1–200，默认 40）；重试另算，超额调用返回 error，允许的调用仍执行。
+    # 每个 Run 的主模型逻辑调用上限（1–100，默认 30）；重试另算，最后一次调用撤掉工具让模型直接作答，下一轮重新计数。
+    agent_model_run_limit: int = Field(default=30, ge=1, le=100)
+    # 每个 Run 的取数类工具调用上限（1–200，默认 40）；compute、计划和结论登记不计入。重试另算，超额调用返回 error。
     agent_tool_run_limit: int = Field(default=40, ge=1, le=200)
+    # 位移结果自动附带逐点数据的点数上限（0–1000，默认 72，约 3 天小时数据）；超过时只给特征，模型可显式要求或用 compute。
+    # 逐点数据会随每次模型调用重复发送，设得过大时多测点调查的输入 token 成倍增长。
+    agent_inline_points_limit: int = Field(default=72, ge=0, le=1000)
+    # compute 单次计算的运行时间上限，单位秒（1–60，默认 10）；超时终止子进程并返回错误。
+    compute_timeout_seconds: float = Field(default=10.0, ge=1, le=60)
     # 单次视觉工具尝试的有效候选数量上限（1–50，默认 12）；超额明确拒绝数值回查，不静默裁剪候选。
     vision_max_candidates: int = Field(default=12, ge=1, le=50)
 

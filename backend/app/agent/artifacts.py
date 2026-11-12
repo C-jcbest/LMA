@@ -48,14 +48,8 @@ class StationArtifact(ArtifactModel):
 
 class StationListArtifactData(ArtifactModel):
     total: int
-    groups: list[StationGroupArtifact] | None = None
-    stations: list[StationArtifact] | None = None
-
-    @model_validator(mode="after")
-    def require_one_collection(self):
-        if (self.groups is None) == (self.stations is None):
-            raise ValueError("station_list data must contain exactly one collection")
-        return self
+    groups: list[StationGroupArtifact] = Field(default_factory=list)
+    stations: list[StationArtifact] = Field(default_factory=list)
 
 
 class GnssPointArtifact(ArtifactModel):
@@ -94,16 +88,23 @@ class GnssSummaryArtifact(ArtifactModel):
 
 
 class GnssSamplingArtifact(ArtifactModel):
-    mode: Literal["sample_times", "frequency", "hourly"]
+    mode: Literal["sample_times", "hourly"]
     sample_times: list[str] | None = None
-    frequency_effective: str | None = None
-    frequency_requested: str | None = None
-    day_stride: int | None = None
     points_limit: int
-    note: str | None = None
+
+
+class GnssStationLocationArtifact(ArtifactModel):
+    """取数时平台登记的测点位置，供界面在对话中绘制测点地图。"""
+
+    group_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    coordinate_system: Literal["WGS84"] = "WGS84"
 
 
 class GnssArtifactData(ArtifactModel):
+    """位移序列与同一窗口的数值特征；features/comparisons 的结构见 numerical.py。"""
+
     coordinate_unit: Literal["m"] = "m"
     summary_unit: Literal["m"] = "m"
     station_uuid: str
@@ -111,6 +112,7 @@ class GnssArtifactData(ArtifactModel):
     begin_time: str
     end_time: str
     timezone: str
+    acquired_at: str | None = None
     total_points: int
     returned_points: int
     downsampled: bool
@@ -118,7 +120,11 @@ class GnssArtifactData(ArtifactModel):
     summary: GnssSummaryArtifact
     sampling: GnssSamplingArtifact | None = None
     quality: dict[str, JsonValue] = Field(default_factory=dict)
+    reference: dict[str, JsonValue] = Field(default_factory=dict)
+    features: dict[str, JsonValue] = Field(default_factory=dict)
+    comparisons: dict[str, JsonValue] = Field(default_factory=dict)
     raw_points: list[GnssPointArtifact] = Field(default_factory=list)
+    location: GnssStationLocationArtifact | None = None
 
 
 class WeatherLocationArtifact(ArtifactModel):
@@ -134,6 +140,7 @@ class WeatherQueryArtifact(ArtifactModel):
     history_start_date: str
     history_end_date: str
     forecast_days: int
+    hourly: bool = False
 
 
 class WeatherCurrentArtifact(ArtifactModel):
@@ -192,8 +199,16 @@ class WeatherDailyArtifact(ArtifactModel):
     wind_gusts_10m_max: list[float | None] | None = None
 
 
+class WeatherHourlyArtifact(ArtifactModel):
+    """小时降水量代表该时间戳之前一小时的总量。"""
+
+    time: list[str]
+    precipitation: list[float | None]
+
+
 class WeatherSeriesArtifact(ArtifactModel):
     daily: WeatherDailyArtifact
+    hourly: WeatherHourlyArtifact | None = None
 
 
 class WeatherUnitsArtifact(ArtifactModel):
@@ -299,51 +314,50 @@ class AcquisitionFailureArtifactData(ArtifactModel):
     message: str
 
 
-class ReportStationArtifact(ArtifactModel):
+InvestigationStatus = Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"]
+
+
+class ConclusionStationArtifact(ArtifactModel):
     station_uuid: str
-    begin_time: str
-    end_time: str
-    supports: list[dict[str, JsonValue]]
     station_name: str
-    status: Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"]
+    status: InvestigationStatus
     reason: str
-    acceleration: Literal["未见持续加速", "疑似加速", "无法判断"] | None
-    data_quality: str
-
-
-class ReportFindingArtifact(ArtifactModel):
-    supports: list[dict[str, JsonValue]]
-    level: Literal["fact", "analysis", "inference"]
-    text: str
-    station_uuids: list[str] = Field(default_factory=list)
-    evidence: list[str]
-
-
-class InvestigationReportArtifactData(ArtifactModel):
-    conclusion: str
-    stations: list[ReportStationArtifact]
-    findings: list[ReportFindingArtifact]
-    next_steps: list[str]
-
-
-class NumericalArtifactData(ArtifactModel):
-    station_uuid: str
-    station_name: str
     begin_time: str
     end_time: str
-    sampling: Literal["hourly", "daily"]
-    features: dict[str, JsonValue]
-    comparisons: dict[str, JsonValue]
-    points: list[GnssPointArtifact]
-    raw_points: list[GnssPointArtifact] = Field(default_factory=list)
-    quality: dict[str, JsonValue] = Field(default_factory=dict)
-    reference: dict[str, JsonValue] = Field(default_factory=dict)
+    evidence: list[str] = Field(description="服务端关联的本会话依据编号")
+
+
+class ConclusionsArtifactData(ArtifactModel):
+    stations: list[ConclusionStationArtifact]
+
+
+class ComputationInputArtifact(ArtifactModel):
+    evidence_id: str
+    description: str
+
+
+class ComputationArtifactData(ArtifactModel):
+    description: str
+    code: str
+    inputs: list[ComputationInputArtifact]
+    result: JsonValue
+    truncated: bool = False
+
+
+class PlanItemArtifact(ArtifactModel):
+    content: str
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class PlanArtifactData(ArtifactModel):
+    items: list[PlanItemArtifact]
 
 
 ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {
     "acquisition_failure": AcquisitionFailureArtifactData,
-    "numerical": NumericalArtifactData,
-    "investigation_report": InvestigationReportArtifactData,
+    "conclusions": ConclusionsArtifactData,
+    "computation": ComputationArtifactData,
+    "plan": PlanArtifactData,
     "station_list": StationListArtifactData,
     "gnss_series": GnssArtifactData,
     "weather": WeatherArtifactData,
@@ -402,9 +416,19 @@ class SiteEnvironmentArtifactEnvelope(ArtifactEnvelopeBase):
     data: SiteEnvironmentArtifactData
 
 
-class InvestigationReportArtifactEnvelope(ArtifactEnvelopeBase):
-    kind: Literal["investigation_report"]
-    data: InvestigationReportArtifactData
+class ConclusionsArtifactEnvelope(ArtifactEnvelopeBase):
+    kind: Literal["conclusions"]
+    data: ConclusionsArtifactData
+
+
+class ComputationArtifactEnvelope(ArtifactEnvelopeBase):
+    kind: Literal["computation"]
+    data: ComputationArtifactData
+
+
+class PlanArtifactEnvelope(ArtifactEnvelopeBase):
+    kind: Literal["plan"]
+    data: PlanArtifactData
 
 
 class AcquisitionFailureArtifactEnvelope(ArtifactEnvelopeBase):
@@ -412,15 +436,11 @@ class AcquisitionFailureArtifactEnvelope(ArtifactEnvelopeBase):
     data: AcquisitionFailureArtifactData
 
 
-class NumericalArtifactEnvelope(ArtifactEnvelopeBase):
-    kind: Literal["numerical"]
-    data: NumericalArtifactData
-
-
 ToolArtifactEnvelope = Annotated[
     AcquisitionFailureArtifactEnvelope
-    | NumericalArtifactEnvelope
-    | InvestigationReportArtifactEnvelope
+    | ConclusionsArtifactEnvelope
+    | ComputationArtifactEnvelope
+    | PlanArtifactEnvelope
     | StationListArtifactEnvelope
     | GnssArtifactEnvelope
     | WeatherArtifactEnvelope

@@ -16,3 +16,6 @@ psycopg[binary,pool]==3.3.3
 
 # GNSS 时序图表渲染（视觉复核工具用）
 matplotlib==3.11.1
+
+# compute 工具在子进程中对会话依据做表格计算（腾讯镜像可取得该版本）
+pandas==3.0.6

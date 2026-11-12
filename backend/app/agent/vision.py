@@ -1,57 +1,35 @@
-"""GNSS 时序图表的视觉复核工具，供智能体调用。
+"""GNSS 时序图表的视觉复核工具。
 
-仿照 landslide-monitoring-agent 的 ChartVisionService 裁剪为本项目极简实现：
-单一工具、单一提示词；每次工具尝试只有一次视觉调用。
-流程：拉取该时间范围的全量 GNSS 数据 → matplotlib 渲染多张分析图
-（原始时序/累计位移/合成位移）→ 视觉模型输出事实观察 + 形态学推断（interpretation，
-非确定措辞）→ Pydantic 结构化校验（时间窗/方向白名单）→ 对每个异常候选区间经
-网络回查原始小时级数据计算五类数值特征（相对初始点累计位移、窗口净变化、
-鲁棒斜率、最大单步变化、跳后持续性），并给出全范围 global_features。
-
-子窗口放大不靠工具内部多阶段，而是由主智能体用更窄的 begin_time/end_time
-重复调用本工具实现：窗口越窄图表横向分辨率越高；累计位移基线为站点初始坐标
-（未登记回退首点），跨时间范围连续可比。
-
-图片通过 LangChain artifact 机制返回（response_format="content_and_artifact"）：
-挂在 ToolMessage.artifact 上随流转发给前端，但不进入 LLM 上下文；
-LLM 只读 JSON 观察结果。chart_points（全量序列）同样放在 artifact 中
-供前端 SVG 兑底渲染，避免全量数据挤占 LLM 上下文。
+用小时级全量数据绘制原始坐标、累计位移与合成位移图，交给视觉模型观察整体形态并标出候选区间；
+候选区间在已取得的小时数据上计算数值特征（数值复核不再重新请求平台）。
+图片随 artifact 发给前端，不进入模型上下文；模型只读结构化观察与数值特征。
+需要看清某一段时由主智能体用更窄的窗口重复调用。
 """
 
 import asyncio
 import base64
-import json
-import math
 import logging
-import re
 from datetime import datetime, timedelta
 from functools import lru_cache
 from io import BytesIO
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-from app.agent.tool_inputs import VisionInput
+from app.agent.tool_inputs import ChartInput
 from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 from pydantic import BaseModel, Field, ValidationError
 
 from app.agent.prompting import VISION_PROMPT
 from app.agent.numerical import axis_features as _axis_features
 from app.agent.retry import is_transient_error
-from app.business_time import BUSINESS_TIMEZONE
-from app.observations import normalize_observations, observation_quality, raw_snapshot
-from app.agent.tools import (
-    _TIME_FORMAT,
-    _build_client,
-    _resolve_station,
-    _to_float,
-)
-from app.beidou.client import BeidouClient
+from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT as _TIME_FORMAT
+from app.monitoring_data import BASE_STATION_NOTE, BASE_STATION_TYPE, monitoring
+from app.observations import finite_number as _to_float, normalize_observations
 from app.config import get_settings
 from app.agent.models import create_chat_model
 
 # 渲染使用全量数据，不做降采样（降采样会漏掉采样点之间的异常形态）
 _MIN_POINTS = 5  # 少于该点数不值得绘图识别
-_RECHECK_CONCURRENCY = 5  # 异常区间回查的并发上限
 
 # 图表定义：name 与前端标题约定
 _CHART_RAW = "raw_coordinates"
@@ -395,316 +373,164 @@ def _window_features(
     return features
 
 
-async def _recheck_candidate_window(
-    client: BeidouClient,
-    station_uuid: str,
+def _recheck_candidate(
+    observations: list,
     candidate: VisualCandidate,
     baseline: tuple[float, float, float] | None,
     pad_hours: int,
     time_start: datetime,
     time_end: datetime,
 ) -> dict:
-    """按视觉定位的异常区间经网络回查原始 GNSS 数据，取区间内的准确数值与形态特征。
+    """在已取得的小时数据上取候选区间，计算准确数值与形态特征。
 
-    首次全量拉取可能被降采样，回查该窗口拿到的是小时级全分辨率数据。
-    视觉估读时间存在误差，窗口过小会截掉边界关键点：起止时间先向两侧各
-    外扩 pad_hours 小时（并夹取到整个查询范围内）再查。返回各方向数值摘要
-    （单位 m）与五类形态数值特征（单位 mm，见 _window_features），
-    供 LLM 判断候选是否被数值证据支持。
+    视觉估读时间存在误差，区间先向两侧各外扩 pad_hours 小时（限制在查询窗口内）。
     """
-    start = _parse_time(candidate.start_at)
-    end = _parse_time(candidate.end_at)
-    if start is None or end is None:
-        return {"ok": False, "error": "回查失败：候选区间时间无法解析"}
     pad = timedelta(hours=max(0, pad_hours))
-    query_start = max(start - pad, time_start)
-    query_end = min(end + pad, time_end)
-    try:
-        points = await client.get_daily_data(
-            station_uuid=station_uuid,
-            begin_time=query_start.strftime(_TIME_FORMAT),
-            end_time=query_end.strftime(_TIME_FORMAT),
-        )
-    except Exception as e:
-        logging.getLogger(__name__).warning("numerical recheck failed", exc_info=True)
-        if is_transient_error(e):
-            raise
-        return {"ok": False, "error": "数值回查失败，候选尚未获得数值复核支持"}
-    points, cleaning = normalize_observations(points, query_start.strftime(_TIME_FORMAT), query_end.strftime(_TIME_FORMAT))
+    query_start = max(_parse_time(candidate.start_at) - pad, time_start).strftime(_TIME_FORMAT)
+    query_end = min(_parse_time(candidate.end_at) + pad, time_end).strftime(_TIME_FORMAT)
+    points = [point for point in observations if query_start <= point.data_time <= query_end]
     return {
-        "quality": observation_quality(points, query_start.strftime(_TIME_FORMAT), query_end.strftime(_TIME_FORMAT), cleaning=cleaning),
         "ok": True,
-        "begin_time": query_start.strftime(_TIME_FORMAT),
-        "end_time": query_end.strftime(_TIME_FORMAT),
+        "begin_time": query_start,
+        "end_time": query_end,
         "pad_hours": max(0, pad_hours),
         "points": len(points),
         "summary": {
-            "n": _axis_detail([(p.data_time, _to_float(p.n)) for p in points]),
-            "e": _axis_detail([(p.data_time, _to_float(p.e)) for p in points]),
-            "u": _axis_detail([(p.data_time, _to_float(p.u)) for p in points]),
+            axis: _axis_detail([(point.data_time, getattr(point, axis)) for point in points])
+            for axis in ("n", "e", "u")
         },
         "features": _window_features(points, baseline),
     }
 
 
-async def _recheck_candidates(
-    client: BeidouClient,
-    station_uuid: str,
-    candidates: list[VisualCandidate],
-    baseline: tuple[float, float, float] | None,
-    pad_hours: int,
-    time_start: datetime,
-    time_end: datetime,
-) -> list[dict]:
-    """并发回查全部异常候选区间（不设数量上限，用信号量限流）。
-
-    单方向候选也返回三方向摘要与特征，便于对照判断（如 N 跳变伴随 E 同步跳变
-    更可能是整站坐标基准问题而非单轴形变）。
-    """
-    semaphore = asyncio.Semaphore(_RECHECK_CONCURRENCY)
-
-    async def _bounded(candidate: VisualCandidate) -> dict:
-        async with semaphore:
-            return await _recheck_candidate_window(
-                client, station_uuid, candidate, baseline, pad_hours, time_start, time_end
-            )
-
-    return list(await asyncio.gather(*(_bounded(c) for c in candidates)))
-
-
-@tool(response_format="content_and_artifact", args_schema=VisionInput)
+@tool(response_format="content_and_artifact", args_schema=ChartInput)
 async def analyze_gnss_chart(
     station_name_or_uuid: str,
     begin_time: str,
     end_time: str,
     tool_call_id: str,
 ) -> tuple[str | ToolMessage, dict | None]:
-    """对指定监测点在时间范围内的 GNSS 位移曲线做图形复核，并给出形态数值特征。
+    """对移动站一段时间的位移曲线做图形复核：视觉模型观察整体形态并标出候选区间，每个候选附数值特征。
 
-    用全量小时级数据绘制累计位移与合成位移图，由视觉模型观察全窗口形态并标出值得核查的候选区间；
-    再对整个窗口和每个候选区间计算数值特征：相对基线的累计位移、窗口净变化、鲁棒趋势斜率、
-    最大单步变化及发生时刻、跳变后是维持还是回落。累计位移以监测点初始坐标为基线，
-    未登记时回退到窗口首个有效点，结果中会注明采用的基线。
-
-    视觉候选是待核查的线索，是否成立以数值特征为准。窗口越窄图形分辨率越高，
-    需要看清某一段时可以用更窄的时间范围再次调用。图表同时展示给用户。
-
-    形变分析适用于移动站；已知站点为基准站时，可结合站点信息说明其差分基准用途，无需请求形变序列。
+    适合判断形态（持续变化、台阶、尖峰、趋势转折），以及数值特征难以说明的情况。
+    视觉候选是待核查的线索，是否成立以数值特征为准；窗口越窄图形分辨率越高。图表同时展示给用户。
     """
     time_start = datetime.strptime(begin_time, _TIME_FORMAT)
     time_end = datetime.strptime(end_time, _TIME_FORMAT)
 
-    async with _build_client() as client:
-        station = await _resolve_station(client, station_name_or_uuid)
-        if station.station_type == 1:
-            return (
-                "未查询形变数据：该监测点为基准站，仅提供差分基准，不适用移动站形变序列分析；这不表示监测异常。可根据用户目标选择移动站，或说明基准站的用途。",
-                None,
-            )
+    async with monitoring() as data:
+        station = await data.resolve_station(station_name_or_uuid)
+        if station.station_type == BASE_STATION_TYPE:
+            return BASE_STATION_NOTE, None
+        series = await data.displacement(station, begin_time, end_time, "hourly")
 
-        points = await client.get_daily_data(
-            station_uuid=station.station_uuid,
-            begin_time=begin_time,
-            end_time=end_time,
-        )
-
-        original_points = raw_snapshot(points)
-        points, cleaning = normalize_observations(points, begin_time, end_time)
-        quality = observation_quality(points, begin_time, end_time, cleaning=cleaning)
-        base_result = {
-            "quality": quality,
-            "station_uuid": station.station_uuid,
-            "station_name": station.station_name,
-            "begin_time": begin_time,
-            "end_time": end_time,
-            "timezone": BUSINESS_TIMEZONE,
-            "total_points": len(points),
-        }
-        if not points:
-            return tool_result(
-                {"ok": True, **base_result, "observations": None},
-                kind="vision",
-                display={
-                    **base_result,
-                    "ok": True,
-                    "images": [],
-                    "chart_points": [],
-                    "observations": None,
-                },
-            )
-
-        if len(points) < _MIN_POINTS:
-            raise ToolFailure(f"该时段数据点过少（{len(points)} 条），不足以绘图复核")
-
-        # 前端展示用全量数据序列：放在 artifact 中随流转发给前端（不进入
-        # LLM 上下文，避免全量数据挤占上下文；数值证据由 recheck 按区间精查提供）
-        chart_points = [
-            {
-                "t": p.data_time,
-                "n": _to_float(p.n),
-                "e": _to_float(p.e),
-                "u": _to_float(p.u),
-            }
-            for p in points
-        ]
-
-        settings = get_settings()
-        baseline = _resolve_baseline(station)
-        # 基线口径说明（用于视觉输入与重试文案）：
-        # 初始坐标基准（平台登记 StationN0/E0/U0）或回退的首点基准
-        baseline_desc = (
-            "相对监测点初始坐标" if baseline is not None else "相对数据首点（站点未登记初始坐标）"
-        )
-        # 图片始终渲染（前端展示用），视觉模型未配置时仅跳过识别。
-        # 渲染必须放入工作线程：matplotlib 首次 import 会同步探测配置目录
-        # （os.getcwd/os.path.realpath），在 langgraph dev 的 blockbuster 检测下
-        # 直接抛 BlockingError，导致 Server 环境图表全部渲染失败
-        charts = await asyncio.to_thread(
-            _render_all_charts, points, baseline, station.station_name, begin_time, end_time
-        )
-        # 展示数据只存在 artifact.data：渲染失败时仍可用全量序列兜底绘制。
-        artifact_data = {**base_result, "images": charts, "chart_points": chart_points, "raw_points": original_points}
-        if not charts:
-            return tool_error_result(
-                "图表渲染失败，无法进行视觉复核",
-                tool_call_id=tool_call_id,
-                tool_name="analyze_gnss_chart",
-                kind="vision",
-                data=artifact_data,
-            )
-
-        if not (settings.vision_base_url and settings.vision_api_key and settings.vision_model):
-            return tool_error_result(
-                "视觉模型未配置，无法进行图表形态复核；已返回图表供人工查看。",
-                tool_call_id=tool_call_id,
-                tool_name="analyze_gnss_chart",
-                kind="vision",
-                category="configuration",
-                data=artifact_data,
-            )
-
-        # 单次视觉调用（单一提示词）：送累计位移与合成位移两张图做全窗口观察。
-        # 需要精确判读某子窗口时，由主智能体以更窄时间范围重复调用本工具实现"放大"。
-        # 原始时序与累计位移形态等价（仅差基准），两图大载荷下视觉模型间歇性
-        # 返回非 JSON，不再多送。artifact 仍包含全部 3 图供前端展示
-        vision_charts = [c for c in charts if c["name"] in (_CHART_CUMULATIVE, _CHART_RESULTANT)] or charts
-        # 单张渲染失败时附图会变少，说明必须按实际送出的图生成
-        chart_notes = {
-            _CHART_RAW: "原始坐标 N/E/U 时序（m）",
-            _CHART_CUMULATIVE: f"{baseline_desc}的累计位移 ΔN/ΔE/ΔU（mm，橙色阴影为缺测时段）",
-            _CHART_RESULTANT: f"{baseline_desc}的合成位移（水平与三维，mm，橙色阴影为缺测时段）",
-        }
-        chart_desc = "".join(
-            f"第 {index} 张图为{chart_notes[chart['name']]}。"
-            for index, chart in enumerate(vision_charts, start=1)
-        )
-        content: list[dict] = [
-            {
-                "type": "text",
-                "text": (
-                    f"监测点 {station.station_name}，时间范围 {begin_time} ~ {end_time} (Asia/Shanghai)，"
-                    f"共 {len(points)} 个数据点（全量绘图）。{chart_desc}"
-                    "请先报告全窗口整体形态，再按系统提示词要求返回 JSON 观察结果。"
-                ),
-            },
-        ]
-        for chart in vision_charts:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{chart['png_base64']}"},
-                }
-            )
-
-        # 每次工具尝试只调用一次视觉模型；只有瞬时失败交给官方工具重试。
-        try:
-            structured_llm = _get_vision_llm().with_structured_output(
-                VisionObservations, method="json_mode", include_raw=True
-            )
-            response = await structured_llm.ainvoke(
-                [SystemMessage(content=VISION_PROMPT), HumanMessage(content=content)],
-                config={"callbacks": []},
-            )
-        except Exception as e:
-            logging.getLogger(__name__).warning("vision model request failed", exc_info=True)
-            if is_transient_error(e):
-                raise
-            return tool_error_result(
-                "视觉模型调用失败，未获得形态复核结果；图表可供人工查看。",
-                tool_call_id=tool_call_id,
-                tool_name="analyze_gnss_chart",
-                kind="vision",
-                data=artifact_data,
-            )
-
-        parsed = response.get("parsed") if isinstance(response, dict) else None
-        parsing_error = response.get("parsing_error") if isinstance(response, dict) else None
-        if parsing_error is not None or not isinstance(parsed, VisionObservations):
-            return tool_error_result(
-                "视觉复核失败：视觉模型返回的不是有效 JSON；图表可供人工查看。",
-                tool_call_id=tool_call_id,
-                tool_name="analyze_gnss_chart",
-                kind="vision",
-                data=artifact_data,
-            )
-
-        validated = _validate_observations(parsed, time_start, time_end)
-        if len(validated.candidates) > settings.vision_max_candidates:
-            return tool_error_result(
-                "视觉候选数量超过本次复核预算，尚未进行数值确认；请缩小查询时间范围。",
-                tool_call_id=tool_call_id,
-                tool_name="analyze_gnss_chart",
-                kind="vision",
-                category="budget",
-                data=artifact_data,
-            )
-
-
-        # 数值证据（纯数据接口回查，无额外视觉调用）：
-        # 全部异常候选经网络回查（首次全量拉取可能被降采样，回查保证窗口内
-        # 小时级全分辨率）计算五类数值特征；global_features 为整个调用范围的
-        # 同一套数值特征独立覆盖整个调用范围，用于与视觉候选交叉核验
-        pad_hours = settings.vision_recheck_pad_hours
-        rechecks = await _recheck_candidates(
-            client, station.station_uuid, validated.candidates,
-            baseline, pad_hours, time_start, time_end,
-        )
-        observations_out = validated.model_dump()
-        observations_out["candidates"] = [
-            {**candidate.model_dump(), "features": recheck}
-            for candidate, recheck in zip(validated.candidates, rechecks)
-        ]
-        observations_out["global_features"] = _window_features(points, baseline)
-        observations_out["feature_note"] = (
-            "candidates[].features 为对相应区间（已向两侧各外扩 "
-            f"{max(0, pad_hours)} 小时）经网络回查原始数据（小时级全分辨率）计算的数值特征，"
-            "global_features 为整个查询范围的同一套特征："
-            "累计位移 cum_start_mm/cum_end_mm（相对基线，mm）、窗口净变化 net_change_mm、"
-            "鲁棒斜率 robust_slope_mm_day（Theil–Sen，mm/天）、最大单步变化 max_step_mm 及"
-            "发生时刻 max_step_time、跳变前后水平差 level_shift_mm 与跳后持续性 "
-            "jump_persistence（持续/回落/样本不足）。"
-            "interpretation 为视觉模型的形态学推断，不是数值事实。"
-            "视觉定位的时间存在误差，变化的实际发生时刻以特征中的时刻为准。"
-        )
-        if any(not item.get("ok") for item in rechecks):
-            return tool_error_result(
-                "部分视觉候选未能完成数值复核，不能将这些候选认定为已确认变化。",
-                tool_call_id=tool_call_id,
-                tool_name="analyze_gnss_chart",
-                kind="vision",
-                facts={"ok": False, **base_result, "observations": observations_out},
-                data={**artifact_data, "observations": validated.model_dump()},
-            )
+    points = series.observations
+    base_result = {
+        "quality": series.quality,
+        "station_uuid": station.station_uuid,
+        "station_name": station.station_name,
+        "begin_time": begin_time,
+        "end_time": end_time,
+        "timezone": BUSINESS_TIMEZONE,
+        "total_points": len(points),
+    }
+    if not points:
         return tool_result(
-            {
-                "ok": True,
-                **base_result,
-                "observations": observations_out,
-            },
+            {"ok": True, **base_result, "observations": None},
             kind="vision",
-            display={
-                **artifact_data,
-                "ok": True,
-                "observations": validated.model_dump(),
-            },
+            display={**base_result, "ok": True, "images": [], "chart_points": [], "observations": None},
         )
+    if len(points) < _MIN_POINTS:
+        raise ToolFailure(f"该时段数据点过少（{len(points)} 条），不足以绘图复核")
+
+    chart_points = [{"t": point.data_time, "n": point.n, "e": point.e, "u": point.u} for point in points]
+    settings = get_settings()
+    baseline = _resolve_baseline(station)
+    baseline_desc = "相对监测点初始坐标" if baseline is not None else "相对数据首点（站点未登记初始坐标）"
+    # matplotlib 首次导入会同步探测配置目录，放进工作线程避免阻塞事件循环。
+    charts = await asyncio.to_thread(_render_all_charts, points, baseline, station.station_name, begin_time, end_time)
+    artifact_data = {**base_result, "images": charts, "chart_points": chart_points, "raw_points": series.raw_points}
+    if not charts:
+        return tool_error_result(
+            "图表渲染失败，无法进行视觉复核",
+            tool_call_id=tool_call_id, tool_name="analyze_gnss_chart", kind="vision", data=artifact_data,
+        )
+    if not (settings.vision_base_url and settings.vision_api_key and settings.vision_model):
+        return tool_error_result(
+            "视觉模型未配置，无法进行图表形态复核；已返回图表供人工查看。",
+            tool_call_id=tool_call_id, tool_name="analyze_gnss_chart", kind="vision",
+            category="configuration", data=artifact_data,
+        )
+
+    # 原始时序与累计位移形态等价（仅差基准）；只送累计与合成两张图，减少视觉模型返回非 JSON 的情况。
+    vision_charts = [chart for chart in charts if chart["name"] in (_CHART_CUMULATIVE, _CHART_RESULTANT)] or charts
+    chart_notes = {
+        _CHART_RAW: "原始坐标 N/E/U 时序（m）",
+        _CHART_CUMULATIVE: f"{baseline_desc}的累计位移 ΔN/ΔE/ΔU（mm，橙色阴影为缺测时段）",
+        _CHART_RESULTANT: f"{baseline_desc}的合成位移（水平与三维，mm，橙色阴影为缺测时段）",
+    }
+    chart_desc = "".join(
+        f"第 {index} 张图为{chart_notes[chart['name']]}。" for index, chart in enumerate(vision_charts, start=1)
+    )
+    content: list[dict] = [{
+        "type": "text",
+        "text": (
+            f"监测点 {station.station_name}，时间范围 {begin_time} ~ {end_time} (Asia/Shanghai)，"
+            f"共 {len(points)} 个数据点（全量绘图）。{chart_desc}"
+            "请先报告全窗口整体形态，再按系统提示词要求返回 JSON 观察结果。"
+        ),
+    }]
+    for chart in vision_charts:
+        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{chart['png_base64']}"}})
+
+    # 每次工具尝试只调用一次视觉模型；只有瞬时失败交给官方工具重试。
+    try:
+        structured_llm = _get_vision_llm().with_structured_output(VisionObservations, method="json_mode", include_raw=True)
+        response = await structured_llm.ainvoke(
+            [SystemMessage(content=VISION_PROMPT), HumanMessage(content=content)], config={"callbacks": []},
+        )
+    except Exception as error:
+        logging.getLogger(__name__).warning("vision model request failed", exc_info=True)
+        if is_transient_error(error):
+            raise
+        return tool_error_result(
+            "视觉模型调用失败，未获得形态复核结果；图表可供人工查看。",
+            tool_call_id=tool_call_id, tool_name="analyze_gnss_chart", kind="vision", data=artifact_data,
+        )
+
+    parsed = response.get("parsed") if isinstance(response, dict) else None
+    parsing_error = response.get("parsing_error") if isinstance(response, dict) else None
+    if parsing_error is not None or not isinstance(parsed, VisionObservations):
+        return tool_error_result(
+            "视觉复核失败：视觉模型返回的不是有效 JSON；图表可供人工查看。",
+            tool_call_id=tool_call_id, tool_name="analyze_gnss_chart", kind="vision", data=artifact_data,
+        )
+
+    validated = _validate_observations(parsed, time_start, time_end)
+    if len(validated.candidates) > settings.vision_max_candidates:
+        return tool_error_result(
+            "视觉候选数量超过本次复核预算，尚未进行数值确认；请缩小查询时间范围。",
+            tool_call_id=tool_call_id, tool_name="analyze_gnss_chart", kind="vision",
+            category="budget", data=artifact_data,
+        )
+
+    pad_hours = settings.vision_recheck_pad_hours
+    observations_out = validated.model_dump()
+    observations_out["candidates"] = [
+        {
+            **candidate.model_dump(),
+            "features": _recheck_candidate(points, candidate, baseline, pad_hours, time_start, time_end),
+        }
+        for candidate in validated.candidates
+    ]
+    observations_out["global_features"] = _window_features(points, baseline)
+    observations_out["feature_note"] = (
+        f"candidates[].features 为候选区间（两侧各外扩 {max(0, pad_hours)} 小时）在小时数据上的数值特征，"
+        "global_features 为整个查询窗口的同一套特征（mm、mm/day）。"
+        "interpretation 是视觉模型的形态推断，不是数值事实；视觉定位时间有误差，发生时刻以特征中的时刻为准。"
+    )
+    return tool_result(
+        {"ok": True, **base_result, "observations": observations_out},
+        kind="vision",
+        display={**artifact_data, "ok": True, "observations": validated.model_dump()},
+    )

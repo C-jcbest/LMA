@@ -218,32 +218,95 @@
   border-radius: 4px;
 }
 
-.investigation-report {
-  container-type: inline-size;
+/* 句末引用编号：小号圆角标记，不打断行高；触屏用透明外扩区域保证点按面积。 */
+.evidence-citation {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  margin-inline: 2px;
+  padding-inline: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  vertical-align: 0.15em;
+  transition: color 120ms, border-color 120ms;
 }
-/* 简报沿用对话正文节奏，按测点连续阅读。 */
-.report-station {
-  padding-block: 8px 16px;
-}
-.report-station + .report-station {
-  border-top: 1px solid var(--border);
-  padding-top: 16px;
-}
-.report-station-selected {
-  border-inline-start: 2px solid var(--foreground);
-  padding-inline-start: 12px;
-}
-.report-findings {
-  padding-left: 20px;
-  list-style-type: disc;
-  line-height: 1.85;
-}
-.report-findings > li + li { margin-top: 6px; }
-.report-findings > li::marker { color: var(--muted-foreground); }
-.report-quiet { margin-block: 8px 16px; border-block: 1px solid var(--border); }
-.report-shared, .report-next-steps { margin-top: 20px; }
+.evidence-citation:hover { color: var(--foreground); border-color: var(--ring); }
+.evidence-citation:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 @media (pointer: coarse) {
-  .report-citation { min-width: 44px; min-height: 44px; }
+  .evidence-citation::after { content: ""; position: absolute; inset: -12px -8px; }
+}
+
+/* 正文中的依据卡片：跟随所引用的段落，宽度与正文一致。 */
+.evidence-card {
+  margin-block: 12px 20px;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+/* 地图测点：圆点、名称和水平位移箭头都由 DOM 绘制，不依赖底图瓦片。 */
+.evidence-map-marker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.evidence-map-marker__dot {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: var(--marker-color);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35);
+}
+.evidence-map-marker__arrow {
+  position: absolute;
+  bottom: calc(100% - 7px);
+  left: calc(50% - 1.5px);
+  width: 3px;
+  background: var(--marker-color);
+  transform-origin: 50% 100%;
+  pointer-events: none;
+}
+.evidence-map-marker__arrow::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: -4.5px;
+  border-inline: 6px solid transparent;
+  border-bottom: 8px solid var(--marker-color);
+}
+/* 名称放在圆点右侧，避开上下方向的位移箭头。 */
+.evidence-map-marker__label {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 6px);
+  transform: translateY(-50%);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.92);
+  color: #1f2024;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+.evidence-map-marker:focus-visible .evidence-map-marker__label {
+  outline: 2px solid #f2ad3a;
+  outline-offset: 2px;
 }
 .assistant-answer > .aui-md + .aui-md {
   margin-top: 16px;

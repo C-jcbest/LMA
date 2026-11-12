@@ -11,13 +11,12 @@ import {
   InvestigationIndicator,
   InvestigationProcess,
 } from "@/features/monitoring/InvestigationProcess";
-import { InvestigationReport, AnswerActions } from "@/features/monitoring/InvestigationReport";
+import { ConclusionsFallback, AnswerActions } from "@/features/monitoring/InvestigationReport";
 import { useStationInspector } from "@/features/monitoring/StationInspectorContext";
 import { cn } from "@/lib/utils";
 import { useSessionMetadata } from "@/lib/session-metadata";
 import { useNavigation } from "@/app/navigation";
 import { RecoveryNotice, useConversationLoading } from "@/app/providers/AssistantProvider";
-import { InvestigationRecords } from "@/app/providers/InvestigationRecords";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -144,7 +143,6 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, p
           {!overview && <AuiIf condition={isHistoryLoadingView}>
             <ThreadHistorySkeleton />
           </AuiIf>}
-          {!overview && <InvestigationRecords />}
 
           <div
             data-slot="aui_message-group"
@@ -374,7 +372,7 @@ const AssistantMessage: FC = () => {
             }
           }}
         </MessagePrimitive.GroupedParts>
-        <InvestigationReport />
+        <ConclusionsFallback />
         <MessageError />
       </div>
 

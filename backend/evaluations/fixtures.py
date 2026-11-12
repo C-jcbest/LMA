@@ -5,7 +5,6 @@ import httpx
 
 from app.beidou.schemas import GnssDataPoint, Station, StationGroup
 from app.business_time import TIME_FORMAT
-from app.agent.tool_inputs import _parse_frequency_minutes
 
 NOW = datetime(2026, 11, 10, 16)
 STATION_A = "11111111-1111-1111-1111-111111111111"
@@ -37,6 +36,9 @@ class MonitoringFixture:
     async def __aexit__(self, *args):
         return False
 
+    async def aclose(self):
+        return None
+
     async def get_station_groups(self):
         groups = {station.group_uuid: station.group_name for station in self.stations}
         return [StationGroup(group_uuid=identifier, group_name=name, station_count=sum(station.group_uuid == identifier for station in self.stations))
@@ -48,11 +50,10 @@ class MonitoringFixture:
                 and (station_name is None or station_name in station.station_name)
                 and (station_status is None or station.station_status == station_status)]
 
-    async def get_daily_data(self, station_uuid, begin_time, end_time, sample_times=None, sampling_frequency=None):
+    async def get_daily_data(self, station_uuid, begin_time, end_time, sample_times=None):
         self.requests.append({
             "station_uuid": station_uuid, "begin_time": begin_time,
             "end_time": end_time, "sample_times": sample_times,
-            "sampling_frequency": sampling_frequency,
         })
         if self.scenario == 'partial_failure' and station_uuid == STATION_B:
             raise httpx.ReadTimeout('合成平台超时')
@@ -64,8 +65,6 @@ class MonitoringFixture:
         if moment < start:
             moment += timedelta(hours=1)
         points = []
-        frequency_minutes = _parse_frequency_minutes(sampling_frequency) if sampling_frequency else None
-        first_sample = moment
         while moment <= end:
             # B每日缺三小时；A和新站末端单点突变，尚无保持证据。
             missing = station_uuid == STATION_B and moment.hour in {3, 4, 5}
@@ -74,9 +73,6 @@ class MonitoringFixture:
             if self.scenario == 'events' and moment.date() in {datetime(2026, 11, 8).date(), datetime(2026, 11, 9).date()}:
                 missing = True
             selected = not sample_times or moment.strftime("%H:%M") in sample_times
-            if not sample_times and frequency_minutes:
-                elapsed_minutes = (moment - first_sample).total_seconds() / 60
-                selected = elapsed_minutes % frequency_minutes == 0
             if selected and not missing:
                 age_days = (moment - (NOW - timedelta(days=90))).total_seconds() / 86400
                 north = 100 + age_days * 0.0002 if station_uuid == STATION_B else 100.0

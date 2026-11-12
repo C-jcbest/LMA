@@ -1,4 +1,4 @@
-import type { NumericalArtifactData } from '@/types/envelope';
+import type { GnssArtifactData } from '@/types/envelope';
 
 const axisNames: Record<string, string> = { n: '北向', e: '东向', u: '垂直', h: '水平合成', d: '三维合成' };
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -23,20 +23,25 @@ function AxisMetrics({ feature }: { feature: Record<string, unknown> }) {
   );
 }
 
-export function NumericalResultView({ data }: { data: NumericalArtifactData }) {
-  const common = data.comparisons.common_period;
-  const stationNames = data.comparisons.station_names;
+/** 位移结果中服务端计算的数值特征；测点页序列没有特征时不渲染。 */
+export function NumericalResultView({ data }: { data: GnssArtifactData }) {
+  const features = data.features ?? {};
+  const comparisons = data.comparisons ?? {};
+  const common = comparisons.common_period;
+  const stationNames = comparisons.station_names;
+  const sampling = data.sampling?.mode === 'sample_times'
+    ? `每日 ${(data.sampling.sample_times ?? []).join('、')} 采样`
+    : '小时采样';
   return (
     <div className="space-y-5 text-sm wrap-break-word">
-      <p>{data.begin_time} 至 {data.end_time} · {data.sampling === 'daily' ? '每日15:00采样' : '小时采样'}</p>
-      {Object.entries(data.features).map(([axis, feature]) => {
-        const windows = data.comparisons[axis];
+      <p>{data.begin_time} 至 {data.end_time} · {sampling}</p>
+      {Object.entries(features).map(([axis, feature]) => {
+        const windows = comparisons[axis];
         return (
           <section key={axis} className="space-y-2">
             <h4 className="font-medium">{axisNames[axis] ?? axis}</h4>
             <AxisMetrics feature={feature} />
             <p>最大相邻变化 {formatNumber(feature.max_step_mm)} mm · 后续：{String(feature.jump_persistence)}</p>
-            <p className="text-muted-foreground">{String(feature.method)}</p>
             {Array.isArray(feature.events) && feature.events.filter(isRecord).map((event, index) => (
               <p key={index}>候选 {String(event.time)} · {String(event.status)} · 已观察保持 {formatNumber(event.held_hours)} 小时
                 {Array.isArray(event.later_unknown_intervals) && event.later_unknown_intervals.length > 0 && '；后续缺测区间仍未知'}

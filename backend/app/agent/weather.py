@@ -2,7 +2,7 @@
 
 支持通过监测点名称/UUID 自动解析经纬度，或直接传入经纬度坐标。
 字段选择聚焦降雨与风况（滑坡监测关心的气象因子），历史数据走 Archive API，
-预报走 Forecast API。
+当前天气与预报走 Forecast API；逐小时降水只在需要时请求。
 """
 
 import asyncio
@@ -15,8 +15,8 @@ from langchain_core.tools import tool
 from app.agent.tool_inputs import WeatherInput
 from app.agent.tool_protocol import ToolFailure, tool_result
 
-from app.agent.tools import _build_client, _resolve_station
 from app.agent.retry import is_transient_error
+from app.monitoring_data import monitoring
 from app.business_time import BUSINESS_TIMEZONE, BUSINESS_TZ, business_now
 
 FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
@@ -25,7 +25,9 @@ ARCHIVE_ENDPOINT = "https://archive-api.open-meteo.com/v1/archive"
 HTTP_TIMEOUT_SECONDS = 10
 MIN_HISTORY_DATE = date(1940, 1, 1)
 MAX_FORECAST_DAYS = 16
-MAX_HISTORY_DAYS = 31
+MAX_HISTORY_DAYS = 366
+DEFAULT_HISTORY_DAYS = 7
+MAX_HOURLY_VALUES_FOR_MODEL = 168
 
 CURRENT_FIELDS = (
     "temperature_2m",
@@ -77,8 +79,8 @@ async def _resolve_coordinates(
 ) -> tuple[float, float, str | None, str | None]:
     """把“站点名/UUID”或经纬度解析为坐标，失败时抛出受控业务异常。"""
     if station_name_or_uuid:
-        async with _build_client() as client:
-            station = await _resolve_station(client, station_name_or_uuid)
+        async with monitoring() as data:
+            station = await data.resolve_station(station_name_or_uuid)
         try:
             lat = float(station.latitude)
             lon = float(station.longitude)
@@ -160,6 +162,13 @@ def _recent_precipitation(payload: dict, now: datetime) -> dict:
     }
 
 
+def _select_hourly_precipitation(payload: dict) -> dict:
+    return {
+        "time": _series(payload, "hourly", "time"),
+        "precipitation": _series(payload, "hourly", "precipitation"),
+    }
+
+
 @tool(response_format="content_and_artifact", args_schema=WeatherInput)
 async def query_weather(
     station_name_or_uuid: str | None = None,
@@ -167,47 +176,46 @@ async def query_weather(
     longitude: float | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
-    forecast_days: int = 7,
+    hourly: bool = False,
+    forecast_days: int = 0,
 ) -> tuple[str, dict]:
-    """查询指定监测点或坐标位置的气象背景。
+    """查询监测点或坐标位置的天气：当前天气、指定历史日期的逐日降雨与风况，可选逐小时降水和未来预报。
 
-    适用于用户询问天气、降雨、风况或历史气象，或气象背景有助于调查已发现的监测现象时。
-
-    返回当前天气、指定历史窗口的逐日气象以及近期预报，数据来自公开气象服务，
-    不等同于现场雨量计实测。
+    适用于用户询问某天或某段时间的天气、降雨，或气象背景有助于解释已发现的监测现象时。
+    历史资料最多到昨天，单次最多 366 天；数据来自公开气象服务，不等同于现场雨量计实测。
+    需要按时段统计降雨（例如变化前 3 天累计雨量）时，可把本结果的依据编号交给 compute。
     """
-    resolved = await _resolve_coordinates(station_name_or_uuid, latitude, longitude)
-    lat, lon, station_name, station_uuid = resolved
+    lat, lon, station_name, station_uuid = await _resolve_coordinates(station_name_or_uuid, latitude, longitude)
 
-    # 历史窗口：默认最近 7 天（截止昨天）
     now = business_now()
     today = now.date()
     yesterday = today - timedelta(days=1)
     if start_date is None and end_date is None:
         history_end = yesterday
-        history_start = history_end - timedelta(days=6)
+        history_start = history_end - timedelta(days=DEFAULT_HISTORY_DAYS - 1)
     else:
         history_start = date.fromisoformat(start_date)
         history_end = date.fromisoformat(end_date)
         if history_start < MIN_HISTORY_DATE:
             raise ToolFailure("历史天气最早支持查询至 1940-01-01")
         if history_end >= today:
-            raise ToolFailure("历史天气最多只能查询到昨天")
+            raise ToolFailure("历史天气最多只能查询到昨天；今天的情况看当前天气和预报")
         if (history_end - history_start).days + 1 > MAX_HISTORY_DAYS:
-            raise ToolFailure(f"历史天气查询跨度不能超过 {MAX_HISTORY_DAYS} 天")
+            raise ToolFailure(f"历史天气查询跨度不能超过 {MAX_HISTORY_DAYS} 天，请分段查询")
 
+    # 当前天气和最近 24 小时降水都来自预报接口；预报天数至少为 1 才能取得这两项。
     forecast_params = {
         "latitude": lat,
         "longitude": lon,
         "timezone": BUSINESS_TIMEZONE,
-        "forecast_days": forecast_days,
+        "forecast_days": max(1, forecast_days),
         "past_days": 1,
         "temperature_unit": "celsius",
         "wind_speed_unit": "kmh",
         "precipitation_unit": "mm",
         "current": ",".join(CURRENT_FIELDS),
         "hourly": "precipitation",
-        "daily": ",".join(FORECAST_DAILY_FIELDS + ("wind_direction_10m_dominant",)),
+        "daily": ",".join(FORECAST_DAILY_FIELDS),
     }
     history_params = {
         "latitude": lat,
@@ -218,8 +226,10 @@ async def query_weather(
         "temperature_unit": "celsius",
         "wind_speed_unit": "kmh",
         "precipitation_unit": "mm",
-        "daily": ",".join(HISTORY_DAILY_FIELDS + ("wind_direction_10m_dominant",)),
+        "daily": ",".join(HISTORY_DAILY_FIELDS),
     }
+    if hourly:
+        history_params["hourly"] = "precipitation"
 
     try:
         forecast, history = await asyncio.gather(
@@ -231,78 +241,77 @@ async def query_weather(
         if is_transient_error(exc):
             raise
         raise ToolFailure("Open-Meteo 拒绝了本次天气查询，请检查参数后重试")
-    except (httpx.TimeoutException, httpx.RequestError):
-        raise
 
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
     recent_24h = _recent_precipitation(forecast, now)
+    history_series = {"daily": _select_daily(history, HISTORY_DAILY_FIELDS)}
+    if hourly:
+        history_series["hourly"] = _select_hourly_precipitation(history)
+    forecast_series = {"daily": _select_daily(forecast, FORECAST_DAILY_FIELDS)} if forecast_days > 0 else None
 
-    return tool_result(
-        {
-            "ok": True,
-            "location": {
-                "station_uuid": station_uuid,
-                "station_name": station_name,
-                "latitude": round(lat, 4),
-                "longitude": round(lon, 4),
-                "timezone": forecast.get("timezone"),
-            },
-            "query": {
-                "timezone": BUSINESS_TIMEZONE,
-                "history_start_date": history_start.isoformat(),
-                "history_end_date": history_end.isoformat(),
-                "forecast_days": forecast_days,
-            },
-            "units": {"temperature": "celsius", "wind_speed": "km/h", "precipitation": "mm"},
-            "current": {
-                "time": current.get("time"),
-                "temperature_2m": current.get("temperature_2m"),
-                "apparent_temperature": current.get("apparent_temperature"),
-                "relative_humidity_2m": current.get("relative_humidity_2m"),
-                "condition": _WMO_CODES.get(weather_code, f"weather_code={weather_code}") if weather_code is not None else None,
-                "precipitation": current.get("precipitation"),
-                "wind_speed_10m": current.get("wind_speed_10m"),
-                "wind_gusts_10m": current.get("wind_gusts_10m"),
-            } if current else None,
-            "rain_summary": {
-                "recent_24h_precipitation": recent_24h["precipitation"],
-                "recent_24h_window": recent_24h,
-                "history_total_precipitation": _sum(
-                    _series(history, "daily", "precipitation_sum")
-                ),
-                "history_max_daily_precipitation": _max_daily_item(
-                    history, "precipitation_sum"
-                ),
-                "forecast_total_precipitation": _sum(
-                    _series(forecast, "daily", "precipitation_sum")
-                ),
-                "forecast_max_daily_precipitation": _max_daily_item(
-                    forecast, "precipitation_sum"
-                ),
-                "forecast_max_precipitation_probability": _max(
-                    _series(forecast, "daily", "precipitation_probability_max")
-                ),
-            },
-            "wind_summary": {
-                "current_wind_speed": current.get("wind_speed_10m"),
-                "current_wind_gust": current.get("wind_gusts_10m"),
-                "history_max_wind_speed": _max(
-                    _series(history, "daily", "wind_speed_10m_max")
-                ),
-                "history_max_wind_gust": _max(
-                    _series(history, "daily", "wind_gusts_10m_max")
-                ),
-                "forecast_max_wind_speed": _max(
-                    _series(forecast, "daily", "wind_speed_10m_max")
-                ),
-                "forecast_max_wind_gust": _max(
-                    _series(forecast, "daily", "wind_gusts_10m_max")
-                ),
-            },
-            "history": {"daily": _select_daily(history, HISTORY_DAILY_FIELDS)},
-            "forecast": {"daily": _select_daily(forecast, FORECAST_DAILY_FIELDS)},
-            "source": {"provider": "Open-Meteo"},
+    rain_summary = {
+        "recent_24h_precipitation": recent_24h["precipitation"],
+        "recent_24h_window": recent_24h,
+        "history_total_precipitation": _sum(_series(history, "daily", "precipitation_sum")),
+        "history_max_daily_precipitation": _max_daily_item(history, "precipitation_sum"),
+    }
+    wind_summary = {
+        "current_wind_speed": current.get("wind_speed_10m"),
+        "current_wind_gust": current.get("wind_gusts_10m"),
+        "history_max_wind_speed": _max(_series(history, "daily", "wind_speed_10m_max")),
+        "history_max_wind_gust": _max(_series(history, "daily", "wind_gusts_10m_max")),
+    }
+    if forecast_series is not None:
+        rain_summary.update(
+            forecast_total_precipitation=_sum(_series(forecast, "daily", "precipitation_sum")),
+            forecast_max_daily_precipitation=_max_daily_item(forecast, "precipitation_sum"),
+            forecast_max_precipitation_probability=_max(_series(forecast, "daily", "precipitation_probability_max")),
+        )
+        wind_summary.update(
+            forecast_max_wind_speed=_max(_series(forecast, "daily", "wind_speed_10m_max")),
+            forecast_max_wind_gust=_max(_series(forecast, "daily", "wind_gusts_10m_max")),
+        )
+
+    data = {
+        "ok": True,
+        "location": {
+            "station_uuid": station_uuid,
+            "station_name": station_name,
+            "latitude": round(lat, 4),
+            "longitude": round(lon, 4),
+            "timezone": forecast.get("timezone"),
         },
-        kind="weather",
-    )
+        "query": {
+            "timezone": BUSINESS_TIMEZONE,
+            "history_start_date": history_start.isoformat(),
+            "history_end_date": history_end.isoformat(),
+            "forecast_days": forecast_days,
+            "hourly": hourly,
+        },
+        "units": {"temperature": "celsius", "wind_speed": "km/h", "precipitation": "mm"},
+        "current": {
+            "time": current.get("time"),
+            "temperature_2m": current.get("temperature_2m"),
+            "apparent_temperature": current.get("apparent_temperature"),
+            "relative_humidity_2m": current.get("relative_humidity_2m"),
+            "condition": _WMO_CODES.get(weather_code, f"weather_code={weather_code}") if weather_code is not None else None,
+            "precipitation": current.get("precipitation"),
+            "wind_speed_10m": current.get("wind_speed_10m"),
+            "wind_gusts_10m": current.get("wind_gusts_10m"),
+        } if current else None,
+        "rain_summary": rain_summary,
+        "wind_summary": wind_summary,
+        "history": history_series,
+        "forecast": forecast_series,
+        "source": {"provider": "Open-Meteo"},
+    }
+    facts = data
+    hourly_count = len(history_series.get("hourly", {}).get("time", []))
+    if hourly_count > MAX_HOURLY_VALUES_FOR_MODEL:
+        # 逐小时序列完整保存在依据中，模型只在需要时通过 compute 读取，避免长序列占满上下文。
+        facts = {**data, "history": {
+            "daily": history_series["daily"],
+            "hourly_note": f"已取得 {hourly_count} 个逐小时降水值，未放入本结果；需要按小时统计时用 compute 读取本依据",
+        }}
+    return tool_result(facts, kind="weather", display=data)

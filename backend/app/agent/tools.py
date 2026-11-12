@@ -1,347 +1,235 @@
-"""北斗平台相关的 LangChain 工具，供智能体调用。
+"""测点与位移工具：按问题取数，返回模型可直接使用的特征；逐点数据按需提供。"""
 
-凭据当前来自 .env 测试账号（用户选定的最小实现方案），
-后续迭代改为用户绑定凭据时只需替换 _build_client。
-"""
-
-import math
-import re
-from datetime import datetime
+import asyncio
 
 from langchain_core.tools import tool
+
+from app.agent.numerical import common_period_features, compare_windows, window_features
+from app.agent.tool_inputs import DisplacementInput, FindStationsInput
 from app.agent.tool_protocol import ToolFailure, tool_result
-from app.agent.tool_inputs import StationListInput, GnssInput, _parse_frequency_minutes
-
-from app.beidou.client import BeidouClient
-from app.beidou.schemas import Station
 from app.config import get_settings
-from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT
-from app.observations import finite_number, normalize_observations, observation_quality, raw_snapshot
-
-# 返回给 LLM 的 GNSS 数据点上限：超出时优先在请求前调整采样间隔（或按天抽稀），
-# 仍超出再等间隔降采样，保证返回数据量不超过该值
-_MAX_DATA_POINTS = 1500
-
-_UUID_PATTERN = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+from app.monitoring_data import (
+    BASE_STATION_NOTE,
+    BASE_STATION_TYPE,
+    DISPLACEMENT_STATION_TYPES,
+    STATION_STATUS_TEXT,
+    DisplacementSeries,
+    displacement_mm,
+    monitoring,
+    series_artifact_data,
+    station_summary,
 )
 
-_TIME_FORMAT = TIME_FORMAT
-
-# 北斗平台枚举值 → 中文可读描述；仅用于工具返回值转换，
-# 入参仍使用平台枚举码（由 LLM 按工具说明完成中文到枚举码的映射）
-_STATION_TYPE_TEXT = {
-    1: "基准站",
-    2: "移动站单点模式",
-    3: "移动站RTK模式",
-    4: "中继站",
-}
-_STATION_STATUS_TEXT = {
-    10: "正常",
-    20: "离线",
-    30: "告警",
-    40: "故障",
-}
+_MAX_REQUESTED_POINTS = 1000
+_MAX_EVENTS_FOR_MODEL = 5
+# 这些字段只服务于复核界面或审计，模型判断不需要，避免占用上下文。
+_FEATURE_FIELDS_FOR_MODEL = (
+    "metric_name", "count", "begin_time", "end_time", "effective_span_hours", "baseline",
+    "cum_start_mm", "cum_end_mm", "net_change_mm", "robust_slope_mm_day", "trend_supported",
+    "residual_noise_mm", "max_step_mm", "max_step_time", "level_shift_mm", "jump_persistence",
+    "event_count", "limitations",
+)
 
 
-def _build_client() -> BeidouClient:
-    settings = get_settings()
-    return BeidouClient(
-        base_url=settings.beidou_api_base_url,
-        username=settings.beidou_username,
-        password=settings.beidou_password,
-    )
+@tool(response_format="content_and_artifact", args_schema=FindStationsInput)
+async def find_stations(group_name: str | None = None, station_name: str | None = None, station_status: str | None = None):
+    """查询有权访问的监测点分组与测点：名称、分组、类型（基准站/移动站）、状态、WGS84 坐标。
 
-
-def _to_float(value: str | float | int | None) -> float | None:
-    """安全转 float，失败返回 None。"""
-    return finite_number(value)
-
-
-def _axis_summary(values: list[str]) -> dict:
-    """单方向（N/E/U）数值摘要：首末值、变化量、极值。"""
-    nums = [v for v in (_to_float(x) for x in values) if v is not None]
-    if not nums:
-        return {"count": 0}
-    return {
-        "count": len(nums),
-        "first": nums[0],
-        "last": nums[-1],
-        "change": nums[-1] - nums[0],
-        "min": min(nums),
-        "max": max(nums),
-    }
-
-
-def _detect_gaps(points, begin_time, end_time, *, frequency_minutes=60, sample_times=None) -> list[dict]:
-    """缺测以请求日历为准，包括头尾和全空窗口，不用观测间隔反推采样。"""
-    normalized, cleaning = normalize_observations(points, begin_time, end_time)
-    return observation_quality(normalized, begin_time, end_time, frequency_minutes=frequency_minutes,
-                               sample_times=sample_times, cleaning=cleaning)["gaps"]
-
-
-def _thin_days(points: list, stride: int) -> list:
-    """固定时刻模式的数据量控制：按天抽稀，并保留时间范围末端。
-
-    同一保留天内的全部固定时刻点都保留，跨天固定时刻对比关系不被破坏。
+    条件都不传时返回全部分组和测点。分组请求得到整个分组的测点集合；基准站与中继站没有形变序列。
     """
-    if stride <= 1 or not points:
-        return points
-    days: list[str] = []
-    for p in points:
-        day = p.data_time[:10]
-        if not days or days[-1] != day:
-            days.append(day)
-    keep = {day for i, day in enumerate(days) if i % stride == 0}
-    keep.add(days[-1])
-    return [p for p in points if p.data_time[:10] in keep]
-
-
-def _station_to_dict(station: Station) -> dict:
-    """精简站点字段并把枚举值转为中文描述，避免工具输出过长且不可读。"""
-    return {
-        "station_uuid": station.station_uuid,
-        "station_name": station.station_name,
-        "group_name": station.group_name,
-        "station_type": _STATION_TYPE_TEXT.get(
-            station.station_type, f"未知类型({station.station_type})"
-        ),
-        "station_status": _STATION_STATUS_TEXT.get(
-            station.station_status, f"未知状态({station.station_status})"
-        ),
-        "location": station.location,
-        "description": station.description,
-        "latitude": _to_float(station.latitude),
-        "longitude": _to_float(station.longitude),
-        "altitude": _to_float(station.altitude),
-        "coordinate_system": "WGS84",
-    }
-
-
-async def _resolve_station(
-    client: BeidouClient, station_name_or_uuid: str, *, stations: list[Station] | None = None
-) -> Station:
-    """把站名或 UUID 解析为唯一站点；无法唯一确定时抛出受控业务异常。"""
-    if _UUID_PATTERN.match(station_name_or_uuid):
-        if stations is None:
-            stations = await client.get_stations()
-        for station in stations:
-            if station.station_uuid == station_name_or_uuid:
-                return station
-        raise ToolFailure(
-            "未找到指定 UUID 对应的监测点，请确认站点。",
-        )
-
-    if stations is None:
-        stations = await client.get_stations(station_name=station_name_or_uuid)
-    else:
-        stations = [station for station in stations if station_name_or_uuid in station.station_name]
-    if not stations:
-        raise ToolFailure(
-            f"未找到名称包含“{station_name_or_uuid}”的监测点",
-        )
-    # 平台按“名称包含”匹配：MS1 会同时命中 MS10。名称完全一致的站点优先，否则它永远无法按名称选中。
-    exact = [item for item in stations if item.station_name == station_name_or_uuid]
-    if len(exact) == 1:
-        return exact[0]
-    if len(stations) > 1:
-        names = [f'{item.station_name}（{item.group_name}，{item.station_uuid}）' for item in stations[:20]]
-        raise ToolFailure(
-            f"匹配到 {len(stations)} 个监测点，请确认具体站点：" + "、".join(names),
-        )
-    return stations[0]
-
-
-@tool(response_format="content_and_artifact")
-async def list_station_groups() -> tuple[str, dict]:
-    """查询北斗监测平台上当前用户有权访问的全部监测点分组。
-
-    返回分组列表，包含分组名称、分组内监测点数量和分组描述。
-    """
-    async with _build_client() as client:
-        groups = await client.get_station_groups()
-    return tool_result(
-        {
-            "total": len(groups),
-            "groups": [
-                {
-                    "group_name": g.group_name,
-                    "station_count": g.station_count,
-                    "description": g.description,
-                }
-                for g in groups
-            ],
-        },
-        kind="station_list",
-    )
-
-
-@tool(response_format="content_and_artifact", args_schema=StationListInput)
-async def list_stations(
-    group_name: str | None = None,
-    station_name: str | None = None,
-    station_status: int | None = None,
-) -> tuple[str, dict]:
-    """按条件查询监测点列表，条件都不传时返回全部监测点。
-
-    返回站点名称、所属分组、类型、状态、位置、WGS84 经纬度和海拔等摘要信息；
-    类型与状态字段已转换为中文描述（如“基准站”“正常”），不返回数字代码。
-    """
-    async with _build_client() as client:
-        group_uuid = None
-        stations = []
-        if group_name:
-            groups = await client.get_station_groups()
-            matched = [g for g in groups if group_name in g.group_name]
-            exact = [g for g in matched if g.group_name == group_name]
-            if len(exact) == 1:
-                matched = exact
-            if len(matched) > 1:
-                raise ToolFailure(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(g.group_name for g in matched[:20]))
-            if matched:
-                group_uuid = matched[0].group_uuid
-
-        if not group_name or group_uuid is not None:
-            stations = await client.get_stations(
-                group_uuid=group_uuid,
-                station_name=station_name,
-                station_status=station_status,
-            )
+    async with monitoring() as data:
+        groups = await data.groups()
+        stations = await data.stations()
+    if group_name:
+        matched = [group for group in groups if group_name in group.group_name]
+        exact = [group for group in matched if group.group_name == group_name]
+        if len(exact) == 1:
+            matched = exact
+        if not matched:
+            raise ToolFailure(f"未找到名称包含“{group_name}”的分组")
+        if len(matched) > 1:
+            raise ToolFailure(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(group.group_name for group in matched[:20]))
+        groups = matched
+        stations = [station for station in stations if station.group_uuid == matched[0].group_uuid]
+    if station_name:
+        stations = [station for station in stations if station_name in station.station_name]
+    if station_status:
+        stations = [station for station in stations if STATION_STATUS_TEXT.get(station.station_status) == station_status]
     return tool_result(
         {
             "total": len(stations),
-            "stations": [_station_to_dict(s) for s in stations],
+            "groups": [
+                {"group_name": group.group_name, "station_count": group.station_count, "description": group.description}
+                for group in groups
+            ],
+            "stations": [station_summary(station) for station in stations],
         },
         kind="station_list",
     )
 
 
-@tool(response_format="content_and_artifact", args_schema=GnssInput)
-async def get_daily_gnss_data(
+@tool(response_format="content_and_artifact", args_schema=DisplacementInput)
+async def get_displacement(
     station_name_or_uuid: str,
     begin_time: str,
     end_time: str,
-    sampling_frequency: str | None = None,
+    sampling: str = "hourly",
     sample_times: list[str] | None = None,
-) -> tuple[str, dict | None]:
-    """查询指定监测点在时间范围内的日监测 GNSS 数据（默认每小时一条）。
+    split_time: str | None = None,
+    compare_stations: list[str] | None = None,
+    include_points: bool | None = None,
+):
+    """查询移动站任意时间窗的 GNSS 位移，并直接给出数值特征。
 
-    形变分析适用于移动站；已知站点为基准站时，可结合站点信息说明其差分基准用途，无需请求形变序列。
+    每个方向（北向 N、东向 E、垂向 U、水平合成 H、三维合成 D）给出：相对平台固定参考的累计偏移、
+    窗口净变化、Theil–Sen 鲁棒趋势、最大单步变化与候选跳变（是否维持或回落）、本窗残差离散；
+    以及按请求采样日历统计的缺测。可选前后分段比较速率、与同组测点按共同有效时刻对比。
 
-    返回的数据点包含时间以及 N（北向坐标，m）、E（东向坐标，m）、U（垂直坐标，m）。
-    数据量自动控制：预计超过 1500 条时自动调整采样间隔（固定时刻模式按天抽稀），
-    仍超出时等间隔降采样（时间范围仍完整覆盖），调整方式记录在 sampling 字段；
-    并附 summary 统计摘要（各方向首末值/变化量/极值及缺失时段）。
-    趋势斜率、最大单步变化等形态特征不在本工具返回，由独立数值复核工具提供；图表工具用于形态候选。
+    这些特征由本系统根据平台观测计算，不是监测平台给出的判定。位移单位 mm，速率 mm/day。
+    点数较少时附逐点相对位移（dn/de/du）；需要逐条查看、
+    自定义统计时把本结果的依据编号交给 compute 计算，不必重新取数。
     """
-    normalized_sample_times = sample_times
-
-    # 请求前规划数据量：估算点数超上限时先调整采样间隔，避免拉回超量数据
-    time_start = datetime.strptime(begin_time, _TIME_FORMAT)
-    time_end = datetime.strptime(end_time, _TIME_FORMAT)
-    total_minutes = (time_end - time_start).total_seconds() / 60
-    notes: list[str] = []
-    day_stride = 0
-    effective_frequency = sampling_frequency
-    if normalized_sample_times:
-        if sampling_frequency:
-            notes.append("已按固定每日时刻取样，sampling_frequency 被忽略（固定时刻优先）")
-        days = max(1, math.ceil(total_minutes / 1440))
-        expected = days * len(normalized_sample_times)
-        if expected > _MAX_DATA_POINTS:
-            day_stride = math.ceil(expected / _MAX_DATA_POINTS)
-            notes.append(
-                f"固定时刻模式预计约 {expected} 条数据（{days} 天 × {len(normalized_sample_times)} 个时刻），"
-                f"超过 {_MAX_DATA_POINTS} 条上限，返回时按每 {day_stride} 天取一天抽稀（保留全部指定时刻）"
-            )
-    else:
-        freq_minutes = _parse_frequency_minutes(sampling_frequency) if sampling_frequency else None
-        base_minutes = freq_minutes or 60
-        expected = math.ceil(total_minutes / base_minutes)
-        if expected > _MAX_DATA_POINTS:
-            hour_step = math.ceil(total_minutes / _MAX_DATA_POINTS / 60)
-            effective_frequency = f"{hour_step}h" if hour_step <= 6 else str(hour_step * 60)
-            notes.append(
-                f"按 {sampling_frequency or '默认每小时'} 采样预计约 {expected} 条数据，"
-                f"超过 {_MAX_DATA_POINTS} 条上限，已自动调整为每 {effective_frequency} 一条"
-                "；查询时间范围仍完整覆盖，但短时波动细节可能因抽稀而缺失"
-            )
-
-    async with _build_client() as client:
-        station = await _resolve_station(client, station_name_or_uuid)
-        if station.station_type == 1:
-            return (
-                "未查询形变数据：该监测点为基准站，仅提供差分基准，不适用移动站形变序列分析；这不表示监测异常。可根据用户目标选择移动站，或说明基准站的用途。",
-                None,
-            )
-
-        points = await client.get_daily_data(
-            station_uuid=station.station_uuid,
-            begin_time=begin_time,
-            end_time=end_time,
-            sampling_frequency=None if normalized_sample_times else effective_frequency,
-            sample_times=normalized_sample_times,
+    async with monitoring() as data:
+        station = await data.resolve_station(station_name_or_uuid)
+        if station.station_type == BASE_STATION_TYPE:
+            return BASE_STATION_NOTE, None
+        series = await data.displacement(station, begin_time, end_time, sampling, sample_times)
+        others = []
+        for identifier in dict.fromkeys(compare_stations or []):
+            other = await data.resolve_station(identifier)
+            if other.station_uuid == station.station_uuid:
+                continue
+            if other.group_uuid != station.group_uuid or other.station_type not in DISPLACEMENT_STATION_TYPES:
+                raise ToolFailure(f"{other.station_name} 不是同组移动站，不能做共同时段对比")
+            others.append(other)
+        outcomes = await asyncio.gather(
+            *(data.displacement(other, begin_time, end_time, sampling, series.sample_times) for other in others),
+            return_exceptions=True,
         )
 
-    total_points = len(points)
-    original_points = raw_snapshot(points)
-    points, cleaning = normalize_observations(points, begin_time, end_time)
-    quality = observation_quality(
-        points, begin_time, end_time, sample_times=normalized_sample_times,
-        frequency_minutes=_parse_frequency_minutes(effective_frequency) or 60, cleaning=cleaning,
-    )
-    summary = {axis: _axis_summary([getattr(point, axis) for point in points]) for axis in ("n", "e", "u")}
-    summary["gaps"] = quality["gaps"]
+    features = window_features(series.observations, station, begin_time, end_time, series.cadence_hours)
+    comparisons = {}
+    if split_time:
+        comparisons.update(_split_comparison(series, split_time))
+    if others:
+        comparisons.update(_station_comparison(series, others, outcomes))
 
-    # 固定时刻模式：按天抽稀（保留全部指定时刻，仅减少参与对比的天数）
-    if normalized_sample_times and day_stride > 1:
-        points = _thin_days(points, day_stride)
+    display = series_artifact_data(series, features=features, comparisons=comparisons)
+    facts = _model_facts(series, features, comparisons, include_points)
+    return tool_result(facts, kind="gnss_series", display=display, observed_at=series.acquired_at)
 
-    # 数据量硬上限：平台实际返回量仍超限时等间隔降采样，并在结果元数据中明确披露
-    downsampled = len(points) > _MAX_DATA_POINTS
-    if downsampled:
-        step = math.ceil(len(points) / _MAX_DATA_POINTS)
-        sampled = points[::step]
-        if sampled[-1] is not points[-1]:
-            sampled.append(points[-1])
-        points_to_return = sampled
-    else:
-        points_to_return = points
 
-    mode = (
-        "sample_times"
-        if normalized_sample_times
-        else ("frequency" if effective_frequency else "hourly")
-    )
-    data = {
-            "station_name": station.station_name,
-            "begin_time": begin_time,
-            "station_uuid": station.station_uuid,
-            "end_time": end_time,
-            "timezone": BUSINESS_TIMEZONE,
-            "coordinate_unit": "m",
-            "summary_unit": "m",
-            "total_points": total_points,
-            "returned_points": len(points_to_return),
-            "downsampled": downsampled or day_stride > 1,
-            "sampling": {
-                "mode": mode,
-                "sample_times": normalized_sample_times,
-                "frequency_effective": None if normalized_sample_times else effective_frequency,
-                "frequency_requested": sampling_frequency,
-                "day_stride": day_stride or None,
-                "points_limit": _MAX_DATA_POINTS,
-                "note": "；".join(notes) if notes else None,
-            },
-            "summary": summary,
-            "quality": quality,
-            "raw_points": original_points,
-            "points": [
-                {"time": p.data_time, "n": p.n, "e": p.e, "u": p.u}
-                for p in points_to_return
-            ],
+def _split_comparison(series: DisplacementSeries, split_time: str) -> dict:
+    station = series.station
+    first = [point for point in series.observations if point.data_time < split_time]
+    second = [point for point in series.observations if point.data_time >= split_time]
+    first_features = window_features(first, station, series.begin_time, split_time, series.cadence_hours, "first_window")
+    second_features = window_features(second, station, split_time, series.end_time, series.cadence_hours, "second_window")
+    return {axis: compare_windows(first_features[axis], second_features[axis]) for axis in first_features}
+
+
+def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
+    observations = {series.station.station_uuid: series.observations}
+    names = {series.station.station_uuid: series.station.station_name}
+    failures = {}
+    for other, outcome in zip(others, outcomes):
+        names[other.station_uuid] = other.station_name
+        if isinstance(outcome, BaseException):
+            # 比较站失败不影响主站结论，但不能拿其他站代替它。
+            failures[other.station_uuid] = "未取得可用数据"
+            observations[other.station_uuid] = []
+        else:
+            observations[other.station_uuid] = outcome.observations
+    return {
+        "common_period": {
+            axis: common_period_features(observations, axis, cadence_hours=series.cadence_hours)
+            for axis in ("n", "e", "u")
+        },
+        "station_names": names,
+        "failures": failures,
+        "snapshots": {
+            identifier: [point.as_dict() for point in points] for identifier, points in observations.items()
+        },
+    }
+
+
+def _rounded(value):
+    # 位移以 mm 计，0.001 mm 以下只是浮点运算噪声，保留会让模型复述出 1.9999999 这类数字。
+    return round(value, 3) if isinstance(value, float) else value
+
+
+def _model_feature(feature: dict) -> dict:
+    compact = {
+        key: _rounded(feature.get(key))
+        for key in _FEATURE_FIELDS_FOR_MODEL if feature.get(key) not in (None, [], "")
+    }
+    events = feature.get("events") or []
+    if events:
+        compact["events"] = [
+            {key: _rounded(event[key]) for key in ("time", "step_mm", "level_shift_mm", "status", "held_until", "held_hours")}
+            for event in events[:_MAX_EVENTS_FOR_MODEL]
+        ]
+    return compact
+
+
+def _model_quality(quality: dict) -> dict:
+    return {
+        "expected_samples": quality["expected"],
+        "missing_samples": quality["missing"],
+        "axes": {axis: {"valid": item["valid"], "missing": item["missing"]} for axis, item in quality["axes"].items()},
+        "gap_count": quality["gap_count"],
+        "gaps": [
+            {key: gap[key] for key in ("from", "to", "missing_count", "boundary")}
+            for gap in quality["gaps"][:10]
+        ],
+    }
+
+
+def _model_facts(series: DisplacementSeries, features: dict, comparisons: dict, include_points: bool | None) -> dict:
+    station = series.station
+    facts = {
+        "station": {
+            "station_uuid": station.station_uuid, "station_name": station.station_name, "group_name": station.group_name,
+        },
+        "window": {
+            "begin_time": series.begin_time, "end_time": series.end_time,
+            "sampling": series.sampling, "sample_times": series.sample_times, "acquired_at": series.acquired_at,
+        },
+        "reference": {
+            axis: "平台固定参考" if value is not None else "固定参考缺失，累计偏移未知"
+            for axis, value in series.reference.items()
+        },
+        "quality": _model_quality(series.quality),
+        "features": {axis: _model_feature(feature) for axis, feature in features.items()},
+    }
+    if any(axis in comparisons for axis in features):
+        facts["split"] = {
+            axis: {
+                "first": _model_feature(comparison["first"]), "second": _model_feature(comparison["second"]),
+                "velocity_difference_mm_day": _rounded(comparison["velocity_difference_mm_day"]),
+                "comparison_supported": comparison["comparison_supported"],
+            }
+            for axis, comparison in comparisons.items() if axis in features
         }
-    return tool_result(
-        {key: value for key, value in data.items() if key != "raw_points"},
-        kind="gnss_series", display=data,
-    )
+    if "common_period" in comparisons:
+        facts["common_period"] = {
+            "station_names": comparisons["station_names"],
+            "failures": comparisons["failures"],
+            "features": {
+                axis: {identifier: _model_feature(feature) for identifier, feature in by_station.items()}
+                for axis, by_station in comparisons["common_period"].items()
+            },
+        }
+
+    count = len(series.observations)
+    inline_limit = get_settings().agent_inline_points_limit
+    if include_points is True and count > _MAX_REQUESTED_POINTS:
+        raise ToolFailure(f"本窗口共 {count} 点，逐点返回最多 {_MAX_REQUESTED_POINTS} 点；请缩小窗口，或用 compute 计算所需统计")
+    if include_points is True or (include_points is None and count <= inline_limit):
+        facts["points"] = [
+            {"time": point.data_time, **displacement_mm(point, series.reference)} for point in series.observations
+        ]
+        facts["points_unit"] = "mm，相对平台固定参考"
+    else:
+        facts["points_note"] = f"共 {count} 个有效时刻未逐点返回；需要逐条数值时缩小窗口、传 include_points，或用 compute 计算"
+    return facts

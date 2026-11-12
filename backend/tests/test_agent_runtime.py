@@ -228,24 +228,46 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("最后一次作答", first_system)
         self.assertIn("最后一次作答", final_system)
 
-    async def test_report_submission_does_not_consume_query_budget(self):
+    async def test_local_tools_do_not_consume_query_budget(self):
         self.settings.agent_tool_run_limit = 1
         @tool
         def station():
             """读取站点。"""
             return "真实证据"
-        @tool(graph.REPORT_TOOL_NAME)
-        def report():
-            """提交简报。"""
-            return "已提交"
+        local_tools = []
+        for name in ("compute", graph.PLAN_TOOL_NAME, graph.CONCLUSIONS_TOOL_NAME):
+            @tool(name)
+            def local():
+                """不访问外部数据源的工具。"""
+                return "完成"
+            local_tools.append(local)
         request = AIMessage(content="", tool_calls=[
-            *call("c1").tool_calls, {"id": "c2", "name": graph.REPORT_TOOL_NAME, "args": {}},
+            *call("c1").tool_calls,
+            *({"id": f"local-{index}", "name": item.name, "args": {}} for index, item in enumerate(local_tools)),
         ])
         model = ScriptedModel(script=[request, AIMessage(content="继续")])
-        result = await graph.create_lma_agent(model, agent_tools=[station, report]).ainvoke(
-            {"messages": [HumanMessage(content="查询并提交")]})
+        result = await graph.create_lma_agent(model, agent_tools=[station, *local_tools]).ainvoke(
+            {"messages": [HumanMessage(content="查询并整理")]})
         results = [m for m in result["messages"] if m.type == "tool"]
-        self.assertEqual({m.name: m.status for m in results}, {"station": "success", graph.REPORT_TOOL_NAME: "success"})
+        self.assertTrue(all(m.status == "success" for m in results))
+        self.assertEqual(len(results), 4)
+
+    async def test_conclusions_with_answer_text_end_the_turn_but_without_text_return_to_model(self):
+        @tool(graph.CONCLUSIONS_TOOL_NAME)
+        def conclusions():
+            """登记结论。"""
+            return "已登记"
+        with_text = AIMessage(content="K3 近 90 天持续向东南变化。", tool_calls=[
+            {"id": "c1", "name": graph.CONCLUSIONS_TOOL_NAME, "args": {}}])
+        model = ScriptedModel(script=[with_text])
+        result = await graph.create_lma_agent(model, agent_tools=[conclusions]).ainvoke({"messages": [HumanMessage(content="调查")]})
+        self.assertEqual(result["messages"][-1].type, "tool")
+        self.assertEqual(len(model.inputs), 1)
+
+        without_text = AIMessage(content="", tool_calls=[{"id": "c2", "name": graph.CONCLUSIONS_TOOL_NAME, "args": {}}])
+        model = ScriptedModel(script=[without_text, AIMessage(content="补上正文回答")])
+        result = await graph.create_lma_agent(model, agent_tools=[conclusions]).ainvoke({"messages": [HumanMessage(content="调查")]})
+        self.assertEqual(result["messages"][-1].content, "补上正文回答")
 
     async def test_tool_budget_blocks_only_exceeded_calls_and_preserves_usage(self):
         self.settings.agent_tool_run_limit = 1

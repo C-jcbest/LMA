@@ -10,8 +10,11 @@ from openai import APIConnectionError, APIStatusError
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from app.agent.tool_protocol import ToolFailure
-from app.agent.tool_inputs import GnssInput
+from app.agent.tool_inputs import DisplacementInput
+from app.monitoring_data import station_summary
+from app.beidou.schemas import Station
 from pydantic import ValidationError
+from runtime_fixtures import FakePlatform
 from app.agent import context, graph, models, retry, site, summarization, title, tools, vision, weather
 from app.agent.prompting import SYSTEM_PROMPT, VISION_PROMPT
 from app.business_time import BUSINESS_TZ, business_now
@@ -357,7 +360,7 @@ class PromptTimeTests(unittest.TestCase):
             longitude="106.5678",
             altitude="982.5",
         )
-        data = tools._station_to_dict(station)
+        data = station_summary(station)
         self.assertEqual(data["coordinate_system"], "WGS84")
         self.assertEqual(data["latitude"], 27.1234)
         self.assertEqual(data["altitude"], 982.5)
@@ -368,7 +371,7 @@ class PromptTimeTests(unittest.TestCase):
         station.latitude = ""
         station.longitude = "not-a-number"
         station.altitude = None
-        invalid = tools._station_to_dict(station)
+        invalid = station_summary(station)
         self.assertIsNone(invalid["latitude"])
         self.assertIsNone(invalid["longitude"])
         self.assertIsNone(invalid["altitude"])
@@ -450,14 +453,10 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             longitude=106.5,
             altitude=980,
         )
-        client = AsyncMock()
-        client.__aenter__.return_value = client
-        client.get_stations.return_value = [station]
         terrain = {"dem_elevation_m": 981.0, "slope_degrees": 12.5}
         geology = {"name": "测试地层", "lithology": "砂岩"}
         with (
-            patch.object(site, "_build_client", return_value=client),
-            patch.object(site, "_resolve_station", AsyncMock(return_value=station)),
+            patch("app.monitoring_data.build_platform_client", return_value=FakePlatform(stations=[station])),
             patch.object(site, "_fetch_terrain", AsyncMock(return_value=(terrain, None))),
             patch.object(site, "_fetch_geology", AsyncMock(return_value=(geology, None))),
         ):
@@ -501,10 +500,10 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 })
 
     async def test_base_station_does_not_query_deformation(self):
-        for module, tool in ((tools, tools.get_daily_gnss_data), (vision, vision.analyze_gnss_chart)):
-            client = AsyncMock()
-            client.__aenter__.return_value = client
-            with patch.object(module, "_build_client", return_value=client), patch.object(module, "_resolve_station", AsyncMock(return_value=SimpleNamespace(station_type=1))):
+        base = Station(station_uuid="base", station_name="基准站", station_type=1, group_uuid="g", group_name="测试组")
+        for tool in (tools.get_displacement, vision.analyze_gnss_chart):
+            platform = FakePlatform(stations=[base])
+            with patch("app.monitoring_data.build_platform_client", return_value=platform):
                 result = await tool.ainvoke({
                     "type": "tool_call",
                     "id": "base-station-call",
@@ -519,12 +518,12 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("基准站", result.content)
                 self.assertEqual(result.status, "success")
                 self.assertIsNone(result.artifact)
-            client.get_daily_data.assert_not_called()
+            self.assertEqual(platform.requests, [])
 
-    async def test_invalid_sampling_frequency_is_not_silently_replaced(self):
+    async def test_unknown_sampling_is_not_silently_replaced(self):
         with self.assertRaises(ValidationError):
-            GnssInput.model_validate({"station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00",
-                "end_time": "2026-09-02 00:00:00", "sampling_frequency": "sometimes"})
+            DisplacementInput.model_validate({"station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00",
+                "end_time": "2026-09-02 00:00:00", "sampling": "sometimes"})
 
 
 if __name__ == "__main__":

@@ -23,10 +23,9 @@ def stamp_user_message(message: HumanMessage) -> HumanMessage:
     focus_station = kwargs.pop(FOCUS_STATION_KEY, None)
     if focus_station:
         context["focus_station"] = focus_station
-    for key, name in (("lma_resume_investigation_id", "resume_investigation_id"), ("lma_focus_identity", "focus_identity")):
-        value = kwargs.pop(key, None)
-        if value:
-            context[name] = value
+    focus_identity = kwargs.pop("lma_focus_identity", None)
+    if focus_identity:
+        context["focus_identity"] = focus_identity
     return message.model_copy(update={"additional_kwargs": {**kwargs, "lma_context": context}})
 
 
@@ -35,8 +34,17 @@ def evidence_id(tool_call_id: str) -> str:
     return "E" + hashlib.sha1(tool_call_id.encode("utf-8")).hexdigest()[:6]
 
 
+# 计划和结论登记是调查过程与留档，不是可引用的观测依据。
+_NON_EVIDENCE_KINDS = {"plan", "conclusions"}
+
+
 def is_evidence(message: BaseMessage) -> bool:
-    return isinstance(message, ToolMessage) and message.artifact is not None and not is_tool_feedback(message)
+    return (
+        isinstance(message, ToolMessage)
+        and isinstance(message.artifact, dict)
+        and message.artifact.get("kind") not in _NON_EVIDENCE_KINDS
+        and not is_tool_feedback(message)
+    )
 
 
 def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
@@ -46,9 +54,6 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
         lines.append(f"focus_station: {context['focus_station']}")
     if context.get("focus_identity"):
         lines.append(f"focus_station_uuid: {context['focus_identity']['station_uuid']}")
-    if context.get("resume_investigation_id"):
-        lines.append(f"resume_investigation_id: {context['resume_investigation_id']}")
-        lines.append("用户明确续查此调查；读取原目标和证据后只处理剩余问题，按当前目标决定是否刷新。")
     metadata = "<lma_message_context>\n" + "\n".join(lines) + "\n</lma_message_context>"
     content = message.content
     if isinstance(content, str):
@@ -83,9 +88,6 @@ def model_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
             }))
         elif is_evidence(message) and isinstance(message.content, str):
             label = f'<lma_evidence id="{evidence_id(message.tool_call_id)}"/>'
-            persisted_uuid = message.additional_kwargs.get("lma_evidence_uuid")
-            if persisted_uuid is not None:
-                label += f'\n<lma_persisted_evidence uuid="{persisted_uuid}"/>'
             projected.append(message.model_copy(update={"content": f"{message.content}\n\n{label}"}))
         else:
             projected.append(message)

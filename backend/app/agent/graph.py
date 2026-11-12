@@ -29,23 +29,22 @@ from app.agent.evidence import EvidenceMiddleware
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
-from app.agent.report import REPORT_TOOL_NAME, submit_investigation_report
+from app.agent.compute import compute
+from app.agent.conclusions import CONCLUSIONS_TOOL_NAME, record_conclusions
 from app.agent.retry import is_transient_error
 from app.agent.models import create_chat_model, model_max_input_tokens
+from app.agent.session_tools import PLAN_TOOL_NAME, station_history_tool, update_plan
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
-from app.agent.tools import (
-    get_daily_gnss_data,
-    list_station_groups,
-    list_stations,
-)
-from app.agent.numerical_tool import analyze_gnss_numerically
+from app.agent.tools import find_stations, get_displacement
 from app.agent.vision import analyze_gnss_chart
 from app.agent.weather import query_weather
 from app.config import get_settings
 
-tools = [list_station_groups, list_stations, get_daily_gnss_data,
-         query_weather, analyze_gnss_chart, inspect_site_environment, analyze_gnss_numerically, submit_investigation_report]
+tools = [
+    find_stations, get_displacement, query_weather, analyze_gnss_chart, inspect_site_environment,
+    compute, update_plan, record_conclusions,
+]
 logger = logging.getLogger(__name__)
 
 
@@ -69,24 +68,19 @@ class AgentState(BaseAgentState):
 
 
 class QueryCallLimitMiddleware(ToolCallLimitMiddleware):
-    """查询额度只约束取数类工具。
+    """查询额度只约束访问外部数据源的工具。
 
-    简报是提交最终回答而不是查询；若计入额度，额度用尽后已取得的证据无法以简报形式交付。
-    简报反复校验失败仍受模型调用上限约束。
+    本地计算、计划、结论登记和读取以往结论不请求监测平台或外部服务；计入额度会让取数用尽后
+    无法整理已取得的依据。它们反复调用仍受模型调用上限约束。
     """
 
     def _matches_tool_filter(self, tool_call) -> bool:
-        return tool_call["name"] not in {
-            REPORT_TOOL_NAME, "start_investigation", "record_target_result",
-            "add_investigation_targets", "finish_investigation", "withdraw_investigation_target",
-            "read_investigation_record", "reuse_investigation_evidence",
-            "compare_investigation_evidence",
-        }
+        return tool_call["name"] not in {"compute", PLAN_TOOL_NAME, CONCLUSIONS_TOOL_NAME, "get_station_history"}
 
 
 _FINAL_MODEL_CALL_NOTICE = (
     "\n\n# 本轮最后一次作答\n\n"
-    "本轮的调用次数即将用尽，这是最后一次作答机会，不能再发起查询或提交简报。"
+    "本轮的调用次数即将用尽，这是最后一次作答机会，不能再调用工具。"
     "请基于已取得的证据直接用文字回答，并说明哪些对象或时段尚未覆盖。"
 )
 
@@ -111,9 +105,8 @@ def _get_llm():
 class LmaMiddleware(AgentMiddleware):
     state_schema = AgentState
 
-    def __init__(self, model, *, model_run_limit: int, investigation_storage=None):
+    def __init__(self, model, *, model_run_limit: int):
         self.model_run_limit = model_run_limit
-        self.investigation_storage = investigation_storage
         self.max_input_tokens = model_max_input_tokens(model)
         self.model_name = (
             getattr(model, "model_name", None)
@@ -133,23 +126,19 @@ class LmaMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["end"])
     async def abefore_model(self, state, runtime):
-        # 官方 return_direct 在工具失败时也会结束；简报校验失败需要回到模型修正。
+        """结论登记成功且正文已随同一条回复给出时结束本轮，不再让模型复述一遍。"""
+        messages = state["messages"]
         latest_results = []
-        for message in reversed(state["messages"]):
-            if not isinstance(message, ToolMessage):
-                break
-            latest_results.append(message)
-        if any(message.status == "error" for message in latest_results):
+        index = len(messages) - 1
+        while index >= 0 and isinstance(messages[index], ToolMessage):
+            latest_results.append(messages[index])
+            index -= 1
+        if not latest_results or any(message.status == "error" for message in latest_results):
             return None
-        if any(message.name == REPORT_TOOL_NAME and message.status != "error" for message in latest_results):
-            if self.investigation_storage is not None:
-                execution = runtime.execution_info
-                session_id = execution.thread_id if execution is not None else None
-                if session_id is not None:
-                    investigations = await self.investigation_storage.investigations(session_id)
-                    if any(record["status"] == "running" for record in investigations):
-                        # 阶段简报不替代目标结果；让模型处理尚未结束的调查或明确交付缺口。
-                        return None
+        recorded = any(message.name == CONCLUSIONS_TOOL_NAME for message in latest_results)
+        # 只登记了结论、没有写正文时回到模型补上回答；与其他查询并行发出时也需要模型继续。
+        only_conclusions = all(message.name in {CONCLUSIONS_TOOL_NAME, PLAN_TOOL_NAME} for message in latest_results)
+        if recorded and only_conclusions and index >= 0 and messages[index].text.strip():
             return {"jump_to": "end"}
         return None
 
@@ -210,13 +199,12 @@ class LmaMiddleware(AgentMiddleware):
         return updates
 
 
-def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None, investigation_storage=None):
-    """生产与回归测试共用同一个官方 Agent 工厂。"""
+def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None, storage=None):
+    """生产与回归测试共用同一个官方 Agent 工厂；有存储时启用存证和以往结论查询。"""
     settings = get_settings()
-    bound_tools = tools if agent_tools is None else agent_tools
-    if investigation_storage is not None:
-        from app.agent.investigation_tools import investigation_tools
-        bound_tools = [*bound_tools, *investigation_tools(investigation_storage)]
+    bound_tools = list(tools if agent_tools is None else agent_tools)
+    if storage is not None:
+        bound_tools.append(station_history_tool(storage))
     for agent_tool in bound_tools:
         agent_tool.handle_validation_error = partial(
             raise_tool_validation_error, schema_name=agent_tool.get_input_schema().__name__,
@@ -226,9 +214,9 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
-            *([EvidenceMiddleware(investigation_storage)] if investigation_storage is not None else []),
+            *([EvidenceMiddleware(storage)] if storage is not None else []),
             ToolFeedbackMiddleware(),
-            LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit, investigation_storage=investigation_storage),
+            LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,
             ),

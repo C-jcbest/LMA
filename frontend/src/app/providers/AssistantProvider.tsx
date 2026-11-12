@@ -125,7 +125,6 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
           checkpointId: config.checkpointId,
           focusStation: scope?.stationName ?? focusStationRef.current ?? undefined,
           signal: config.abortSignal,
-          resumeInvestigationId: (config.runConfig as { custom?: { resumeInvestigationId?: string } } | undefined)?.custom?.resumeInvestigationId,
         });
         for await (const event of events) {
           if (event.event.startsWith('messages') && Array.isArray(event.data)) {

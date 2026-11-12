@@ -14,7 +14,7 @@ const support = {
 };
 
 const gnssResult = (id: string, beginTime: string) => ({
-  type: 'tool', id: `${id}-result`, tool_call_id: id, name: 'get_daily_gnss_data', content: '模型专用内容不得展示', status: 'success',
+  type: 'tool', id: `${id}-result`, tool_call_id: id, name: 'get_displacement', content: '模型专用内容不得展示', status: 'success',
   artifact: {
     version: 1, kind: 'gnss_series', status: 'success',
     data: {
@@ -27,32 +27,27 @@ const gnssResult = (id: string, beginTime: string) => ({
   },
 });
 
-const report = {
-  conclusion: '测试点 A 需要优先复核，测试点 B 未见明显变化。',
+const conclusions = {
   stations: [
-    { station_uuid: '22222222-2222-2222-2222-222222222222', begin_time: support.begin_time, end_time: support.end_time, supports: [{ ...support, station_uuid: '22222222-2222-2222-2222-222222222222' }], station_name: '测试点 B', status: '未见明显变化', reason: '三个方向均无持续变化', acceleration: '未见持续加速', data_quality: '数据完整' },
-    { station_uuid: support.station_uuid, begin_time: support.begin_time, end_time: support.end_time, supports: [support], station_name: '测试点 A', status: '需人工复核', reason: '长期同向变化', acceleration: '无法判断', data_quality: '一次缺测' },
+    { station_uuid: '22222222-2222-2222-2222-222222222222', station_name: '测试点 B', status: '未见明显变化', reason: '三个方向均无持续变化', begin_time: support.begin_time, end_time: support.end_time, evidence: ['E123abc'] },
+    { station_uuid: support.station_uuid, station_name: '测试点 A', status: '需人工复核', reason: '长期同向变化', begin_time: support.begin_time, end_time: support.end_time, evidence: ['E123abc'] },
   ],
-  findings: [
-    { level: 'fact', text: '北向净变化约 2 mm', supports: [support], evidence: ['gnss-short'] },
-    { level: 'analysis', text: '长期趋势仍在延续', supports: [support], evidence: ['gnss-long', 'gnss-short'] },
-    { level: 'inference', text: '可能与坡体缓慢变形有关', supports: [support], evidence: ['gnss-short'] },
-  ],
-  next_steps: ['现场核查观测墩'],
 };
+// 只登记结论、没有正文时，界面用各测点原因补出的文字。
+const fallbackText = '测试点 A（需人工复核）：长期同向变化';
 
 const messages = [
   { type: 'human', id: 'question-1', content: '测试点 A 最近怎么样？' },
   { type: 'ai', id: 'query-1', content: [], tool_calls: [
-    { id: 'gnss-long', name: 'get_daily_gnss_data', args: {} },
-    { id: 'gnss-short', name: 'get_daily_gnss_data', args: {} },
+    { id: 'gnss-long', name: 'get_displacement', args: {} },
+    { id: 'gnss-short', name: 'get_displacement', args: {} },
   ] },
   gnssResult('gnss-long', '2026-08-01 00:00:00'),
   gnssResult('gnss-short', '2026-11-01 00:00:00'),
-  { type: 'ai', id: 'report-1', content: [], tool_calls: [{ id: 'report-call', name: 'submit_investigation_report', args: {} }] },
+  { type: 'ai', id: 'report-1', content: [], tool_calls: [{ id: 'report-call', name: 'record_conclusions', args: {} }] },
   {
-    type: 'tool', id: 'report-result', tool_call_id: 'report-call', name: 'submit_investigation_report', content: '{}', status: 'success',
-    artifact: { version: 1, kind: 'investigation_report', status: 'success', data: report },
+    type: 'tool', id: 'report-result', tool_call_id: 'report-call', name: 'record_conclusions', content: '{}', status: 'success',
+    artifact: { version: 1, kind: 'conclusions', status: 'success', data: conclusions },
   },
 ];
 
@@ -60,7 +55,7 @@ const stationTimeline = {
   station_uuid: '测试点 A', station_name: '测试点 A', group_name: 'K3 分组',
   series: gnssResult('timeline', '2026-11-01 00:00:00').artifact.data,
   records: [{
-    session_id: 'report-session', anchor_id: 'report-call', session_name: '测试分组巡检', status: '需人工复核',
+    session_id: 'report-session', anchor_id: 'question-1', session_name: '测试分组巡检', status: '需人工复核',
     reason: '长期同向变化', created_at: '2026-11-08T00:00:00Z',
   }],
 };
@@ -98,22 +93,44 @@ async function mockApi(page: Page) {
   await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({
     json: { values: { messages }, latest_run: { id: 'run-1', status: 'success' } },
   }));
-  await page.route('**/api/sessions/*/investigations', (route) => route.fulfill({ json: [] }));
 }
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
+
+/** 章节式正文引用长、短两个窗口；结论登记只作为留档数据随同提交。 */
+const proseHistory = () => {
+  const withEvidence = (result: ReturnType<typeof gnssResult>, evidenceId: string) => ({
+    ...result, artifact: { ...result.artifact, evidence_id: evidenceId },
+  });
+  return [
+    messages[0],
+    messages[1],
+    withEvidence(gnssResult('gnss-long', '2026-08-01 00:00:00'), 'Elong'),
+    withEvidence(gnssResult('gnss-short', '2026-11-01 00:00:00'), 'Eshort'),
+    {
+      type: 'ai', id: 'report-1', content: [
+        '## 调查结论', '', '测试点 A 需要优先复核，测试点 B 未见明显变化。', '',
+        '### 一、数据现象', '', '长期窗口北向持续同向变化。[1](#evidence-Elong)', '',
+        '近期北向净变化约 2 mm。[2](#evidence-Eshort) 与长期趋势一致。[1](#evidence-Elong)', '',
+        '### 二、滑坡推断', '', '可能与坡体缓慢变形有关。',
+      ].join('\n'),
+      tool_calls: [{ id: 'report-call', name: 'record_conclusions', args: {} }],
+    },
+    messages[5],
+  ];
+};
 
 test('内部纠错在流式和刷新后不显示技术错误，真实故障可收起且不会被另一站成功清除', async ({ page }) => {
   await mockApi(page);
   await page.setViewportSize({ width: 320, height: 844 });
   let history: unknown[] = [];
   const feedback = {
-    type: 'tool', id: 'parameter-feedback', tool_call_id: 'invalid-window', name: 'analyze_gnss_numerically',
+    type: 'tool', id: 'parameter-feedback', tool_call_id: 'invalid-window', name: 'get_displacement',
     content: '查询参数需调整，该调用未取得观测数据。', status: 'error',
     artifact: { version: 1, kind: 'tool_feedback', category: 'input_validation' },
   };
   const failed = {
-    type: 'tool', id: 'real-timeout', tool_call_id: 'timeout-query', name: 'get_daily_gnss_data', status: 'error', content: '服务不可用',
+    type: 'tool', id: 'real-timeout', tool_call_id: 'timeout-query', name: 'get_displacement', status: 'error', content: '服务不可用',
     artifact: { version: 1, kind: 'acquisition_failure', status: 'error',
       data: { station_uuid: '22222222-2222-2222-2222-222222222222', station_name: '测试点 B', requested_station: '测试点 B',
         begin_time: '2026-10-01 00:00:00', end_time: '2026-10-31 00:00:00', message: '数据服务暂不可用。' },
@@ -123,11 +140,11 @@ test('内部纠错在流式和刷新后不显示技术错误，真实故障可�
   await page.route('**/api/sessions/report-session/runs', async (route) => {
     const user = route.request().postDataJSON().messages[0];
     const interim = [user, { type: 'ai', id: 'invalid-attempt', content: [], tool_calls: [
-      { id: 'invalid-window', name: 'analyze_gnss_numerically', args: { begin_time: '2024-01-01 00:00:00', sampling: 'daily' } },
+      { id: 'invalid-window', name: 'get_displacement', args: { begin_time: '2024-01-01 00:00:00', sampling: 'daily' } },
     ] }, feedback];
     history = [...interim, { type: 'ai', id: 'corrected-attempt', content: [], tool_calls: [
-      { id: 'corrected-query', name: 'get_daily_gnss_data', args: { begin_time: '2026-11-01 00:00:00' } },
-      { id: 'timeout-query', name: 'get_daily_gnss_data', args: { station_name_or_uuid: '测试点 B', begin_time: '2026-10-01 00:00:00' } },
+      { id: 'corrected-query', name: 'get_displacement', args: { begin_time: '2026-11-01 00:00:00' } },
+      { id: 'timeout-query', name: 'get_displacement', args: { station_name_or_uuid: '测试点 B', begin_time: '2026-10-01 00:00:00' } },
     ] }, gnssResult('corrected-query', '2026-11-01 00:00:00'), failed,
     { type: 'ai', id: 'feedback-answer', content: 'A站已有观测，B站原窗口仍未取得数据。' }];
     const event = (messages: unknown[]) => 'event: values\ndata: ' + JSON.stringify({ messages }) + '\n\n';
@@ -217,33 +234,18 @@ test('390px 旧会话目录失败不阻断数据与新调查', async ({ page }, 
   await expect(page.getByText('北向净变化', { exact: true })).toBeVisible();
 });
 
-test('完成的调查不显示虚假的待解决事项', async ({ page }) => {
-  await mockApi(page);
-  await page.route('**/api/sessions/*/investigations', (route) => route.fulfill({ json: [{
-    id: 'completed-investigation', status: 'completed', progress: {
-      goal: '复核测点 A', covered: ['A'], unresolved: [], stage_conclusion: '已完成复核',
-      targets: [{ target_id: 'A', question: '复核测点 A' }],
-    },
-  }] }));
-  await page.goto('/?threadId=report-session');
-  await page.getByText('调查进度', { exact: true }).click();
-  await expect(page.getByText('已完成复核', { exact: true })).toBeVisible();
-  await expect(page.getByText('待解决：尚未记录', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: '继续调查', exact: true })).toHaveCount(0);
-});
-
-test('320px 独立数值证据可查看两窗口与共同有效时段，无需视觉结果', async ({ page }) => {
+test('320px 位移结果的数值特征可查看两窗口与共同有效时段，无需视觉结果', async ({ page }) => {
   await mockApi(page);
   const feature = { count: 4, net_change_mm: 3, robust_slope_mm_day: 1, max_step_mm: 1,
     begin_time: '2026-11-02 00:00:00', end_time: '2026-11-03 00:00:00',
     jump_persistence: '待观察', method: 'Theil–Sen', limitations: [] };
   const history = [
     { type: 'human', id: 'numerical-question', content: '复核数值' },
-    { type: 'ai', id: 'numerical-call', content: [], tool_calls: [{ id: 'numeric-1', name: 'analyze_gnss_numerically', args: {} }] },
-    { type: 'tool', id: 'numerical-result', tool_call_id: 'numeric-1', name: 'analyze_gnss_numerically', status: 'success', content: '{}',
-      artifact: { version: 1, kind: 'numerical', status: 'success', data: {
-        station_uuid: '11111111-1111-1111-1111-111111111111', station_name: '测试点 A', sampling: 'hourly', points: [],
-        begin_time: '2026-11-01 00:00:00', end_time: '2026-11-04 00:00:00', features: { n: feature },
+    { type: 'ai', id: 'numerical-call', content: [], tool_calls: [{ id: 'numeric-1', name: 'get_displacement', args: {} }] },
+    { type: 'tool', id: 'numerical-result', tool_call_id: 'numeric-1', name: 'get_displacement', status: 'success', content: '{}',
+      artifact: { version: 1, kind: 'gnss_series', status: 'success', data: {
+        ...gnssResult('numeric-1', '2026-11-01 00:00:00').artifact.data,
+        sampling: { mode: 'hourly', points_limit: 2 }, features: { n: feature },
         comparisons: { n: { first: feature, second: feature, velocity_difference_mm_day: null, speed_ratio: null, limitation: '倍率不构成加速结论' },
           station_names: { b: '测试点 B' }, common_period: { n: { b: feature } } },
       } } },
@@ -253,51 +255,47 @@ test('320px 独立数值证据可查看两窗口与共同有效时段，无需�
   await page.setViewportSize({ width: 320, height: 844 });
   await page.goto('/?threadId=report-session');
   await page.getByRole('button', { name: '查看 测试点 A 的依据', exact: true }).click();
+  // 有序列时默认看时间轴；数值特征在明细页。
+  await inspector(page).getByRole('tab', { name: '明细' }).click();
   await expect(inspector(page).getByText('两个窗口比较')).toBeVisible();
   await expect(inspector(page).getByText('共同有效时段比较')).toBeVisible();
   await expect(inspector(page).getByText('测试点 B', { exact: true })).toBeVisible();
   expect(await inspector(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test('调查进度保留覆盖范围，继续调查由用户点击后发送且不覆盖草稿', async ({ page }, testInfo) => {
+test('多步骤调查显示计划，计算结果作为依据卡片出现在正文中', async ({ page }) => {
   await mockApi(page);
-  const investigationId = '44444444-4444-4444-4444-444444444444';
-  await page.route('**/api/sessions/*/investigations', (route) => route.fulfill({ json: [{
-    id: investigationId, status: 'interrupted', progress: {
-      goal: '复核两个测点', covered: ['A'], unresolved: ['B尚未复核'], stage_conclusion: 'A已完成',
-      targets: ['A', 'B'].map((key) => ({
-        target_id: key, station_uuid: key, question: `复核测点${key}`, evidence_ids: [],
-        outcome: key === 'A' ? 'answered' : 'pending', result: key === 'A' ? 'A已完成' : '',
-        begin_time: '2026-11-01T00:00:00', end_time: '2026-11-08T00:00:00',
-      })),
-    },
-  }] }));
-  const requests: Array<{ messages: Array<{ content: string }>; resume_investigation_id: string }> = [];
-  await page.route('**/api/sessions/*/runs', (route) => {
-    requests.push(route.request().postDataJSON());
-    return route.fulfill({ status: 503, json: { detail: '测试执行服务暂不可用' } });
-  });
+  const history = [
+    { type: 'human', id: 'plan-question', content: '看一下 K3 组整体情况，按周汇总北向变化' },
+    { type: 'ai', id: 'plan-call', content: [], tool_calls: [
+      { id: 'plan-1', name: 'update_plan', args: {} },
+      { id: 'compute-1', name: 'compute', args: {} },
+    ] },
+    { type: 'tool', id: 'plan-result', tool_call_id: 'plan-1', name: 'update_plan', status: 'success', content: '{}',
+      artifact: { version: 1, kind: 'plan', status: 'success', data: { items: [
+        { content: '核对测试点 A 近 90 天趋势', status: 'completed' },
+        { content: '与同组测点对比', status: 'in_progress' },
+        { content: '查询同期降雨', status: 'pending' },
+      ] } } },
+    { type: 'tool', id: 'compute-result', tool_call_id: 'compute-1', name: 'compute', status: 'success', content: '{}',
+      artifact: { version: 1, kind: 'computation', status: 'success', evidence_id: 'Ecalc', data: {
+        description: '测试点 A 每周北向变化', code: 'PRIVATE_CODE_SHOULD_NOT_RENDER',
+        inputs: [{ evidence_id: 'E123abc', description: '测试点 A 位移 2026-08-01 至 2026-11-03' }],
+        result: { type: 'series', name: 'dn', index: ['2026-10-19', '2026-10-26'], values: [0.8, 1.1], row_count: 2 }, truncated: false,
+      } } },
+    { type: 'ai', id: 'plan-answer', content: '近两周北向每周变化约 1 mm。[1](#evidence-Ecalc)' },
+  ];
+  await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?threadId=report-session');
-  await page.getByText('调查进度', { exact: true }).click();
-  await expect(page.getByText('已覆盖：1 / 2 项')).toBeVisible();
-  await expect(page.getByText(/待调查：复核测点B/)).toBeVisible();
-  await expect(page.getByText(/待调查：复核测点A/)).toHaveCount(0);
-  const composer = page.getByRole('textbox', { name: '输入监测问题' });
-  await composer.fill('我还没写完的问题');
-  expect(requests).toHaveLength(0);
-  await page.getByRole('button', { name: '继续调查', exact: true }).click();
-  await expect.poll(() => requests.length).toBe(1);
-  expect(requests[0]!.messages[0]!.content).toBe('继续调查');
-  expect(requests[0]!.resume_investigation_id).toBe(investigationId);
-  await expect(page.getByText(investigationId, { exact: false })).toHaveCount(0);
-  await expect(composer).toHaveValue('我还没写完的问题');
-  await expect(page.getByRole('alert')).toContainText('本次回答未完成');
-  await expect(page.locator('.aui-message-error-root')).toHaveCount(0);
-  await page.getByRole('radio', { name: '深色主题', exact: true }).click();
-  await expect(page.getByRole('radio', { name: '深色主题', exact: true })).toHaveAttribute('aria-checked', 'true');
-  await page.locator('[data-role=user]').last().scrollIntoViewIfNeeded();
-  await page.screenshot({ path: testInfo.outputPath('续查与局部反馈-390px.png') });
+  const plan = page.getByRole('list', { name: '调查计划' });
+  await expect(plan.getByRole('listitem')).toHaveCount(3);
+  await expect(plan.getByText('与同组测点对比')).toBeVisible();
+  const card = page.locator('[data-slot=evidence-card]').filter({ hasText: '测试点 A 每周北向变化' });
+  await expect(card).toBeVisible();
+  await expect(card.getByRole('table')).toContainText('1.1');
+  await expect(page.getByText('PRIVATE_CODE_SHOULD_NOT_RENDER')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 });
 
 test('数据分析使用九月正文模板，正文引用仍可打开当前依据', async ({ page }, testInfo) => {
@@ -354,7 +352,7 @@ test('今日切换测点不恢复旧调查，草稿互不串站且浏览不创�
   await page.getByRole('button', { name: '查看 测试点 A', exact: true }).click();
   await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
   await expect(page.getByText('这是测试点 A 的最新调查')).toHaveCount(0);
-  await expect(page.getByText(report.conclusion)).toHaveCount(0);
+  await expect(page.getByText(fallbackText)).toHaveCount(0);
   await page.getByRole('textbox', { name: '输入监测问题' }).fill('A 的草稿');
   await page.getByRole('button', { name: '返回', exact: true }).click();
   await page.getByRole('button', { name: '查看 测试点 B', exact: true }).click();
@@ -370,47 +368,39 @@ test('今日切换测点不恢复旧调查，草稿互不串站且浏览不创�
 });
 
 for (const scenario of ['单点', '全部平稳', '资料有限']) {
-  test(`简报状态：${scenario}`, async ({ page }, testInfo) => {
+  test(`结论登记状态：${scenario}`, async ({ page }, testInfo) => {
     await mockApi(page);
-    const variant = structuredClone(report);
+    const variant = structuredClone(conclusions);
     if (scenario === '单点') {
-      variant.stations = [report.stations[1]!];
-      variant.conclusion = '测试点 A 的长期同向变化需要复核。';
+      variant.stations = [conclusions.stations[1]!];
     } else if (scenario === '全部平稳') {
-      variant.conclusion = '本次两个测点均未见明显变化。';
-      variant.stations = report.stations.map((station) => ({ ...station, status: '未见明显变化', reason: '三个方向均无持续变化', acceleration: '未见持续加速', data_quality: '数据完整' }));
-      variant.findings = [];
-      variant.next_steps = [];
+      variant.stations = conclusions.stations.map((station) => ({ ...station, status: '未见明显变化', reason: '三个方向均无持续变化' }));
     } else {
-      variant.conclusion = '测试点 A 最近 48 小时缺少监测记录。';
-      variant.stations = [{ ...report.stations[1]!, status: '数据不足', reason: '最近 48 小时没有数据', data_quality: '缺少近期记录' }];
-      variant.findings = [];
-      variant.next_steps = ['检查测点采集与传输记录'];
+      variant.stations = [{ ...conclusions.stations[1]!, status: '数据不足', reason: '最近 48 小时没有数据' }];
     }
     const history = messages.map((message) => message.id === 'report-result'
-      ? { ...message, artifact: { version: 1, kind: 'investigation_report', status: 'success', data: variant } }
+      ? { ...message, artifact: { version: 1, kind: 'conclusions', status: 'success', data: variant } }
       : message);
     await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/?threadId=report-session');
-    const reportRegion = page.getByRole('region', { name: '调查简报' });
-    await expect(reportRegion.getByText(variant.conclusion)).toBeVisible();
+    // 没有正文时由各测点原因补出回答；状态标签按优先级排列并可打开依据。
+    const fallback = page.getByRole('region', { name: '测点结论' });
+    await expect(fallback.getByRole('listitem')).toHaveCount(variant.stations.length);
+    const statuses = page.getByRole('list', { name: '测点状态' });
+    await expect(statuses.getByRole('listitem')).toHaveCount(variant.stations.length);
     if (scenario === '全部平稳') {
-      await expect(reportRegion.locator('summary')).toHaveText('2 个测点未见明显变化');
-      await reportRegion.locator('summary').click();
-      await expect(reportRegion.getByText('三个方向均无持续变化')).toHaveCount(2);
+      await expect(fallback.getByText(/三个方向均无持续变化/)).toHaveCount(2);
     } else {
-      await expect(reportRegion.getByText('2 个测点未见明显变化', { exact: true })).toHaveCount(0);
-      await expect(reportRegion.getByRole('heading', { name: '查看 测试点 A 的依据' })).toBeVisible();
+      await expect(statuses.getByRole('button').first()).toHaveAccessibleName(/^查看 测试点 A /);
     }
-    await expect(reportRegion.getByText('无法判断', { exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
     await page.locator('[data-slot=aui_thread-viewport]').evaluate((element) => { element.scrollTop = 0; });
-    await page.screenshot({ path: testInfo.outputPath(`简报-${scenario}.png`), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath(`结论-${scenario}.png`), fullPage: true });
   });
 }
 
-for (const anchor of ['report-call', 'plain-answer']) {
+for (const anchor of ['question-1', 'followup']) {
   test(`调查记录定位 ${anchor}，而不是会话末尾`, async ({ page }) => {
     await mockApi(page);
     const history = [
@@ -428,7 +418,7 @@ for (const anchor of ['report-call', 'plain-answer']) {
     await page.goto('/?station=测试点 A');
     await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
     await expect(page).toHaveURL(new RegExp(`result=${anchor}`));
-    const target = anchor === 'report-call' ? page.getByText(report.conclusion) : page.getByText('继续观察北向趋势。');
+    const target = anchor === 'question-1' ? page.getByText('测试点 A 最近怎么样？') : page.getByText('接下来观察什么？');
     await expect(target).toBeInViewport();
   });
 }
@@ -480,19 +470,23 @@ test('窄屏切换调查保留数据滚动、图表选区与追问草稿', async
 });
 
 for (const width of [320, 390, 1440]) {
-  test(`${width}px 简报重点与引用触控区域`, async ({ page }, testInfo) => {
+  test(`${width}px 章节正文、依据卡片与引用编号`, async ({ page }, testInfo) => {
     await mockApi(page);
+    await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: proseHistory() }, latest_run: null } }));
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: width === 390 ? 'dark' : 'light' });
     await page.goto('/?threadId=report-session');
-    const reportRegion = page.getByRole('region', { name: '调查简报' });
-    await expect(reportRegion.getByText(report.conclusion)).toBeVisible();
-    const focused = reportRegion.locator('.report-station').first();
-    await expect(focused).toContainText('北向净变化约 2 mm');
-    await expect(focused).toContainText('长期趋势仍在延续');
-    await expect(reportRegion.getByText('三个方向均无持续变化')).not.toBeVisible();
-    const citation = await reportRegion.getByRole('button', { name: /查看依据 1/ }).first().boundingBox();
-    expect(citation!.width).toBeGreaterThanOrEqual(32);
+    const answer = page.locator('[data-role=assistant]');
+    await expect(answer.getByRole('heading', { name: '一、数据现象' })).toBeVisible();
+    // 结论登记不作为第二段正文出现，只保留测点状态。
+    await expect(page.getByRole('region', { name: '测点结论' })).toHaveCount(0);
+    await expect(answer.getByText('北向净变化约 2 mm', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('list', { name: '测点状态' }).getByRole('listitem')).toHaveCount(2);
+    // 每个依据在首次引用处出现一张卡片，重复引用只留编号。
+    const cards = answer.locator('[data-slot=evidence-card]');
+    await expect(cards).toHaveCount(2);
+    await expect(cards.first().getByRole('img', { name: /测试点 A .*位移曲线/ })).toBeVisible();
+    await expect(answer.getByRole('button', { name: /查看依据 1：/ })).toHaveCount(2);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
     await page.locator('[data-slot=aui_thread-viewport]').evaluate((element) => { element.scrollTop = 0; });
     await page.screenshot({ path: testInfo.outputPath(`简报-${width}px.png`), fullPage: true });
@@ -531,32 +525,34 @@ test('普通 AI 消息的标题、列表和长表格在窄屏保持可读', asyn
   await viewportElement.evaluate((element) => { element.scrollTop = 0; });
 });
 
-test('简报分层、复制及依据时间窗口定位', async ({ page, context }) => {
+test('测点状态、复制导出及引用定位依据时间窗口', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await mockApi(page);
+  await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: proseHistory() }, latest_run: null } }));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?threadId=report-session');
 
-  const reportRegion = page.getByRole('region', { name: '调查简报' });
-  await expect(reportRegion.getByText(report.conclusion)).toBeVisible();
-  await expect(reportRegion.getByRole('button', { name: /查看 测试点/ }).first()).toHaveAccessibleName('查看 测试点 A 的依据');
-  await expect(reportRegion.getByRole('heading', { name: '建议' })).toBeVisible();
-  await expect(reportRegion.getByText('三个方向均无持续变化')).not.toBeVisible();
-  await reportRegion.getByText('1 个测点未见明显变化', { exact: true }).click();
-  await expect(reportRegion.getByText('三个方向均无持续变化')).toBeVisible();
-  await expect(reportRegion.getByText('推断', { exact: true })).toBeVisible();
+  // 状态按优先级排列，原因放在提示里，点击打开该测点依据。
+  const statuses = page.getByRole('list', { name: '测点状态' });
+  await expect(statuses.getByRole('button').first()).toHaveAccessibleName('查看 测试点 A 需人工复核 的依据');
+  await expect(statuses.getByRole('button').first()).toHaveAttribute('title', '长期同向变化');
   await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /已调查 1 个测点 · 2 项查询/ })).toBeVisible();
 
   const copy = page.locator('[data-role="assistant"]').last().getByRole('button', { name: '复制', exact: true });
   await copy.click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('## 测试点 A');
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('测点状态：测试点 A：需人工复核；测试点 B：未见明显变化');
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain('### 一、数据现象');
+  expect(copied).toContain('## 依据');
+  expect(copied).not.toContain('#evidence-');
+
   await page.getByRole('button', { name: /查看依据 1：/ }).first().click();
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
-  await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
+  await expect(inspector(page).getByRole('radio', { name: /08-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
 
   await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
-  await expect(inspector(page).getByRole('radio', { name: /08-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
+  await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
 });
 
 test('今日页只列建议调查的测点，点击进入测点页直接看数据，不调用模型', async ({ page }) => {
@@ -594,10 +590,10 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.getByRole('radio', { name: '30 天' }).click();
   await expect.poll(() => timelineQueries.at(-1)).toBe('?days=30');
 
-  // 历次调查从测点的记录里打开；窄屏切到对话面板显示那次的简报。
+  // 历次调查从测点的记录里打开；窄屏切到对话面板显示那次的结论。
   await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
   await expect(page).toHaveURL(/threadId=report-session/);
-  await expect(page.getByText(report.conclusion)).toBeVisible();
+  await expect(page.getByText(fallbackText)).toBeVisible();
   expect(runRequests).toBe(0);
 });
 
@@ -738,9 +734,9 @@ test('调查记录写出涉及的测点和结论，点击回到那次对话', as
   await expect(page).toHaveURL(/threadId=report-session/);
   await expect(page).not.toHaveURL(/page=records/);
   await expect(page).not.toHaveURL(/[?&]result=/);
-  await expect(page.getByText(report.conclusion)).toBeVisible();
+  await expect(page.getByText(fallbackText)).toBeVisible();
   await page.reload();
-  await expect(page.getByText(report.conclusion)).toBeVisible();
+  await expect(page.getByText(fallbackText)).toBeVisible();
 });
 
 test('桌面调查支持调宽关闭展开并保留草稿', async ({ page }) => {

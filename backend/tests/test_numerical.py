@@ -2,7 +2,7 @@
 import unittest
 from datetime import timedelta
 from app.agent.numerical import axis_features, compare_windows, common_period_features
-from app.agent.tools import _detect_gaps
+from app.observations import normalize_observations, observation_quality
 from test_inspection_screening import NOW, point
 
 class NumericalTests(unittest.TestCase):
@@ -33,7 +33,7 @@ class NumericalTests(unittest.TestCase):
 
     def test_normalized_raw_and_numerical_paths_agree_on_nonfinite_and_duplicates(self):
         from app.observations import normalize_observations
-        from app.agent.tools import _axis_summary
+        from app.monitoring_data import _axis_summary
         points = [point(NOW + timedelta(hours=hour), value) for hour, value in ((2, 100.002), (0, 100), (1, 'nan'), (3, 100.003), (3, 99))]
         normalized, cleaning = normalize_observations(points)
         summary = _axis_summary([item.n for item in normalized])
@@ -92,7 +92,8 @@ class NumericalTests(unittest.TestCase):
         for hours, expected in (((0, 1, 2, 6, 7, 8), 3), ((0, 1, 3, 4, 5), 1)):
             with self.subTest(hours=hours):
                 points = [point(NOW + timedelta(hours=hour), 100) for hour in hours]
-                gaps = _detect_gaps(list(reversed(points)), points[0].data_time, points[-1].data_time)
+                normalized, cleaning = normalize_observations(list(reversed(points)), points[0].data_time, points[-1].data_time)
+                gaps = observation_quality(normalized, points[0].data_time, points[-1].data_time, cleaning=cleaning)['gaps']
                 self.assertEqual(len(gaps), 1)
                 self.assertEqual(gaps[0]['missing_hours'], expected)
 
@@ -142,58 +143,92 @@ class NumericalTests(unittest.TestCase):
         self.assertEqual(result['a']['count'], 2)
         self.assertAlmostEqual(result['a']['net_change_mm'], 1)
         self.assertAlmostEqual(result['b']['net_change_mm'], 2)
-from unittest.mock import AsyncMock, patch
-from app.agent.numerical_tool import analyze_gnss_numerically
+import json
+from app.agent.tools import get_displacement
 from app.beidou.schemas import Station
+from app.monitoring_data import monitoring_scope
+from runtime_fixtures import FakePlatform
 
-class NumericalToolTests(unittest.IsolatedAsyncioTestCase):
-    async def test_daily_long_history_and_compact_model_context(self):
-        client = AsyncMock()
-        client.__aenter__.return_value = client
-        client.get_daily_data.return_value = [point(NOW-timedelta(days=i),100-i*.001) for i in range(90)]
-        station = Station(station_uuid='11111111-1111-1111-1111-111111111111', station_name='测试点', station_type=3, group_uuid='g', group_name='测试组')
-        with patch('app.agent.numerical_tool._build_client', return_value=client), patch('app.agent.numerical_tool._resolve_station', return_value=station):
-            result = await analyze_gnss_numerically.ainvoke({
-                'type':'tool_call', 'id':'long-history', 'name':'analyze_gnss_numerically',
-                'args':{'station_name_or_uuid':station.station_uuid, 'sampling':'daily',
-                        'begin_time':(NOW-timedelta(days=90)).strftime('%Y-%m-%d %H:%M:%S'),
-                        'end_time':NOW.strftime('%Y-%m-%d %H:%M:%S')},
-            })
-        import json
-        self.assertNotIn('points', json.loads(result.content))
-        self.assertEqual(len(result.artifact['data']['points']), 90)
-        self.assertEqual(result.artifact['data']['sampling'], 'daily')
-        self.assertAlmostEqual(result.artifact['data']['features']['n']['robust_slope_mm_day'], 1)
-        self.assertEqual(client.get_daily_data.await_args.kwargs['sample_times'], ['15:00'])
 
-    async def test_tool_returns_reviewable_snapshot_without_visual_model(self):
-        client = AsyncMock()
-        client.__aenter__.return_value = client
-        client.get_daily_data.return_value = [point(NOW-timedelta(hours=i),100-i*.001) for i in range(10)]
-        station = Station(station_uuid='11111111-1111-1111-1111-111111111111', station_name='测试点', station_type=3, group_uuid='group', group_name='测试组')
-        with patch('app.agent.numerical_tool._build_client', return_value=client), patch('app.agent.numerical_tool._resolve_station', return_value=station):
-            result = await analyze_gnss_numerically.ainvoke({
-                'type': 'tool_call', 'id': 'numeric-1', 'name': 'analyze_gnss_numerically',
-                'args': {'station_name_or_uuid':'测试点', 'begin_time':(NOW-timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'), 'end_time':NOW.strftime('%Y-%m-%d %H:%M:%S')},
-            })
-        self.assertEqual(result.artifact['kind'], 'numerical')
-        self.assertEqual(len(result.artifact['data']['points']), 10)
-        self.assertAlmostEqual(result.artifact['data']['features']['n']['net_change_mm'], 9)
+STATION_A = Station(station_uuid='11111111-1111-1111-1111-111111111111', station_name='测试点', station_type=3,
+                    group_uuid='g', group_name='测试组', station_n0='100', station_e0='200', station_u0='300')
+STATION_B = Station(station_uuid='22222222-2222-2222-2222-222222222222', station_name='对比点', station_type=3,
+                    group_uuid='g', group_name='测试组')
+
+
+def window(days=0, hours=0):
+    return {
+        'begin_time': (NOW - timedelta(days=days, hours=hours)).strftime('%Y-%m-%d %H:%M:%S'),
+        'end_time': NOW.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
+async def displacement(platform, call_id='call', session_id=None, **args):
+    async with monitoring_scope(session_id, client_factory=lambda: platform):
+        return await get_displacement.ainvoke({'type': 'tool_call', 'id': call_id, 'name': 'get_displacement', 'args': args})
+
+
+class DisplacementToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_daily_long_history_uses_fixed_sample_time(self):
+        daily = [point(NOW.replace(hour=15) - timedelta(days=i), 100 - i * .001) for i in range(90)]
+        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: daily})
+        result = await displacement(platform, station_name_or_uuid=STATION_A.station_uuid, sampling='daily', **window(days=90))
+        content = json.loads(result.content)
+        self.assertAlmostEqual(content['features']['n']['robust_slope_mm_day'], 1)
+        self.assertEqual(content['quality']['missing_samples'], 0)
+        self.assertTrue(all(request[3] == ['15:00'] for request in platform.requests))
+
+    async def test_long_hourly_window_gives_features_without_flooding_model_context(self):
+        hourly = [point(NOW - timedelta(hours=i), 100 - i * .0001) for i in range(24 * 20)]
+        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
+        result = await displacement(platform, station_name_or_uuid='测试点', **window(days=20))
+        content = json.loads(result.content)
+        self.assertNotIn('points', content)
+        self.assertIn('points_note', content)
+        self.assertEqual(len(result.artifact['data']['points']), 24 * 20)
+        explicit = await displacement(platform, 'explicit', station_name_or_uuid='测试点', include_points=True, **window(days=20))
+        self.assertEqual(len(json.loads(explicit.content)['points']), 24 * 20)
+
+    async def test_short_window_returns_points_relative_to_fixed_reference(self):
+        hourly = [point(NOW - timedelta(hours=i), 100.002 - i * .001) for i in range(3)]
+        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
+        result = await displacement(platform, station_name_or_uuid='测试点', **window(hours=2))
+        content = json.loads(result.content)
+        self.assertEqual([round(item['dn'], 3) for item in content['points']], [0.0, 1.0, 2.0])
+        self.assertEqual(content['features']['n']['cum_end_mm'], content['points'][-1]['dn'])
+        self.assertEqual(result.artifact['kind'], 'gnss_series')
         self.assertIn('observedAt', result.artifact)
 
     async def test_same_group_comparison_uses_common_timestamps(self):
-        client = AsyncMock()
-        client.__aenter__.return_value = client
-        first = Station(station_uuid='11111111-1111-1111-1111-111111111111', station_name='A', station_type=3, group_uuid='g', group_name='G')
-        second = Station(station_uuid='22222222-2222-2222-2222-222222222222', station_name='B', station_type=3, group_uuid='g', group_name='G')
-        client.get_daily_data.side_effect = [
-            [point(NOW-timedelta(hours=i),100-i*.001) for i in range(10)],
-            [point(NOW-timedelta(hours=i),200-i*.002) for i in range(5)],
-        ]
-        with patch('app.agent.numerical_tool._build_client', return_value=client), patch('app.agent.numerical_tool._resolve_station', side_effect=[first,second]):
-            result = await analyze_gnss_numerically.ainvoke({'type':'tool_call','id':'compare','name':'analyze_gnss_numerically','args':{
-                'station_name_or_uuid':first.station_uuid, 'compare_station_uuids':[second.station_uuid],
-                'begin_time':(NOW-timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'), 'end_time':NOW.strftime('%Y-%m-%d %H:%M:%S')}})
+        platform = FakePlatform([STATION_A, STATION_B], {
+            STATION_A.station_uuid: [point(NOW - timedelta(hours=i), 100 - i * .001) for i in range(10)],
+            STATION_B.station_uuid: [point(NOW - timedelta(hours=i), 200 - i * .002) for i in range(5)],
+        })
+        result = await displacement(platform, station_name_or_uuid=STATION_A.station_uuid,
+                                    compare_stations=['对比点'], **window(days=1))
         common = result.artifact['data']['comparisons']['common_period']['n']
-        self.assertEqual(common[first.station_uuid]['count'], 5)
-        self.assertAlmostEqual(common[second.station_uuid]['net_change_mm'], 8)
+        self.assertEqual(common[STATION_A.station_uuid]['count'], 5)
+        self.assertAlmostEqual(common[STATION_B.station_uuid]['net_change_mm'], 8)
+
+    async def test_base_station_is_not_treated_as_missing_displacement(self):
+        base = Station(station_uuid='33333333-3333-3333-3333-333333333333', station_name='基准', station_type=1,
+                       group_uuid='g', group_name='测试组')
+        platform = FakePlatform([base], {base.station_uuid: []})
+        result = await displacement(platform, station_name_or_uuid='基准', **window(days=1))
+        self.assertEqual(result.status, 'success')
+        self.assertIn('基准站', result.content)
+        self.assertIsNone(result.artifact)
+        self.assertEqual(platform.requests, [])
+
+
+class MonitoringDataCacheTests(unittest.IsolatedAsyncioTestCase):
+    async def test_long_hourly_window_is_split_and_follow_up_reuses_session_blocks(self):
+        hourly = [point(NOW - timedelta(hours=i), 100) for i in range(24 * 60)]
+        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
+        await displacement(platform, 'first', 'cache-session', station_name_or_uuid='测试点', **window(days=59))
+        first_requests = len(platform.requests)
+        self.assertGreaterEqual(first_requests, 2)
+        await displacement(platform, 'second', 'cache-session', station_name_or_uuid='测试点', **window(days=3))
+        self.assertEqual(len(platform.requests), first_requests)
+        await displacement(platform, 'other', 'another-session', station_name_or_uuid='测试点', **window(days=3))
+        self.assertGreater(len(platform.requests), first_requests)

@@ -60,10 +60,6 @@ const samplingLabel = (data: GnssArtifactData) => {
   if (sampling?.mode === 'sample_times' && sampling.sample_times?.length) {
     return `每日 ${sampling.sample_times.join('、')}`;
   }
-  if (sampling?.mode === 'frequency' && sampling.frequency_effective) {
-    const frequency = sampling.frequency_effective;
-    return frequency.endsWith('h') ? `每 ${frequency.slice(0, -1)} 小时` : `每 ${frequency} 分钟`;
-  }
   return '每小时';
 };
 

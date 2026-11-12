@@ -17,7 +17,7 @@ from app.config import Settings
 from app.agent.graph import create_lma_agent
 from app.server.api import create_app
 from app.server.storage import migrate_database
-from runtime_fixtures import ScriptedModel
+from runtime_fixtures import FakePlatform, ScriptedModel
 
 DATABASE_URI = os.environ.get("LMA_TEST_DATABASE_URI", "")
 
@@ -51,11 +51,12 @@ class SelfHostedApiTests(unittest.TestCase):
         def agent_factory(saver, storage):
             return create_lma_agent(
                 self.model, agent_tools=[station], checkpointer=saver,
-                summary_model=ScriptedModel(script=[]), retry_delay=0, investigation_storage=storage,
+                summary_model=ScriptedModel(script=[]), retry_delay=0, storage=storage,
             )
 
         self.agent_factory = agent_factory
-        self.app = create_app(self.settings, agent_factory)
+        self.platform = FakePlatform()
+        self.app = create_app(self.settings, agent_factory, platform_client_factory=lambda: self.platform)
         options = {"loop_factory": asyncio.SelectorEventLoop} if sys.platform == "win32" else {}
         self.client = self.enterContext(TestClient(self.app, backend_options=options))
         self.session_id = self.client.post("/sessions", json={"name": "API 回归"}).json()["id"]
@@ -70,26 +71,26 @@ class SelfHostedApiTests(unittest.TestCase):
         return self.client.get(f"/sessions/{self.session_id}/state").json()
 
     def test_parameter_feedback_is_sanitized_in_sse_and_restored_history(self):
-        from app.agent.numerical_tool import analyze_gnss_numerically
-        from test_tool_feedback import query, INVALID_WINDOW
+        from app.agent.tools import get_displacement
+        from test_tool_feedback import STATION, TOO_LONG_HOURLY, evidence_kinds, query
 
-        self.model.script = [query('invalid-sse-window', INVALID_WINDOW), AIMessage(content='未取得观测，不能判断趋势。')]
+        self.model.script = [query('invalid-sse-window', TOO_LONG_HOURLY), AIMessage(content='未取得观测，不能判断趋势。')]
         self.app.state.agent = create_lma_agent(
-            self.model, agent_tools=[analyze_gnss_numerically], checkpointer=self.app.state.checkpointer,
-            investigation_storage=self.app.state.storage, summary_model=ScriptedModel(script=[]),
+            self.model, agent_tools=[get_displacement], checkpointer=self.app.state.checkpointer,
+            storage=self.app.state.storage, summary_model=ScriptedModel(script=[]),
         )
+        self.platform.stations = [STATION]
         response = self.run_message()
         self.assertIn('event: values', response.text)
         self.assertIn('tool_feedback', response.text)
-        self.assertNotIn('Value error', response.text)
-        self.assertNotIn('365个每日15:00', response.text)
+        self.assertNotIn('单次查询最多', response.text)
         state = self.state()
         self.assertEqual(state['latest_run']['status'], 'success')
         message = next(item for item in state['values']['messages'] if item['type'] == 'tool')
         self.assertEqual(message['status'], 'error')
         self.assertEqual(message['artifact']['kind'], 'tool_feedback')
-        self.assertEqual(self.client.get(f'/sessions/{self.session_id}/evidence').json()['items'], [])
-        self.assertIn('365个每日15:00', self.model.inputs[-1][-1].text)
+        self.assertEqual(self.client.portal.call(evidence_kinds, self.app.state.storage, self.session_id), [])
+        self.assertIn('单次查询最多 366 天', self.model.inputs[-1][-1].text)
 
     def test_suggestions_do_not_create_sessions_or_messages(self):
         before = self.client.get('/sessions').json()
@@ -140,38 +141,6 @@ class SelfHostedApiTests(unittest.TestCase):
         response = self.client.patch(f"/sessions/{self.session_id}", json={"name": "   "})
         self.assertEqual(response.status_code, 422)
         self.assertEqual(self.client.get(f"/sessions/{self.session_id}").json()["name"], "API 回归")
-
-    def test_resume_investigation_is_explicit_and_session_scoped(self):
-        investigation_id = str(uuid4())
-
-        async def seed():
-            await self.app.state.storage.save_progress(self.session_id, investigation_id, {
-                'goal': '复核测点', 'targets': [{
-                    'target_id': 'A', 'station_uuid': str(uuid4()), 'question': '复核北向变化',
-                    'begin_time': '2026-11-01T00:00:00', 'end_time': '2026-11-02T00:00:00',
-                    'evidence_ids': [],
-                }],
-                'covered': [], 'unresolved': ['A尚未复核'], 'stage_conclusion': '尚未完成',
-                'status': 'paused', 'end_reason': 'budget',
-            })
-
-        self.client.portal.call(seed)
-        records = self.client.get(f'/sessions/{self.session_id}/investigations').json()
-        self.assertEqual(records[0]['status'], 'paused')
-        self.assertEqual(self.model.inputs, [])
-        other_session = self.client.post('/sessions', json={'name': '其他会话'}).json()['id']
-        try:
-            rejected = self.client.post(f'/sessions/{other_session}/investigations/{investigation_id}/resume')
-            self.assertEqual(rejected.status_code, 404)
-        finally:
-            self.client.delete(f'/sessions/{other_session}')
-        response = self.client.post(f'/sessions/{self.session_id}/investigations/{investigation_id}/resume')
-        self.assertEqual(response.status_code, 200, response.text)
-        question = self.state()['values']['messages'][0]['content']
-        self.assertEqual(question, '继续调查')
-        self.assertNotIn(investigation_id, response.text)
-        self.assertIn(investigation_id, str(self.model.inputs))
-        self.assertEqual(self.state()['latest_run']['status'], 'success')
 
     def test_stream_and_history_keep_reasoning_and_message_context_private(self):
         self.model.script = [AIMessage(

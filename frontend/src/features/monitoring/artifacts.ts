@@ -8,8 +8,9 @@ export const isToolFeedback = (value: unknown): boolean =>
 
 const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
   'acquisition_failure',
-  'numerical',
-  'investigation_report',
+  'conclusions',
+  'computation',
+  'plan',
   'station_list',
   'gnss_series',
   'weather',
@@ -88,50 +89,38 @@ const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
     case 'acquisition_failure':
       return typeof value.station_name === 'string' && typeof value.message === 'string'
         && typeof value.requested_station === 'string';
-    case 'numerical':
-      return typeof value.station_uuid === 'string' && typeof value.station_name === 'string'
-        && typeof value.begin_time === 'string' && typeof value.end_time === 'string'
-        && ['hourly', 'daily'].includes(String(value.sampling)) && isRecord(value.features)
-        && isRecord(value.comparisons) && Array.isArray(value.points);
-    case 'investigation_report':
+    case 'conclusions':
       return (
-        typeof value.conclusion === 'string' &&
         Array.isArray(value.stations) &&
-        value.stations.every((station) => isRecord(station) && typeof station.station_name === 'string'
-          && typeof station.status === 'string' && typeof station.reason === 'string') &&
-        Array.isArray(value.findings) &&
-        value.findings.every((finding) => isRecord(finding) && typeof finding.text === 'string'
-          && ['fact', 'analysis', 'inference'].includes(String(finding.level))
-          && isStringArray(finding.evidence) && Array.isArray(finding.supports)
-          && finding.supports.every((support) => isRecord(support)
-            && typeof support.evidence_id === 'string' && typeof support.station_uuid === 'string'
-            && typeof support.rationale === 'string' && typeof support.claim === 'string'
-            && (support.begin_time == null || typeof support.begin_time === 'string')
-            && (support.end_time == null || typeof support.end_time === 'string'))) &&
-        isStringArray(value.next_steps)
+        value.stations.every((station) => isRecord(station)
+          && typeof station.station_uuid === 'string' && typeof station.station_name === 'string'
+          && typeof station.status === 'string' && typeof station.reason === 'string'
+          && typeof station.begin_time === 'string' && typeof station.end_time === 'string'
+          && isStringArray(station.evidence))
       );
-    case 'station_list': {
-      const groupsValid =
-        value.groups === undefined ||
-        value.groups === null ||
-        (Array.isArray(value.groups) &&
-          value.groups.every(
-            (group) =>
-              isRecord(group) &&
-              typeof group.group_name === 'string' &&
-              typeof group.station_count === 'number',
-          ));
-      const stationsValid =
-        value.stations === undefined ||
-        value.stations === null ||
-        (Array.isArray(value.stations) && value.stations.every(isStation));
+    case 'computation':
+      return (
+        typeof value.description === 'string' && typeof value.code === 'string'
+        && typeof value.truncated === 'boolean' && 'result' in value
+        && Array.isArray(value.inputs)
+        && value.inputs.every((input) => isRecord(input) && typeof input.evidence_id === 'string'
+          && typeof input.description === 'string')
+      );
+    case 'plan':
+      return (
+        Array.isArray(value.items) &&
+        value.items.every((item) => isRecord(item) && typeof item.content === 'string'
+          && ['pending', 'in_progress', 'completed'].includes(String(item.status)))
+      );
+    case 'station_list':
       return (
         typeof value.total === 'number' &&
-        groupsValid &&
-        stationsValid &&
-        (Array.isArray(value.groups) !== Array.isArray(value.stations))
+        Array.isArray(value.groups) &&
+        value.groups.every((group) => isRecord(group) && typeof group.group_name === 'string'
+          && typeof group.station_count === 'number') &&
+        Array.isArray(value.stations) &&
+        value.stations.every(isStation)
       );
-    }
     case 'gnss_series':
       return (
         typeof value.station_name === 'string' &&
