@@ -1,4 +1,5 @@
-import type { FC } from 'react';
+import { useEffect, useState, type FC } from 'react';
+import { isInspectionFromToday } from './inspection-date';
 import { ArrowRightIcon, RefreshCwIcon } from 'lucide-react';
 import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,7 @@ import type { InspectionStation } from '@/services/api';
 
 const formatFinishedAt = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit',
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   }).format(new Date(value));
 };
@@ -67,6 +68,17 @@ const AttentionRow: FC<{ station: InspectionStation }> = ({ station }) => {
 export const TodayAttention: FC = () => {
   const { goStations } = useNavigation();
   const { latest, isLoading, hasLoadError, isStarting, hasStartError, reload, start } = useInspection();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const update = () => setNow(Date.now());
+    const timer = window.setInterval(update, 60000);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, []);
+  const historical = Boolean(latest?.inspection && !isInspectionFromToday(latest.inspection.finished_at, now));
 
   const stations = latest?.stations ?? [];
   const hasResults = stations.length > 0;
@@ -91,12 +103,12 @@ export const TodayAttention: FC = () => {
 
   return (
     <section aria-label="今日" className="aui-thread-welcome-root today mb-8">
-      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-[1.75rem]">{headline}</h1>
+      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-[1.75rem]">{historical && <>上次巡检 · </>}{headline}</h1>
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        {latest?.inspection && <span className="tabular-nums">{formatFinishedAt(latest.inspection.finished_at)} 巡检</span>}
+        {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{formatFinishedAt(latest.inspection.finished_at)} 巡检</time>}
         <Button
           type="button"
-          variant={hasResults ? 'ghost' : 'outline'}
+          variant={hasResults && !historical ? 'ghost' : 'outline'}
           size="sm"
           disabled={isRunning || isStarting || isLoading}
           onClick={start}

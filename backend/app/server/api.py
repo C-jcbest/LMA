@@ -233,8 +233,9 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
     async def list_sessions(
         limit: int = Query(21, ge=1, le=100), offset: int = Query(0, ge=0),
         station_uuid: str | None = Query(None, min_length=1, max_length=200),
+        search: str | None = Query(None, max_length=200),
     ):
-        return await app.state.storage.list(limit, offset, station_uuid)
+        return await app.state.storage.list(limit, offset, station_uuid, search)
 
     @app.get("/sessions/conclusions")
     async def list_session_conclusions():

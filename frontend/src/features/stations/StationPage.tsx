@@ -35,6 +35,14 @@ const WINDOW_OPTIONS: readonly { value: string; label: string }[] = [
 
 type Panel = 'data' | 'chat';
 
+function StationInvestigationTitle() {
+  const title = useAuiState((state) => {
+    const current = state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId);
+    return current?.title || '新调查';
+  });
+  return <span className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>{title}</span>;
+}
+
 /** 在测点自己的会话运行时里开始新调查；必须渲染在 StationConversation 内。 */
 function NewStationInvestigationButton({ onStarted }: { onStarted: () => void }) {
   const aui = useAui();
@@ -65,7 +73,7 @@ function StationChatActions({ expanded, onExpand, onClose, onNewInvestigation }:
 }) {
   return (
     <div className="flex min-h-11 shrink-0 items-center gap-1 border-b px-3">
-      <span className="mr-auto text-sm font-medium">AI 调查</span>
+      <StationInvestigationTitle />
       <NewStationInvestigationButton onStarted={onNewInvestigation} />
       <Button variant="ghost" size="icon" title={expanded ? '恢复分栏' : '展开调查'} aria-label={expanded ? '恢复分栏' : '展开调查'} onClick={onExpand}>
         {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
@@ -76,10 +84,11 @@ function StationChatActions({ expanded, onExpand, onClose, onNewInvestigation }:
 }
 
 /** 历次调查在测点自己的对话栏里打开，用户不离开正在看的数据。 */
-function StationRecords({ records, onOpened }: { records: readonly StationRecord[]; onOpened: (anchorId: string) => void }) {
+function StationRecords({ records, anchorId, onOpened }: { records: readonly StationRecord[]; anchorId?: string; onOpened: (anchorId: string) => void }) {
   const aui = useAui();
+  const sessionId = useAuiState((state) => state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId);
   return (
-    <RecordList records={records} onOpen={async (record) => {
+    <RecordList records={records} selected={{ sessionId, anchorId }} onOpen={async (record) => {
       await aui.threads().switchToThread(record.session_id);
       onOpened(record.anchor_id);
     }} />
@@ -138,7 +147,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   );
 };
 
-const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (record: StationRecord) => Promise<void> }> = ({ records, onOpen }) => {
+const RecordList: FC<{ records: readonly StationRecord[]; selected: { sessionId?: string; anchorId?: string }; onOpen: (record: StationRecord) => Promise<void> }> = ({ records, selected, onOpen }) => {
   const [opening, setOpening] = useState<string | null>(null);
   const [hasError, setHasError] = useState(false);
 
@@ -161,6 +170,7 @@ const RecordList: FC<{ records: readonly StationRecord[]; onOpen: (record: Stati
           <button
             type="button"
             disabled={opening !== null}
+            aria-current={record.session_id === selected.sessionId && record.anchor_id === selected.anchorId ? 'true' : undefined}
             onClick={async () => {
               setOpening(record.anchor_id);
               setHasError(false);
@@ -215,17 +225,16 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
 export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningChange: (running: boolean) => void }> = ({ stationUuid, active, onRunningChange }) => {
   const client = useLmaClient();
   const globalAui = useAui();
-  const { returnFromStation } = useNavigation();
+  const { returnFromStation, resultAnchor: recordAnchor, showStationResult: setRecordAnchor } = useNavigation();
   const { latest } = useInspection();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
   const [days, setDays] = useState<TimelineDays>(90);
   const [timeline, setTimeline] = useState<StationTimeline | null>(null);
   const [hasError, setHasError] = useState(false);
   const [reloadCount, setReloadCount] = useState(0);
-  const [panel, setPanel] = useState<Panel>('data');
+  const [panel, setPanel] = useState<Panel>(() => new URL(window.location.href).searchParams.has('stationThread') ? 'chat' : 'data');
   const [chatMode, setChatMode] = useState<'split' | 'closed' | 'expanded'>('split');
   // 从调查记录打开的会话定位到那次结论；开始新调查后清除。
-  const [recordAnchor, setRecordAnchor] = useState<string | undefined>(undefined);
   const chatRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const chatResize = usePanelResize({
@@ -323,7 +332,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
         {timeline && (
           <div className="mt-9">
             <h2 className="mb-2 text-sm font-medium">调查记录</h2>
-            <StationRecords records={timeline.records} onOpened={(anchorId) => {
+            <StationRecords records={timeline.records} anchorId={recordAnchor} onOpened={(anchorId) => {
               setRecordAnchor(anchorId);
               showChat();
             }} />
@@ -353,7 +362,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           {/* 窄屏只保留这一行：返回、测点名、数据/调查切换，调查时附带新调查。 */}
           {!isSideBySide && <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
             <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
-            <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>
+            {panel === 'chat' ? <StationInvestigationTitle /> : <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>}
             {panel === 'chat' && <NewStationInvestigationButton onStarted={() => setRecordAnchor(undefined)} />}
             <Segmented
               label="测点页内容"

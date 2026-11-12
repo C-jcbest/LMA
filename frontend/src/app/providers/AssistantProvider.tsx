@@ -6,6 +6,10 @@ import { createSessionListAdapter } from '@/lib/session-list-adapter';
 import { FocusStationContext, LmaClientContext } from './LmaClientContext';
 
 const getUrlThreadId = () => new URL(window.location.href).searchParams.get('threadId') || undefined;
+const getStationThreadId = (stationUuid: string) => {
+  const params = new URL(window.location.href).searchParams;
+  return params.get('station') === stationUuid ? params.get('stationThread') || undefined : undefined;
+};
 
 type RecoveryError = 'history' | 'run' | null;
 const RequestedSessionContext = createContext<string | undefined>(undefined);
@@ -75,15 +79,17 @@ export function RecoveryNotice() {
 }
 
 export function AssistantProvider({ client, children, scope }: { client: LmaClient; children: ReactNode; scope?: StationConversationScope }) {
-  const [threadId, setThreadId] = useState(() => scope ? undefined : getUrlThreadId());
+  const [threadId, setThreadId] = useState(() => scope ? getStationThreadId(scope.stationUuid) : getUrlThreadId());
   const inheritedDrafts = useContext(StationDraftsContext);
   const ownDrafts = useRef(new Map<string, string>());
   const [error, setError] = useState<RecoveryError>(null);
   useEffect(() => {
-    if (scope) {
-      return;
-    }
-    const onPopState = () => setThreadId(getUrlThreadId());
+    const onPopState = () => {
+      if (scope && new URL(window.location.href).searchParams.get('station') !== scope.stationUuid) {
+        return;
+      }
+      setThreadId(scope ? getStationThreadId(scope.stationUuid) : getUrlThreadId());
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, [scope]);
@@ -91,15 +97,21 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
   const handleThreadIdChange = useCallback((id: string | undefined) => {
     setError(null);
     setThreadId(id);
-    if (scope) {
+    const url = new URL(window.location.href);
+    if (scope && url.searchParams.get('station') !== scope.stationUuid) {
       return;
     }
-    const url = new URL(window.location.href);
-    if ((url.searchParams.get('threadId') || undefined) === id) return;
+    const parameter = scope ? 'stationThread' : 'threadId';
+    if ((url.searchParams.get(parameter) || undefined) === id) {
+      return;
+    }
     if (id) {
-      url.searchParams.set('threadId', id);
+      url.searchParams.set(parameter, id);
     } else {
-      url.searchParams.delete('threadId');
+      url.searchParams.delete(parameter);
+    }
+    if (scope) {
+      url.searchParams.delete('result');
     }
     window.history.pushState(null, '', url);
   }, [scope]);

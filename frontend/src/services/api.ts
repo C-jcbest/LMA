@@ -108,12 +108,15 @@ export class LmaClient {
     return response.json();
   }
 
-  async listSessions(params: { limit: number; offset: number; stationUuid?: string }): Promise<Session[]> {
+  async listSessions(params: { limit: number; offset: number; stationUuid?: string; search?: string }, signal?: AbortSignal): Promise<Session[]> {
     const query = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
     if (params.stationUuid) {
       query.set('station_uuid', params.stationUuid);
     }
-    return (await this.request(`/sessions?${query}`)).json();
+    if (params.search) {
+      query.set('search', params.search);
+    }
+    return (await this.request(`/sessions?${query}`, { signal })).json();
   }
 
   async createSession(stationUuid?: string): Promise<Session> {

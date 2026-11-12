@@ -205,8 +205,23 @@ class SessionStorage:
             )
             return await cursor.fetchall()
 
-    async def list(self, limit: int, offset: int, station_uuid: str | None = None) -> list[dict]:
+    async def list(self, limit: int, offset: int, station_uuid: str | None = None, search: str | None = None) -> list[dict]:
         async with self.pool.connection() as connection:
+            if search and search.strip():
+                # 按文字匹配而非 LIKE 通配符；从数据库全量记录中筛选后再分页。
+                query = search.strip()
+                cursor = await connection.execute(
+                    """SELECT s.* FROM lma_sessions s
+                       WHERE (%s::text IS NULL OR (s.station_uuid = %s AND s.archived = false))
+                         AND (strpos(lower(s.name), lower(%s)) > 0
+                           OR EXISTS (SELECT 1 FROM lma_station_records r WHERE r.session_id = s.id
+                             AND strpos(lower(r.station_name), lower(%s)) > 0)
+                           OR EXISTS (SELECT 1 FROM lma_station_results r WHERE r.session_id = s.id
+                             AND strpos(lower(r.station_name), lower(%s)) > 0))
+                       ORDER BY s.updated_at DESC, s.id DESC LIMIT %s OFFSET %s""",
+                    (station_uuid, station_uuid, query, query, query, limit, offset),
+                )
+                return await cursor.fetchall()
             if station_uuid is not None:
                 cursor = await connection.execute(
                     """SELECT * FROM lma_sessions WHERE station_uuid = %s AND archived = false

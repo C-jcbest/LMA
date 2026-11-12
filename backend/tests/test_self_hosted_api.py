@@ -70,6 +70,28 @@ class SelfHostedApiTests(unittest.TestCase):
     def state(self):
         return self.client.get(f"/sessions/{self.session_id}/state").json()
 
+    def test_search_covers_unloaded_titles_and_station_names(self):
+        marker = str(uuid4())
+        self.client.patch(f'/sessions/{self.session_id}', json={'name': f'历史分析-{marker}'})
+        for index in range(22):
+            identifier = self.client.post('/sessions', json={'name': f'其他记录-{index}'}).json()['id']
+            self.addCleanup(lambda identifier=identifier: self.client.delete(f'/sessions/{identifier}'))
+        self.assertNotIn(self.session_id, [item['id'] for item in self.client.get('/sessions?limit=20').json()])
+        result = self.client.get('/sessions', params={'search': marker, 'limit': 1}).json()
+        self.assertEqual([item['id'] for item in result], [self.session_id])
+
+        async def add_station_records():
+            async with self.app.state.storage.pool.connection() as connection:
+                for anchor in ['first', 'second']:
+                    await connection.execute(
+                        'INSERT INTO lma_station_records(session_id,anchor_id,station_uuid,station_name,question) VALUES (%s,%s,%s,%s,%s)',
+                        (self.session_id, anchor, marker, f'测点_{marker}', '复核'),
+                    )
+        self.client.portal.call(add_station_records)
+        result = self.client.get('/sessions', params={'search': f'测点_{marker}'}).json()
+        self.assertEqual([item['id'] for item in result], [self.session_id])
+        self.assertEqual(self.client.get('/sessions', params={'search': marker, 'offset': 1}).json(), [])
+
     def test_parameter_feedback_is_sanitized_in_sse_and_restored_history(self):
         from app.agent.tools import get_displacement
         from test_tool_feedback import STATION, TOO_LONG_HOURLY, evidence_kinds, query

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, type ReactNode } from 'react';
-import { AuiConfig, AuiProvider, useAuiEvent } from '@assistant-ui/react';
+import { AuiConfig, AuiProvider, useAuiEvent, useAuiState } from '@assistant-ui/react';
 import { AssistantProvider } from '@/app/providers/AssistantProvider';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { StationInspector } from '@/features/monitoring/StationInspector';
@@ -11,6 +11,17 @@ function InvestigationEvents({ onComplete, onRunningChange, active }: {
   active: boolean;
 }) {
   const { closeInspector } = useStationInspector();
+  const sessionId = useAuiState((state) => state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId);
+  useEffect(() => {
+    // 返回仍在运行的测点调查时，地址也恢复到正在查看的会话。
+    if (active && sessionId) {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has('stationThread')) {
+        url.searchParams.set('stationThread', sessionId);
+        window.history.replaceState(null, '', url);
+      }
+    }
+  }, [active, sessionId]);
   useEffect(() => {
     if (!active) {
       closeInspector();

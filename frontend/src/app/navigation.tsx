@@ -19,6 +19,7 @@ interface NavigationValue extends NavigationLocation {
   goStations: () => void;
   goRecords: () => void;
   openStation: (stationUuid: string) => void;
+  showStationResult: (resultAnchor?: string) => void;
 }
 
 const NavigationContext = createContext<NavigationValue | null>(null);
@@ -27,7 +28,7 @@ const readLocation = (): NavigationLocation => {
   const params = new URL(window.location.href).searchParams;
   const stationUuid = params.get('station');
   if (stationUuid) {
-    return { page: 'station', stationUuid };
+    return { page: 'station', stationUuid, resultAnchor: params.get('result') ?? undefined };
   }
   const page = params.get('page');
   if (page === 'home' || page === 'stations' || page === 'records') {
@@ -45,6 +46,7 @@ const writeLocation = (location: NavigationLocation) => {
   url.searchParams.delete('page');
   url.searchParams.delete('station');
   url.searchParams.delete('result');
+  url.searchParams.delete('stationThread');
   if (location.page === 'station' && location.stationUuid) {
     url.searchParams.set('station', location.stationUuid);
   } else {
@@ -84,6 +86,16 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       navigate({ page: 'conversation', stationUuid: null });
     },
     returnFromStation: () => navigate(stationOrigin.current),
+    showStationResult: (resultAnchor) => {
+      const url = new URL(window.location.href);
+      if (resultAnchor) {
+        url.searchParams.set('result', resultAnchor);
+      } else {
+        url.searchParams.delete('result');
+      }
+      window.history.replaceState(null, '', url);
+      setLocation((current) => ({ ...current, resultAnchor }));
+    },
     goStations: () => navigate({ page: 'stations', stationUuid: null }),
     goRecords: () => navigate({ page: 'records', stationUuid: null }),
     openStation: (stationUuid) => {

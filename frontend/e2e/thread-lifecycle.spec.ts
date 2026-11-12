@@ -92,7 +92,7 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
     expect(unchanged).not.toContain('请慢速回答切换会话场景');
     await page.reload();
     await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
-    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toHaveCount(0);
+    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
   } finally {
     if (dedicated) {
       await client.cancelRun(dedicated.id);

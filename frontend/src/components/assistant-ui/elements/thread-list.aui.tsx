@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSessionVerdict } from "@/features/records/SessionConclusions";
 import { investigationStatusLabel } from "@/features/monitoring/investigation";
 import { StatusDot } from "@/features/monitoring/status";
+import { RecordSearchResults } from "@/features/records/RecordSearchResults";
 import { cn } from "@/lib/utils";
 import {
   AuiIf,
@@ -80,7 +81,7 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
     <ThreadListNavigationContext.Provider value={onNavigate}>
       <ThreadListVariantContext.Provider value={variant}>
         <ThreadListRoot>
-          {variant === "all" && hasThreads && (
+          {variant === "all" && (
             <ThreadListSearch value={search} onValueChange={setSearch} />
           )}
           <div
@@ -89,6 +90,8 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
           >
             {variant === "recent" ? (
               <RecentThreadListItems />
+            ) : search.trim() ? (
+              <RecordSearchResults key={search.trim()} query={search.trim()} onOpen={onNavigate} />
             ) : (
               <>
                 <ThreadListItems searchQuery={hasThreads ? search : ""} />
@@ -179,7 +182,7 @@ export const ThreadListSearch = forwardRef<
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
         aria-label="搜索会话"
-        placeholder="搜索已加载的记录"
+        placeholder="搜索标题或测点"
         className={cn(
           "h-9 border-transparent bg-muted ps-8 text-sm shadow-none focus-visible:bg-background",
           className,

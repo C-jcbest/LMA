@@ -416,6 +416,18 @@ for (const anchor of ['question-1', 'followup']) {
     await expect(page.getByRole('radio', { name: 'AI 调查', exact: true })).toHaveAttribute('aria-checked', 'true');
     const target = anchor === 'question-1' ? page.getByText('测试点 A 最近怎么样？') : page.getByText('接下来观察什么？');
     await expect(target).toBeInViewport();
+    await expect(page).toHaveURL(/stationThread=report-session/);
+    await expect(page.getByRole('main').getByText('测试分组巡检', { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(target).toBeInViewport();
+    await expect(page.getByRole('radio', { name: 'AI 调查', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await page.getByRole('button', { name: '开始新的测点调查' }).click();
+    await expect(page).not.toHaveURL(/stationThread=/);
+    await expect(target).toHaveCount(0);
+    await page.goBack();
+    await expect(target).toBeInViewport();
+    await page.getByRole('radio', { name: '数据', exact: true }).click();
+    await expect(page.getByRole('button', { name: /需人工复核.*长期同向变化/ })).toHaveAttribute('aria-current', 'true');
   });
 }
 

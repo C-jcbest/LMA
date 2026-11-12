@@ -222,3 +222,39 @@ test('列表失败在窄屏直接可见，失败重试不循环，恢复后保�
   await page.getByRole('button', { name: '打开导航' }).click();
   await expect(page.getByRole('button', { name: sessions[0].name, exact: true })).toBeVisible();
 });
+
+test('记录搜索查询全量接口，失败可重试并打开未加载记录', async ({ page }) => {
+  await mockSessions(page);
+  let fail = true;
+  const remote = { ...sessions[0], id: 'layout-remote', name: '很早的测点调查' };
+  await page.route('**/api/sessions?*', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    if (!params.has('search')) return route.fulfill({ json: sessions });
+    expect(params.get('search')).toBe('远端测点');
+    return route.fulfill(fail ? { status: 503, json: {} } : { json: [remote] });
+  });
+  await page.route('**/api/sessions/layout-remote', (route) => route.fulfill({ json: remote }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/?page=records');
+  await page.getByRole('searchbox', { name: '搜索会话' }).fill('远端测点');
+  await expect(page.getByRole('alert')).toContainText('搜索结果尚未载入');
+  fail = false;
+  await page.getByRole('button', { name: '重试', exact: true }).click();
+  await page.getByRole('button', { name: /很早的测点调查/ }).click();
+  await expect(page).toHaveURL(/threadId=layout-remote/);
+});
+
+test('非当天巡检突出历史状态，当天结果保留正常标题', async ({ page }) => {
+  await mockSessions(page);
+  let finishedAt = '2020-01-01T00:00:00Z';
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: {
+    running: null, latest_attempt: null, inspection: { id: 'snapshot', finished_at: finishedAt },
+    stations: [{ station_uuid: 'a', station_name: 'A', group_name: '', screening: '未见明显变化', reasons: [], metrics: {}, trend: [], previous_screening: null, last_conclusion: null }],
+  } }));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('上次巡检');
+  await expect(page.locator('time')).toContainText('2020');
+  finishedAt = new Date().toISOString();
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('1 个测点未见明显变化');
+});
