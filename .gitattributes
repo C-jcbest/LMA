@@ -14,3 +14,14 @@
 /ops/*.sh text eol=lf
 /ops/*.py text eol=lf
 /.github/workflows/*.yml text eol=lf
+
+# Deployment archives contain runtime and build inputs, not development evidence.
+/.github export-ignore
+/docs export-ignore
+/backend/tests export-ignore
+/backend/evaluations export-ignore
+/frontend/tests export-ignore
+/frontend/e2e export-ignore
+/AGENTS.md export-ignore
+/README.md export-ignore
+/prd.md export-ignore

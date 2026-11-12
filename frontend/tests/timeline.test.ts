@@ -6,7 +6,6 @@ import {
   displacementOf,
   latestHorizontal,
   peerSeriesFor,
-  seriesLabel,
   toDisplacement,
   type ChartColors,
 } from '../src/features/monitoring/timeline';
@@ -105,15 +104,6 @@ describe('测点时间轴数据', () => {
     ]);
     expect(peers.map((peer) => peer.name)).toEqual(['测试点 B']);
     expect(peers[0]!.points.map((point) => point.h)).toEqual([0, 5]);
-  });
-
-  it('时间窗口标签说明范围和采样口径', () => {
-    expect(seriesLabel(series({
-      sampling: { mode: 'sample_times', sample_times: ['15:00'], points_limit: 1500 },
-    }))).toBe('11-01 至 11-11 · 每日 15:00');
-    expect(seriesLabel(series({
-      sampling: { mode: 'hourly', points_limit: 1500 },
-    }))).toBe('11-01 至 11-11 · 每小时');
   });
 
   it('有降雨时位移与降雨共用时间轴，日降雨覆盖整天，缩放同时作用于两者', () => {

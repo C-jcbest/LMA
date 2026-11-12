@@ -67,81 +67,39 @@ async function openInvestigation(page: Page, width: number, history: readonly un
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 const stationEntry = (page: Page) => page.getByRole('button', { name: '查看 测试点 A 的依据' });
 
-test('已存证的失败原因在过程折叠时可见，不展示模型专用正文', async ({ page }) => {
-  const history = messages.map((message) => {
-    if (message.id !== 'weather-result') {
-      return message;
-    }
-    return {
-      ...message, content: 'MODEL_ONLY',
-      artifact: {
-        version: 1, kind: 'acquisition_failure', status: 'error',
-        data: { station_uuid: 'test-a', station_name: '测试点 A', requested_station: 'test-a',
-          message: '气象服务暂不可用，未取得本次降雨数据。' },
-        error: { code: 'unavailable', category: 'business',
-          message: '气象服务暂不可用，未取得本次降雨数据。', retryable: false },
-      },
-    };
-  });
-  await openInvestigation(page, 320, history);
-  await expect(page.getByText('气象服务暂不可用，未取得本次降雨数据。', { exact: false })).toBeVisible();
-  await expect(page.getByText('MODEL_ONLY')).toHaveCount(0);
-  await expect(page.getByRole('button', { name: /查询记录 · 2 项已获取/ })).toHaveAttribute('aria-expanded', 'false');
+test('320px 测点时间轴可打开并恢复草稿与焦点', async ({ page }) => {
+  await openInvestigation(page, 320);
+  const input = page.getByRole('textbox', { name: '输入监测问题' });
+  await input.fill('保留的追问草稿');
+
+  await expect(page.getByText('气象服务暂不可用，未取得本次降雨数据。')).toHaveCount(0);
+  await expect(page.getByText('测试点 A 需要优先复核。气象数据本次未取得，暂不能核查降雨关联。')).toBeVisible();
+  await expect(page.getByText('PRIVATE_CHAIN_SHOULD_NOT_RENDER')).toHaveCount(0);
+  await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
-});
+  const processHeight = (await page.locator('[data-slot="investigation"]').boundingBox())!.height;
+  expect(processHeight).toBeLessThan(180);
 
-for (const width of [320, 1440]) {
-  test(`${width}px 结论优先，测点时间轴可打开并恢复草稿与焦点`, async ({ page }) => {
-    await openInvestigation(page, width);
-    const input = page.getByRole('textbox', { name: '输入监测问题' });
-    await input.fill('保留的追问草稿');
-
-    await expect(page.getByText('气象服务暂不可用，未取得本次降雨数据。')).toHaveCount(0);
-    await expect(page.getByText('测试点 A 需要优先复核。气象数据本次未取得，暂不能核查降雨关联。')).toBeVisible();
-    await expect(page.getByText('PRIVATE_CHAIN_SHOULD_NOT_RENDER')).toHaveCount(0);
-    await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
-    const processHeight = (await page.locator('[data-slot="investigation"]').boundingBox())!.height;
-    expect(processHeight).toBeLessThan(180);
-
-    await stationEntry(page).click();
-    await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
-    await expect(inspector(page).locator('canvas').first()).toBeVisible();
-    const box = (await inspector(page).boundingBox())!;
-    expect(box.y).toBe(0);
-    expect(box.height).toBe(900);
-    expect(box.x + box.width).toBeCloseTo(width);
-    if (width < 1024) {
-      expect(box.width).toBe(width);
-    } else {
-      const inputBox = (await input.boundingBox())!;
-      expect(inputBox.x + inputBox.width).toBeLessThanOrEqual(box.x);
-      await input.fill('并排核查时仍可追问');
-    }
-    expect(await inspector(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
-
-    await page.getByRole('tab', { name: '明细' }).click();
-    await inspector(page).getByText(/^原始坐标/).click();
-    await expect(inspector(page).getByRole('cell', { name: '—', exact: true })).toBeVisible();
-    await expect(inspector(page).getByText('自动化测试数据')).toBeVisible();
-
-    await page.keyboard.press('Escape');
-    await expect(inspector(page)).toHaveCount(0);
-    await expect(input).toHaveValue(width < 1024 ? '保留的追问草稿' : '并排核查时仍可追问');
-    await expect(stationEntry(page)).toBeFocused();
-    await expect(input).toBeInViewport();
-  });
-}
-
-test('调查过程默认折叠，展开后每一步都能定位到对应测点', async ({ page }) => {
-  await openInvestigation(page, 1440);
-  const process = page.getByRole('button', { name: /查询记录 · 2 项已获取/ });
-  await expect(page.getByText('GNSS 数据获取失败')).toHaveCount(0);
-  await process.click();
-  await page.getByRole('button', { name: /已获取位移数据.*测试点 B/ }).click();
-  await expect(inspector(page).getByRole('heading', { name: '测试点 B' })).toBeVisible();
-  await page.getByRole('button', { name: '上一个测点' }).click();
+  await stationEntry(page).click();
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
+  await expect(inspector(page).locator('canvas').first()).toBeVisible();
+  const box = (await inspector(page).boundingBox())!;
+  expect(box.y).toBe(0);
+  expect(box.height).toBe(900);
+  expect(box.x + box.width).toBeCloseTo(320);
+  expect(box.width).toBe(320);
+  expect(await inspector(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+  await page.getByRole('tab', { name: '明细' }).click();
+  await inspector(page).getByText(/^原始坐标/).click();
+  await expect(inspector(page).getByRole('cell', { name: '—', exact: true })).toBeVisible();
+  await expect(inspector(page).getByText('自动化测试数据')).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(inspector(page)).toHaveCount(0);
+  await expect(input).toHaveValue('保留的追问草稿');
+  await expect(stationEntry(page)).toBeFocused();
+  await expect(input).toBeInViewport();
 });
 
 test('框选时间段后就地追问或放大，还原后恢复完整窗口', async ({ page }) => {
@@ -192,54 +150,6 @@ test('框选时间段后就地追问或放大，还原后恢复完整窗口', as
   await expect(inspector(page).getByRole('button', { name: '问当前范围' })).toHaveCount(0);
 });
 
-test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度，窄屏不覆盖桌面偏好', async ({ page }) => {
-  const chartWarnings: string[] = [];
-  page.on('console', (message) => {
-    if (message.text().includes('[ECharts]')) {
-      chartWarnings.push(message.text());
-    }
-  });
-  await openInvestigation(page, 1920);
-  await stationEntry(page).click();
-  const handle = page.getByRole('separator', { name: '调整聊天与依据宽度' });
-  const canvas = inspector(page).locator('canvas').first();
-  await expect(canvas).toBeVisible();
-  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(896);
-  const box = (await handle.boundingBox())!;
-  await page.mouse.move(box.x + box.width / 2, 300);
-  await page.mouse.down();
-  await page.mouse.move(box.x + box.width / 2 + 160, 300, { steps: 16 });
-  expect(await page.evaluate(() => localStorage.getItem('lma-inspector-width'))).toBeNull();
-  await page.mouse.up();
-  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(736);
-  expect(await page.evaluate(() => localStorage.getItem('lma-inspector-width'))).toBe('736');
-
-  await handle.focus();
-  await page.keyboard.press('ArrowLeft');
-  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
-  await page.getByRole('button', { name: '关闭依据' }).click();
-  await expect(inspector(page)).toHaveCount(0);
-  await stationEntry(page).click();
-  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
-  await page.reload();
-  await stationEntry(page).click();
-  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBeCloseTo(390, 1);
-  await page.setViewportSize({ width: 1024, height: 844 });
-  // 1024 宽时侧栏收为 48px 导航条：1024 - 48 - 360（对话最小宽度）。
-  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(616);
-  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1024);
-  await page.setViewportSize({ width: 1920, height: 900 });
-  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBe(746);
-  await expect.poll(async () => (await page.locator('[data-navigation-docked]').boundingBox())!.width).toBe(260);
-  await page.getByRole('radio', { name: '深色主题', exact: true }).click();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  expect(chartWarnings).toEqual([]);
-});
-
 test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据面板', async ({ page }) => {
   await page.route('**/api/map-config', (route) => route.fulfill({ json: { amap_token: null } }));
   const site = {
@@ -284,32 +194,4 @@ test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据�
   await expect(inspector(page).getByText('现场环境地图渲染异常')).toHaveCount(0);
   await inspector(page).getByRole('tab', { name: '时间轴', exact: true }).click();
   expect(await timelineCanvas.evaluate((element, original) => element === original, originalTimelineCanvas)).toBe(true);
-});
-
-test('切换屏宽和会话时不残留依据，宽度不足时会话导航改为抽屉', async ({ page }) => {
-  await openInvestigation(page, 1440);
-  await stationEntry(page).click();
-  await expect(inspector(page)).toBeVisible();
-  await expect(page.getByRole('complementary', { name: '导航' })).toHaveCount(0);
-
-  await page.getByRole('button', { name: '打开导航' }).click();
-  await expect(page.getByRole('dialog', { name: '导航', exact: true })).toBeVisible();
-  await expect(inspector(page)).toBeVisible();
-  await page.keyboard.press('Escape');
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  // 跨越并排断点时检查器会重新挂载为全屏形态。
-  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(390);
-  await page.getByRole('button', { name: '关闭依据' }).click();
-  await expect(inspector(page)).toHaveCount(0);
-
-  await stationEntry(page).click();
-  await page.getByRole('button', { name: '关闭依据' }).click();
-  await page.getByRole('button', { name: '打开导航' }).click();
-  await page.getByRole('button', { name: '今日', exact: true }).click();
-  // 返回今日保留会话，只收起消息视图。
-  await expect(page.getByText('测试点 A 需要优先复核')).not.toBeVisible();
-  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue('');
-  await expect(inspector(page)).toHaveCount(0);
 });

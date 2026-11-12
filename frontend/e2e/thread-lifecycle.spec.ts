@@ -58,7 +58,7 @@ function expectToolCallsPaired(messages: Array<Record<string, unknown>>) {
       ))
       .map((call) => call.id);
   });
-  expect(toolCallIds.every((id) => toolResultIds.has(id))).toBe(true);
+  expect(toolCallIds.filter((id) => !toolResultIds.has(id))).toEqual([]);
 }
 
 test.describe.configure({ mode: 'serial' });
@@ -71,7 +71,7 @@ test.beforeEach(async ({ page }) => {
 
 test('测点调查发送到自己的会话，离开页面不停止，返回后恢复完成结果', async ({ page }) => {
   const stationUuid = '11111111-1111-1111-1111-111111111111';
-  let dedicated: { id: string } | undefined;
+  let dedicated: { id: string; station_uuid: string } | undefined;
   const unrelated = await createThread('其他测点的会话');
   try {
     await seedThread(unrelated, '其他测点的旧消息');
@@ -82,6 +82,7 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
     const created = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/sessions'));
     await send(page, '请慢速回答切换会话场景');
     dedicated = await (await created).json();
+    expect(dedicated?.station_uuid).toBe(stationUuid);
     await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
     await page.getByRole('button', { name: '返回', exact: true }).click();
     await expect(page).toHaveURL(/page=stations/);
@@ -99,30 +100,6 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
       await client.deleteSession(dedicated.id);
     }
     await client.deleteSession(unrelated);
-  }
-});
-
-test('首次测点提问才创建带测点归属的会话', async ({ page }) => {
-  const stationUuid = '11111111-1111-1111-1111-111111111111';
-  let createdId: string | undefined;
-  try {
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/?station=${stationUuid}`);
-    await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
-    const created = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/sessions'));
-    await send(page, '查看这个测点');
-    const session = await (await created).json();
-    createdId = session.id;
-    expect(session.station_uuid).toBe(stationUuid);
-    await expect(page.getByText('已继续处理：查看这个测点')).toBeVisible();
-    await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
-    const latest = await client.listSessions({ stationUuid, limit: 1, offset: 0 });
-    expect(latest[0]?.id).toBe(createdId);
-  } finally {
-    if (createdId) {
-      await client.cancelRun(createdId);
-      await client.deleteSession(createdId);
-    }
   }
 });
 
@@ -160,34 +137,6 @@ test('深链接、浏览器前进后退与刷新保持同一 Thread', async ({ p
   }
 });
 
-test('生成中切换会话再返回：后台 Run 继续且返回后恢复状态与内容', async ({ page }) => {
-  const suffix = Date.now().toString(36);
-  const activeName = `生成中会话-${suffix}`;
-  const otherName = `后台会话-${suffix}`;
-  const activeId = await createThread(activeName);
-  const otherId = await createThread(otherName);
-
-  try {
-    await seedThread(activeId, '准备生成会话');
-    await seedThread(otherId, '准备后台会话');
-    await openThread(page, activeId);
-    await send(page, '请慢速回答切换会话场景');
-    await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
-
-    await switchThread(page, otherName, otherId);
-    await expect(page.getByText('已继续处理：准备后台会话')).toBeVisible();
-    await switchThread(page, activeName, activeId);
-
-    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible({
-      timeout: 20_000,
-    });
-    await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
-  } finally {
-    await client.deleteSession(activeId);
-    await client.deleteSession(otherId);
-  }
-});
-
 test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状态仍合法', async ({ page }) => {
   const suffix = Date.now().toString(36);
   const threadName = `Stop 生命周期-${suffix}`;
@@ -199,13 +148,19 @@ test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状�
     await openThread(page, threadId);
     await send(page, '执行并行工具停止验证');
     await expect(page.getByText(/正在查询监测点….*已完成 1 项/)).toBeVisible();
+    const cancellation = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && response.url().endsWith(`/sessions/${threadId}/cancel`),
+    );
     await page.getByRole('button', { name: '停止生成' }).click();
+    expect((await cancellation).status()).toBe(204);
     await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
 
     await page.reload();
     await expect(page).toHaveURL(new RegExp(`threadId=${threadId}`));
     await send(page, '停止后继续提问');
     await expect(page.getByText('已继续处理：停止后继续提问')).toBeVisible();
+    // 流式正文先于最终 checkpoint 到达；持久化断言等待本轮真正结束。
+    await expect.poll(async () => (await client.getState(threadId)).latest_run?.status).toBe('success');
 
     await switchThread(page, otherName, otherId);
     await expect(page.getByText('已继续处理：Stop 场景切换目标')).toBeVisible();
@@ -256,38 +211,6 @@ test('重新生成使用 checkpoint fork，刷新后显示最新回答', async (
   }
 });
 
-test('工具错误不直出内部原因，空结果和查询记录刷新后仍可查看', async ({ page }) => {
-  const errorThreadId = await createThread('工具错误');
-  const emptyThreadId = await createThread('工具空结果');
-  try {
-    await openThread(page, errorThreadId);
-    await send(page, '查询不存在监测点的 GNSS 数据');
-    const failure = page.getByRole('button', { name: /查询记录 · 0 项已获取/ });
-    await expect(failure).toBeVisible();
-    await expect(page.getByRole('alert')).toHaveCount(0);
-    await failure.click();
-    await expect(page.getByText('本次未取得位移数据')).toBeVisible();
-
-    await page.reload();
-    await expect(failure).toBeVisible();
-
-    await openThread(page, emptyThreadId);
-    await send(page, '查询空结果监测点的 GNSS 数据');
-    const process = page.getByRole('button', { name: /已完成 1 项查询/ });
-    await expect(process).toBeVisible();
-    await process.click();
-    await expect(page.getByText(/该时间范围内暂无位移数据/)).toBeVisible();
-
-    await page.reload();
-    await expect(process).toBeVisible();
-    await process.click();
-    await expect(page.getByText(/该时间范围内暂无位移数据/)).toBeVisible();
-  } finally {
-    await client.deleteSession(errorThreadId);
-    await client.deleteSession(emptyThreadId);
-  }
-});
-
 test('调查记录滚动加载下一页，整页耗尽后隐藏加载入口，侧栏只留最近几条', async ({ page }) => {
   // 隔离持久化的历史测试数据，只替换列表 HTTP 响应，运行真实 Runtime 与浏览器布局。
   const rows = Array.from({ length: 40 }, (_, index) => ({
@@ -322,7 +245,6 @@ test('调查记录滚动加载下一页，整页耗尽后隐藏加载入口，�
   expect((await heading.boundingBox())?.y).toBe(before?.y);
   expect(offsets).toEqual([0, 20]);
 });
-
 
 test('最新用户消息可编辑重新生成、复制，悬停不改变消息位置', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);

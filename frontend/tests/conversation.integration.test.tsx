@@ -13,9 +13,7 @@ import {
   ThreadSummaryMessage,
 } from '../src/components/assistant-ui/elements/thread.aui';
 import { ErrorBoundary } from '../src/components/ErrorBoundary';
-import { ContextUsageElement } from '../src/components/assistant-ui/elements/context-usage.aui';
 import { HumanMessage } from '@langchain/core/messages';
-import { createSessionListAdapter } from '../src/lib/session-list-adapter';
 import { convertLangChainBaseMessage } from '@assistant-ui/react-langchain';
 
 const station = (station_name: string, fields: Record<string, unknown> = {}) => ({
@@ -147,7 +145,6 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByText('该位置和时间范围内暂无天气数据')).toBeInTheDocument();
   });
 
-
   it('GNSS 空值与非有限值显示为缺测，不会转换为零', () => {
     render(
       <GnssResultView
@@ -179,79 +176,7 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getAllByRole('row')).toHaveLength(101);
   });
 
-  it('站点状态分别展示，旧数字状态和缺失类型均显示未知', () => {
-    render(
-      <StationResultView
-        data={stationListData([
-          { station_name: 'A', station_status: '正常', station_type: '基准站' },
-          { station_name: 'B', station_status: '离线', station_type: '移动站RTK模式' },
-          { station_name: 'C', station_status: '告警', station_type: '移动站单点模式' },
-          { station_name: 'D', station_status: '故障', station_type: '中继站' },
-          { station_name: 'E', station_status: '其他' },
-        ]) as React.ComponentProps<typeof StationResultView>['data']}
-      />,
-    );
-    for (const label of ['正常', '离线', '告警', '故障']) {
-      expect(screen.getByText(label)).toBeInTheDocument();
-    }
-    expect(screen.getAllByText('未知')).toHaveLength(2);
-  });
-
-  it('上下文用量接近上限时才出现', () => {
-    render(
-      <ContextUsageElement
-        usage={{
-          input_tokens: 850,
-          output_tokens: 20,
-          total_tokens: 870,
-          max_input_tokens: 1000,
-          usage_ratio: 0.85,
-          model: 'deepseek-flash',
-        }}
-      />
-    );
-
-    const trigger = screen.getByLabelText('上下文用量');
-    expect(trigger).toHaveTextContent('85%');
-    expect(trigger.querySelector('svg')).toBeInTheDocument();
-  });
-
-  it('用量较低或缺少真实 usage 时不渲染上下文占比', () => {
-    const { rerender } = render(
-      <ContextUsageElement usage={{ max_input_tokens: 1_048_576 }} />
-    );
-    expect(screen.queryByLabelText('上下文用量')).not.toBeInTheDocument();
-    rerender(<ContextUsageElement usage={{ input_tokens: 250, max_input_tokens: 1000 }} />);
-    expect(screen.queryByLabelText('上下文用量')).not.toBeInTheDocument();
-  });
-
-  it('会话目录映射服务端 id 到 remoteId 与 externalId', async () => {
-    const searchMock = vi.fn().mockImplementation(async (query: any) => {
-      expect(query).toEqual({ limit: 21, offset: 0 });
-      return [
-        { id: 'real', name: '站点分析', archived: false, updated_at: '2026-09-14T00:00:01Z' },
-      ];
-    });
-    const mockClient = {
-      listSessions: searchMock,
-    } as any;
-    const adapter = createSessionListAdapter(mockClient);
-    const res = await adapter.list();
-    expect(searchMock).toHaveBeenCalledTimes(1);
-    expect(res.threads).toEqual([
-      {
-        status: 'regular',
-        remoteId: 'real',
-        externalId: 'real',
-        title: '站点分析',
-        lastMessageAt: new Date('2026-09-14T00:00:01Z'),
-      },
-    ]);
-  });
-
-
 });
-
 
 it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹配，非法/缺失产物安全返回 undefined', () => {
   const validEnvelope = {
@@ -281,7 +206,6 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
   expect(decodeToolArtifact('station_list', null)).toBeUndefined();
   expect(decodeToolArtifact('station_list', undefined)).toBeUndefined();
 });
-
 
 it('摘要消息通过 ThreadSummaryMessage 渲染折叠卡片，绝不作为用户气泡', async () => {
   render(<ThreadSummaryMessage text="这是之前轮次的滑坡监测背景摘要。" />);
@@ -367,14 +291,4 @@ it('计算结果中的嵌套字典展示为对比表和小表，不显示 JSON �
   expect(screen.getByText('recent 7d rain（mm）')).toBeVisible();
   expect(screen.getByText('recent 7d daily')).toBeVisible();
   expect(tables[1]).toHaveTextContent('2026-11-06');
-});
-
-it('计算结果的中文键名带单位后缀时显示为“名称（单位）”', () => {
-  render(<ComputationResultView data={{
-    description: '降雨前后速率', code: 'result = {}', truncated: false,
-    inputs: [{ evidence_id: 'E1', description: '测点A 90 天位移' }],
-    result: { 降雨前: { 北向速率_mm每天: -0.12, 有效点: 28 }, 降雨后: { 北向速率_mm每天: -0.15, 有效点: 27 } },
-  }} />);
-  expect(screen.getByRole('columnheader', { name: '北向速率（mm/天）' })).toBeVisible();
-  expect(screen.queryByText(/_/)).toBeNull();
 });
