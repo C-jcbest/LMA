@@ -252,12 +252,12 @@
   background: var(--card);
 }
 
-/* 地图测点：圆点、名称和水平位移箭头都由 DOM 绘制，不依赖底图瓦片。 */
+/* 地图位置锚点保持小巧，44px 点击区域便于触屏选择；信息标签不改变真实坐标。 */
 .evidence-map-marker {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  width: 44px;
+  height: 44px;
+  font-family: var(--font-sans);
   appearance: none;
   border: 0;
   padding: 0;
@@ -265,80 +265,228 @@
   cursor: pointer;
 }
 .evidence-map-marker__dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 14px;
   height: 14px;
-  border: 2px solid #fff;
-  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--popover);
+  border-radius: 50%;
   background: var(--marker-color);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.35);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 30%), 0 2px 5px rgb(0 0 0 / 30%);
+}
+.evidence-map-marker[data-reference='true'] .evidence-map-marker__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.evidence-map-marker[data-current='true'] .evidence-map-marker__dot {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--popover) 55%, transparent), 0 2px 5px rgb(0 0 0 / 30%);
 }
 .evidence-map-marker__arrow {
   position: absolute;
-  bottom: calc(100% - 7px);
+  bottom: 50%;
   left: calc(50% - 1.5px);
   width: 3px;
   background: var(--marker-color);
   transform-origin: 50% 100%;
   pointer-events: none;
+  filter: drop-shadow(0 0 1px var(--popover));
 }
 .evidence-map-marker__arrow::before {
-  content: "";
+  content: '';
   position: absolute;
   top: -6px;
   left: -4.5px;
   border-inline: 6px solid transparent;
   border-bottom: 8px solid var(--marker-color);
 }
-/* 名称放在圆点右侧，避开上下方向的位移箭头。 */
 .evidence-map-marker__label {
   position: absolute;
   top: 50%;
-  left: calc(100% + 6px);
+  left: calc(50% + 14px);
+  display: grid;
+  gap: 2px;
+  width: max-content;
+  min-width: 72px;
+  max-width: 168px;
   transform: translateY(-50%);
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgb(255 255 255 / 0.92);
-  color: #1f2024;
-  font-size: 12px;
-  white-space: nowrap;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--marker-color);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  text-align: start;
+  line-height: 1.3;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 16%);
 }
-.evidence-map-marker__label {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
+.evidence-map-marker__name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .evidence-map-marker__value {
-  color: #55575e;
-  font-variant-numeric: tabular-nums;
-}
-.evidence-map-popup {
-  display: grid;
-  gap: 4px;
-  font-size: 13px;
-  line-height: 1.45;
-}
-.evidence-map-popup__muted {
+  overflow: hidden;
   color: var(--muted-foreground);
-  font-size: 12px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.evidence-map-popup__action {
-  justify-self: start;
-  margin-top: 4px;
-  padding: 2px 0;
-  color: var(--foreground);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
+.evidence-map-marker:is(:hover, :focus-visible) .evidence-map-marker__label {
+  border-color: var(--marker-color);
 }
-.evidence-map-marker--label-start .evidence-map-marker__label {
-  left: auto;
-  right: calc(100% + 6px);
-}
+.evidence-map-marker:focus-visible { outline: none; }
 .evidence-map-marker:focus-visible .evidence-map-marker__label {
-  outline: 2px solid #f2ad3a;
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
+
+/* 自定义信息窗沿用应用主题，单位、测点身份与真实数据各有独立阅读层次。 */
+.map-station-popup {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--marker-color);
+  border-radius: 14px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: start;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 22%);
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+.map-station-popup__header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.map-station-popup__header > div { min-width: 0; }
+.map-station-popup__body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.map-station-popup__context {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.map-station-popup__name {
+  margin-block: 3px 5px;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.map-station-popup__type {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+.map-station-popup__close {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  margin: -8px -8px 0 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 24px;
+  cursor: pointer;
+}
+.map-station-popup__close:hover { background: var(--muted); }
+.map-station-popup__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.map-station-popup__status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--marker-color);
+}
+.map-station-popup__reason {
+  margin-block: 5px 12px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.map-station-popup__metric {
+  margin-block: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--muted);
+}
+.map-station-popup__metric-label { color: var(--muted-foreground); font-size: 11px; }
+.map-station-popup__metric-value {
+  margin-top: 2px;
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+}
+.map-station-popup__metric-unit {
+  margin-inline-start: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.map-station-popup__direction { margin-top: 5px; font-size: 12px; }
+.map-station-popup__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin-block: 12px;
+}
+.map-station-popup__field-wide { grid-column: 1 / -1; }
+.map-station-popup__fields dt { color: var(--muted-foreground); font-size: 10px; }
+.map-station-popup__fields dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.map-station-popup__note { margin-block: 10px; color: var(--muted-foreground); font-size: 12px; }
+.map-station-popup__action {
+  display: block;
+  flex-shrink: 0;
+  width: 100%;
+  min-height: 40px;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+.map-station-popup button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .assistant-answer > .aui-md + .aui-md {
   margin-top: 16px;
 }
@@ -510,59 +658,6 @@
   [data-slot="dialog-content"],
   .inspector-overlay { animation: none !important; }
 }
-
-/* 地图测点使用 DOM Marker，不依赖远程矢量图层的加载结果；底图为影像，配色不随主题变化。 */
-.site-map-marker {
-  appearance: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  filter: drop-shadow(0 2px 3px rgb(0 0 0 / 45%));
-}
-
-.site-map-marker__dot {
-  width: 13px;
-  height: 13px;
-  border: 2px solid #1f2024;
-  border-radius: 999px;
-  background: #fafafa;
-}
-
-.site-map-marker--center .site-map-marker__dot {
-  width: 18px;
-  height: 18px;
-  border-width: 3px;
-  background: #f2ad3a;
-}
-
-.site-map-marker__label {
-  margin-top: 3px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  color: #fafafa;
-  background: rgb(31 32 36 / 88%);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.site-map-marker:focus-visible .site-map-marker__label {
-  outline: 2px solid #f2ad3a;
-  outline-offset: 2px;
-}
-
-:root .amap-info-content {
-  background: var(--popover);
-  color: var(--popover-foreground);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-:root .amap-info-close { color: var(--muted-foreground); }
-:root .amap-info-sharp { border-top-color: var(--popover); }
 
 @keyframes investigation-enter {
   from { opacity: 0; transform: translateY(10px); }

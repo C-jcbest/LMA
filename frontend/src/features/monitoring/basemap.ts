@@ -7,6 +7,10 @@ import type { LmaClient } from '@/services/api';
 import type { Coordinates } from './coordinates';
 
 export type BaseLayer = 'satellite' | 'road';
+export interface MapLayerSelection {
+  baseLayer: BaseLayer;
+  showRoads: boolean;
+}
 export type AMapState = { status: 'loading' } | { status: 'ready'; sdk: typeof AMap } | { status: 'error'; message: string };
 
 /** 只在展示边界转换，观测数据、环境查询和坐标文字仍使用 WGS84。 */
@@ -64,30 +68,35 @@ export function useAMap(): AMapState {
   return state;
 }
 
-/** 路网为普通地图，影像附带中文标注；两张地图共享相同的底图切换。 */
-export function createBaseLayers(sdk: typeof AMap, base: BaseLayer) {
+/** 卫星影像默认不叠加道路线；RoadNet 同时包含道路与地名，只由用户主动开启。 */
+export function createBaseLayers(sdk: typeof AMap, selection: MapLayerSelection) {
   const road = new sdk.TileLayer();
   const satellite = new sdk.TileLayer.Satellite();
-  const labels = new sdk.TileLayer.RoadNet();
-  const select = (value: BaseLayer) => {
-    if (value === 'road') {
+  const roadLabels = new sdk.TileLayer.RoadNet();
+  const select = ({ baseLayer, showRoads }: MapLayerSelection) => {
+    if (baseLayer === 'road') {
       road.show();
       satellite.hide();
-      labels.hide();
+      roadLabels.hide();
     } else {
       road.hide();
       satellite.show();
-      labels.show();
+      if (showRoads) {
+        roadLabels.show();
+      } else {
+        roadLabels.hide();
+      }
     }
   };
-  select(base);
-  return { layers: [road, satellite, labels], select };
+  select(selection);
+  return { layers: [road, satellite, roadLabels], select };
 }
 
 /** 当前高德 2.0 手势处理会吞掉滚轮而不缩放；两张地图统一用公开 API 控制。 */
 export function bindMapWheelZoom(map: AMap.Map, container: HTMLElement) {
   const onWheel = (event: WheelEvent) => {
-    if (event.ctrlKey || event.deltaY === 0) {
+    const insidePopup = event.target instanceof Element && event.target.closest('.map-station-popup');
+    if (insidePopup || event.ctrlKey || event.deltaY === 0) {
       return;
     }
     event.preventDefault();

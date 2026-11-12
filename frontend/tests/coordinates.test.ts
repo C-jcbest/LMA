@@ -1,6 +1,28 @@
 import { expect, it } from 'vitest';
 import { validCoordinates } from '../src/features/monitoring/coordinates';
-import { amapPosition, bindMapWheelZoom } from '../src/features/monitoring/basemap';
+import { amapPosition, bindMapWheelZoom, createBaseLayers } from '../src/features/monitoring/basemap';
+
+it('卫星图默认只有影像，道路与地名需主动开启，普通地图不重复叠加路网', () => {
+  class Layer {
+    visible = true;
+    show() {
+      this.visible = true;
+    }
+    hide() {
+      this.visible = false;
+    }
+  }
+  const sdk = { TileLayer: Object.assign(Layer, { Satellite: Layer, RoadNet: Layer }) } as unknown as typeof AMap;
+  const base = createBaseLayers(sdk, { baseLayer: 'satellite', showRoads: false });
+  const visibility = () => base.layers.map((layer) => (layer as unknown as Layer).visible);
+  expect(visibility()).toEqual([false, true, false]);
+  base.select({ baseLayer: 'satellite', showRoads: true });
+  expect(visibility()).toEqual([false, true, true]);
+  base.select({ baseLayer: 'road', showRoads: true });
+  expect(visibility()).toEqual([true, false, false]);
+  base.select({ baseLayer: 'satellite', showRoads: false });
+  expect(visibility()).toEqual([false, true, false]);
+});
 
 it('拒绝线上出现的经纬度填反、越界和缺失值，不猜测交换坐标', () => {
   expect(validCoordinates({ latitude: 116.467877157, longitude: 40.005701073 })).toBe(false);
@@ -37,6 +59,13 @@ it('地图滚轮可放大缩小并限制级别，移除监听后恢复页面滚�
   expect(wheel(-240)).toBe(true);
   expect(zoom).toBe(17);
   wheel(6, WheelEvent.DOM_DELTA_LINE);
+  expect(zoom).toBe(16);
+  const popup = document.createElement('div');
+  popup.className = 'map-station-popup';
+  container.append(popup);
+  const popupWheel = new WheelEvent('wheel', { deltaY: 240, bubbles: true, cancelable: true });
+  popup.dispatchEvent(popupWheel);
+  expect(popupWheel.defaultPrevented).toBe(false);
   expect(zoom).toBe(16);
   zoom = 20;
   wheel(-240);

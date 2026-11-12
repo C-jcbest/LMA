@@ -211,10 +211,16 @@ test('场地引用定位原始资料，地图不可用和调整面板不影响�
   await expect(inspector(page).getByText(/以下测点坐标缺失或超出经纬度范围，未绘制：坐标填反的测试点/)).toBeVisible();
   await expect(inspector(page).getByText('30.000000, 121.000000')).toBeVisible();
   await expect(inspector(page).getByRole('radio', { name: '卫星图', exact: true })).toBeChecked();
+  const roads = inspector(page).getByRole('checkbox', { name: '道路与地名', exact: true });
+  await expect(roads).not.toBeChecked();
+  await roads.check();
+  await expect(roads).toBeChecked();
   await expect(inspector(page).getByRole('button', { name: '地层（区域图）', exact: true })).toHaveCount(0);
   await expect(inspector(page).getByRole('button', { name: '构造线', exact: true })).toHaveCount(0);
   await inspector(page).getByRole('radio', { name: '普通地图', exact: true }).click();
   await expect(inspector(page).getByRole('radio', { name: '普通地图', exact: true })).toBeChecked();
+  await inspector(page).getByRole('radio', { name: '卫星图', exact: true }).click();
+  await expect(roads).toBeChecked();
   const handle = page.getByRole('separator', { name: '调整聊天与依据宽度' });
   const originalWidth = (await inspector(page).boundingBox())!.width;
   await handle.focus();
