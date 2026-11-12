@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CARD_HREF_PREFIX, insertEvidenceCards, STATION_MAP_CARD } from '../src/features/monitoring/evidence-cards';
+import { CARD_HREF_PREFIX, evidenceNumbers, insertEvidenceCards, STATION_MAP_CARD } from '../src/features/monitoring/evidence-cards';
 
 const card = (id: string) => `[依据卡片](${CARD_HREF_PREFIX}${id})`;
 const options = (overrides: Partial<Parameters<typeof insertEvidenceCards>[1]> = {}) => ({
@@ -10,6 +10,10 @@ const options = (overrides: Partial<Parameters<typeof insertEvidenceCards>[1]> =
 });
 
 describe('正文依据卡片位置', () => {
+  it('依据按首次引用顺序编号，忽略内部 ID、错误数字和重复引用的标签', () => {
+    const text = '[E30d8d1](#evidence-E30d8d1) [99](#evidence-Eother)\n\n[2](#evidence-E30d8d1)';
+    expect([...evidenceNumbers(text)]).toEqual([['E30d8d1', 1], ['Eother', 2]]);
+  });
   it('卡片跟在第一次引用的段落后，再次引用只保留编号', () => {
     const markdown = [
       '## 一、数据现象',

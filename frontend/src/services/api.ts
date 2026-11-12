@@ -143,7 +143,7 @@ export class LmaClient {
     return (await response.json()).checkpoint_id;
   }
 
-  async getMapConfig(): Promise<{ tianditu_token: string | null }> {
+  async getMapConfig(): Promise<{ amap_token: string | null }> {
     return (await this.request('/map-config', { signal: AbortSignal.timeout(10000) })).json();
   }
 

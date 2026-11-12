@@ -1,18 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { LngLatBounds, Map as MapLibreMap, Marker, NavigationControl, Popup, setWorkerUrl } from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
-import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { Segmented } from '@/components/ui/segmented';
-import {
-  BASE_LAYER_IDS,
-  MISSING_TOKEN_NOTICE,
-  tiandituLayers,
-  tiandituSources,
-  useTiandituToken,
-  type BaseLayer,
-} from './basemap';
-
-setWorkerUrl(mapWorkerUrl);
+import { amapPosition, bindMapWheelZoom, createBaseLayers, useAMap, type BaseLayer } from './basemap';
+import { validCoordinates } from './coordinates';
 
 export interface MapStation {
   id: string;
@@ -85,7 +74,7 @@ function createPopupNode(station: MapStation, onSelect: (id: string) => void) {
   return node;
 }
 
-/** 测点标记不依赖底图瓦片：瓦片失败或未配置密钥时点位、名称和方向仍然可见。 */
+/** 测点名称、状态和位移方向独立于底图图层。 */
 function createMarkerNode(station: MapStation, largestMillimeters: number) {
   const node = document.createElement('button');
   node.type = 'button';
@@ -123,127 +112,95 @@ function createMarkerNode(station: MapStation, largestMillimeters: number) {
 
 export default function StationMap({ stations, onSelect }: { stations: readonly MapStation[]; onSelect: (id: string) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MapLibreMap | null>(null);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
-  const tiandituToken = useTiandituToken();
-  const token = tiandituToken.status === 'ready' ? tiandituToken.token : null;
-  const [baseLayer, setBaseLayer] = useState<BaseLayer>('terrain');
+  const amap = useAMap();
+  const sdk = amap.status === 'ready' ? amap.sdk : null;
+  const [baseLayer, setBaseLayer] = useState<BaseLayer>('road');
   const baseLayerRef = useRef(baseLayer);
   baseLayerRef.current = baseLayer;
+  const layersRef = useRef<ReturnType<typeof createBaseLayers> | null>(null);
+  const [mapError, setMapError] = useState('');
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || stations.length === 0 || tiandituToken.status === 'loading') {
+    const located = stations.filter(validCoordinates);
+    if (!container || !sdk || located.length === 0) {
       return;
     }
-    const bounds = new LngLatBounds();
-    for (const station of stations) {
-      bounds.extend([station.longitude, station.latitude]);
-    }
-    const map = new MapLibreMap({
-      container,
-      style: {
-        version: 8,
-        sources: token ? tiandituSources(token) : {},
-        layers: token ? tiandituLayers(baseLayerRef.current) : [],
-      },
-      bounds,
-      fitBoundsOptions: { padding: 72, maxZoom: 16 },
-      attributionControl: { compact: true },
-      // 地图嵌在滚动的正文里：滚轮和触屏单指都留给页面滚动，缩放用按钮或双指。
-      scrollZoom: false,
-      dragPan: window.matchMedia('(pointer: fine)').matches,
+    const layers = createBaseLayers(sdk, baseLayerRef.current);
+    layersRef.current = layers;
+    const map = new sdk.Map(container, {
+      layers: layers.layers,
+      center: amapPosition(located[0]!),
+      zoom: 16,
+      zooms: [2, 20],
+      viewMode: '2D',
+      scrollWheel: false,
+      resizeEnable: true,
+      dragEnable: window.matchMedia('(pointer: fine)').matches,
     });
-    mapRef.current = map;
-    map.addControl(new NavigationControl({ showCompass: false }), 'bottom-right');
-
-    const largest = Math.max(0, ...stations.map((station) => horizontalMillimeters(station) ?? 0));
-    const markers = stations.map((station) => new Marker({
-      element: createMarkerNode(station, largest),
-      anchor: 'center',
-    })
-      .setLngLat([station.longitude, station.latitude])
-      .setPopup(new Popup({ offset: 14, closeButton: true, maxWidth: '18rem' })
-        .setDOMContent(createPopupNode(station, (id) => onSelectRef.current(id))))
-      .addTo(map));
-
-    // 名称默认在圆点右侧；右边放不下（如窄屏靠右的测点）时改放左侧，不被地图边框裁掉。
-    const placeLabels = () => {
-      const width = container.clientWidth;
-      for (const marker of markers) {
-        const element = marker.getElement();
-        const label = element.querySelector<HTMLElement>('.evidence-map-marker__label');
-        if (!label) continue;
-        const x = map.project(marker.getLngLat()).x;
-        const roomOnRight = width - x - LABEL_EDGE_MARGIN;
-        const roomOnLeft = x - LABEL_EDGE_MARGIN;
-        const needed = label.offsetWidth + LABEL_GAP;
-        element.classList.toggle('evidence-map-marker--label-start', needed > roomOnRight && roomOnLeft > roomOnRight);
-      }
-    };
-    placeLabels();
-    map.on('move', placeLabels);
-    map.on('resize', placeLabels);
-
-    let resizeFrame: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (resizeFrame !== null) {
-        return;
-      }
-      resizeFrame = requestAnimationFrame(() => {
-        resizeFrame = null;
-        if (container.clientWidth > 0 && container.clientHeight > 0) {
-          map.resize();
-        }
+    map.addControl(new sdk.ToolBar({ position: 'RB' }));
+    map.addControl(new sdk.Scale());
+    const unbindWheel = bindMapWheelZoom(map, container);
+    const popup = new sdk.InfoWindow({ offset: new sdk.Pixel(0, -14) });
+    const largest = Math.max(0, ...located.map((station) => horizontalMillimeters(station) ?? 0));
+    const markers = located.map((station) => {
+      const element = createMarkerNode(station, largest);
+      const position = amapPosition(station);
+      const marker = new sdk.Marker({ position, content: element, anchor: 'center' });
+      element.addEventListener('click', () => {
+        popup.setContent(createPopupNode(station, (id) => onSelectRef.current(id)));
+        popup.open(map, position);
       });
+      marker.setMap(map);
+      return { marker, element };
     });
-    observer.observe(container);
+    map.setFitView(markers.map((item) => item.marker), true, [72, 72, 72, 72], 16);
 
-    return () => {
-      observer.disconnect();
-      if (resizeFrame !== null) {
-        cancelAnimationFrame(resizeFrame);
+    const placeLabels = () => {
+      for (const { marker, element } of markers) {
+        const label = element.querySelector<HTMLElement>('.evidence-map-marker__label');
+        if (!label) {
+          continue;
+        }
+        const x = map.lngLatToContainer(marker.getPosition()!).x;
+        const roomOnRight = container.clientWidth - x - LABEL_EDGE_MARGIN;
+        const roomOnLeft = x - LABEL_EDGE_MARGIN;
+        element.classList.toggle('evidence-map-marker--label-start', label.offsetWidth + LABEL_GAP > roomOnRight && roomOnLeft > roomOnRight);
       }
-      markers.forEach((marker) => marker.remove());
-      map.remove();
-      mapRef.current = null;
     };
-  }, [stations, tiandituToken.status, token]);
+    map.on('mapmove', placeLabels);
+    map.on('zoomchange', placeLabels);
+    map.on('resize', placeLabels);
+    map.on('complete', placeLabels);
+    const loadTimeout = window.setTimeout(() => setMapError('高德地图暂时不可用，请检查地图密钥授权和网络后刷新。'), 20000);
+    map.on('complete', () => {
+      window.clearTimeout(loadTimeout);
+      setMapError('');
+    });
+    return () => {
+      unbindWheel();
+      window.clearTimeout(loadTimeout);
+      popup.close();
+      map.destroy();
+      layersRef.current = null;
+    };
+  }, [stations, sdk]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !token) {
-      return;
-    }
-    const apply = () => {
-      for (const [base, layerIds] of Object.entries(BASE_LAYER_IDS)) {
-        for (const layerId of layerIds) {
-          if (map.getLayer(layerId)) {
-            map.setLayoutProperty(layerId, 'visibility', base === baseLayer ? 'visible' : 'none');
-          }
-        }
-      }
-    };
-    if (map.isStyleLoaded()) {
-      apply();
-    } else {
-      map.once('load', apply);
-    }
-  }, [baseLayer, token]);
+    layersRef.current?.select(baseLayer);
+  }, [baseLayer]);
 
   return (
     <div className="space-y-2">
-      {token && (
-        <Segmented
-          label="底图"
-          value={baseLayer}
-          options={[{ value: 'terrain', label: '地形' }, { value: 'satellite', label: '影像' }]}
-          onValueChange={(value) => setBaseLayer(value as BaseLayer)}
-        />
-      )}
+      <Segmented label="底图" value={baseLayer}
+        options={[{ value: 'road', label: '路网' }, { value: 'satellite', label: '影像' }]}
+        onValueChange={(value) => setBaseLayer(value as BaseLayer)} />
       <div ref={containerRef} role="region" aria-label="测点位置与水平位移方向" className="h-72 w-full overflow-hidden rounded-lg bg-muted/40" />
-      {tiandituToken.status === 'ready' && !token && <p className="text-xs text-muted-foreground">{MISSING_TOKEN_NOTICE}</p>}
+      {amap.status === 'loading' && <p className="text-xs text-muted-foreground">正在加载高德地图…</p>}
+      {amap.status === 'error' && <p role="status" className="text-xs text-muted-foreground">{amap.message}</p>}
+      {mapError && <p role="status" className="text-xs text-muted-foreground">{mapError}</p>}
     </div>
   );
 }

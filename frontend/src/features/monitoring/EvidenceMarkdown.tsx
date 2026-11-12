@@ -1,20 +1,21 @@
-import { Children, isValidElement, useCallback, useMemo, useState, type ComponentProps, type FC, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, useCallback, useContext, useMemo, useState, type ComponentProps, type FC, type ReactNode } from 'react';
 import { useAuiState } from '@assistant-ui/react';
 import { MarkdownText } from '@/components/markdown-text';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { cardIdFromHref, citedEvidenceIds, insertEvidenceCards } from './evidence-cards';
+import { cardIdFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenceCards } from './evidence-cards';
 import { EvidenceCard, hasEvidenceCard, mapStationsOf } from './EvidenceCards';
-import { buildSteps, collectStations } from './investigation';
+import { buildSteps, collectStations, type InvestigationStep } from './investigation';
 import { StepInlineResult } from './InvestigationProcess';
 import { useStationInspector } from './StationInspectorContext';
 
+const EvidenceContext = createContext<{ steps: InvestigationStep[]; numbers: Map<string, number> }>({ steps: [], numbers: new Map() });
+
 const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => {
   const messageId = useAuiState((state) => state.message.id);
-  const parts = useAuiState((state) => state.message.parts);
+  const { steps, numbers } = useContext(EvidenceContext);
   const { openStation } = useStationInspector();
   const [expanded, setExpanded] = useState(false);
-  const steps = useMemo(() => buildSteps(parts, collectStations(parts)), [parts]);
   if (cardIdFromHref(href) !== null) {
     // 卡片标记只应独占一段，由段落组件渲染；混在句中时不显示。
     return null;
@@ -23,16 +24,17 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
     return <a {...props} href={href} className="aui-md-a text-primary underline underline-offset-2">{children}</a>;
   }
   const id = href.slice('#evidence-'.length);
+  const citationNumber = numbers.get(id);
   const step = steps.find((item) => item.evidenceId === id && item.state === 'complete');
   // 不存在或尚未收到的依据不生成跳转，避免暴露内部编号和伪造引用。
-  if (!step || (!step.stationId && !step.inlineEnvelope)) {
-    return <span className="text-muted-foreground text-xs">{children}</span>;
+  if (!step || !citationNumber || (!step.stationId && !step.inlineEnvelope)) {
+    return <span className="text-muted-foreground text-xs" title="原始依据未随本次结果提供">依据暂缺</span>;
   }
   return (
     <>
       <button
         type="button"
-        aria-label={`查看依据 ${children}：${step.detail ?? step.label}`}
+        aria-label={`查看依据 ${citationNumber}：${step.detail ?? step.label}`}
         className="evidence-citation"
         onClick={() => {
           if (step.stationId) {
@@ -41,7 +43,7 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
             setExpanded(true);
           }
         }}
-      >{children}</button>
+      >{citationNumber}</button>
       {!step.stationId && (
         <Dialog open={expanded} onOpenChange={setExpanded}>
           <DialogContent className="max-h-[85dvh] overflow-y-auto">
@@ -83,6 +85,10 @@ export const EvidenceMarkdown: FC = () => {
   const text = useAuiState((state) => (state.part.type === 'text' ? state.part.text : ''));
   const stations = useMemo(() => collectStations(parts), [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
+  const context = useMemo(() => ({
+    steps,
+    numbers: evidenceNumbers(parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n\n')),
+  }), [parts, steps]);
 
   const textParts = parts.flatMap((part) => (part.type === 'text' && part.text.trim() ? [part.text] : []));
   const earlierTexts = textParts.slice(0, Math.max(0, textParts.indexOf(text)));
@@ -99,5 +105,9 @@ export const EvidenceMarkdown: FC = () => {
     [cardKey, alreadyShownKey, includeStationMap],
   );
 
-  return <MarkdownText components={components} preprocess={preprocess} />;
+  return (
+    <EvidenceContext.Provider value={context}>
+      <MarkdownText components={components} preprocess={preprocess} />
+    </EvidenceContext.Provider>
+  );
 };

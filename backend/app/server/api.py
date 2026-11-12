@@ -226,8 +226,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
 
     @app.get("/map-config")
     async def map_config():
-        # 天地图是浏览器直接取瓦片，密钥本就会出现在瓦片请求里；只下发给通过访问保护的用户。
-        return {"tianditu_token": settings.tianditu_token or None}
+        # 浏览器使用该密钥加载高德 SDK；仅向通过访问保护的用户提供地图配置。
+        return {"amap_token": settings.amap_token or None}
 
     @app.get("/sessions")
     async def list_sessions(

@@ -1,76 +1,60 @@
 import { useEffect, useState } from 'react';
-import type { SourceSpecification } from 'maplibre-gl';
+import AMapLoader from '@amap/amap-jsapi-loader';
+import '@amap/amap-jsapi-types';
+import gcoord from 'gcoord';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import type { LmaClient } from '@/services/api';
+import type { Coordinates } from './coordinates';
 
-export type BaseLayer = 'satellite' | 'terrain';
+export type BaseLayer = 'satellite' | 'road';
+export type AMapState = { status: 'loading' } | { status: 'ready'; sdk: typeof AMap } | { status: 'error'; message: string };
 
-const TIANDITU_ATTRIBUTION = '© 天地图';
-const TIANDITU_SUBDOMAINS = ['0', '1', '2', '3', '4', '5', '6', '7'];
+/** 只在展示边界转换，观测数据、环境查询和坐标文字仍使用 WGS84。 */
+export const amapPosition = (location: Coordinates): [number, number] =>
+  gcoord.transform([location.longitude, location.latitude], gcoord.WGS84, gcoord.GCJ02) as [number, number];
 
-/** 天地图 Web 墨卡托瓦片（TILEMATRIXSET=w），坐标与 WGS84 测点一致，无需偏移换算。 */
-const tiandituSource = (layer: string, token: string, maxzoom: number): SourceSpecification => ({
-  type: 'raster',
-  tiles: TIANDITU_SUBDOMAINS.map((subdomain) => (
-    `https://t${subdomain}.tianditu.gov.cn/${layer}_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0`
-    + `&LAYER=${layer}&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk=${token}`
-  )),
-  tileSize: 256,
-  maxzoom,
-  attribution: TIANDITU_ATTRIBUTION,
-});
+const sdkRequests = new WeakMap<LmaClient, Promise<typeof AMap>>();
 
-/** 影像和地形晕渲各配一层中文注记；地形晕渲只到 14 级，更大比例尺由地图放大该级瓦片。 */
-export function tiandituSources(token: string): Record<string, SourceSpecification> {
-  return {
-    'tianditu-img': tiandituSource('img', token, 18),
-    'tianditu-img-label': tiandituSource('cia', token, 18),
-    'tianditu-ter': tiandituSource('ter', token, 14),
-    'tianditu-ter-label': tiandituSource('cta', token, 14),
-  };
-}
-
-export const BASE_LAYER_IDS: Record<BaseLayer, string[]> = {
-  satellite: ['tianditu-img', 'tianditu-img-label'],
-  terrain: ['tianditu-ter', 'tianditu-ter-label'],
-};
-
-export function tiandituLayers(visible: BaseLayer) {
-  return (Object.keys(BASE_LAYER_IDS) as BaseLayer[]).flatMap((base) => BASE_LAYER_IDS[base].map((source) => ({
-    id: source,
-    type: 'raster' as const,
-    source,
-    layout: { visibility: base === visible ? 'visible' as const : 'none' as const },
-  })));
-}
-
-// 密钥由后端按运行配置下发，同一客户端只请求一次。
-const tokenRequests = new WeakMap<LmaClient, Promise<string | null>>();
-
-const requestToken = (client: LmaClient) => {
-  let request = tokenRequests.get(client);
+function requestSdk(client: LmaClient): Promise<typeof AMap> {
+  let request = sdkRequests.get(client);
   if (!request) {
     request = client.getMapConfig()
-      .then((config) => config.tianditu_token || null)
       .catch(() => {
-        tokenRequests.delete(client);
-        return null;
+        throw new Error('地图配置读取失败，请检查服务连接后刷新。');
+      })
+      .then((config) => {
+        if (!config.amap_token) {
+          throw new Error('未配置高德地图密钥，暂时无法加载地图。');
+        }
+        return AMapLoader.load({
+          key: config.amap_token,
+          version: '2.0',
+          plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.CustomLayer'],
+        }).catch(() => {
+          throw new Error('高德地图加载失败，请检查地图密钥和网络后刷新。');
+        });
+      })
+      .catch((error: Error) => {
+        sdkRequests.delete(client);
+        throw error;
       });
-    tokenRequests.set(client, request);
+    sdkRequests.set(client, request);
   }
   return request;
-};
+}
 
-export type TiandituToken = { status: 'loading' } | { status: 'ready'; token: string | null };
-
-export function useTiandituToken(): TiandituToken {
+export function useAMap(): AMapState {
   const client = useLmaClient();
-  const [state, setState] = useState<TiandituToken>({ status: 'loading' });
+  const [state, setState] = useState<AMapState>({ status: 'loading' });
   useEffect(() => {
     let active = true;
-    void requestToken(client).then((token) => {
+    void requestSdk(client).then((sdk) => {
       if (active) {
-        setState({ status: 'ready', token });
+        setState({ status: 'ready', sdk });
+      }
+    }).catch((error: Error) => {
+      if (active) {
+        setState({ status: 'error', message: error.message });
       }
     });
     return () => {
@@ -80,4 +64,44 @@ export function useTiandituToken(): TiandituToken {
   return state;
 }
 
-export const MISSING_TOKEN_NOTICE = '未配置天地图密钥，地图只显示测点位置，不加载底图。';
+/** 路网为普通地图，影像附带中文标注；两张地图共享相同的底图切换。 */
+export function createBaseLayers(sdk: typeof AMap, base: BaseLayer) {
+  const road = new sdk.TileLayer();
+  const satellite = new sdk.TileLayer.Satellite();
+  const labels = new sdk.TileLayer.RoadNet();
+  const select = (value: BaseLayer) => {
+    if (value === 'road') {
+      road.show();
+      satellite.hide();
+      labels.hide();
+    } else {
+      road.hide();
+      satellite.show();
+      labels.show();
+    }
+  };
+  select(base);
+  return { layers: [road, satellite, labels], select };
+}
+
+/** 当前高德 2.0 手势处理会吞掉滚轮而不缩放；两张地图统一用公开 API 控制。 */
+export function bindMapWheelZoom(map: AMap.Map, container: HTMLElement) {
+  const onWheel = (event: WheelEvent) => {
+    if (event.ctrlKey || event.deltaY === 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    let delta = event.deltaY;
+    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) {
+      delta *= 40;
+    } else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+      delta *= container.clientHeight;
+    }
+    const [minimum, maximum] = map.getZooms();
+    const change = Math.max(-1, Math.min(1, -delta / 240));
+    map.setZoom(Math.max(minimum, Math.min(maximum, map.getZoom() + change)), true);
+  };
+  container.addEventListener('wheel', onWheel, { capture: true, passive: false });
+  return () => container.removeEventListener('wheel', onWheel, true);
+}

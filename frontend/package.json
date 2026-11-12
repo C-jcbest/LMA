@@ -17,19 +17,22 @@
     "test:gate": "pnpm test && pnpm test:e2e && pnpm build"
   },
   "dependencies": {
+    "@amap/amap-jsapi-loader": "1.0.1",
     "@assistant-ui/react": "0.15.21",
     "@assistant-ui/react-langchain": "0.0.32",
     "@assistant-ui/react-langgraph": "0.14.29",
     "@assistant-ui/react-streamdown": "0.3.16",
     "@langchain/core": "^1.2.11",
     "@langchain/langgraph-sdk": "^1.11.1",
+    "@mapbox/vector-tile": "3.0.0",
     "@streamdown/code": "^1.1.1",
     "assistant-stream": "0.3.44",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.3.0",
     "echarts": "^6.1.0",
+    "gcoord": "1.0.7",
     "lucide-react": "^0.475.0",
-    "maplibre-gl": "^6.9.0",
+    "pbf": "5.1.2",
     "radix-ui": "^1.6.7",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
@@ -37,6 +40,7 @@
     "zustand": "^5.0.15"
   },
   "devDependencies": {
+    "@amap/amap-jsapi-types": "0.0.15",
     "@playwright/test": "1.55.0",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/jest-dom": "^6.10.0",

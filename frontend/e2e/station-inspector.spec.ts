@@ -240,9 +240,8 @@ test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度�
   expect(chartWarnings).toEqual([]);
 });
 
-test('场地地图随依据宽度调整画布，不依赖窗口 resize', async ({ page }) => {
-  // 瓦片是外部服务，本用例只验证本地画布和布局，不请求真实地图数据。
-  await page.route('https://**/*', (route) => route.abort());
+test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据面板', async ({ page }) => {
+  await page.route('**/api/map-config', (route) => route.fulfill({ json: { amap_token: null } }));
   const site = {
     type: 'tool', id: 'site-result', tool_call_id: 'site-a', name: 'inspect_site_environment',
     content: '自动化测试场地', status: 'success',
@@ -251,7 +250,8 @@ test('场地地图随依据宽度调整画布，不依赖窗口 resize', async (
       data: {
         version: 1, observed_at: '2026-11-09T00:00:00Z', coordinate_system: 'WGS84',
         center_station: { station_uuid: 'test-a', station_name: '测试点 A', longitude: 120, latitude: 30, coordinate_system: 'WGS84' },
-        group_stations: [], faults: { available: false, note: '自动化测试数据，无真实断层结论' },
+        group_stations: [{ station_uuid: 'invalid', station_name: '坐标填反的测试点', longitude: 39.87, latitude: 116.48, coordinate_system: 'WGS84' }],
+        faults: { available: false, note: '自动化测试数据，无真实断层结论' },
         layer_sources: { geology_tiles: '', geology_source_layer: 'units', fault_source_layer: 'lines' },
       },
     },
@@ -266,22 +266,17 @@ test('场地地图随依据宽度调整画布，不依赖窗口 resize', async (
   const timelineCanvas = inspector(page).locator('canvas').first();
   await expect(timelineCanvas).toBeVisible();
   const originalTimelineCanvas = await timelineCanvas.elementHandle();
-  const workerCreated = page.waitForEvent('worker', { predicate: (worker) => worker.url().includes('maplibre-gl-worker') });
   await inspector(page).getByRole('tab', { name: '场地', exact: true }).click();
-  const worker = await workerCreated;
-  const workerResponse = await page.request.get(worker.url());
-  expect(workerResponse.ok()).toBe(true);
-  expect(workerResponse.headers()['content-type']).toMatch(/javascript/);
-  expect(await worker.evaluate(() => self.location.href)).toContain('maplibre-gl-worker');
-  const map = inspector(page).locator('.maplibregl-map');
-  const canvas = map.locator('canvas');
-  await expect(canvas).toBeVisible();
-  const originalWidth = (await canvas.boundingBox())!.width;
+  await expect(inspector(page).getByText('未配置高德地图密钥，暂时无法加载地图。')).toBeVisible();
+  await expect(inspector(page).getByText(/以下测点坐标缺失或超出经纬度范围，未绘制：坐标填反的测试点/)).toBeVisible();
+  await expect(inspector(page).getByText('30.000000, 120.000000')).toBeVisible();
   const handle = page.getByRole('separator', { name: '调整聊天与依据宽度' });
+  const originalWidth = (await inspector(page).boundingBox())!.width;
   await handle.focus();
   await page.keyboard.press('Shift+ArrowRight');
-  await expect.poll(async () => (await canvas.boundingBox())!.width).toBeLessThan(originalWidth);
-  await expect.poll(async () => Math.abs((await canvas.boundingBox())!.width - await map.evaluate((element) => element.clientWidth))).toBeLessThan(1);
+  await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBeLessThan(originalWidth);
+  await expect(inspector(page).getByText('30.000000, 120.000000')).toBeVisible();
+  await expect(inspector(page).getByText('现场环境地图渲染异常')).toHaveCount(0);
   await inspector(page).getByRole('tab', { name: '时间轴', exact: true }).click();
   expect(await timelineCanvas.evaluate((element, original) => element === original, originalTimelineCanvas)).toBe(true);
 });

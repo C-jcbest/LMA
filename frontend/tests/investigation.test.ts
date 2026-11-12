@@ -106,7 +106,7 @@ it('复制与导出的正文引用保留测点、完整窗口和来源，不输�
       ...gnssEnvelope('测点 A'), evidence_id: 'E123abc',
       sources: [{ provider: '监测平台', name: 'GNSS观测', observed_at: '2026-11-08' }],
     } }),
-    { type: 'text', text: '北向持续变化。[2](#evidence-E123abc) 再次引用[2](#evidence-E123abc)' } as PartState,
+    { type: 'text', text: '北向持续变化。[E123abc](#evidence-E123abc) 再次引用[99](#evidence-E123abc)' } as PartState,
   ];
   const markdown = answerToMarkdown(parts);
   expect(markdown).toContain('北向持续变化。[1]');
@@ -115,6 +115,16 @@ it('复制与导出的正文引用保留测点、完整窗口和来源，不输�
   expect(markdown).not.toContain('#evidence-');
   expect(markdown).not.toContain('E123abc');
   expect(markdown.match(/## 依据/g)).toHaveLength(1);
+});
+
+it('非法位置不进入测点地图，已有有效位置不会被后续错误记录覆盖', () => {
+  const envelope = gnssEnvelope('测点 A');
+  const parts = [
+    toolPart('get_displacement', { artifact: { ...envelope, data: { ...envelope.data, location: { latitude: 39.87, longitude: 116.48 } } } }),
+    toolPart('get_displacement', { artifact: { ...envelope, data: { ...envelope.data, location: { latitude: 116.48, longitude: 39.87 } } } }),
+  ];
+  expect(collectStations(parts)[0]?.coordinates).toEqual({ latitude: 39.87, longitude: 116.48 });
+  expect(collectStations(parts.slice(1))[0]?.coordinates).toBeUndefined();
 });
 
 it('失败查询快照作为限制依据导出，保留对象、窗口及失败原因', () => {

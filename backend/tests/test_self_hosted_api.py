@@ -110,10 +110,10 @@ class SelfHostedApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'questions': []})
 
-    def test_map_config_exposes_only_configured_tianditu_token(self):
-        self.assertEqual(self.client.get("/map-config").json(), {"tianditu_token": None})
-        self.settings.tianditu_token = "browser-key"
-        self.assertEqual(self.client.get("/map-config").json(), {"tianditu_token": "browser-key"})
+    def test_map_config_exposes_only_configured_amap_token(self):
+        self.assertEqual(self.client.get("/map-config").json(), {"amap_token": None})
+        self.settings.amap_token = "browser-key"
+        self.assertEqual(self.client.get("/map-config").json(), {"amap_token": "browser-key"})
 
     def test_session_metadata_and_204_delete(self):
         self.assertEqual(self.client.get("/health").json(), {"ok": True, "service": "lma"})

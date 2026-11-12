@@ -8,6 +8,8 @@ import type {
   ToolArtifactKind,
 } from '@/types/envelope';
 import { decodeToolArtifact, isToolFeedback } from './artifacts';
+import { validCoordinates } from './coordinates';
+import { evidenceNumbers } from './evidence-cards';
 
 interface ToolPresentation {
   kind?: ToolArtifactKind;
@@ -165,13 +167,10 @@ const stationUuidOf = (envelope: ToolArtifactEnvelope): string | null => {
 const coordinatesOf = (
   location: { latitude?: number | null; longitude?: number | null } | null | undefined,
 ) => {
-  const latitude = location?.latitude;
-  const longitude = location?.longitude;
-  if (typeof latitude !== 'number' || typeof longitude !== 'number'
-      || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  if (!validCoordinates(location)) {
     return undefined;
   }
-  return { latitude, longitude };
+  return { latitude: location.latitude, longitude: location.longitude };
 };
 
 /** 依据按测点归集，而不是按工具调用顺序：用户核查的对象是测点。 */
@@ -452,14 +451,15 @@ export function answerToMarkdown(parts: readonly PartState[]): string {
   if (!text) {
     return conclusions ? conclusionsToMarkdown(conclusions) : '';
   }
+  const numbers = evidenceNumbers(text);
   const cited = new Map<string, number>();
   const body = text.replace(/\[([^\]]+)\]\(#evidence-([A-Za-z0-9]+)\)/g, (_match, label: string, id: string) => {
     const step = steps.find((item) => item.evidenceId === id && hasRetainedEvidence(item));
     if (!step) {
-      return `${label}（原始依据未随本次结果提供）`;
+      return '（原始依据未随本次结果提供）';
     }
     if (!cited.has(id)) {
-      cited.set(id, cited.size + 1);
+      cited.set(id, numbers.get(id)!);
     }
     return `[${cited.get(id)}]`;
   });

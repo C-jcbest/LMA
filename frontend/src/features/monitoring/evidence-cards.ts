@@ -25,6 +25,10 @@ export function citedEvidenceIds(markdown: string): string[] {
   return ids;
 }
 
+/** 显示和导出共用首次引用的顺序，模型给出的标签不决定用户看到的编号。 */
+export const evidenceNumbers = (markdown: string) =>
+  new Map(citedEvidenceIds(markdown).map((id, index) => [id, index + 1]));
+
 interface Block {
   lines: string[];
   isHeading: boolean;

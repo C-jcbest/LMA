@@ -110,8 +110,8 @@ const proseHistory = () => {
     {
       type: 'ai', id: 'report-1', content: [
         '## 调查结论', '', '测试点 A 需要优先复核，测试点 B 未见明显变化。', '',
-        '### 一、数据现象', '', '长期窗口北向持续同向变化。[1](#evidence-Elong)', '',
-        '近期北向净变化约 2 mm。[2](#evidence-Eshort) 与长期趋势一致。[1](#evidence-Elong)', '',
+        '### 一、数据现象', '', '长期窗口北向持续同向变化。[Elong](#evidence-Elong)', '',
+        '近期北向净变化约 2 mm。[99](#evidence-Eshort) 与长期趋势一致。[Elong](#evidence-Elong)', '',
         '### 二、滑坡推断', '', '可能与坡体缓慢变形有关。',
       ].join('\n'),
       tool_calls: [{ id: 'report-call', name: 'record_conclusions', args: {} }],
