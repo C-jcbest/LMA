@@ -24,7 +24,7 @@ from sse_starlette import EventSourceResponse
 from app.agent.graph import _get_llm, create_lma_agent
 from app.agent.evidence import reconcile_evidence
 from app.agent.title import generate_title_node
-from app.agent.suggestions import suggest_questions
+from app.agent.suggestions import SuggestionService
 from app.beidou.client import BeidouApiError
 from app.config import Settings, get_settings
 from app.inspection.runner import run_inspection
@@ -175,9 +175,11 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             app.state.agent = factory(checkpointer, storage)
             app.state.storage = storage
             app.state.checkpointer = checkpointer
+            app.state.suggestions = SuggestionService()
             try:
                 yield
             finally:
+                await app.state.suggestions.close()
                 for inspection in active_inspections:
                     inspection.cancel()
                 if active_inspections:
@@ -353,8 +355,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
     async def generate_suggestions():
         try:
             async with asyncio.timeout(15):
-                inspection = await app.state.storage.latest_inspection()
-                return {"questions": await suggest_questions(inspection)}
+                return {"questions": await app.state.suggestions.get(app.state.storage)}
         except Exception:
             logger.warning("question suggestions unavailable", exc_info=True)
             return {"questions": []}

@@ -92,9 +92,13 @@ Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.
 | compute 沙箱与结论登记校验 | backend/tests/test_compute_and_conclusions.py |
 | 时间、模型配置、气象与场地计算 | backend/tests/test_prompt_time.py；验证项目参数与数值规则 |
 | 摘要、失败后历史保留与 token 隔离 | backend/tests/test_context_management.py |
+| 推荐来源、并发合并、取消、超时与版本失效 | backend/tests/test_suggestions.py；数据库投影与归档/删除见 test_self_hosted_api.py |
 | PostgreSQL checkpoint、消息注入拒绝、编辑与并发 | backend/tests/test_self_hosted_api.py |
 | 领域显示、artifact 校验、服务失败与 SSE | frontend/tests/；单元测试覆盖可精确定位的边界 |
 | 导航、Stop、刷新、编辑、复制与分页 | frontend/e2e/thread-lifecycle.spec.ts；使用真实前端、API 与隔离数据库 |
 | 窄屏、抽屉、失败原因与草稿保留 | frontend/e2e/layout-feedback.spec.ts；浏览器布局和 HTTP 边界回归 |
+| 慢推荐下首屏可操作、迟到推荐和点击填入 | frontend/e2e/suggestion-readiness.spec.ts；分别记录首屏与推荐计时 |
 
 新增测试优先补现有入口的独立行为缺口。不要为同一行为重复添加组件挂载测试、SDK 对象取值测试或手写计时器来模拟运行时；跨层测试只保留真实的适配、持久化或浏览器风险。不得通过删掉失败断言掩盖问题。真实服务与真机待验收项统一见 [TODO](TODO.md)。
+
+推荐真实模型评测在 backend 中用 python -m evaluations.run_suggestions --env-file <已有配置文件> 执行，只发送合成摘要；可用 --scenario <场景名> 缩小范围。加 --measure-api 时必须配置隔离 LMA_TEST_DATABASE_URI，在 lma_test 保存本轮合成巡检、测量 SQL/HTTP 冷暖耗时并清理本轮数据，不修改业务库。输出在 Git 忽略的 evaluations/results，结论需人工审阅；复现条件和已审阅实例见[验收报告](suggestion-review-2026-11-13.md)。

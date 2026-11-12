@@ -338,6 +338,73 @@ class SessionStorage:
                 (status, inspection_id),
             )
 
+    async def suggestion_sources(self) -> dict:
+        """推荐专用的有界投影；不读趋势数组、原始观测或会话 checkpoint。"""
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                """WITH latest AS (
+                       SELECT id, finished_at FROM lma_inspections
+                       WHERE status = 'success' ORDER BY started_at DESC, id DESC LIMIT 1
+                   ), inspected AS (
+                       SELECT s.station_uuid, s.station_name, s.group_name, s.screening,
+                              jsonb_path_query_array(s.reasons, '$[0 to 5]') AS reasons,
+                              s.metrics - 'long_quality' - 'recent_quality' || jsonb_build_object(
+                                  'long_quality', (s.metrics->'long_quality') - 'gaps',
+                                  'recent_quality', (s.metrics->'recent_quality') - 'gaps'
+                              ) AS metrics
+                       FROM lma_inspection_stations s JOIN latest ON latest.id = s.inspection_id
+                       ORDER BY CASE s.screening WHEN '建议调查' THEN 0 WHEN '数据不足' THEN 1
+                                    WHEN '暂无法分析' THEN 2 ELSE 3 END, s.station_uuid
+                       LIMIT 4
+                   ), investigated AS (
+                       SELECT DISTINCT ON (c.station_uuid) c.station_uuid, c.station_name, c.created_at
+                       FROM lma_station_results c JOIN lma_sessions s ON s.id = c.session_id
+                       WHERE s.archived = false
+                         AND NOT EXISTS (SELECT 1 FROM inspected i WHERE i.station_uuid = c.station_uuid)
+                       ORDER BY c.station_uuid, c.created_at DESC, c.session_id, c.tool_call_id
+                   ), candidates AS (
+                       SELECT * FROM inspected
+                       UNION ALL
+                       SELECT station_uuid, station_name, '' AS group_name, NULL AS screening,
+                              '[]'::jsonb AS reasons, '{}'::jsonb AS metrics
+                       FROM (SELECT * FROM investigated ORDER BY created_at DESC, station_uuid LIMIT 2) r
+                   ), name_counts AS (
+                       SELECT station_name, count(DISTINCT station_uuid) AS total FROM (
+                           SELECT station_uuid, station_name FROM lma_inspection_stations
+                           WHERE inspection_id = (SELECT id FROM latest)
+                           UNION ALL
+                           SELECT r.station_uuid, r.station_name FROM lma_station_results r
+                           JOIN lma_sessions s ON s.id = r.session_id WHERE s.archived = false
+                       ) names WHERE station_name IN (SELECT station_name FROM candidates)
+                       GROUP BY station_name
+                   )
+                   SELECT c.*,
+                          CASE WHEN c.screening IS NOT NULL THEN (SELECT finished_at FROM latest) END AS inspection_recorded_at,
+                          CASE WHEN c.screening IS NOT NULL THEN (SELECT id FROM latest) END AS inspection_id,
+                          COALESCE(history.items, '[]'::jsonb) AS conclusions,
+                          names.total AS same_name_count
+                   FROM candidates c
+                   JOIN name_counts names USING (station_name)
+                   LEFT JOIN LATERAL (
+                       SELECT jsonb_agg(item ORDER BY recorded_at DESC, session_id, tool_call_id) AS items
+                       FROM (
+                           SELECT r.created_at AS recorded_at, r.session_id, r.tool_call_id,
+                                  jsonb_build_object(
+                                      'status', r.status, 'reason', left(r.reason, 200),
+                                      'begin_time', r.detail->>'begin_time',
+                                      'end_time', r.detail->>'end_time',
+                                      'recorded_at', r.created_at, 'session_id', r.session_id,
+                                      'tool_call_id', r.tool_call_id
+                                  ) AS item
+                           FROM lma_station_results r JOIN lma_sessions s ON s.id = r.session_id
+                           WHERE r.station_uuid = c.station_uuid AND s.archived = false
+                           ORDER BY r.created_at DESC, r.session_id, r.tool_call_id LIMIT 2
+                       ) recent
+                   ) history ON true
+                   ORDER BY c.station_uuid""",
+            )
+            return {"stations": await cursor.fetchall()}
+
     async def latest_inspection(self) -> dict:
         """最近一次尝试及最近成功结果；失败和中断不覆盖已完成的结果。"""
         async with self.pool.connection() as connection:

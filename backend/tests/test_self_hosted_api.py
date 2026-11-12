@@ -117,7 +117,7 @@ class SelfHostedApiTests(unittest.TestCase):
     def test_suggestions_do_not_create_sessions_or_messages(self):
         before = self.client.get('/sessions').json()
         original = self.state()
-        with patch('app.server.api.suggest_questions', new_callable=AsyncMock) as generate:
+        with patch('app.agent.suggestions.suggest_questions', new_callable=AsyncMock) as generate:
             generate.return_value = ['哪些测点值得关注？']
             response = self.client.post('/suggestions')
             self.assertEqual(response.json(), {'questions': ['哪些测点值得关注？']})
@@ -126,11 +126,80 @@ class SelfHostedApiTests(unittest.TestCase):
         self.assertEqual(self.state(), original)
 
     def test_suggestion_failure_returns_no_questions(self):
-        with patch('app.server.api.suggest_questions', new_callable=AsyncMock) as generate:
+        with patch('app.agent.suggestions.suggest_questions', new_callable=AsyncMock) as generate:
             generate.side_effect = TimeoutError('private provider error')
             response = self.client.post('/suggestions')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'questions': []})
+
+    def test_suggestion_sources_are_bounded_and_archive_delete_invalidate_cache(self):
+        from types import SimpleNamespace
+        from app.inspection.screening import ScreeningResult
+        from test_suggestions import source_station
+
+        inspection_id = str(uuid4())
+        identifiers = [str(uuid4()) for _ in range(10)]
+        storage = self.app.state.storage
+
+        async def seed():
+            await storage.start_inspection(inspection_id)
+            stations = []
+            for index, identifier in enumerate(identifiers[:8]):
+                row = source_station(identifier)
+                row['metrics']['long_quality']['gaps'] = [{'from': 'synthetic'}] * 100
+                station = SimpleNamespace(station_uuid=identifier, station_name='同名演示点', group_name=f'坡体{index}')
+                result = ScreeningResult('建议调查' if index == 0 else '未见明显变化',
+                                         ['已保存线索'] * 10, row['metrics'], [0.0] * 1000)
+                stations.append((station, result))
+            await storage.save_inspection_stations(inspection_id, stations)
+            await storage.finish_inspection(inspection_id, 'success')
+            conclusions = [{
+                'station_uuid': identifier, 'station_name': '同名演示点', 'status': '持续关注',
+                'reason': '历史变化已有解释', 'begin_time': '2026-10-01 00:00:00',
+                'end_time': '2026-10-07 00:00:00',
+            } for identifier in (identifiers[0], *identifiers[8:])]
+            await storage.save_evidence(self.session_id, 'suggestion-fixture', {
+                'kind': 'conclusions', 'status': 'success', 'data': {'stations': conclusions},
+            }, execution_id='suggestion-fixture')
+
+        async def cleanup():
+            async with storage.pool.connection() as connection:
+                await connection.execute('DELETE FROM lma_inspections WHERE id=%s', (inspection_id,))
+
+        self.client.portal.call(seed)
+        self.addCleanup(lambda: self.client.portal.call(cleanup))
+        sources = self.client.portal.call(storage.suggestion_sources)
+        self.assertEqual(len(sources['stations']), 6)
+        inspection_rows = [row for row in sources['stations'] if row['screening'] is not None]
+        self.assertEqual(len(inspection_rows), 4)
+        self.assertIn(identifiers[0], [row['station_uuid'] for row in inspection_rows])
+        for row in inspection_rows:
+            self.assertLessEqual(len(row['reasons']), 6)
+            self.assertNotIn('trend', row)
+            self.assertNotIn('gaps', row['metrics']['long_quality'])
+            self.assertEqual(row['same_name_count'], 10)
+            self.assertLessEqual(len(row['conclusions']), 2)
+        independent = [row for row in sources['stations'] if row['screening'] is None]
+        self.assertEqual({row['station_uuid'] for row in independent}, set(identifiers[8:]))
+        self.assertTrue(all(row['conclusions'][0]['begin_time'] == '2026-10-01 00:00:00' for row in independent))
+
+        with patch('app.agent.suggestions.suggest_questions', return_value=['已绑定来源的问题']) as generate:
+            self.assertEqual(self.client.post('/suggestions').json()['questions'], ['已绑定来源的问题'])
+            self.client.post('/suggestions')
+            self.assertEqual(generate.await_count, 1)
+            self.client.patch(f'/sessions/{self.session_id}', json={'archived': True})
+            self.client.post('/suggestions')
+            archived = self.client.portal.call(storage.suggestion_sources)
+            self.assertEqual(len(archived['stations']), 4)
+            self.assertTrue(all(not row['conclusions'] for row in archived['stations']))
+            self.assertEqual(generate.await_count, 2)
+            self.client.patch(f'/sessions/{self.session_id}', json={'archived': False})
+            self.client.post('/suggestions')
+            self.client.delete(f'/sessions/{self.session_id}')
+            self.client.post('/suggestions')
+            remaining = self.client.portal.call(storage.suggestion_sources)
+            self.assertTrue(all(not row['conclusions'] for row in remaining['stations']))
+            self.assertNotEqual(sources, remaining)
 
     def test_map_config_exposes_only_configured_amap_token(self):
         self.assertEqual(self.client.get("/map-config").json(), {"amap_token": None})
