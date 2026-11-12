@@ -97,6 +97,7 @@ export interface StationEvidence {
   id: string;
   uuid?: string;
   name: string;
+  stationType?: string | null;
   status?: string | null;
   group?: string | null;
   /** WGS84 位置，来自测点资料或 GNSS 依据；用于在正文中绘制测点地图。 */
@@ -221,6 +222,7 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
     const station = known.station_uuid ? stations.get(known.station_uuid) : undefined;
     if (station) {
       station.status = known.station_status ?? station.status;
+      station.stationType = known.station_type ?? station.stationType;
       station.group = known.group_name ?? station.group;
       station.coordinates = station.coordinates ?? coordinatesOf(known);
     }

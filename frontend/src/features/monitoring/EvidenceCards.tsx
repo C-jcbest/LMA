@@ -62,6 +62,7 @@ export const mapStationsOf = (
     return {
       id: station.id,
       name: station.name,
+      stationType: station.stationType ?? null,
       latitude: station.coordinates!.latitude,
       longitude: station.coordinates!.longitude,
       northMillimeters: horizontal?.north ?? null,

@@ -127,6 +127,25 @@ it('非法位置不进入测点地图，已有有效位置不会被后续错误�
   expect(collectStations(parts.slice(1))[0]?.coordinates).toBeUndefined();
 });
 
+it('按 UUID 保留基准站和移动站类型，供地图决定是否显示方向', () => {
+  const parts = [
+    toolPart('get_displacement', { artifact: gnssEnvelope('测试点 A') }),
+    toolPart('get_displacement', { artifact: gnssEnvelope('测试点 B') }),
+    toolPart('find_stations', { artifact: {
+      version: 1, kind: 'station_list', status: 'success', data: {
+        total: 2, groups: [], stations: [
+          { station_uuid: 'uuid-A', station_name: '测试点 A', station_type: '基准站', coordinate_system: 'WGS84' },
+          { station_uuid: 'uuid-B', station_name: '测试点 B', station_type: '移动站RTK模式', coordinate_system: 'WGS84' },
+        ],
+      },
+    } }),
+  ];
+  expect(collectStations(parts).map((station) => [station.uuid, station.stationType])).toEqual([
+    ['uuid-A', '基准站'],
+    ['uuid-B', '移动站RTK模式'],
+  ]);
+});
+
 it('失败查询快照作为限制依据导出，保留对象、窗口及失败原因', () => {
   const parts = [
     toolPart('get_displacement', { isError: true, artifact: {

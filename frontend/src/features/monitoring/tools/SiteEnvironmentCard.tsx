@@ -1,24 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ToggleGroup } from 'radix-ui';
+import { Segmented } from '@/components/ui/segmented';
 import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
 import { amapPosition, bindMapWheelZoom, createBaseLayers, useAMap, type BaseLayer } from '../basemap';
 import { validCoordinates, type Coordinates } from '../coordinates';
-import { createGeologyLayer } from '../geology-layer';
 
 export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironmentArtifactData }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const amap = useAMap();
   const sdk = amap.status === 'ready' ? amap.sdk : null;
   const [baseLayer, setBaseLayer] = useState<BaseLayer>('satellite');
-  const [geologyVisible, setGeologyVisible] = useState(false);
-  const [faultsVisible, setFaultsVisible] = useState(true);
-  const [faultsInView, setFaultsInView] = useState<boolean | null>(null);
   const [mapError, setMapError] = useState('');
-  const [layerError, setLayerError] = useState('');
   const layersRef = useRef<ReturnType<typeof createBaseLayers> | null>(null);
-  const geologyRef = useRef<ReturnType<typeof createGeologyLayer> | null>(null);
-  const configRef = useRef({ baseLayer, geologyVisible, faultsVisible });
-  configRef.current = { baseLayer, geologyVisible, faultsVisible };
+  const baseLayerRef = useRef(baseLayer);
+  baseLayerRef.current = baseLayer;
   const stations = useMemo(() => {
     const seen = new Set<string>();
     return [environment.center_station, ...environment.group_stations].filter((station): station is StationArtifact & Coordinates => {
@@ -39,12 +33,19 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
     if (!container || !sdk || !validCoordinates(center)) {
       return;
     }
-    const layers = createBaseLayers(sdk, configRef.current.baseLayer);
+    const layers = createBaseLayers(sdk, baseLayerRef.current);
     layersRef.current = layers;
     const map = new sdk.Map(container, {
-      layers: layers.layers, center: amapPosition(center), zoom: 15, zooms: [2, 20],
-      viewMode: '2D', scrollWheel: false, resizeEnable: true,
-      dragEnable: window.matchMedia('(pointer: fine)').matches,
+      layers: layers.layers,
+      center: amapPosition(center),
+      zoom: 15,
+      zooms: [2, 20],
+      viewMode: '2D',
+      scrollWheel: false,
+      resizeEnable: true,
+      dragEnable: true,
+      touchZoom: true,
+      rotateEnable: false,
     });
     map.addControl(new sdk.ToolBar({ position: 'RB' }));
     map.addControl(new sdk.Scale());
@@ -69,7 +70,7 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
         const title = document.createElement('strong');
         title.textContent = station.station_name;
         content.append(title);
-        for (const text of [isCenter ? '当前调查站点' : '同组监测点', station.station_status, station.location]) {
+        for (const text of [isCenter ? '当前调查站点' : '同组监测点', station.station_type, station.station_status, station.location]) {
           if (text) {
             const line = document.createElement('div');
             line.textContent = text;
@@ -104,57 +105,34 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
       window.clearTimeout(loadTimeout);
       setMapError('');
     });
-    const geology = createGeologyLayer(sdk, map, setLayerError, setFaultsInView);
-    geology.select({ geology: configRef.current.geologyVisible, faults: configRef.current.faultsVisible });
-    geologyRef.current = geology;
     return () => {
       unbindWheel();
       window.clearTimeout(loadTimeout);
-      geology.destroy();
       popup.close();
       map.destroy();
       layersRef.current = null;
-      geologyRef.current = null;
     };
   }, [sdk, center, stations]);
 
   useEffect(() => {
     layersRef.current?.select(baseLayer);
-    geologyRef.current?.select({ geology: geologyVisible, faults: faultsVisible });
-  }, [baseLayer, geologyVisible, faultsVisible]);
+  }, [baseLayer]);
 
   const terrain = environment.terrain;
   const geology = environment.geology;
   const faults = environment.faults;
-  const layerToggleClass = 'min-h-8 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-muted data-[state=on]:text-foreground aria-pressed:bg-muted aria-pressed:text-foreground';
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <ToggleGroup.Root type="single" aria-label="底图" value={baseLayer} className="flex gap-1"
-          onValueChange={(value) => {
-            if (value) {
-              setBaseLayer(value as BaseLayer);
-            }
-          }}>
-          <ToggleGroup.Item value="satellite" className={layerToggleClass}>影像</ToggleGroup.Item>
-          <ToggleGroup.Item value="road" className={layerToggleClass}>路网</ToggleGroup.Item>
-        </ToggleGroup.Root>
-        <div className="flex gap-1">
-          <button type="button" onClick={() => setGeologyVisible((value) => !value)} aria-pressed={geologyVisible} className={layerToggleClass}>地层（区域图）</button>
-          <button type="button" onClick={() => setFaultsVisible((value) => !value)} aria-pressed={faultsVisible} className={layerToggleClass}>构造线</button>
-        </div>
-      </div>
+      <Segmented label="底图" value={baseLayer}
+        options={[{ value: 'satellite', label: '卫星图' }, { value: 'road', label: '普通地图' }]}
+        onValueChange={(value) => setBaseLayer(value as BaseLayer)} />
       <div className="relative isolate overflow-hidden rounded-lg border">
-        <div ref={containerRef} role="region" aria-label="场地环境地图" className="h-[min(60dvh,32rem)] w-full" />
+        <div ref={containerRef} role="region" aria-label="场地环境地图" className="h-[min(60dvh,32rem)] w-full touch-none" />
       </div>
       {amap.status === 'loading' && <p className="text-sm text-muted-foreground">正在加载高德地图…</p>}
       {amap.status === 'error' && <p role="status" className="text-sm text-muted-foreground">{amap.message}</p>}
       {invalidNames.length > 0 && <p className="text-sm text-muted-foreground">以下测点坐标缺失或超出经纬度范围，未绘制：{invalidNames.join('、')}。请核对平台登记坐标。</p>}
-      {faultsVisible && faultsInView === false && <p className="text-sm text-muted-foreground">当前视野内没有已收录的构造线；Macrostrat 区域地质图在该地区精度有限，不代表现场没有断层。</p>}
-      {geologyVisible && <p className="text-sm text-muted-foreground">地层为小比例尺区域地质图，放大后的边界不代表现场实际界线。</p>}
-      <p className="text-xs text-muted-foreground">区域地质资料 © Macrostrat（CC BY 4.0）</p>
       {mapError && <p role="status" className="text-sm text-muted-foreground">{mapError}</p>}
-      {layerError && <p role="status" className="text-sm text-muted-foreground">{layerError}</p>}
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div>
           <dt className="text-muted-foreground">坐标（WGS84）</dt>

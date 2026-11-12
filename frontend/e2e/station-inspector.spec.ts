@@ -270,6 +270,11 @@ test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据�
   await expect(inspector(page).getByText('未配置高德地图密钥，暂时无法加载地图。')).toBeVisible();
   await expect(inspector(page).getByText(/以下测点坐标缺失或超出经纬度范围，未绘制：坐标填反的测试点/)).toBeVisible();
   await expect(inspector(page).getByText('30.000000, 120.000000')).toBeVisible();
+  await expect(inspector(page).getByRole('radio', { name: '卫星图', exact: true })).toBeChecked();
+  await expect(inspector(page).getByRole('button', { name: '地层（区域图）', exact: true })).toHaveCount(0);
+  await expect(inspector(page).getByRole('button', { name: '构造线', exact: true })).toHaveCount(0);
+  await inspector(page).getByRole('radio', { name: '普通地图', exact: true }).click();
+  await expect(inspector(page).getByRole('radio', { name: '普通地图', exact: true })).toBeChecked();
   const handle = page.getByRole('separator', { name: '调整聊天与依据宽度' });
   const originalWidth = (await inspector(page).boundingBox())!.width;
   await handle.focus();

@@ -29,7 +29,7 @@ function requestSdk(client: LmaClient): Promise<typeof AMap> {
         return AMapLoader.load({
           key: config.amap_token,
           version: '2.0',
-          plugins: ['AMap.Scale', 'AMap.ToolBar', 'AMap.CustomLayer'],
+          plugins: ['AMap.Scale', 'AMap.ToolBar'],
         }).catch(() => {
           throw new Error('高德地图加载失败，请检查地图密钥和网络后刷新。');
         });
