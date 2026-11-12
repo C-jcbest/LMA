@@ -143,6 +143,10 @@ export class LmaClient {
     return (await response.json()).checkpoint_id;
   }
 
+  async getMapConfig(): Promise<{ tianditu_token: string | null }> {
+    return (await this.request('/map-config', { signal: AbortSignal.timeout(10000) })).json();
+  }
+
   async generateTitle(inputText: string): Promise<string> {
     const response = await this.request('/title', {
       method: 'POST', body: JSON.stringify({ input_text: inputText }), signal: AbortSignal.timeout(20000),

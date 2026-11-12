@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as echarts from 'echarts/core';
-import { BarChart, LineChart } from 'echarts/charts';
+import { CustomChart, LineChart } from 'echarts/charts';
 import {
   AxisPointerComponent,
   BrushComponent,
@@ -8,13 +8,14 @@ import {
   GridComponent,
   LegendComponent,
   MarkAreaComponent,
+  MarkPointComponent,
   ToolboxComponent,
   TooltipComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 
 echarts.use([
-  BarChart,
+  CustomChart,
   LineChart,
   AxisPointerComponent,
   BrushComponent,
@@ -22,6 +23,7 @@ echarts.use([
   GridComponent,
   LegendComponent,
   MarkAreaComponent,
+  MarkPointComponent,
   // 拖选依赖 brush，而 brush 内部需要 toolbox 组件，界面上不显示工具栏。
   ToolboxComponent,
   TooltipComponent,

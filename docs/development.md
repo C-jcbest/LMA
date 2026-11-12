@@ -41,9 +41,9 @@ pnpm --dir frontend dev
 | 改动范围 | 入口 |
 | --- | --- |
 | Agent 编排、middleware、隐藏消息上下文 | [graph.py](../backend/app/agent/graph.py)、[message_context.py](../backend/app/agent/message_context.py) |
-| 主业务与视觉策略 | [system.md](../backend/app/agent/prompts/system.md)、[vision.md](../backend/app/agent/prompts/vision.md) |
+| 主业务策略 | [system.md](../backend/app/agent/prompts/system.md) |
 | 监测数据层（测点解析、分片取数、会话缓存） | [monitoring_data.py](../backend/app/monitoring_data.py) |
-| 监测、视觉、天气与场地工具 | [tools.py](../backend/app/agent/tools.py)、[vision.py](../backend/app/agent/vision.py)、[weather.py](../backend/app/agent/weather.py)、[site.py](../backend/app/agent/site.py) |
+| 监测、天气与场地工具 | [tools.py](../backend/app/agent/tools.py)、[weather.py](../backend/app/agent/weather.py)、[site.py](../backend/app/agent/site.py) |
 | 计算、结论登记、计划与以往结论 | [compute.py](../backend/app/agent/compute.py)、[compute_runner.py](../backend/app/agent/compute_runner.py)、[conclusions.py](../backend/app/agent/conclusions.py)、[session_tools.py](../backend/app/agent/session_tools.py) |
 | 平台请求与字段 | [beidou](../backend/app/beidou/)、[接口参考](reference/beidou-platform-api.md) |
 | 会话 API、Run 与存储 | [server](../backend/app/server/) |
@@ -92,7 +92,6 @@ Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.
 | compute 沙箱与结论登记校验 | backend/tests/test_compute_and_conclusions.py |
 | 时间、模型配置、气象与场地计算 | backend/tests/test_prompt_time.py；验证项目参数与数值规则 |
 | 摘要、失败后历史保留与 token 隔离 | backend/tests/test_context_management.py |
-| 图像生成、候选范围与模型协议 | backend/tests/test_vision_rendering.py、test_vision_model.py；后者在 HTTP 边界检验实际请求 |
 | PostgreSQL checkpoint、消息注入拒绝、编辑与并发 | backend/tests/test_self_hosted_api.py |
 | 领域显示、artifact 校验、服务失败与 SSE | frontend/tests/；单元测试覆盖可精确定位的边界 |
 | 导航、Stop、刷新、编辑、复制与分页 | frontend/e2e/thread-lifecycle.spec.ts；使用真实前端、API 与隔离数据库 |

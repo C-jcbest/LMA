@@ -137,7 +137,8 @@ class _Serializer:
         if depth > 6:
             raise ValueError("结果嵌套过深，请返回更简单的结构")
         if isinstance(value, pd.DataFrame):
-            frame = value.reset_index()
+            # 默认整数行号对用户没有意义，只有带业务含义的索引（时间、分段名）才作为首列展示。
+            frame = value if isinstance(value.index, pd.RangeIndex) else value.reset_index()
             if len(frame) > MAX_ROWS:
                 self.truncated = True
                 frame = frame.head(MAX_ROWS)

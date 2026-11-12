@@ -101,6 +101,8 @@ async def compute(
     - 天气：字典，可能含 "daily"（逐日，precipitation_sum 等）、"hourly"（逐小时 precipitation）、"forecast"，均为时间索引 DataFrame。
     - 已有计算结果：原样的 JSON 值。
     把最终结果赋值给 result（数值、字典、Series 或 DataFrame，表格最多返回 200 行）；print 的内容也会返回。
+    result 会原样以表格展示给用户：字典的键、列名和索引用简短的中文业务名称并注明单位（如“累计降雨(mm)”）；
+    几组同类指标（如前后两段的天数、雨量、最大日雨量）用 DataFrame 每组一行，不要嵌套字典。
     除 pandas、numpy、math、statistics 外不能导入其他模块，也不能读写文件。
     """
     try:

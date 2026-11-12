@@ -9,7 +9,7 @@ import httpx
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.messages.utils import convert_to_openai_messages
 from langchain_core.tools import tool
-from app.agent import graph, summarization, tools, vision, weather, site
+from app.agent import graph, summarization, tools, weather, site
 from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 from app.beidou.schemas import GnssDataPoint, Station
 from app.monitoring_data import MonitoringData, _SeriesCache
@@ -52,7 +52,7 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         return message, model
 
     def test_injected_tool_call_id_is_not_exposed_to_model(self):
-        for agent_tool in (site.inspect_site_environment, vision.analyze_gnss_chart):
+        for agent_tool in (site.inspect_site_environment,):
             with self.subTest(tool=agent_tool.name):
                 schema = agent_tool.tool_call_schema.model_json_schema()
                 self.assertNotIn("tool_call_id", schema.get("properties", {}))
@@ -167,25 +167,6 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("latitude", message.content)
         self.assertEqual(len(platform.requests), 1)
 
-    async def test_empty_visual_data_returns_success_without_model_call(self):
-        self.use_platform(FakePlatform(stations=[station()]))
-        with patch.object(vision, "_get_vision_llm") as vision_model:
-            message, _ = await self.run_tool(
-                vision.analyze_gnss_chart,
-                {
-                    "station_name_or_uuid": "测试站",
-                    "begin_time": "2026-09-01 00:00:00",
-                    "end_time": "2026-09-02 00:00:00",
-                },
-            )
-        self.assertEqual(message.status, "success")
-        self.assertEqual(message.artifact["status"], "success")
-        self.assertEqual(message.artifact["data"]["total_points"], 0)
-        self.assertEqual(message.artifact["data"]["chart_points"], [])
-        self.assertEqual(message.artifact["data"]["images"], [])
-        self.assertNotIn("message", message.artifact["data"])
-        vision_model.assert_not_called()
-
     async def test_internal_error_is_logged_but_never_exposed(self):
         @tool
         def broken():
@@ -285,103 +266,24 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(message.artifact["data"].get("terrain"))
         self.assertIn("缺少地形证据", message.artifact["error"]["message"])
 
-    async def test_unconfigured_vision_preserves_charts_with_error_status(self):
-        test_station = station()
-        self.use_platform(FakePlatform(stations=[test_station], series={test_station.station_uuid: hourly_points(5)}))
-        with patch.object(vision, "_resolve_baseline", return_value=None), \
-             patch.object(vision, "_render_all_charts", return_value=[{"name": "raw_coordinates", "png_base64": "TEST_IMAGE"}]), \
-             patch.object(vision, "get_settings", return_value=SimpleNamespace(vision_base_url="", vision_api_key="", vision_model="")):
-            message, _ = await self.run_tool(vision.analyze_gnss_chart, {"station_name_or_uuid": "测试站",
-                "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
-        self.assertEqual(message.status, "error")
-        self.assertEqual(len(message.artifact["data"]["chart_points"]), 5)
-        self.assertEqual(message.artifact["data"]["station_name"], "测试站")
-        self.assertIn("未配置", message.artifact["error"]["message"])
-        self.assertNotIn("VISION_", message.content)
-        self.assertNotIn("TEST_IMAGE", str(convert_to_openai_messages([message])))
-
     async def test_success_artifact_not_serialized_to_model(self):
         @tool(response_format="content_and_artifact")
         def evidence():
             """测试模型事实与展示序列分离。"""
             return tool_result(
                 {"station_name": "测试站", "net_change_mm": 2},
-                kind="vision",
+                kind="computation",
                 display={
-                    "station_uuid": "11111111-1111-1111-1111-111111111111",
-                    "station_name": "测试站",
-                    "begin_time": "2026-09-21 00:00:00",
-                    "end_time": "2026-09-21 01:00:00",
-                    "timezone": "Asia/Shanghai",
-                    "total_points": 1,
-                    "images": [],
-                    "chart_points": [{"t": "DISPLAY_ONLY", "n": 1, "e": 2, "u": 3}],
+                    "description": "测试计算",
+                    "code": "result = 1",
+                    "inputs": [],
+                    "result": {"t": "DISPLAY_ONLY"},
+                    "truncated": False,
                 },
             )
         message, _ = await self.run_tool(evidence, {})
         self.assertEqual(message.status, "success")
-        self.assertEqual(message.artifact["data"]["chart_points"][0]["t"], "DISPLAY_ONLY")
+        self.assertEqual(message.artifact["data"]["result"]["t"], "DISPLAY_ONLY")
         self.assertNotIn("DISPLAY_ONLY", str(convert_to_openai_messages([message])))
         self.assertIn("net_change_mm", message.content)
 
-    async def test_vision_invalid_output_and_excess_candidates_do_not_retry(self):
-        for output in ("not-json", "many"):
-            with self.subTest(output=output):
-                test_station = station()
-                self.use_platform(FakePlatform(stations=[test_station], series={test_station.station_uuid: hourly_points(5)}))
-                observations = vision.VisionObservations(candidates=[vision.VisualCandidate(metric="N",
-                    start_at="2026-09-01 01:00:00", end_at="2026-09-01 02:00:00") for _ in range(2)])
-                if output == "not-json":
-                    structured_result = {"raw": AIMessage(content="not-json"), "parsed": None, "parsing_error": ValueError("not json")}
-                else:
-                    structured_result = {"raw": AIMessage(content="{}"), "parsed": observations, "parsing_error": None}
-                bound_structured = SimpleNamespace(ainvoke=AsyncMock(return_value=structured_result))
-                model = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
-                settings = SimpleNamespace(vision_base_url="https://test.invalid", vision_api_key="INVALID", vision_model="test", vision_max_candidates=1)
-                with patch.object(vision, "_resolve_baseline", return_value=None), \
-                     patch.object(vision, "_render_all_charts", return_value=[{"name": "cumulative_displacement", "png_base64": "TEST"}]), \
-                     patch.object(vision, "get_settings", return_value=settings), \
-                     patch.object(vision, "_get_vision_llm", return_value=model), \
-                     patch.object(vision, "_recheck_candidate") as recheck:
-                    message, _ = await self.run_tool(vision.analyze_gnss_chart, {"station_name_or_uuid": "测试站",
-                        "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
-                self.assertEqual(message.status, "error")
-                self.assertEqual(bound_structured.ainvoke.await_count, 1)
-                recheck.assert_not_called()
-                self.assertEqual(len(message.artifact["data"]["chart_points"]), 5)
-
-    async def test_empty_vision_observation_returns_standard_success(self):
-        test_station = station()
-        self.use_platform(FakePlatform(stations=[test_station], series={test_station.station_uuid: hourly_points(5)}))
-        structured_result = {"raw": AIMessage(content="{}"), "parsed": vision.VisionObservations(), "parsing_error": None}
-        bound_structured = SimpleNamespace(ainvoke=AsyncMock(return_value=structured_result))
-        model = SimpleNamespace(with_structured_output=MagicMock(return_value=bound_structured))
-        settings = SimpleNamespace(vision_base_url="https://test.invalid", vision_api_key="INVALID", vision_model="test",
-                                   vision_max_candidates=1, vision_recheck_pad_hours=2)
-        with patch.object(vision, "_resolve_baseline", return_value=None), \
-             patch.object(vision, "_render_all_charts", return_value=[{"name": "cumulative_displacement", "png_base64": "TEST"}]), \
-             patch.object(vision, "get_settings", return_value=settings), \
-             patch.object(vision, "_get_vision_llm", return_value=model):
-            message, _ = await self.run_tool(vision.analyze_gnss_chart, {
-                "station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
-        self.assertEqual(message.status, "success")
-        self.assertNotIn("error", message.artifact)
-        self.assertEqual(message.artifact["data"]["observations"]["candidates"], [])
-        self.assertEqual(json.loads(message.content)["observations"]["global_features"]["points"], 5)
-
-    async def test_vision_candidates_are_rechecked_on_fetched_hourly_data_without_new_requests(self):
-        test_station = station()
-        platform = self.use_platform(FakePlatform(stations=[test_station], series={test_station.station_uuid: hourly_points(8)}))
-        candidate = vision.VisualCandidate(metric="N", start_at="2026-09-01 03:00:00", end_at="2026-09-01 04:00:00")
-        structured_result = {"raw": AIMessage(content="{}"), "parsed": vision.VisionObservations(candidates=[candidate]), "parsing_error": None}
-        model = SimpleNamespace(with_structured_output=MagicMock(return_value=SimpleNamespace(ainvoke=AsyncMock(return_value=structured_result))))
-        settings = SimpleNamespace(vision_base_url="https://test.invalid", vision_api_key="INVALID", vision_model="test",
-                                   vision_max_candidates=3, vision_recheck_pad_hours=1)
-        with patch.object(vision, "_render_all_charts", return_value=[{"name": "cumulative_displacement", "png_base64": "TEST"}]), \
-             patch.object(vision, "get_settings", return_value=settings), \
-             patch.object(vision, "_get_vision_llm", return_value=model):
-            message, _ = await self.run_tool(vision.analyze_gnss_chart, {
-                "station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-01 07:00:00"})
-        recheck = json.loads(message.content)["observations"]["candidates"][0]["features"]
-        self.assertEqual((recheck["begin_time"], recheck["end_time"], recheck["points"]), ("2026-09-01 02:00:00", "2026-09-01 05:00:00", 4))
-        self.assertEqual(len(platform.requests), 1)

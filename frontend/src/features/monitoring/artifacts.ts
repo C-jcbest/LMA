@@ -10,11 +10,9 @@ const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
   'acquisition_failure',
   'conclusions',
   'computation',
-  'plan',
   'station_list',
   'gnss_series',
   'weather',
-  'vision',
   'site_environment',
 ]);
 
@@ -39,50 +37,6 @@ const isStation = (value: unknown) =>
   typeof value.station_name === 'string' &&
   value.coordinate_system === 'WGS84';
 
-const isVisionData = (value: unknown) => {
-  if (
-    !isRecord(value) ||
-    typeof value.station_name !== 'string' ||
-    typeof value.begin_time !== 'string' ||
-    typeof value.end_time !== 'string' ||
-    typeof value.timezone !== 'string' ||
-    typeof value.total_points !== 'number' ||
-    !Array.isArray(value.images) ||
-    !Array.isArray(value.chart_points)
-  ) {
-    return false;
-  }
-  if (
-    !value.images.every(
-      (image) =>
-        isRecord(image) &&
-        typeof image.name === 'string' &&
-        typeof image.png_base64 === 'string',
-    ) ||
-    !value.chart_points.every(
-      (point) => isRecord(point) && typeof point.t === 'string',
-    )
-  ) {
-    return false;
-  }
-  if (value.observations == null) return true;
-  if (!isRecord(value.observations)) return false;
-  const { candidates, trends, turning_points } = value.observations;
-  return (
-    (candidates === undefined ||
-      (Array.isArray(candidates) &&
-        candidates.every(
-          (candidate) =>
-            isRecord(candidate) &&
-            typeof candidate.metric === 'string' &&
-            typeof candidate.start_at === 'string' &&
-            typeof candidate.end_at === 'string',
-        ))) &&
-    (trends === undefined || isStringArray(trends)) &&
-    (turning_points === undefined || isStringArray(turning_points))
-  );
-};
-
 const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
   if (!isRecord(value)) return false;
   switch (kind) {
@@ -105,12 +59,6 @@ const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
         && Array.isArray(value.inputs)
         && value.inputs.every((input) => isRecord(input) && typeof input.evidence_id === 'string'
           && typeof input.description === 'string')
-      );
-    case 'plan':
-      return (
-        Array.isArray(value.items) &&
-        value.items.every((item) => isRecord(item) && typeof item.content === 'string'
-          && ['pending', 'in_progress', 'completed'].includes(String(item.status)))
       );
     case 'station_list':
       return (
@@ -145,8 +93,6 @@ const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
         typeof value.location.longitude === 'number' &&
         isRecord(value.query)
       );
-    case 'vision':
-      return isVisionData(value);
     case 'site_environment':
       return (
         value.version === 1 &&

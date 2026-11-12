@@ -33,17 +33,16 @@ from app.agent.compute import compute
 from app.agent.conclusions import CONCLUSIONS_TOOL_NAME, record_conclusions
 from app.agent.retry import is_transient_error
 from app.agent.models import create_chat_model, model_max_input_tokens
-from app.agent.session_tools import PLAN_TOOL_NAME, station_history_tool, update_plan
+from app.agent.session_tools import station_history_tool
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
 from app.agent.tools import find_stations, get_displacement
-from app.agent.vision import analyze_gnss_chart
 from app.agent.weather import query_weather
 from app.config import get_settings
 
 tools = [
-    find_stations, get_displacement, query_weather, analyze_gnss_chart, inspect_site_environment,
-    compute, update_plan, record_conclusions,
+    find_stations, get_displacement, query_weather, inspect_site_environment,
+    compute, record_conclusions,
 ]
 logger = logging.getLogger(__name__)
 
@@ -75,7 +74,7 @@ class QueryCallLimitMiddleware(ToolCallLimitMiddleware):
     """
 
     def _matches_tool_filter(self, tool_call) -> bool:
-        return tool_call["name"] not in {"compute", PLAN_TOOL_NAME, CONCLUSIONS_TOOL_NAME, "get_station_history"}
+        return tool_call["name"] not in {"compute", CONCLUSIONS_TOOL_NAME, "get_station_history"}
 
 
 _FINAL_MODEL_CALL_NOTICE = (
@@ -137,7 +136,7 @@ class LmaMiddleware(AgentMiddleware):
             return None
         recorded = any(message.name == CONCLUSIONS_TOOL_NAME for message in latest_results)
         # 只登记了结论、没有写正文时回到模型补上回答；与其他查询并行发出时也需要模型继续。
-        only_conclusions = all(message.name in {CONCLUSIONS_TOOL_NAME, PLAN_TOOL_NAME} for message in latest_results)
+        only_conclusions = all(message.name == CONCLUSIONS_TOOL_NAME for message in latest_results)
         if recorded and only_conclusions and index >= 0 and messages[index].text.strip():
             return {"jump_to": "end"}
         return None

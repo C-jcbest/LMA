@@ -225,16 +225,16 @@ test('390px 旧会话目录失败不阻断数据与新调查', async ({ page }, 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?station=A');
   await expect(page.getByRole('region', { name: '测点数据' })).toBeVisible();
-  await expect(page.getByText('北向净变化', { exact: true })).toBeVisible();
+  await expect(page.getByText('北向本窗口变化', { exact: true })).toBeVisible();
   await expect(page.getByRole('img', { name: '测试点 A 位移时间轴' }).locator('canvas').first()).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('测点局部失败-数据仍可用-390px.png') });
   await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeEnabled();
   await page.getByRole('radio', { name: '数据', exact: true }).click();
-  await expect(page.getByText('北向净变化', { exact: true })).toBeVisible();
+  await expect(page.getByText('北向本窗口变化', { exact: true })).toBeVisible();
 });
 
-test('320px 位移结果的数值特征可查看两窗口与共同有效时段，无需视觉结果', async ({ page }) => {
+test('320px 位移结果的数值特征可查看两窗口与共同有效时段', async ({ page }) => {
   await mockApi(page);
   const feature = { count: 4, net_change_mm: 3, robust_slope_mm_day: 1, max_step_mm: 1,
     begin_time: '2026-11-02 00:00:00', end_time: '2026-11-03 00:00:00',
@@ -257,26 +257,19 @@ test('320px 位移结果的数值特征可查看两窗口与共同有效时段�
   await page.getByRole('button', { name: '查看 测试点 A 的依据', exact: true }).click();
   // 有序列时默认看时间轴；数值特征在明细页。
   await inspector(page).getByRole('tab', { name: '明细' }).click();
-  await expect(inspector(page).getByText('两个窗口比较')).toBeVisible();
-  await expect(inspector(page).getByText('共同有效时段比较')).toBeVisible();
+  await expect(inspector(page).getByRole('table', { name: '前后两段比较' })).toBeVisible();
+  await expect(inspector(page).getByText('同组共同时段')).toBeVisible();
   await expect(inspector(page).getByText('测试点 B', { exact: true })).toBeVisible();
   expect(await inspector(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test('多步骤调查显示计划，计算结果作为依据卡片出现在正文中', async ({ page }) => {
+test('计算结果作为可收起的依据卡片出现在正文中', async ({ page }) => {
   await mockApi(page);
   const history = [
     { type: 'human', id: 'plan-question', content: '看一下 K3 组整体情况，按周汇总北向变化' },
     { type: 'ai', id: 'plan-call', content: [], tool_calls: [
-      { id: 'plan-1', name: 'update_plan', args: {} },
       { id: 'compute-1', name: 'compute', args: {} },
     ] },
-    { type: 'tool', id: 'plan-result', tool_call_id: 'plan-1', name: 'update_plan', status: 'success', content: '{}',
-      artifact: { version: 1, kind: 'plan', status: 'success', data: { items: [
-        { content: '核对测试点 A 近 90 天趋势', status: 'completed' },
-        { content: '与同组测点对比', status: 'in_progress' },
-        { content: '查询同期降雨', status: 'pending' },
-      ] } } },
     { type: 'tool', id: 'compute-result', tool_call_id: 'compute-1', name: 'compute', status: 'success', content: '{}',
       artifact: { version: 1, kind: 'computation', status: 'success', evidence_id: 'Ecalc', data: {
         description: '测试点 A 每周北向变化', code: 'PRIVATE_CODE_SHOULD_NOT_RENDER',
@@ -288,11 +281,12 @@ test('多步骤调查显示计划，计算结果作为依据卡片出现在正�
   await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?threadId=report-session');
-  const plan = page.getByRole('list', { name: '调查计划' });
-  await expect(plan.getByRole('listitem')).toHaveCount(3);
-  await expect(plan.getByText('与同组测点对比')).toBeVisible();
   const card = page.locator('[data-slot=evidence-card]').filter({ hasText: '测试点 A 每周北向变化' });
   await expect(card).toBeVisible();
+  await expect(card.getByRole('table')).toContainText('1.1');
+  await card.getByRole('button', { name: /测试点 A 每周北向变化/ }).click();
+  await expect(card.getByRole('table')).toHaveCount(0);
+  await card.getByRole('button', { name: /测试点 A 每周北向变化/ }).click();
   await expect(card.getByRole('table')).toContainText('1.1');
   await expect(page.getByText('PRIVATE_CODE_SHOULD_NOT_RENDER')).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
@@ -582,7 +576,7 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.getByRole('button', { name: '查看 测试点 A' }).click();
   await expect(page).toHaveURL(/station=/);
   await expect(page.getByRole('heading', { name: '测试点 A' })).toBeVisible();
-  await expect(page.getByText('北向净变化')).toBeVisible();
+  await expect(page.getByText('北向本窗口变化')).toBeVisible();
   await expect(page.getByRole('img', { name: '测试点 A 位移时间轴' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   expect(runRequests).toBe(0);

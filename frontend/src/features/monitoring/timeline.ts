@@ -3,7 +3,6 @@ import type {
   GapArtifact,
   GnssArtifactData,
   GnssPointArtifact,
-  VisionCandidateArtifact,
   WeatherArtifactData,
 } from '@/types/envelope';
 import { toFiniteGnssNumber } from './tools/gnssUtils';
@@ -11,6 +10,11 @@ import { toFiniteGnssNumber } from './tools/gnssUtils';
 const MILLIMETERS_PER_METER = 1000;
 const MIN_PEER_OVERLAP_RATIO = 0.5;
 const RAINFALL_SERIES_NAME = '日降雨';
+const BAND_SERIES_NAME = '证据区间';
+const DAY_MILLIS = 24 * 60 * 60 * 1000;
+const AXES = ['n', 'e', 'u'] as const;
+
+type Axis = (typeof AXES)[number];
 
 const toMillis = (value: string) => new Date(value.replace(' ', 'T')).getTime();
 
@@ -24,20 +28,48 @@ export interface DisplacementPoint {
   h: number | null;
 }
 
+export type ReferenceCoordinates = Record<Axis, number | null>;
+
+/** 平台登记的固定参考坐标（m）；旧依据或平台未登记的方向为 null。 */
+export function referenceOf(data: GnssArtifactData): ReferenceCoordinates {
+  const coordinates = data.reference?.coordinates_m;
+  const record = typeof coordinates === 'object' && coordinates !== null ? coordinates as Record<string, unknown> : {};
+  return { n: toFiniteGnssNumber(record.n), e: toFiniteGnssNumber(record.e), u: toFiniteGnssNumber(record.u) };
+}
+
+export type DisplacementBasis = 'fixed' | 'partial' | 'window';
+
+export function displacementBasis(data: GnssArtifactData): DisplacementBasis {
+  const reference = referenceOf(data);
+  const fixedAxes = AXES.filter((axis) => reference[axis] !== null).length;
+  if (fixedAxes === AXES.length) return 'fixed';
+  return fixedAxes === 0 ? 'window' : 'partial';
+}
+
+const BASIS_LABELS: Record<DisplacementBasis, string> = {
+  fixed: '相对固定参考的累计位移',
+  partial: '部分方向平台未登记固定参考，这些方向相对本窗口首点',
+  window: '平台未登记固定参考，相对本窗口首点',
+};
+
+export const displacementBasisLabel = (data: GnssArtifactData) => BASIS_LABELS[displacementBasis(data)];
+
 /**
- * 相对本窗口首个有效点的变化（mm）。这是窗口内变化，不是相对平台固定初始
- * 坐标的累计偏移；序列产物不携带固定基准，图上不得把二者混称。
- * 缺测保持 null，折线在此断开，不转换为 0。
+ * 位移（mm）：有固定参考的方向是累计位移，没有的方向退回本窗口首个有效点，
+ * 并由 displacementBasisLabel 向用户说明。缺测保持 null，折线在此断开，不转换为 0。
  */
-export function toDisplacement(points: readonly GnssPointArtifact[]): DisplacementPoint[] {
-  const firstValues: Record<'n' | 'e' | 'u', number | null> = { n: null, e: null, u: null };
+export function toDisplacement(
+  points: readonly GnssPointArtifact[],
+  reference: ReferenceCoordinates = { n: null, e: null, u: null },
+): DisplacementPoint[] {
+  const baseValues: ReferenceCoordinates = { ...reference };
 
   return points.map((point) => {
-    const relative = (axis: 'n' | 'e' | 'u') => {
+    const relative = (axis: Axis) => {
       const value = toFiniteGnssNumber(point[axis]);
       if (value === null) return null;
-      firstValues[axis] ??= value;
-      return roundToHundredth((value - firstValues[axis]) * MILLIMETERS_PER_METER);
+      baseValues[axis] ??= value;
+      return roundToHundredth((value - baseValues[axis]) * MILLIMETERS_PER_METER);
     };
     const n = relative('n');
     const e = relative('e');
@@ -50,6 +82,20 @@ export function toDisplacement(points: readonly GnssPointArtifact[]): Displaceme
       h: n === null || e === null ? null : roundToHundredth(Math.hypot(n, e)),
     };
   });
+}
+
+export const displacementOf = (data: GnssArtifactData) => toDisplacement(data.points, referenceOf(data));
+
+/** 窗口内最后一个水平分量齐全的点；用于地图上的位移方向。 */
+export function latestHorizontal(data: GnssArtifactData): { north: number; east: number } | null {
+  const points = displacementOf(data);
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const point = points[index]!;
+    if (point.n !== null && point.e !== null) {
+      return { north: point.n, east: point.e };
+    }
+  }
+  return null;
 }
 
 export const seriesDuration = (data: GnssArtifactData) =>
@@ -101,7 +147,7 @@ export interface PeerSeries {
   points: DisplacementPoint[];
 }
 
-/** 同组对比只取与当前窗口重叠过半的序列，并在共同窗口内重新取首点。 */
+/** 同组对比只取与当前窗口重叠过半的序列，位移基准与本测点一致（有固定参考时为累计位移）。 */
 export function peerSeriesFor(
   current: GnssArtifactData,
   peers: readonly { name: string; series: readonly GnssArtifactData[] }[],
@@ -128,10 +174,41 @@ export function peerSeriesFor(
       const time = toMillis(point.time);
       return time >= windowStart && time <= windowEnd;
     });
-    result.push({ name: peer.name, points: toDisplacement(pointsInWindow) });
+    result.push({ name: peer.name, points: toDisplacement(pointsInWindow, referenceOf(bestSeries)) });
   }
   return result;
 }
+
+export interface StepEvent {
+  axis: Axis | 'h';
+  time: string;
+  stepMillimeters: number;
+  status: string;
+}
+
+/** 服务端在本窗口检测到的台阶候选（数值特征 events），不是视觉判断。 */
+export function stepEventsOf(data: GnssArtifactData, axes: readonly (Axis | 'h')[]): StepEvent[] {
+  const events: StepEvent[] = [];
+  for (const axis of axes) {
+    const axisEvents = data.features?.[axis]?.events;
+    if (!Array.isArray(axisEvents)) continue;
+    for (const event of axisEvents) {
+      if (typeof event !== 'object' || event === null) continue;
+      const { time, step_mm: step, status } = event as Record<string, unknown>;
+      if (typeof time === 'string' && typeof step === 'number') {
+        events.push({ axis, time, stepMillimeters: step, status: typeof status === 'string' ? status : '' });
+      }
+    }
+  }
+  return events;
+}
+
+const AXIS_LABELS: Record<Axis | 'h', string> = { n: '北向', e: '东向', u: '垂直', h: '水平' };
+
+const formatSigned = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(1)}`;
+
+export const stepEventText = (event: StepEvent) =>
+  `${AXIS_LABELS[event.axis]}台阶 ${formatSigned(event.stepMillimeters)} mm · ${event.time.slice(5, 16)}${event.status ? ` · ${event.status}` : ''}`;
 
 export interface ChartColors {
   text: string;
@@ -145,7 +222,6 @@ export interface ChartColors {
   up: string;
   rain: string;
   peer: string;
-  candidate: string;
   gap: string;
 }
 
@@ -154,10 +230,26 @@ export type TimelineMode = 'components' | 'peers';
 export interface TimelineInput {
   data: GnssArtifactData;
   rainfall: readonly DailyRainfall[];
-  candidates: readonly VisionCandidateArtifact[];
   peers: readonly PeerSeries[];
   mode: TimelineMode;
 }
+
+/** 台阶标在曲线上的发生时刻，悬停看幅度和后续状态；不再用区间色块覆盖曲线。 */
+const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPoint[], color: string) => {
+  if (events.length === 0) return undefined;
+  const valueAt = new Map(points.map((point) => [point.time, point]));
+  return {
+    symbol: 'triangle',
+    symbolSize: 9,
+    itemStyle: { color, borderColor: '#fff', borderWidth: 1 },
+    label: { show: false },
+    tooltip: { trigger: 'item', formatter: (params: { name: string }) => params.name },
+    data: events.flatMap((event) => {
+      const value = valueAt.get(event.time)?.[event.axis];
+      return typeof value === 'number' ? [{ name: stepEventText(event), coord: [event.time, value] }] : [];
+    }),
+  };
+};
 
 const displacementLine = (
   name: string,
@@ -177,40 +269,85 @@ const displacementLine = (
   emphasis: { disabled: true },
 });
 
-const evidenceBands = (
-  gaps: readonly GapArtifact[],
-  candidates: readonly VisionCandidateArtifact[],
-  colors: ChartColors,
-) => ({
+const gapBands = (gaps: readonly GapArtifact[], colors: ChartColors) => ({
   silent: true,
   label: { color: colors.mutedText, fontSize: 12, position: 'insideTop' },
-  data: [
-    ...gaps.map((gap) => [
-      { name: '缺测', xAxis: gap.from, itemStyle: { color: colors.gap } },
-      { xAxis: gap.to },
-    ]),
-    ...candidates.map((candidate) => [
-      { name: `候选 ${candidate.metric}`, xAxis: candidate.start_at, itemStyle: { color: colors.candidate } },
-      { xAxis: candidate.end_at },
-    ]),
-  ],
+  data: gaps.map((gap) => [
+    { name: '缺测', xAxis: gap.from, itemStyle: { color: colors.gap } },
+    { xAxis: gap.to },
+  ]),
 });
 
-/** 位移、降雨、缺测和视觉候选共用同一时间轴，时间对齐由图本身完成。 */
+/** 日降雨是整日累计，画成覆盖当天 0–24 时的色块，任何采样时刻都落在当天之内。 */
+const rainfallSeries = (rainfall: readonly DailyRainfall[], colors: ChartColors) => ({
+  name: RAINFALL_SERIES_NAME,
+  type: 'custom',
+  xAxisIndex: 1,
+  yAxisIndex: 1,
+  clip: true,
+  // 取当天正午作为提示框的对齐点：当天任一时刻离它都比离相邻日更近。
+  encode: { x: 0, y: 1 },
+  itemStyle: { color: colors.rain },
+  data: rainfall.map((day) => {
+    const start = toMillis(`${day.date} 00:00:00`);
+    return { value: [start + DAY_MILLIS / 2, day.value, start, start + DAY_MILLIS, day.isForecast ? 1 : 0] };
+  }),
+  renderItem: (
+    _params: unknown,
+    api: { value: (dimension: number) => number; coord: (value: [number, number]) => [number, number] },
+  ) => {
+    const [left, top] = api.coord([api.value(2), api.value(1)]);
+    const [right, bottom] = api.coord([api.value(3), 0]);
+    return {
+      type: 'rect',
+      shape: { x: left + 1, y: top, width: Math.max(1, right - left - 2), height: bottom - top },
+      style: { fill: colors.rain, opacity: api.value(4) === 1 ? 0.45 : 1 },
+    };
+  },
+});
+
+interface TooltipItem {
+  seriesName: string;
+  marker: string;
+  value: unknown;
+  axisValue?: number | string;
+}
+
+const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
+  const items = (Array.isArray(params) ? params : [params]).filter((item) => item.seriesName !== BAND_SERIES_NAME);
+  const lines = items.map((item) => {
+    const value = Array.isArray(item.value) ? item.value[1] : item.value;
+    const text = typeof value === 'number' ? `${value.toFixed(2)} mm` : '缺测';
+    if (item.seriesName === RAINFALL_SERIES_NAME && Array.isArray(item.value)) {
+      const day = formatChartTime(Number(item.value[2])).slice(5, 10);
+      return `${item.marker}${day} 日降雨 ${text}`;
+    }
+    return `${item.marker}${item.seriesName} ${text}`;
+  });
+  const axisValue = items[0]?.axisValue;
+  const header = typeof axisValue === 'number' ? formatChartTime(axisValue) : String(axisValue ?? '');
+  return [header, ...lines].join('<br/>');
+};
+
+/** 位移、降雨、缺测和台阶共用同一时间轴，时间对齐由图本身完成。 */
 export function buildTimelineOption(input: TimelineInput, colors: ChartColors): EChartsCoreOption {
-  const { data, rainfall, candidates, peers, mode } = input;
-  const displacement = toDisplacement(data.points);
+  const { data, rainfall, peers, mode } = input;
+  const displacement = displacementOf(data);
   const hasRainfall = rainfall.length > 0;
   const axisIndexes = hasRainfall ? [0, 1] : [0];
 
   const lineValues = (key: 'n' | 'e' | 'u' | 'h') =>
     displacement.map((point) => [point.time, point[key]] as const);
+  const withSteps = (line: ReturnType<typeof displacementLine>, axis: Axis | 'h', color: string) => {
+    const markPoint = stepMarks(stepEventsOf(data, [axis]), displacement, color);
+    return markPoint ? { ...line, markPoint } : line;
+  };
 
   const lines = mode === 'components'
     ? [
-        displacementLine('北向 N', lineValues('n'), colors.north, 1.75),
-        displacementLine('东向 E', lineValues('e'), colors.east, 1.75),
-        displacementLine('垂直 U', lineValues('u'), colors.up, 1.75),
+        withSteps(displacementLine('北向 N', lineValues('n'), colors.north, 1.75), 'n', colors.north),
+        withSteps(displacementLine('东向 E', lineValues('e'), colors.east, 1.75), 'e', colors.east),
+        withSteps(displacementLine('垂直 U', lineValues('u'), colors.up, 1.75), 'u', colors.up),
       ]
     : [
         ...peers.map((peer) => displacementLine(
@@ -219,13 +356,13 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
           colors.peer,
           1,
         )),
-        displacementLine(`${data.station_name} 水平`, lineValues('h'), colors.primary, 2.25),
+        withSteps(displacementLine(`${data.station_name} 水平`, lineValues('h'), colors.primary, 2.25), 'h', colors.primary),
       ];
 
-  // 证据带放在独立的空序列上，用图例隐藏某个方向时缺测和候选区间仍然可见。
+  // 缺测带放在独立的空序列上，用图例隐藏某个方向时缺测区间仍然可见。
   const bandSeries = {
-    ...displacementLine('证据区间', [], colors.mutedText, 0),
-    markArea: evidenceBands(data.summary.gaps, candidates, colors),
+    ...displacementLine(BAND_SERIES_NAME, [], colors.mutedText, 0),
+    markArea: gapBands(data.summary.gaps, colors),
   };
 
   const axisLine = { lineStyle: { color: colors.border } };
@@ -280,7 +417,7 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       backgroundColor: colors.surface,
       borderColor: colors.border,
       textStyle: { color: colors.text, fontSize: 13 },
-      valueFormatter: (value: unknown) => (typeof value === 'number' ? `${value.toFixed(2)} mm` : '缺测'),
+      formatter: formatTooltip,
     },
     // brush 需要 toolbox 组件，拖选由图表本身触发，不显示工具栏。
     toolbox: { show: false },
@@ -310,21 +447,7 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     series: [
       bandSeries,
       ...lines,
-      ...(hasRainfall
-        ? [{
-            name: RAINFALL_SERIES_NAME,
-            type: 'bar',
-            xAxisIndex: 1,
-            yAxisIndex: 1,
-            barMaxWidth: 14,
-            barMinWidth: 2,
-            itemStyle: { color: colors.rain },
-            data: rainfall.map((day) => ({
-              value: [`${day.date} 12:00:00`, day.value],
-              itemStyle: { color: colors.rain, opacity: day.isForecast ? 0.45 : 1 },
-            })),
-          }]
-        : []),
+      ...(hasRainfall ? [rainfallSeries(rainfall, colors)] : []),
     ],
   };
 }

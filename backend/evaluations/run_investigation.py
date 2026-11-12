@@ -18,15 +18,14 @@ from app.agent.artifacts import validate_artifact_envelope
 from app.agent.compute import compute
 from app.agent.conclusions import record_conclusions
 from app.agent.graph import create_lma_agent, _get_llm
-from app.agent.session_tools import update_plan
 from app.agent.tools import find_stations, get_displacement
 from app.config import get_settings
 from app.monitoring_data import monitoring_scope
 from app.server.storage import SessionStorage, connection_pool, migrate_database
 from evaluations.fixtures import MonitoringFixture, NEW_STATION, STATION_A, STATION_B
 
-# 评测只用合成监测平台；天气、场地和视觉依赖外部服务，不绑定这些工具。
-_EVALUATION_TOOLS = [find_stations, get_displacement, compute, update_plan, record_conclusions]
+# 评测只用合成监测平台；天气和场地依赖外部服务，不绑定这些工具。
+_EVALUATION_TOOLS = [find_stations, get_displacement, compute, record_conclusions]
 
 
 async def seed_previous_conclusion(storage):

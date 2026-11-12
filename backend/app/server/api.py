@@ -224,6 +224,11 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             await connection.execute("SELECT 1")
         return {"ok": True, "service": "lma"}
 
+    @app.get("/map-config")
+    async def map_config():
+        # 天地图是浏览器直接取瓦片，密钥本就会出现在瓦片请求里；只下发给通过访问保护的用户。
+        return {"tianditu_token": settings.tianditu_token or None}
+
     @app.get("/sessions")
     async def list_sessions(
         limit: int = Query(21, ge=1, le=100), offset: int = Query(0, ge=0),
@@ -246,7 +251,9 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
     @app.patch("/sessions/{session_id}")
     async def update_session(session_id: UUID, body: SessionUpdate):
         await require_session(session_id)
-        require_idle(session_id)
+        # 标题在首条消息运行期间生成并写回，改名不影响运行；归档会把会话移出列表，需等运行结束。
+        if body.archived is not None:
+            require_idle(session_id)
         return await app.state.storage.update(str(session_id), body.name, body.archived)
 
     @app.delete("/sessions/{session_id}", status_code=204)

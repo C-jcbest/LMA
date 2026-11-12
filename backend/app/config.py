@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # 主模型 Provider 标识（deepseek/openai）；决定官方 integration 与 thinking 参数映射，不靠模型名猜测。
     llm_provider: str = "deepseek"
-    # 主模型 OpenAI 兼容接口地址；标题、摘要复用此端点，视觉模型单独配置。
+    # 主模型 OpenAI 兼容接口地址；标题、摘要复用此端点。
     llm_base_url: str = "https://api.deepseek.com"
     # 主模型接口密钥；标题、摘要复用。默认空值，实际调用前需配置，不提交版本库。
     llm_api_key: str = ""
@@ -48,8 +48,6 @@ class Settings(BaseSettings):
     agent_inline_points_limit: int = Field(default=72, ge=0, le=1000)
     # compute 单次计算的运行时间上限，单位秒（1–60，默认 10）；超时终止子进程并返回错误。
     compute_timeout_seconds: float = Field(default=10.0, ge=1, le=60)
-    # 单次视觉工具尝试的有效候选数量上限（1–50，默认 12）；超额明确拒绝数值回查，不静默裁剪候选。
-    vision_max_candidates: int = Field(default=12, ge=1, le=50)
 
     # 北斗监测平台 API 根地址，默认空值；使用平台工具前需配置，接口路径由客户端追加。
     beidou_api_base_url: str = ""
@@ -58,21 +56,10 @@ class Settings(BaseSettings):
     # 北斗平台登录密码，默认空值；仅运行时配置，不提交版本库或转发给模型/前端。
     beidou_password: str = ""
 
-    # 视觉模型 Provider 标识（deepseek/openai）；与主模型独立，决定官方 integration 与 thinking 参数映射。
-    vision_provider: str = "openai"
-    # 视觉请求协议（responses/chat_completions），默认 chat_completions；仅视觉调用生效，不自动回退。
-    # responses 需 openai integration 与支持该协议的端点；仅支持 Chat Completions 的端点使用 chat_completions。
-    vision_protocol: Literal["responses", "chat_completions"] = "chat_completions"
-    # 视觉模型 OpenAI 兼容端点，默认空值；与视觉密钥、模型一起配置，缺任一项则复核返回 error 并保留图表。
-    vision_base_url: str = ""
-    # 视觉模型接口密钥，默认空值；不复用主模型密钥，不提交版本库。
-    vision_api_key: str = ""
-    # 支持图像输入的视觉模型标识，默认空值；必须为视觉端点提供的可用模型，不复用主模型。
-    vision_model: str = ""
-    # 视觉模型独立思考开关（默认 false）；开关语义同 LLM_THINKING，不继承主模型开关。
-    vision_thinking: bool = False
-    # 候选数值核验向起止两侧各外扩的小时数（默认 2）；限制在原查询窗口内，0 不外扩，负值运行时按 0 处理。
-    vision_recheck_pad_hours: int = 2
+    # 天地图浏览器端密钥，默认空值；地图底图（影像、地形晕渲及注记）使用。密钥会下发到已登录用户的浏览器，
+    # 需在天地图控制台为该密钥配置域名白名单；为空时地图只显示测点，不加载底图。
+    tianditu_token: str = ""
+
 
     # 官方摘要的消息 token 触发阈值（正整数，默认 800000）；使用官方计数，不采用展示估算或窗口比例。
     context_token_threshold: int = Field(default=800_000, gt=0)

@@ -26,8 +26,8 @@ class MessageProjectionTests(unittest.TestCase):
         self.assertEqual(public['content'], '最近怎么样')
         self.assertNotIn('44444444', json.dumps(public))
 
-    def test_plan_and_conclusions_are_not_citable_evidence(self):
-        for kind in ('plan', 'conclusions'):
+    def test_conclusions_are_not_citable_evidence(self):
+        for kind in ('conclusions',):
             message = ToolMessage(content='完成', tool_call_id=f'{kind}-1', artifact={'version': 1, 'kind': kind, 'data': {}})
             self.assertFalse(message_context.is_evidence(message))
             self.assertNotIn('lma_evidence', message_context.model_messages([message])[0].content)

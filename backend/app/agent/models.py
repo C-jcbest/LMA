@@ -1,6 +1,6 @@
 """统一模型构造入口：官方 init_chat_model 按 Provider 选择 integration。
 
-四个业务角色（主 Agent / 标题 / 摘要 / 视觉）只调用本工厂，各自传入独立
+三个业务角色（主 Agent / 标题 / 摘要）只调用本工厂，各自传入独立
 thinking 开关与调用参数；Provider 层把布尔思考开关显式映射为供应商官方参数，不靠
 模型名猜测 Provider，也不为每个角色维护独立 Provider/Endpoint 配置。
 
@@ -223,13 +223,6 @@ def create_chat_model(
         protocol=protocol,
         vendor=resolved_vendor,
     )
-
-    # 视觉角色沿用 OpenAI 的 max_completion_tokens 名称；DeepSeek integration 使用
-    # max_tokens。仅在统一入口做这一处确定映射，避免供应商参数散落到业务调用层。
-    if provider == "deepseek" and "max_completion_tokens" in kwargs:
-        if "max_tokens" in kwargs:
-            raise ValueError("不能同时配置 max_completion_tokens 与 max_tokens")
-        kwargs["max_tokens"] = kwargs.pop("max_completion_tokens")
 
     # 规范合并 extra_body
     if "extra_body" in options:

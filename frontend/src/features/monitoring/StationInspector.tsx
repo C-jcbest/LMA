@@ -8,13 +8,16 @@ import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
 import { appendToComposerDraft } from '@/lib/composer-draft';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
-import type { EvidenceSource, GnssArtifactData, VisionCandidateArtifact } from '@/types/envelope';
+import type { EvidenceSource, GnssArtifactData } from '@/types/envelope';
 import { useChartColors } from './chartColors';
 import { collectStations, type StationEvidence } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
 import {
   buildTimelineOption,
   dailyRainfallWithin,
+  displacementBasisLabel,
+  displacementOf,
+  referenceOf,
   formatChartTime,
   peerSeriesFor,
   seriesDuration,
@@ -27,56 +30,64 @@ import { GnssResultView } from './tools/GnssResultView';
 import { NumericalResultView } from './tools/NumericalResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
 import { StationStatus } from './tools/StationResultView';
-import { VisionResultView } from './tools/VisionResultView';
 import { WeatherResultView } from './tools/WeatherResultView';
 
 const TimelineChart = lazy(() => import('./TimelineChart'));
 
 const MILLIMETERS_PER_METER = 1000;
 
-const formatChange = (meters: number | null | undefined) => {
-  if (meters === null || meters === undefined) return '—';
-  const millimeters = meters * MILLIMETERS_PER_METER;
-  const sign = millimeters > 0 ? '+' : '';
-  return `${sign}${millimeters.toFixed(1)}`;
+const formatSigned = (millimeters: number | null | undefined) => {
+  if (millimeters === null || millimeters === undefined) return '—';
+  return `${millimeters > 0 ? '+' : ''}${millimeters.toFixed(1)}`;
 };
 
+const METRIC_AXES = [
+  { axis: 'n', label: '北向' },
+  { axis: 'e', label: '东向' },
+  { axis: 'u', label: '垂直' },
+] as const;
+
+/** 有固定参考的方向显示最新累计位移，并附本窗口净变化；没有参考的方向只能给本窗口净变化。 */
 export const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
-  const metrics = [
-    { label: '北向净变化', value: formatChange(data.summary.n.change), unit: 'mm' },
-    { label: '东向净变化', value: formatChange(data.summary.e.change), unit: 'mm' },
-    { label: '垂直净变化', value: formatChange(data.summary.u.change), unit: 'mm' },
-    { label: '缺测', value: String(data.summary.gaps.length), unit: '段' },
-  ];
+  const reference = referenceOf(data);
+  const displacement = displacementOf(data);
+  const latestOf = (axis: 'n' | 'e' | 'u') => {
+    for (let index = displacement.length - 1; index >= 0; index -= 1) {
+      const value = displacement[index]![axis];
+      if (value !== null) return value;
+    }
+    return null;
+  };
+  const windowChange = (axis: 'n' | 'e' | 'u') => {
+    const meters = data.summary[axis].change;
+    return meters === null || meters === undefined ? null : meters * MILLIMETERS_PER_METER;
+  };
   return (
     <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
-      {metrics.map((metric) => (
-        <div key={metric.label} className="min-w-0">
-          <dt className="text-sm text-muted-foreground">{metric.label}</dt>
-          <dd className="mt-0.5 text-xl font-medium tabular-nums">
-            {metric.value}<span className="ms-1 text-sm font-normal text-muted-foreground">{metric.unit}</span>
-          </dd>
-        </div>
-      ))}
+      {METRIC_AXES.map(({ axis, label }) => {
+        const hasReference = reference[axis] !== null;
+        return (
+          <div key={axis} className="min-w-0">
+            <dt className="text-sm text-muted-foreground">{label}{hasReference ? '累计' : '本窗口变化'}</dt>
+            <dd className="mt-0.5 text-xl font-medium tabular-nums">
+              {formatSigned(hasReference ? latestOf(axis) : windowChange(axis))}
+              <span className="ms-1 text-sm font-normal text-muted-foreground">mm</span>
+            </dd>
+            {hasReference && (
+              <dd className="text-xs text-muted-foreground tabular-nums">本窗口 {formatSigned(windowChange(axis))} mm</dd>
+            )}
+          </div>
+        );
+      })}
+      <div className="min-w-0">
+        <dt className="text-sm text-muted-foreground">缺测</dt>
+        <dd className="mt-0.5 text-xl font-medium tabular-nums">
+          {data.summary.gaps.length}<span className="ms-1 text-sm font-normal text-muted-foreground">段</span>
+        </dd>
+      </div>
     </dl>
   );
 };
-
-const CandidateList: FC<{ candidates: readonly VisionCandidateArtifact[] }> = ({ candidates }) => (
-  <section aria-label="视觉候选区间" className="space-y-2">
-    <h3 className="text-sm font-medium">视觉候选，待数值复核</h3>
-    <ul className="space-y-2">
-      {candidates.map((candidate, index) => (
-        <li key={index} className="border-s-2 border-status-attention ps-3 text-sm">
-          <div className="text-muted-foreground tabular-nums">
-            {candidate.metric} · {candidate.start_at.slice(0, 16)} 至 {candidate.end_at.slice(5, 16)}
-          </div>
-          <div className="mt-0.5 wrap-break-word">{candidate.description || '未描述'}</div>
-        </li>
-      ))}
-    </ul>
-  </section>
-);
 
 interface TimelineViewProps {
   station: StationEvidence;
@@ -99,18 +110,13 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
     () => peerSeriesFor(data, peers.map((peer) => ({ name: peer.name, series: peer.series.map((item) => item.data) }))),
     [data, peers],
   );
-  const candidates = useMemo(() => {
-    return station.vision
-      .flatMap((item) => item.data.observations?.candidates ?? [])
-      .filter((candidate) => candidate.end_at >= data.begin_time && candidate.start_at <= data.end_time);
-  }, [station.vision, data]);
   const option = useMemo(() => {
     const rainfall = dailyRainfallWithin(station.weather.map((item) => item.data), data.begin_time, data.end_time);
     return buildTimelineOption(
-      { data, rainfall, candidates, peers: peerSeries, mode: peerSeries.length > 0 ? mode : 'components' },
+      { data, rainfall, peers: peerSeries, mode: peerSeries.length > 0 ? mode : 'components' },
       chartColors,
     );
-  }, [station.weather, data, candidates, peerSeries, mode, chartColors]);
+  }, [station.weather, data, peerSeries, mode, chartColors]);
 
   const askAboutRange = () => {
     if (!range) return;
@@ -156,7 +162,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
           <p className="min-w-0 truncate text-sm text-muted-foreground tabular-nums">
             {range
               ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`
-              : '相对本窗口首点的变化'}
+              : `${displacementBasisLabel(data)}（mm）· ▲ 为台阶`}
           </p>
           {range && (
             <div className="flex shrink-0 items-center gap-1">
@@ -182,7 +188,6 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
         </ErrorBoundary>
       </div>
 
-      {candidates.length > 0 && <CandidateList candidates={candidates} />}
     </div>
   );
 };
@@ -195,7 +200,7 @@ const DetailSection: FC<{ title: string; children: ReactNode }> = ({ title, chil
 );
 
 const EvidenceNotes: FC<{ station: StationEvidence }> = ({ station }) => {
-  const envelopes = [...station.series, ...station.weather, ...station.vision, ...station.site];
+  const envelopes = [...station.series, ...station.weather, ...station.site];
   const limitations = [...new Set(envelopes.flatMap((envelope) => envelope.limitations ?? []))];
   const sourcesByLabel = new Map<string, EvidenceSource>();
   for (const source of envelopes.flatMap((envelope) => envelope.sources ?? [])) {
@@ -269,9 +274,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
   let defaultTab = 'details';
   if (isSiteFocused || (hasSite && !hasTimeline)) {
     defaultTab = 'site';
-  } else if (hasTimeline
-    && !station.weather.some((item) => item.toolCallId === focusToolCallId)
-    && !station.vision.some((item) => item.toolCallId === focusToolCallId)) {
+  } else if (hasTimeline && !station.weather.some((item) => item.toolCallId === focusToolCallId)) {
     defaultTab = 'timeline';
   }
   const [activeTab, setActiveTab] = useState(defaultTab);
@@ -326,21 +329,21 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
             </Tabs.Content>
           )}
           <Tabs.Content value="details" className="space-y-8 focus-visible:outline-none">
-            {hasTimeline && (
-              <DetailSection title="GNSS 原始数据">
-                <GnssResultView data={seriesList[selectedIndex]!} />
-              </DetailSection>
-            )}
             {sortedSeries.filter((item) => Object.keys(item.data.features ?? {}).length > 0).map((item) => (
-              <DetailSection key={item.toolCallId} title="数值特征（mm、mm/day）">
+              <DetailSection key={item.toolCallId} title={`数值特征 · ${seriesLabel(item.data)}`}>
                 <NumericalResultView data={item.data} />
               </DetailSection>
             ))}
-            {station.vision.map((item, index) => (
-              <DetailSection key={index} title="位移曲线复核">
-                <VisionResultView data={item.data} />
-              </DetailSection>
-            ))}
+            {hasTimeline && (
+              <details className="rounded-lg border">
+                <summary className="flex min-h-10 cursor-pointer items-center px-3 text-sm font-medium">
+                  原始坐标 · {seriesLabel(seriesList[selectedIndex]!)}
+                </summary>
+                <div className="border-t p-3">
+                  <GnssResultView data={seriesList[selectedIndex]!} />
+                </div>
+              </details>
+            )}
             {station.weather.map((item, index) => (
               <DetailSection key={index} title="同期天气">
                 <WeatherResultView data={item.data} />

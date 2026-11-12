@@ -71,7 +71,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
   const option = useMemo(
-    () => buildTimelineOption({ data, rainfall: [], candidates: [], peers: [], mode: 'components' }, chartColors),
+    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components' }, chartColors),
     [data, chartColors],
   );
 

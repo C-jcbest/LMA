@@ -17,7 +17,6 @@ const readChartColors = (): ChartColors => {
     up: token('--chart-up'),
     rain: token('--chart-rain'),
     peer: token('--chart-peer'),
-    candidate: token('--chart-candidate'),
     gap: token('--chart-gap'),
   };
 };

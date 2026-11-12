@@ -32,12 +32,12 @@ def evidence_by_station(messages: list[BaseMessage]) -> dict[str, StationEvidenc
         kind = artifact.get("kind")
         identifier = evidence_id(message.tool_call_id)
         succeeded = artifact.get("status") != "error"
-        if kind in {"gnss_series", "vision"}:
+        if kind == "gnss_series":
             item = entry(data.get("station_uuid"), data.get("station_name"))
             if item is None:
                 continue
             item.evidence_ids.append(identifier)
-            if succeeded and data.get("points", data.get("chart_points")):
+            if succeeded and data.get("points"):
                 item.displacement_windows.append((data["begin_time"], data["end_time"]))
             # 同组对比中的测点也取得了同一窗口的数据。
             comparisons = data.get("comparisons", {})

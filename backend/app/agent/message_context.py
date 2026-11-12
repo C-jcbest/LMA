@@ -34,8 +34,8 @@ def evidence_id(tool_call_id: str) -> str:
     return "E" + hashlib.sha1(tool_call_id.encode("utf-8")).hexdigest()[:6]
 
 
-# 计划和结论登记是调查过程与留档，不是可引用的观测依据。
-_NON_EVIDENCE_KINDS = {"plan", "conclusions"}
+# 结论登记是留档，不是可引用的观测依据。
+_NON_EVIDENCE_KINDS = {"conclusions"}
 
 
 def is_evidence(message: BaseMessage) -> bool:

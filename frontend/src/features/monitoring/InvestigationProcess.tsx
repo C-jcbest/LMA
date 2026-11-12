@@ -1,13 +1,12 @@
 import { useMemo, useState, type FC } from 'react';
 import { useAuiState, type AssistantState } from '@assistant-ui/react';
-import { AlertCircleIcon, CheckIcon, ChevronRightIcon, CircleIcon, LoaderCircleIcon, MinusIcon } from 'lucide-react';
+import { AlertCircleIcon, CheckIcon, ChevronRightIcon, MinusIcon } from 'lucide-react';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
-import type { PlanArtifactData } from '@/types/envelope';
 import { ComputationResultView } from './tools/ComputationResultView';
 import { EmptyResultView } from './tools/EmptyResultView';
 import { StationResultView } from './tools/StationResultView';
@@ -16,14 +15,13 @@ import {
   buildSteps,
   collectStations,
   findConclusions,
-  findPlan,
   type InvestigationStep,
   type StationEvidence,
   type StepState,
 } from './investigation';
 import { ConclusionStatusStrip } from './InvestigationReport';
 import { useStationInspector } from './StationInspectorContext';
-import { seriesDuration, toDisplacement } from './timeline';
+import { displacementOf, seriesDuration } from './timeline';
 
 const MAX_VISIBLE_STATIONS = 6;
 const SPARKLINE_WIDTH = 40;
@@ -35,7 +33,7 @@ const isMessageRunning = (state: AssistantState) => state.message.status?.type =
 export const StationSparkline: FC<{ station: StationEvidence }> = ({ station }) => {
   const longest = [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data))[0];
   const values = useMemo(
-    () => (longest ? toDisplacement(longest.data.points).map((point) => point.h) : []),
+    () => (longest ? displacementOf(longest.data).map((point) => point.h) : []),
     [longest],
   );
   return <Sparkline values={values} />;
@@ -100,29 +98,6 @@ export const StepInlineResult: FC<{ step: InvestigationStep }> = ({ step }) => {
   }
   return null;
 };
-
-const PLAN_STATUS_LABEL: Record<PlanArtifactData['items'][number]['status'], string> = {
-  pending: '待进行',
-  in_progress: '进行中',
-  completed: '已完成',
-};
-
-/** 多步骤调查的计划：随模型更新而变化，结束后保留最后一版，便于看出覆盖了哪些对象。 */
-const PlanCard: FC<{ plan: PlanArtifactData; isRunning: boolean }> = ({ plan, isRunning }) => (
-  <ol aria-label="调查计划" className="space-y-1 rounded-lg border bg-muted/20 px-3 py-2 text-sm">
-    {plan.items.map((item, index) => (
-      <li key={index} className="flex min-h-7 items-center gap-2">
-        {item.status === 'completed' && <CheckIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
-        {item.status === 'in_progress' && (
-          <LoaderCircleIcon aria-hidden className={cn('size-3.5 shrink-0', isRunning && 'animate-spin motion-reduce:animate-none')} />
-        )}
-        {item.status === 'pending' && <CircleIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground/60" />}
-        <span className={cn('min-w-0 wrap-anywhere', item.status === 'completed' && 'text-muted-foreground')}>{item.content}</span>
-        <span className="sr-only">{PLAN_STATUS_LABEL[item.status]}</span>
-      </li>
-    ))}
-  </ol>
-);
 
 const StepText: FC<{ step: InvestigationStep }> = ({ step }) => (
   <>
@@ -200,12 +175,11 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
 
   const stations = useMemo(() => collectStations(parts), [parts]);
   const conclusions = useMemo(() => findConclusions(parts), [parts]);
-  const plan = useMemo(() => findPlan(parts), [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
   const failures = steps.filter((step) => step.state === 'failed' && step.envelope?.error);
 
   const isFirstToolGroup = firstPartIndex === parts.findIndex((part) => part.type === 'tool-call');
-  if (!isFirstToolGroup || (steps.length === 0 && !plan)) return null;
+  if (!isFirstToolGroup || steps.length === 0) return null;
 
   const open = (stationId: string) => openStation({ messageId, stationId });
   let headlineState: StepState = 'complete';
@@ -219,7 +193,6 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
 
   return (
     <div data-slot="investigation" className="investigation-process mb-5 flex flex-col gap-2">
-      {plan && <PlanCard plan={plan} isRunning={isRunning} />}
       {steps.length > 0 && <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
         <CollapsibleTrigger className="group/process flex min-h-10 max-w-full items-center gap-2 rounded-lg border bg-muted/30 px-3 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <StepIcon state={headlineState} />

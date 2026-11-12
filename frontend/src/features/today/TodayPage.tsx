@@ -45,7 +45,7 @@ export function TodayPage({ draft, onDraftChange }: { draft: string; onDraftChan
             <textarea aria-label="输入监测问题" placeholder="询问监测数据、变化趋势、降雨关联或场地环境…"
               value={draft} onChange={(event) => onDraftChange(event.target.value)} disabled={sending}
               rows={2} enterKeyHint="send"
-              className="max-h-48 min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 outline-none placeholder:text-muted-foreground [field-sizing:content]"
+              className="max-h-48 min-h-8 min-w-0 flex-1 resize-none bg-transparent py-1 text-base leading-6 outline-none placeholder:text-muted-foreground/60 [field-sizing:content]"
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();

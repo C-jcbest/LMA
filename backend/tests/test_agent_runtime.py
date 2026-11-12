@@ -235,7 +235,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             """读取站点。"""
             return "真实证据"
         local_tools = []
-        for name in ("compute", graph.PLAN_TOOL_NAME, graph.CONCLUSIONS_TOOL_NAME):
+        for name in ("compute", graph.CONCLUSIONS_TOOL_NAME):
             @tool(name)
             def local():
                 """不访问外部数据源的工具。"""
@@ -250,7 +250,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             {"messages": [HumanMessage(content="查询并整理")]})
         results = [m for m in result["messages"] if m.type == "tool"]
         self.assertTrue(all(m.status == "success" for m in results))
-        self.assertEqual(len(results), 4)
+        self.assertEqual(len(results), 1 + len(local_tools))
 
     async def test_conclusions_with_answer_text_end_the_turn_but_without_text_return_to_model(self):
         @tool(graph.CONCLUSIONS_TOOL_NAME)

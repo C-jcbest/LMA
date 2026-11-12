@@ -15,8 +15,8 @@ from app.monitoring_data import station_summary
 from app.beidou.schemas import Station
 from pydantic import ValidationError
 from runtime_fixtures import FakePlatform
-from app.agent import context, graph, models, retry, site, summarization, title, tools, vision, weather
-from app.agent.prompting import SYSTEM_PROMPT, VISION_PROMPT
+from app.agent import context, graph, models, retry, site, summarization, title, tools, weather
+from app.agent.prompting import SYSTEM_PROMPT
 from app.business_time import BUSINESS_TZ, business_now
 
 
@@ -148,21 +148,6 @@ class PromptTimeTests(unittest.TestCase):
             )
         self.assertEqual(result.profile, {"max_input_tokens": 1_048_576})
 
-    def test_deepseek_maps_vision_output_budget_to_max_tokens(self):
-        with patch.object(models, "init_chat_model") as init_model:
-            init_model.return_value.profile = {}
-            models.create_chat_model(
-                provider="deepseek",
-                model="vision-model",
-                api_key="test-key",
-                base_url="https://example.invalid/v1",
-                thinking=True,
-                tool_loop=False,
-                max_completion_tokens=8000,
-            )
-        kwargs = init_model.call_args.kwargs
-        self.assertEqual(kwargs["max_tokens"], 8000)
-        self.assertNotIn("max_completion_tokens", kwargs)
 
     def test_auxiliary_models_do_not_inherit_main_thinking(self):
         settings = SimpleNamespace(
@@ -174,17 +159,10 @@ class PromptTimeTests(unittest.TestCase):
             title_thinking=False,
             context_summary_max_tokens=2000,
             compress_thinking=False,
-            vision_provider="deepseek",
-            vision_protocol="chat_completions",
-            vision_model="vision-model",
-            vision_api_key="test-key",
-            vision_base_url="https://example.invalid/v1",
-            vision_thinking=False,
         )
         factories = (
             (title, title._get_title_llm),
             (summarization, summarization._get_summary_model),
-            (vision, vision._get_vision_llm),
         )
         try:
             for module, factory in factories:
@@ -197,7 +175,7 @@ class PromptTimeTests(unittest.TestCase):
             for _, factory in factories:
                 factory.cache_clear()
 
-    def test_all_four_roles_read_independent_thinking_settings(self):
+    def test_all_roles_read_independent_thinking_settings(self):
         settings = SimpleNamespace(
             llm_provider="deepseek",
             llm_model="test-model",
@@ -208,18 +186,11 @@ class PromptTimeTests(unittest.TestCase):
             title_thinking=True,
             context_summary_max_tokens=2000,
             compress_thinking=True,
-            vision_provider="deepseek",
-            vision_protocol="chat_completions",
-            vision_model="vision-model",
-            vision_api_key="test-key",
-            vision_base_url="https://example.invalid/v1",
-            vision_thinking=True,
         )
         factories = (
             (graph, graph._get_llm, {"thinking": {"type": "disabled"}}),
             (title, title._get_title_llm, {"thinking": {"type": "enabled"}}),
             (summarization, summarization._get_summary_model, {"thinking": {"type": "enabled"}}),
-            (vision, vision._get_vision_llm, {"thinking": {"type": "enabled"}}),
         )
         try:
             for module, factory, expected_extra_body in factories:
@@ -324,7 +295,6 @@ class PromptTimeTests(unittest.TestCase):
         repo_root = Path(__file__).resolve().parents[2]
         prompt_dir = repo_root / "backend" / "app" / "agent" / "prompts"
         self.assertEqual(SYSTEM_PROMPT, (prompt_dir / "system.md").read_text(encoding="utf-8"))
-        self.assertEqual(VISION_PROMPT, (prompt_dir / "vision.md").read_text(encoding="utf-8"))
         self.assertNotIn("{{CURRENT_TIME}}", SYSTEM_PROMPT)
 
     def test_clock_is_aware(self):
@@ -501,7 +471,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_base_station_does_not_query_deformation(self):
         base = Station(station_uuid="base", station_name="基准站", station_type=1, group_uuid="g", group_name="测试组")
-        for tool in (tools.get_displacement, vision.analyze_gnss_chart):
+        for tool in (tools.get_displacement,):
             platform = FakePlatform(stations=[base])
             with patch("app.monitoring_data.build_platform_client", return_value=platform):
                 result = await tool.ainvoke({

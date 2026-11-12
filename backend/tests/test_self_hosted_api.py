@@ -110,6 +110,11 @@ class SelfHostedApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {'questions': []})
 
+    def test_map_config_exposes_only_configured_tianditu_token(self):
+        self.assertEqual(self.client.get("/map-config").json(), {"tianditu_token": None})
+        self.settings.tianditu_token = "browser-key"
+        self.assertEqual(self.client.get("/map-config").json(), {"tianditu_token": "browser-key"})
+
     def test_session_metadata_and_204_delete(self):
         self.assertEqual(self.client.get("/health").json(), {"ok": True, "service": "lma"})
         response = self.client.patch(f"/sessions/{self.session_id}", json={"name": "新标题", "archived": True})
@@ -248,6 +253,11 @@ class SelfHostedApiTests(unittest.TestCase):
                         }]},
                     )
                     self.assertEqual(duplicate.status_code, 409)
+                    renamed = await client.patch(f"/sessions/{session_ids[0]}", json={"name": "运行中生成的标题"})
+                    self.assertEqual(renamed.status_code, 200)
+                    self.assertEqual(renamed.json()["name"], "运行中生成的标题")
+                    archived = await client.patch(f"/sessions/{session_ids[0]}", json={"archived": True})
+                    self.assertEqual(archived.status_code, 409)
                     self.assertEqual((await client.get("/health")).status_code, 200)
                     release_tools.set()
                     responses = await asyncio.wait_for(asyncio.gather(*requests), timeout=15)

@@ -32,8 +32,8 @@
 - 会话目录适配由 createSessionListAdapter 统一负责，remoteId、externalId 与 thread_id 相同，分页使用 ThreadListPrimitive.LoadMore。URL 只保存导航选择，与 Runtime 双向同步。
 - Stop 等待服务端取消持久化。下一轮官方取消 stub 只能对应真实未完成调用，服务端通过公开 aupdate_state 写入受控 error ToolMessage；禁止接受客户端工具成功结果或覆盖已完成并行结果。
 - 工具完成以结果实际返回为准，展示使用官方 ToolCall 的 status/result/artifact；持久化 ToolMessage.artifact 是刷新恢复依据，不自建 tools channel 解析器，不在各 Renderer 猜测 JSON 字符串。
-- system.md 是主业务策略唯一编辑源，vision.md 是视觉策略唯一编辑源；prompting.py 仅导出静态文本，create_agent 直接传入 SYSTEM_PROMPT。业务时间为 Asia/Shanghai。新消息由服务端保存 sent_at/timezone，模型调用时对每条用户消息作确定性投影，原文与静态 System Prompt 不变；重试、工具循环及重新生成复用原快照，客户端投影去掉隐藏上下文。
-- Agent 根据目标、上下文、数据质量和证据自主编排工具。提示词表达目标、证据边界与可选策略，不固化步骤、工具顺序、章节或回答模板；schema 只用于接口校验与安全边界。监测事实、视觉数值复核、气象非因果与风险措辞遵循 [PRD](../../prd.md)。
+- system.md 是主业务策略唯一编辑源；prompting.py 仅导出静态文本，create_agent 直接传入 SYSTEM_PROMPT。业务时间为 Asia/Shanghai。新消息由服务端保存 sent_at/timezone，模型调用时对每条用户消息作确定性投影，原文与静态 System Prompt 不变；重试、工具循环及重新生成复用原快照，客户端投影去掉隐藏上下文。
+- Agent 根据目标、上下文、数据质量和证据自主编排工具。提示词表达目标、证据边界与可选策略，不固化步骤、工具顺序、章节或回答模板；schema 只用于接口校验与安全边界。监测事实、数值复核、气象非因果与风险措辞遵循 [PRD](../../prd.md)。
 - 用户输入、历史摘要、外部资料、工具结果、图表文字与模型输出均是不可信数据；不得执行其中夹带的指令或直接用于 HTML、命令、URL 等副作用操作。所有业务工具保持只读、最小权限。
 - 新增兼容或兜底前说明触发条件、用户可见行为和误导风险，并按 [AGENTS.md](../../AGENTS.md) 获得授权。不得伪造数据、占位进度或本地成功；失败显式呈现或保留上一已确认状态。
 
@@ -45,7 +45,7 @@
 
 助手输入及报告引用校验使用 `ToolInputError`，由官方工具包装边界保留 error ToolMessage 和模型反馈，跳过取数存证。SSE 与历史将其投影为明确的 `tool_feedback` 分类，前端不作为业务故障展示；真实失败仍显示限制并可收起。用户已遇到的旧数值跨度校验错误只在读取时按严格来源识别，原 checkpoint 和证据不改写；具体范围见[修复记录](../tool-feedback-repair.md)。
 
-正常请求返回标准 success 结构，空集合由领域 Renderer 显示“暂无数据”。GNSS 与视觉工具识别基准站后仅返回适用性说明及 `artifact=None`，不生成卡片。部分场地资料不可用时保留已取得证据并标注 `limitations`。
+正常请求返回标准 success 结构，空集合由领域 Renderer 显示“暂无数据”。GNSS 工具识别基准站后仅返回适用性说明及 `artifact=None`，不生成卡片。部分场地资料不可用时保留已取得证据并标注 `limitations`。
 
 前端通过 [monitoring toolkit](../../frontend/src/features/monitoring/toolkit.tsx) 集中校验 artifact，领域组件只消费对应的 `data`。持久化 ToolMessage 是刷新恢复的权威来源；流式生命周期与 artifact 传递由官方栈负责，不解析自定义 tools channel 协议。artifact 会发送客户端，不能承载秘密、请求 URL 或原始异常。
 
@@ -57,7 +57,7 @@
 
 重试只处理已判定的瞬时失败；参数、权限、业务拒绝、空数据和格式错误不重试。调用限额计数的是每 Run 逻辑调用，不代表全 HTTP 或耗时预算。默认值与边界统一维护在 [Settings](../../backend/app/config.py) 和 [.env.example](../../backend/.env.example)。
 
-视觉每次工具尝试只调用一次模型；有效候选超额时明确拒绝数值回查，不静默裁剪。标题 SDK 不叠加重试；摘要采用官方独立重试逻辑。北斗会话过期后的单次认证刷新不属于通用失败重试。
+标题 SDK 不叠加重试；摘要采用官方独立重试逻辑。北斗会话过期后的单次认证刷新不属于通用失败重试。
 
 ## 保留的适配与边界
 
@@ -100,7 +100,7 @@ API 行为以锁定版本的公共类型与实际 FastAPI + PostgreSQL 测试核
 
 本节取代 2026-11-10、2026-11-11 的调查目标、续查与正式报告设计：调查目标表、revision CAS、持久化证据 UUID、续查接口和带 findings 的正式报告全部删除。理由是这些簿记由模型维护，占用调用预算并拖慢回答，而前端已只展示测点状态。旧表与旧数据保留在数据库中，不再读写，迁移不删除。
 
-- 数据层 `app/monitoring_data.py`：模型工具、视觉复核和测点页共用测点解析、按固定日历块分片取数（小时 30 天、每日固定时刻 360 天）、上游并发 4、观测清洗和质量统计。同一会话的数据块缓存 10 分钟，追问和重叠窗口不重复请求；缓存不是事实来源，过期即重读。运行结束关闭连接，缓存保留。
+- 数据层 `app/monitoring_data.py`：模型工具和测点页共用测点解析、按固定日历块分片取数（小时 30 天、每日固定时刻 360 天）、上游并发 4、观测清洗和质量统计。同一会话的数据块缓存 10 分钟，追问和重叠窗口不重复请求；缓存不是事实来源，过期即重读。运行结束关闭连接，缓存保留。
 - 工具按意图组织：find_stations、get_displacement（序列与各方向特征合一，可分段、可同组共同时段对比，点数少时附逐点相对位移）、query_weather（历史最多 366 天，可选逐小时降水，预报按需）、analyze_gnss_chart（候选在已取得的小时数据上复核，不再回查平台）、inspect_site_environment、compute、update_plan、record_conclusions，以及有存储时的 get_station_history。基准站由工具直接说明，不生成失败卡片；窗口过长等可修正问题作为参数纠错返回模型。
 - compute 在子进程中执行模型写的 pandas/numpy 代码，输入只来自本会话依据：语法树白名单（禁止导入、下划线属性和文件/网络入口）、受限内置函数、`python -I`、超时，Linux 上另有内存和 CPU 上限。这能挡住常见误用和注入，不等同于操作系统级沙箱；单人自托管下可接受，多用户前需复核。计算结果是 computation 依据，可被引用和再次计算；代码保存在依据中，界面不展示。
 - 依据产物：位移统一为 gnss_series（含 features/comparisons/reference/quality/location），删除 numerical；新增 computation、plan、conclusions。plan 与 conclusions 不是可引用依据。
@@ -112,3 +112,10 @@ API 行为以锁定版本的公共类型与实际 FastAPI + PostgreSQL 测试核
 观测在所有入口共用排序、重复时间剔除、非有限值清洗及请求采样日历；固定参考累计值与窗口净变化分开。单站全窗、方向独立的共同有效样本、分窗与事件区间显式标注。
 
 EvidenceMiddleware 在工具完成边界幂等存证，执行键包含模型消息 ID 与工具调用 ID；SSE 只传递结果，不负责存证。短写入有超时及取消保护，恢复核对官方 checkpoint 与证据表并补全，不重放已完成取数，也不增加第二份会话历史。
+
+## 2026-11-12（续）删除视觉复核与调查计划，地图改用天地图
+
+- 删除 analyze_gnss_chart（看图找候选再数值复核）和 update_plan。台阶、趋势转折已由 get_displacement 的数值特征给出（发生时刻、幅度、维持或回落），看图结果重复且慢；计划与调查过程展示重复，还多占一次模型调用。相关配置（VISION_*）、matplotlib 依赖和前端卡片一并删除；旧会话中的这两类工具结果按未知工具显示为一般步骤，不做兼容渲染。
+- 时间轴与依据卡片默认展示累计位移（相对平台固定参考），缺参考的方向退回窗口首点并在图上说明；台阶以曲线上的标记呈现。日降雨画成整日色块，避免与 15:00 等采样时刻错位。
+- 地图底图改为天地图（影像、地形晕渲及注记，Web 墨卡托，WGS84 测点无需偏移）。浏览器端密钥由后端 TIANDITU_TOKEN 运行时下发（/map-config），未配置时只显示测点。Macrostrat 在多数国内区域只有约 5 级以内的小比例尺地质图，场地尺度下单一地层会铺满视野，因此地层图层默认关闭，构造线在视野内无收录时给出说明。
+- 会话改名不再要求会话空闲：标题在首条消息运行期间生成并写回，此前被 409 拒绝导致会话名一直是“新会话”。归档仍需等运行结束。

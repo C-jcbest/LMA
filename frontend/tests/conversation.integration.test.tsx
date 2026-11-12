@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { decodeToolArtifact } from '../src/features/monitoring/artifacts';
 import { GnssResultView } from '../src/features/monitoring/tools/GnssResultView';
 import { NumericalResultView } from '../src/features/monitoring/tools/NumericalResultView';
-import { VisionResultView } from '../src/features/monitoring/tools/VisionResultView';
 import { StationResultView } from '../src/features/monitoring/tools/StationResultView';
 import { WeatherResultView } from '../src/features/monitoring/tools/WeatherResultView';
+import { ComputationResultView } from '../src/features/monitoring/tools/ComputationResultView';
 import {
   hasSummarizationSource,
   ThreadSummaryMessage,
@@ -53,17 +53,6 @@ const gnssData = (station_name: string, points: Array<Record<string, unknown>>) 
   },
 });
 
-const visionData = (fields: Record<string, unknown> = {}) => ({
-  station_name: '测试站',
-  begin_time: '2026-09-15 00:00:00',
-  end_time: '2026-09-16 00:00:00',
-  timezone: 'Asia/Shanghai',
-  total_points: 0,
-  images: [],
-  chart_points: [],
-  ...fields,
-});
-
 describe('会话关键路径集成回归', () => {
   it('数值特征展示两窗口和共同覆盖，缺失速度不显示为零', () => {
     const feature = { count: 4, net_change_mm: 3, robust_slope_mm_day: null,
@@ -80,11 +69,13 @@ describe('会话关键路径集成回归', () => {
         station_names: { b: '测点B' }, common_period: { n: { b: feature } },
       },
     }} />);
-    expect(screen.getByText('两个窗口比较')).toBeVisible();
-    expect(screen.getByText('共同有效时段比较')).toBeVisible();
+    expect(screen.getByRole('table', { name: '前后两段比较' })).toBeVisible();
+    expect(screen.getByText('同组共同时段')).toBeVisible();
     expect(screen.getByText('测点B')).toBeVisible();
-    expect(screen.getAllByText('描述斜率 未知 mm/day')).toHaveLength(4);
-    expect(screen.getByText('速度差 未知 mm/day · 速度倍率 未知')).toBeVisible();
+    // 缺失速度显示为“—”，不显示为 0。
+    expect(screen.getAllByText('—（描述）').length).toBeGreaterThanOrEqual(4);
+    expect(screen.queryByText('0.00')).toBeNull();
+    expect(screen.getByText('倍率不构成加速结论')).toBeVisible();
   });
 
   it('结论缺少时间窗或依据时拒绝渲染，不让畸形字段使界面崩溃', () => {
@@ -119,13 +110,6 @@ describe('会话关键路径集成回归', () => {
       />,
     );
     expect(screen.getByText('该时间范围内暂无 GNSS 数据')).toBeInTheDocument();
-
-    rerender(
-      <VisionResultView
-        data={visionData() as React.ComponentProps<typeof VisionResultView>['data']}
-      />,
-    );
-    expect(screen.getByText('该时间范围内暂无可供复核的 GNSS 数据')).toBeInTheDocument();
 
     rerender(
       <WeatherResultView
@@ -195,27 +179,6 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getAllByRole('row')).toHaveLength(101);
   });
 
-  it('视觉复核无图时折线在缺测点处分段，不把缺测绘制为零或跨段连线', () => {
-    render(
-      <VisionResultView
-        data={visionData({
-          observations: {},
-          total_points: 5,
-          chart_points: [
-            { t: '2026-09-15 08:00:00', n: 1, e: 2, u: 3 },
-            { t: '2026-09-15 09:00:00', n: 2, e: 3, u: 4 },
-            { t: '2026-09-15 10:00:00', n: null, e: null, u: null },
-            { t: '2026-09-15 11:00:00', n: 3, e: 4, u: 5 },
-            { t: '2026-09-15 12:00:00', n: 4, e: 5, u: 6 },
-          ],
-        }) as React.ComponentProps<typeof VisionResultView>['data']}
-      />,
-    );
-    const polylines = Array.from(document.querySelectorAll('polyline'));
-    expect(polylines).toHaveLength(6);
-    expect(polylines.every((line) => !line.getAttribute('points')?.includes('50.00,'))).toBe(true);
-  });
-
   it('站点状态分别展示，旧数字状态和缺失类型均显示未知', () => {
     render(
       <StationResultView
@@ -232,20 +195,6 @@ describe('会话关键路径集成回归', () => {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
     expect(screen.getAllByText('未知')).toHaveLength(2);
-  });
-
-  it('视觉复核图可放大查看', async () => {
-    render(
-      <VisionResultView
-        data={visionData({
-          images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
-        }) as React.ComponentProps<typeof VisionResultView>['data']}
-      />,
-    );
-    expect(screen.getByRole('img', { name: /原始坐标时序/ })).toBeInTheDocument();
-    const zoom = screen.getByRole('button', { name: /放大原始坐标时序/ });
-    await userEvent.click(zoom);
-    expect(screen.getByRole('button', { name: /缩小原始坐标时序/ })).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('上下文用量接近上限时才出现', () => {
@@ -331,18 +280,6 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
   expect(decodeToolArtifact('station_list', 'not an object')).toBeUndefined();
   expect(decodeToolArtifact('station_list', null)).toBeUndefined();
   expect(decodeToolArtifact('station_list', undefined)).toBeUndefined();
-
-  // 6. 已删除的顶层业务字段不得再被兼容读取
-  expect(
-    decodeToolArtifact('vision', {
-      version: 1,
-      kind: 'vision',
-      status: 'success',
-      data: { station_name: '旧协议' },
-      images: [{ name: 'raw_coordinates', png_base64: 'LEGACY' }],
-      chart_points: [],
-    }),
-  ).toBeUndefined();
 });
 
 
@@ -408,4 +345,24 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
   expect(refreshBtn).toBeInTheDocument();
   fireEvent.click(refreshBtn);
   expect(reloadSpy).toHaveBeenCalled();
+});
+
+it('计算结果中的嵌套字典展示为对比表和小表，不显示 JSON 原文', () => {
+  render(<ComputationResultView data={{
+    description: '前后两段降雨', code: 'result = {}', truncated: false,
+    inputs: [{ evidence_id: 'E1', description: '测点A 90 天天气' }],
+    result: {
+      first_period: { days: 60, rain_mm: 286.3 },
+      second_period: { days: 30, rain_mm: 91.7 },
+      recent_7d_rain_mm: 33,
+      recent_7d_daily: { '2026-11-05': 1.3, '2026-11-06': 2.5 },
+    },
+  }} />);
+  expect(screen.queryByText(/\{"days"/)).toBeNull();
+  const tables = screen.getAllByRole('table');
+  expect(tables[0]).toHaveTextContent('first_period');
+  expect(tables[0]).toHaveTextContent('286.3');
+  expect(screen.getByText('recent_7d_rain_mm')).toBeVisible();
+  expect(screen.getByText('recent_7d_daily')).toBeVisible();
+  expect(tables[1]).toHaveTextContent('2026-11-06');
 });

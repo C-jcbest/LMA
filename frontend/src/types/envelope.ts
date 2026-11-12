@@ -4,11 +4,9 @@ export type ToolArtifactKind =
   | 'acquisition_failure'
   | 'conclusions'
   | 'computation'
-  | 'plan'
   | 'station_list'
   | 'gnss_series'
   | 'weather'
-  | 'vision'
   | 'site_environment';
 
 export type ToolArtifactStatus = 'success' | 'partial' | 'error';
@@ -189,47 +187,6 @@ export interface WeatherArtifactData {
   source?: { provider: string } | null;
 }
 
-export interface ToolCallImageArtifact {
-  name: string;
-  title?: string | null;
-  png_base64: string;
-}
-
-export interface ChartPointArtifact {
-  t: string;
-  n?: number | null;
-  e?: number | null;
-  u?: number | null;
-}
-
-export interface VisionCandidateArtifact {
-  metric: string;
-  start_at: string;
-  end_at: string;
-  description?: string | null;
-}
-
-export interface VisionObservationsArtifact {
-  candidates?: VisionCandidateArtifact[];
-  fact_text?: string | null;
-  trends?: string[];
-  turning_points?: string[];
-  image_quality?: string | null;
-}
-
-export interface VisionArtifactData {
-  station_uuid: string;
-  station_name: string;
-  begin_time: string;
-  end_time: string;
-  timezone: string;
-  total_points: number;
-  images: ToolCallImageArtifact[];
-  chart_points: ChartPointArtifact[];
-  ok?: boolean | null;
-  observations?: VisionObservationsArtifact | null;
-}
-
 export interface SiteEnvironmentArtifactData {
   version: 1;
   observed_at: string;
@@ -286,24 +243,13 @@ export interface ComputationArtifactData {
   truncated: boolean;
 }
 
-export interface PlanItemArtifact {
-  content: string;
-  status: 'pending' | 'in_progress' | 'completed';
-}
-
-export interface PlanArtifactData {
-  items: PlanItemArtifact[];
-}
-
 export interface ArtifactDataByKind {
   acquisition_failure: { station_uuid?: string; station_name: string; requested_station: string; begin_time?: string; end_time?: string; message: string };
   conclusions: ConclusionsArtifactData;
   computation: ComputationArtifactData;
-  plan: PlanArtifactData;
   station_list: StationListArtifactData;
   gnss_series: GnssArtifactData;
   weather: WeatherArtifactData;
-  vision: VisionArtifactData;
   site_environment: SiteEnvironmentArtifactData;
 }
 

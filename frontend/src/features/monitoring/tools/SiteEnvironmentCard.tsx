@@ -6,41 +6,38 @@ import {
   NavigationControl,
   Popup,
   setWorkerUrl,
-  StyleSpecification,
+  type StyleSpecification,
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import mapWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { ToggleGroup } from 'radix-ui';
 import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
+import {
+  BASE_LAYER_IDS,
+  MISSING_TOKEN_NOTICE,
+  tiandituLayers,
+  tiandituSources,
+  useTiandituToken,
+  type BaseLayer,
+} from '../basemap';
 
 interface SiteEnvironmentCardProps {
   environment: SiteEnvironmentArtifactData;
 }
-
-type BaseLayer = 'satellite' | 'terrain';
 
 const GEOLOGY_TILES = 'https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt';
 
 // 交给 Vite 打包 Worker 及其共享模块，避免从预构建目录或页面地址猜相对路径。
 setWorkerUrl(mapWorkerUrl);
 
-const BASE_STYLE: StyleSpecification = {
+/**
+ * Macrostrat 在多数国内区域只有小比例尺（约 5 级以内）的区域地质图：放大到场地尺度时，
+ * 一个地层单元会铺满整个视野，像一层遮罩。因此地层默认关闭、只做淡色填充，按需打开对照。
+ */
+const geologyStyle = (token: string | null, baseLayer: BaseLayer): StyleSpecification => ({
   version: 8,
   sources: {
-    satellite: {
-      type: 'raster',
-      tiles: [
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      ],
-      tileSize: 256,
-      attribution: 'Imagery © Esri',
-    },
-    terrain: {
-      type: 'raster',
-      tiles: ['https://a.tile.opentopomap.org/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution: '© OpenStreetMap contributors · SRTM | OpenTopoMap (CC-BY-SA)',
-    },
+    ...(token ? tiandituSources(token) : {}),
     geology: {
       type: 'vector',
       tiles: [GEOLOGY_TILES],
@@ -50,17 +47,17 @@ const BASE_STYLE: StyleSpecification = {
     },
   },
   layers: [
-    { id: 'satellite-base', type: 'raster', source: 'satellite' },
-    { id: 'terrain-base', type: 'raster', source: 'terrain', layout: { visibility: 'none' } },
+    ...(token ? tiandituLayers(baseLayer) : []),
     {
       id: 'geology-units',
       type: 'fill',
       source: 'geology',
       'source-layer': 'units',
+      layout: { visibility: 'none' },
       paint: {
         'fill-color': ['coalesce', ['get', 'color'], '#d4b483'],
-        'fill-opacity': 0.35,
-        'fill-outline-color': 'rgba(40, 30, 20, 0.45)',
+        'fill-opacity': 0.2,
+        'fill-outline-color': 'rgba(40, 30, 20, 0.6)',
       },
     },
     {
@@ -75,7 +72,7 @@ const BASE_STYLE: StyleSpecification = {
       },
     },
   ],
-};
+});
 
 const validStations = (environment: SiteEnvironmentArtifactData): StationArtifact[] => {
   const candidates = [environment.center_station, ...(environment.group_stations || [])];
@@ -93,19 +90,22 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
+  const tiandituToken = useTiandituToken();
+  const token = tiandituToken.status === 'ready' ? tiandituToken.token : null;
   const [baseLayer, setBaseLayer] = useState<BaseLayer>('satellite');
-  const [geologyVisible, setGeologyVisible] = useState(true);
+  const [geologyVisible, setGeologyVisible] = useState(false);
   const [faultsVisible, setFaultsVisible] = useState(true);
+  const [faultsInView, setFaultsInView] = useState<boolean | null>(null);
   const [mapError, setMapError] = useState('');
   const stations = validStations(environment);
   const center = stations[0];
 
   useEffect(() => {
-    if (!mapNodeRef.current || !center) return;
+    if (!mapNodeRef.current || !center || tiandituToken.status === 'loading') return;
 
     const map = new MapLibreMap({
       container: mapNodeRef.current,
-      style: BASE_STYLE,
+      style: geologyStyle(token, layerConfigRef.current.baseLayer),
       center: [center.longitude as number, center.latitude as number],
       zoom: 15,
       attributionControl: { compact: true },
@@ -202,6 +202,13 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
       window.requestAnimationFrame(updateMarkerVisibility);
     }
     map.on('load', () => applyLayerVisibilities(map));
+    // 构造线按当前视野统计：区域图在多数地点附近没有收录断层，开关看起来“没有变化”时要说明原因。
+    const updateFaultsInView = () => {
+      if (map.getLayer('fault-lines')) {
+        setFaultsInView(map.queryRenderedFeatures({ layers: ['fault-lines'] }).length > 0);
+      }
+    };
+    map.on('idle', updateFaultsInView);
 
     map.on('error', (event: { error?: unknown }) => {
       console.warn('site map resource error:', event.error);
@@ -218,7 +225,7 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
       map.remove();
       mapRef.current = null;
     };
-  }, [environment.center_station.station_uuid]);
+  }, [environment.center_station.station_uuid, tiandituToken.status, token]);
 
   // 保持对最新图层配置的引用
   const layerConfigRef = useRef({ baseLayer, geologyVisible, faultsVisible });
@@ -242,8 +249,11 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
       }
     };
 
-    setVisibilityIfChanged('satellite-base', currentBase === 'satellite' ? 'visible' : 'none');
-    setVisibilityIfChanged('terrain-base', currentBase === 'terrain' ? 'visible' : 'none');
+    for (const [base, layerIds] of Object.entries(BASE_LAYER_IDS)) {
+      for (const layerId of layerIds) {
+        setVisibilityIfChanged(layerId, currentBase === base ? 'visible' : 'none');
+      }
+    }
     setVisibilityIfChanged('geology-units', currentGeology ? 'visible' : 'none');
     setVisibilityIfChanged('fault-lines', currentFaults ? 'visible' : 'none');
   };
@@ -285,11 +295,11 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
           }}
           className="flex gap-1"
         >
-          <ToggleGroup.Item value="satellite" className={layerToggleClass}>卫星</ToggleGroup.Item>
+          <ToggleGroup.Item value="satellite" className={layerToggleClass}>影像</ToggleGroup.Item>
           <ToggleGroup.Item value="terrain" className={layerToggleClass}>地形</ToggleGroup.Item>
         </ToggleGroup.Root>
         <div className="flex gap-1">
-          <button type="button" onClick={handleToggleGeology} aria-pressed={geologyVisible} className={layerToggleClass}>地层</button>
+          <button type="button" onClick={handleToggleGeology} aria-pressed={geologyVisible} className={layerToggleClass}>地层（区域图）</button>
           <button type="button" onClick={handleToggleFaults} aria-pressed={faultsVisible} className={layerToggleClass}>构造线</button>
         </div>
       </div>
@@ -297,6 +307,13 @@ export const SiteEnvironmentCard: React.FC<SiteEnvironmentCardProps> = ({ enviro
       <div className="relative isolate overflow-hidden rounded-lg border">
         <div ref={mapNodeRef} className="h-[min(60dvh,32rem)] w-full" />
       </div>
+      {tiandituToken.status === 'ready' && !token && <p className="text-sm text-muted-foreground">{MISSING_TOKEN_NOTICE}</p>}
+      {faultsVisible && faultsInView === false && (
+        <p className="text-sm text-muted-foreground">当前视野内没有已收录的构造线；Macrostrat 区域地质图在该地区精度有限，不代表现场没有断层。</p>
+      )}
+      {geologyVisible && (
+        <p className="text-sm text-muted-foreground">地层为小比例尺区域地质图，放大后的边界不代表现场实际界线。</p>
+      )}
       {mapError && <p className="text-sm text-muted-foreground">{mapError}</p>}
 
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">

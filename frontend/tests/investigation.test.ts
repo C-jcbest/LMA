@@ -1,6 +1,6 @@
 import type { PartState } from '@assistant-ui/react';
 import { describe, expect, it } from 'vitest';
-import { answerToMarkdown, buildSteps, collectStations, findPlan } from '../src/features/monitoring/investigation';
+import { answerToMarkdown, buildSteps, collectStations } from '../src/features/monitoring/investigation';
 
 const complete = { type: 'complete' } as const;
 
@@ -88,11 +88,8 @@ it('只登记结论没有正文时，导出各测点状态与原因', () => {
   expect(markdown).toContain('长期同向变化');
 });
 
-it('计划只在计划卡中展示，计算结果可在步骤内展开', () => {
+it('计算结果可在步骤内展开', () => {
   const parts = [
-    toolPart('update_plan', { artifact: { version: 1, kind: 'plan', status: 'success', data: { items: [
-      { content: '核对 A 近 90 天趋势', status: 'completed' }, { content: '对比同组', status: 'in_progress' },
-    ] } } }),
     toolPart('compute', { artifact: { version: 1, kind: 'computation', status: 'success', evidence_id: 'Ecalc', data: {
       description: '每周北向变化', code: 'result = 1', inputs: [{ evidence_id: 'E1', description: 'A 位移' }], result: 1.5, truncated: false,
     } } }),
@@ -101,7 +98,6 @@ it('计划只在计划卡中展示，计算结果可在步骤内展开', () => {
   expect(steps).toHaveLength(1);
   expect(steps[0]).toMatchObject({ label: '已完成计算', detail: '每周北向变化', evidenceId: 'Ecalc' });
   expect(steps[0]!.inlineEnvelope?.kind).toBe('computation');
-  expect(findPlan(parts)?.items.map((item) => item.status)).toEqual(['completed', 'in_progress']);
 });
 
 it('复制与导出的正文引用保留测点、完整窗口和来源，不输出内部锚点', () => {
@@ -198,27 +194,17 @@ describe('调查过程由官方 tool part 派生', () => {
 
   it('部分失败保留已取得的证据，并给出受控原因', () => {
     const parts = [
-      toolPart('analyze_gnss_chart', {
+      toolPart('get_displacement', {
         isError: true,
         result: 'MODEL_ONLY',
         artifact: {
-          version: 1,
-          kind: 'vision',
+          ...gnssEnvelope('测试点 A'),
           status: 'error',
-          data: {
-            station_name: '测试点 A',
-            begin_time: '2026-09-21 00:00:00',
-            end_time: '2026-09-21 01:00:00',
-            timezone: 'Asia/Shanghai',
-            total_points: 1,
-            images: [{ name: 'raw_coordinates', png_base64: 'TEST_IMAGE' }],
-            chart_points: [],
-          },
           error: {
-            code: 'configuration',
-            category: 'configuration',
-            message: '视觉模型未配置，已返回图表供人工查看。',
-            retryable: false,
+            code: 'upstream',
+            category: 'upstream',
+            message: '部分分片未取得，已保留取得的数据。',
+            retryable: true,
           },
         },
       }),
@@ -226,7 +212,7 @@ describe('调查过程由官方 tool part 派生', () => {
     const [step] = stepsOf(parts);
     expect(step).toMatchObject({ state: 'failed', stationName: '测试点 A' });
     expect(step).not.toHaveProperty('errorMessage');
-    expect(collectStations(parts)[0]!.vision).toHaveLength(1);
+    expect(collectStations(parts)[0]!.series).toHaveLength(1);
   });
 
   it('取消不呈现为失败，运行中的步骤使用进行时文案', () => {

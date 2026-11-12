@@ -2,7 +2,6 @@ import type { PartState, ToolCallMessagePartStatus } from '@assistant-ui/react';
 import type {
   ConclusionsArtifactData,
   InvestigationStatus,
-  PlanArtifactData,
   StationArtifact,
   ToolArtifactEnvelope,
   ToolArtifactEnvelopeFor,
@@ -20,7 +19,6 @@ interface ToolPresentation {
 }
 
 export const CONCLUSIONS_TOOL_NAME = 'record_conclusions';
-export const PLAN_TOOL_NAME = 'update_plan';
 
 const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
   find_stations: {
@@ -54,14 +52,6 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     cancelled: '已取消计算',
     emptyNotice: '',
   },
-  [PLAN_TOOL_NAME]: {
-    kind: 'plan',
-    running: '正在更新调查计划…',
-    complete: '已更新调查计划',
-    failed: '调查计划未更新',
-    cancelled: '已取消更新计划',
-    emptyNotice: '',
-  },
   [CONCLUSIONS_TOOL_NAME]: {
     kind: 'conclusions',
     running: '正在登记测点结论…',
@@ -77,14 +67,6 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     failed: '本次未取得天气',
     cancelled: '已取消查询天气',
     emptyNotice: '未查询到符合条件的天气数据。',
-  },
-  analyze_gnss_chart: {
-    kind: 'vision',
-    running: '正在复核位移曲线…',
-    complete: '已完成位移曲线复核',
-    failed: '本次未取得曲线复核结果',
-    cancelled: '已取消复核位移曲线',
-    emptyNotice: '该时间范围内暂无可供复核的 GNSS 数据。',
   },
   inspect_site_environment: {
     kind: 'site_environment',
@@ -120,7 +102,6 @@ export interface StationEvidence {
   /** 位移序列，同时带有该窗口的数值特征。 */
   series: Located<'gnss_series'>[];
   weather: Located<'weather'>[];
-  vision: Located<'vision'>[];
   site: Located<'site_environment'>[];
 }
 
@@ -150,9 +131,6 @@ const hasChartableData = (envelope: ToolArtifactEnvelope) => {
   if (envelope.kind === 'gnss_series') {
     return envelope.data.points.length > 0;
   }
-  if (envelope.kind === 'vision') {
-    return envelope.data.images.length > 0 || envelope.data.chart_points.length > 0;
-  }
   return true;
 };
 
@@ -160,7 +138,6 @@ const stationNameOf = (envelope: ToolArtifactEnvelope): string | null => {
   switch (envelope.kind) {
     case 'acquisition_failure':
     case 'gnss_series':
-    case 'vision':
       return envelope.data.station_name;
     case 'weather':
       return envelope.data.location.station_name ?? null;
@@ -175,7 +152,6 @@ const stationUuidOf = (envelope: ToolArtifactEnvelope): string | null => {
   switch (envelope.kind) {
     case 'acquisition_failure':
     case 'gnss_series':
-    case 'vision':
       return envelope.data.station_uuid || null;
     case 'weather':
       return envelope.data.location.station_uuid || null;
@@ -223,7 +199,7 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
     const id = uuid ?? 'evidence:' + part.toolCallId;
     let station = stations.get(id);
     if (!station) {
-      station = { id, uuid: uuid ?? undefined, name, series: [], weather: [], vision: [], site: [] };
+      station = { id, uuid: uuid ?? undefined, name, series: [], weather: [], site: [] };
       stations.set(id, station);
     }
     const toolCallId = part.toolCallId;
@@ -235,9 +211,6 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
         break;
       case 'weather':
         station.weather.push({ ...envelope, toolCallId });
-        break;
-      case 'vision':
-        station.vision.push({ ...envelope, toolCallId });
         break;
       case 'site_environment':
         station.site.push({ ...envelope, toolCallId });
@@ -283,7 +256,6 @@ const stepDetail = (envelope: ToolArtifactEnvelope): string | undefined => {
     case 'acquisition_failure':
       return envelope.data.station_name;
     case 'gnss_series':
-    case 'vision':
       return `${envelope.data.station_name} · ${formatDateRange(envelope.data.begin_time, envelope.data.end_time)}`;
     case 'weather':
       return envelope.data.location.station_name ?? undefined;
@@ -309,8 +281,8 @@ const stepStateOf = (part: ToolPart, envelope: ToolArtifactEnvelope | undefined)
   return status.type === 'complete' ? 'complete' : 'running';
 };
 
-/** 计划在计划卡里展示；结论登记是留档，完成后只体现为测点状态标签。 */
-const HIDDEN_WHEN_SETTLED = new Set([PLAN_TOOL_NAME, CONCLUSIONS_TOOL_NAME]);
+/** 结论登记是留档，完成后只体现为测点状态标签。 */
+const HIDDEN_WHEN_SETTLED = new Set([CONCLUSIONS_TOOL_NAME]);
 
 /** 步骤状态只来自官方 tool part，不由前端推测进度。 */
 export function buildSteps(
@@ -390,10 +362,6 @@ const latestArtifact = <K extends ToolArtifactKind>(
 export const findConclusions = (parts: readonly { type: string }[]): ConclusionsArtifactData | undefined =>
   latestArtifact(parts, CONCLUSIONS_TOOL_NAME, 'conclusions');
 
-/** 一条回答里计划可能更新多次，只展示最新一版。 */
-export const findPlan = (parts: readonly { type: string }[]): PlanArtifactData | undefined =>
-  latestArtifact(parts, PLAN_TOOL_NAME, 'plan');
-
 export const STATUS_PRIORITY: Record<InvestigationStatus, number> = {
   需人工复核: 0,
   持续关注: 1,
@@ -436,9 +404,6 @@ export function evidenceDescription(step: InvestigationStep | undefined): string
       details.push(envelope.data.sampling?.mode === 'sample_times'
         ? `每日 ${(envelope.data.sampling.sample_times ?? []).join('、')} 采样`
         : '小时采样');
-      break;
-    case 'vision':
-      details.push(envelope.data.station_name, `${envelope.data.begin_time} 至 ${envelope.data.end_time}`);
       break;
     case 'weather':
       details.push(envelope.data.location.station_name ?? '天气资料');

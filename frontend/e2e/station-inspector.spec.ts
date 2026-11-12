@@ -121,6 +121,7 @@ for (const width of [320, 1440]) {
     expect(await inspector(page).evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
     await page.getByRole('tab', { name: '明细' }).click();
+    await inspector(page).getByText(/^原始坐标/).click();
     await expect(inspector(page).getByRole('cell', { name: '—', exact: true })).toBeVisible();
     await expect(inspector(page).getByText('自动化测试数据')).toBeVisible();
 

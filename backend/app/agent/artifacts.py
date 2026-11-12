@@ -234,34 +234,6 @@ class WeatherArtifactData(ArtifactModel):
     source: WeatherSourceArtifact | None = None
 
 
-class ToolCallImageArtifact(ArtifactModel):
-    name: str
-    title: str | None = None
-    png_base64: str
-
-
-class ChartPointArtifact(ArtifactModel):
-    t: str
-    n: float | None = None
-    e: float | None = None
-    u: float | None = None
-
-
-class VisionArtifactData(ArtifactModel):
-    station_uuid: str
-    station_name: str
-    begin_time: str
-    end_time: str
-    timezone: str
-    total_points: int
-    images: list[ToolCallImageArtifact]
-    chart_points: list[ChartPointArtifact]
-    ok: bool | None = None
-    observations: dict[str, JsonValue] | None = None
-    quality: dict[str, JsonValue] = Field(default_factory=dict)
-    raw_points: list[GnssPointArtifact] = Field(default_factory=list)
-
-
 class TerrainArtifact(ArtifactModel):
     dem_elevation_m: float | None = None
     slope_degrees: float | None = None
@@ -344,24 +316,13 @@ class ComputationArtifactData(ArtifactModel):
     truncated: bool = False
 
 
-class PlanItemArtifact(ArtifactModel):
-    content: str
-    status: Literal["pending", "in_progress", "completed"]
-
-
-class PlanArtifactData(ArtifactModel):
-    items: list[PlanItemArtifact]
-
-
 ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {
     "acquisition_failure": AcquisitionFailureArtifactData,
     "conclusions": ConclusionsArtifactData,
     "computation": ComputationArtifactData,
-    "plan": PlanArtifactData,
     "station_list": StationListArtifactData,
     "gnss_series": GnssArtifactData,
     "weather": WeatherArtifactData,
-    "vision": VisionArtifactData,
     "site_environment": SiteEnvironmentArtifactData,
 }
 
@@ -406,11 +367,6 @@ class WeatherArtifactEnvelope(ArtifactEnvelopeBase):
     data: WeatherArtifactData
 
 
-class VisionArtifactEnvelope(ArtifactEnvelopeBase):
-    kind: Literal["vision"]
-    data: VisionArtifactData
-
-
 class SiteEnvironmentArtifactEnvelope(ArtifactEnvelopeBase):
     kind: Literal["site_environment"]
     data: SiteEnvironmentArtifactData
@@ -426,11 +382,6 @@ class ComputationArtifactEnvelope(ArtifactEnvelopeBase):
     data: ComputationArtifactData
 
 
-class PlanArtifactEnvelope(ArtifactEnvelopeBase):
-    kind: Literal["plan"]
-    data: PlanArtifactData
-
-
 class AcquisitionFailureArtifactEnvelope(ArtifactEnvelopeBase):
     kind: Literal["acquisition_failure"]
     data: AcquisitionFailureArtifactData
@@ -440,11 +391,9 @@ ToolArtifactEnvelope = Annotated[
     AcquisitionFailureArtifactEnvelope
     | ConclusionsArtifactEnvelope
     | ComputationArtifactEnvelope
-    | PlanArtifactEnvelope
     | StationListArtifactEnvelope
     | GnssArtifactEnvelope
     | WeatherArtifactEnvelope
-    | VisionArtifactEnvelope
     | SiteEnvironmentArtifactEnvelope,
     Field(discriminator="kind"),
 ]
