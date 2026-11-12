@@ -146,17 +146,32 @@ test('框选时间段后就地追问或放大，还原后恢复完整窗口', as
   await page.mouse.up();
   await selectionBar.getByRole('button', { name: '放大所选时间段' }).click();
   await expect(inspector(page).getByRole('button', { name: '问当前范围' })).toBeVisible();
+  const rangeText = await inspector(page).locator('p').filter({ hasText: /2026-11-.* 至 / }).innerText();
+  await inspector(page).getByRole('button', { name: '展开依据全屏' }).click();
+  await expect(inspector(page)).toHaveAttribute('role', 'dialog');
+  await expect(inspector(page).getByRole('button', { name: '问当前范围' })).toBeVisible();
+  await expect(inspector(page).getByText(rangeText, { exact: true })).toBeVisible();
+  await inspector(page).getByRole('button', { name: '恢复依据分栏' }).click();
+  await expect(page.getByRole('separator', { name: '调整聊天与依据宽度' })).toBeVisible();
+  await expect(inspector(page).getByText(rangeText, { exact: true })).toBeVisible();
+  await inspector(page).getByRole('button', { name: '关闭依据' }).click();
+  await expect(inspector(page)).toHaveCount(0);
+  await stationEntry(page).click();
+  await expect(inspector(page).getByText(rangeText, { exact: true })).toBeVisible();
+  await expect(inspector(page).getByRole('button', { name: '问当前范围' })).toBeVisible();
   await inspector(page).getByRole('button', { name: '还原' }).click();
   await expect(inspector(page).getByRole('button', { name: '问当前范围' })).toHaveCount(0);
 });
 
-test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据面板', async ({ page }) => {
+test('场地引用定位原始资料，地图不可用和调整面板不影响核查', async ({ page }) => {
   await page.route('**/api/map-config', (route) => route.fulfill({ json: { amap_token: null } }));
   const site = {
     type: 'tool', id: 'site-result', tool_call_id: 'site-a', name: 'inspect_site_environment',
     content: '自动化测试场地', status: 'success',
     artifact: {
       version: 1, kind: 'site_environment', status: 'success',
+      evidence_id: 'EsiteOld',
+      sources: [{ name: '首次现场资料' }],
       data: {
         version: 1, observed_at: '2026-11-09T00:00:00Z', coordinate_system: 'WGS84',
         center_station: { station_uuid: 'test-a', station_name: '测试点 A', longitude: 120, latitude: 30, coordinate_system: 'WGS84' },
@@ -166,10 +181,25 @@ test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据�
       },
     },
   };
+  const latestSite = {
+    ...site, id: 'latest-site-result', tool_call_id: 'site-latest',
+    artifact: {
+      ...site.artifact, evidence_id: 'EsiteLatest', sources: [{ name: '第二次现场资料' }],
+      data: {
+        ...site.artifact.data,
+        center_station: { ...site.artifact.data.center_station, longitude: 121 },
+      },
+    },
+  };
   const history = [
     messages[0],
-    { ...messages[1], tool_calls: [...messages[1].tool_calls!, { id: 'site-a', name: 'inspect_site_environment', args: {} }] },
-    ...messages.slice(2, -1), site, messages.at(-1),
+    { ...messages[1], tool_calls: [
+      ...messages[1].tool_calls!,
+      { id: 'site-a', name: 'inspect_site_environment', args: {} },
+      { id: 'site-latest', name: 'inspect_site_environment', args: {} },
+    ] },
+    ...messages.slice(2, -1), site, latestSite, messages.at(-1),
+    { type: 'ai', id: 'site-answer', content: '核对首次资料。[1](#evidence-EsiteOld)' },
   ];
   await openInvestigation(page, 1920, history);
   await stationEntry(page).click();
@@ -179,7 +209,7 @@ test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据�
   await inspector(page).getByRole('tab', { name: '场地', exact: true }).click();
   await expect(inspector(page).getByText('未配置高德地图密钥，暂时无法加载地图。')).toBeVisible();
   await expect(inspector(page).getByText(/以下测点坐标缺失或超出经纬度范围，未绘制：坐标填反的测试点/)).toBeVisible();
-  await expect(inspector(page).getByText('30.000000, 120.000000')).toBeVisible();
+  await expect(inspector(page).getByText('30.000000, 121.000000')).toBeVisible();
   await expect(inspector(page).getByRole('radio', { name: '卫星图', exact: true })).toBeChecked();
   await expect(inspector(page).getByRole('button', { name: '地层（区域图）', exact: true })).toHaveCount(0);
   await expect(inspector(page).getByRole('button', { name: '构造线', exact: true })).toHaveCount(0);
@@ -190,8 +220,13 @@ test('地图密钥缺失和非法坐标不会遮掉场地资料或破坏依据�
   await handle.focus();
   await page.keyboard.press('Shift+ArrowRight');
   await expect.poll(async () => (await inspector(page).boundingBox())!.width).toBeLessThan(originalWidth);
-  await expect(inspector(page).getByText('30.000000, 120.000000')).toBeVisible();
+  await expect(inspector(page).getByText('30.000000, 121.000000')).toBeVisible();
   await expect(inspector(page).getByText('现场环境地图渲染异常')).toHaveCount(0);
   await inspector(page).getByRole('tab', { name: '时间轴', exact: true }).click();
   expect(await timelineCanvas.evaluate((element, original) => element === original, originalTimelineCanvas)).toBe(true);
+  await page.getByRole('button', { name: /查看依据 1：/ }).click();
+  await expect(inspector(page).getByRole('tab', { name: '场地', exact: true })).toHaveAttribute('data-state', 'active');
+  await expect(inspector(page).getByText('30.000000, 120.000000')).toBeVisible();
+  await expect(inspector(page).getByText('首次现场资料')).toBeVisible();
+  await expect(inspector(page).getByText('第二次现场资料')).toHaveCount(0);
 });

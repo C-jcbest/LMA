@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/react';
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from 'lucide-react';
+import { ChevronLeftIcon, ChevronRightIcon, Maximize2Icon, Minimize2Icon, XIcon } from 'lucide-react';
 import { Dialog as DialogPrimitive, Tabs } from 'radix-ui';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,7 @@ import type { EvidenceSource, GnssArtifactData } from '@/types/envelope';
 import { useChartColors } from './chartColors';
 import { formatSigned, MILLIMETER_DIGITS } from './format';
 import { collectStations, type StationEvidence } from './investigation';
-import { useStationInspector } from './StationInspectorContext';
+import { useStationInspector, type InspectorViewState } from './StationInspectorContext';
 import {
   buildTimelineOption,
   dailyRainfallWithin,
@@ -94,13 +94,15 @@ interface TimelineViewProps {
   selectedIndex: number;
   onSelectIndex: (index: number) => void;
   peers: readonly StationEvidence[];
+  viewState: InspectorViewState;
+  toolCallId: string;
 }
 
-const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedIndex, onSelectIndex, peers }) => {
+const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedIndex, onSelectIndex, peers, viewState, toolCallId }) => {
   const aui = useAui();
   const { isSplit, composerInputRef, closeInspector } = useStationInspector();
   const chartColors = useChartColors();
-  const [mode, setMode] = useState<TimelineMode>('components');
+  const [mode, setMode] = useState<TimelineMode>(viewState.mode ?? 'components');
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
 
@@ -148,7 +150,10 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
               { value: 'components', label: '三个方向' },
               { value: 'peers', label: '同组对比' },
             ]}
-            onValueChange={(value) => setMode(value as TimelineMode)}
+            onValueChange={(value) => {
+              viewState.mode = value as TimelineMode;
+              setMode(value as TimelineMode);
+            }}
           />
         )}
       </div>
@@ -176,12 +181,14 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
         <ErrorBoundary fallbackTitle="时间轴渲染异常">
           <Suspense fallback={<Skeleton className="h-96 w-full" />}>
             <TimelineChart
-              viewKey={`${station.id}:${data.begin_time}:${data.end_time}:${mode}`}
+              viewKey={`${station.id}:${toolCallId}:${mode}`}
               option={option}
               label={`${station.name} ${seriesLabel(data)} 位移时间轴`}
               resetSignal={resetSignal}
               onRangeChange={setRange}
               onAsk={askAbout}
+              initialState={viewState.charts.get(`${toolCallId}:${mode}`)}
+              onStateChange={(state) => viewState.charts.set(`${toolCallId}:${mode}`, state)}
             />
           </Suspense>
         </ErrorBoundary>
@@ -198,8 +205,9 @@ const DetailSection: FC<{ title: string; children: ReactNode }> = ({ title, chil
   </section>
 );
 
-const EvidenceNotes: FC<{ station: StationEvidence }> = ({ station }) => {
-  const envelopes = [...station.series, ...station.weather, ...station.site];
+const EvidenceNotes: FC<{ station: StationEvidence; toolCallId?: string }> = ({ station, toolCallId }) => {
+  const envelopes = [...station.series, ...station.weather, ...station.site]
+    .filter((item) => !toolCallId || item.toolCallId === toolCallId);
   const limitations = [...new Set(envelopes.flatMap((envelope) => envelope.limitations ?? []))];
   const sourcesByLabel = new Map<string, EvidenceSource>();
   for (const source of envelopes.flatMap((envelope) => envelope.sources ?? [])) {
@@ -235,6 +243,7 @@ const EvidenceNotes: FC<{ station: StationEvidence }> = ({ station }) => {
 const TAB_CLASS = 'min-h-11 border-b-2 border-transparent px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-foreground data-[state=active]:text-foreground';
 
 interface InspectorBodyProps {
+  viewKey: string;
   station: StationEvidence;
   focusToolCallId?: string;
   stations: readonly StationEvidence[];
@@ -243,16 +252,29 @@ interface InspectorBodyProps {
   onClose: () => void;
 }
 
-const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stations, title, onSelectStation, onClose }) => {
+const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCallId, stations, title, onSelectStation, onClose }) => {
+  const { viewStates, canExpand, isFullscreen, toggleFullscreen } = useStationInspector();
+  const saved = useMemo(() => {
+    let state = viewStates.current.get(viewKey);
+    if (!state) {
+      state = { charts: new Map() };
+      viewStates.current.set(viewKey, state);
+    }
+    return state;
+  }, [viewKey, viewStates]);
   // 默认看最长窗口：长期背景决定是否存在缓慢累积，短窗口用于放大细节。
   const sortedSeries = useMemo(
     () => [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data)),
     [station.series],
   );
   const seriesList = useMemo(() => sortedSeries.map((item) => item.data), [sortedSeries]);
-  const [selectedIndex, setSelectedIndex] = useState(
-    () => Math.max(0, sortedSeries.findIndex((item) => item.toolCallId === focusToolCallId)),
+  const [selectedIndex, updateSelectedIndex] = useState(
+    () => Math.max(0, sortedSeries.findIndex((item) => item.toolCallId === (saved.selectedToolCallId ?? focusToolCallId))),
   );
+  const setSelectedIndex = (index: number) => {
+    saved.selectedToolCallId = sortedSeries[index]?.toolCallId;
+    updateSelectedIndex(index);
+  };
 
   const peers = useMemo(
     () => stations.filter((candidate) => (
@@ -276,7 +298,26 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
   } else if (hasTimeline && !station.weather.some((item) => item.toolCallId === focusToolCallId)) {
     defaultTab = 'timeline';
   }
-  const [activeTab, setActiveTab] = useState(defaultTab);
+  const [activeTab, updateActiveTab] = useState(saved.tab ?? defaultTab);
+  const setActiveTab = (tab: string) => {
+    saved.tab = tab;
+    updateActiveTab(tab);
+  };
+  const siteEvidence = station.site.find((item) => item.toolCallId === focusToolCallId) ?? station.site.at(-1);
+  let noteToolCallId = focusToolCallId;
+  if (activeTab === 'timeline') {
+    noteToolCallId = sortedSeries[selectedIndex]?.toolCallId;
+  } else if (activeTab === 'site') {
+    noteToolCallId = siteEvidence?.toolCallId;
+  }
+  const detailsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (activeTab !== 'details' || !focusToolCallId) {
+      return;
+    }
+    const target = detailsRef.current?.querySelector<HTMLElement>(`[data-evidence-tool="${CSS.escape(focusToolCallId)}"]`);
+    target?.scrollIntoView({ block: 'nearest' });
+  }, [activeTab, focusToolCallId]);
 
   return (
     <>
@@ -286,6 +327,9 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
           {station.status && <StationStatus status={station.status} />}
         </div>
         <div className="flex shrink-0 items-center">
+          {canExpand && <Button type="button" variant="ghost" size="icon" className="size-10" aria-label={isFullscreen ? '恢复依据分栏' : '展开依据全屏'} onClick={toggleFullscreen}>
+            {isFullscreen ? <Minimize2Icon className="size-4" /> : <Maximize2Icon className="size-4" />}
+          </Button>}
           {stations.length > 1 && (
             <>
               <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!previousStation} aria-label="上一个测点" onClick={() => onSelectStation(previousStation!.id)}>
@@ -319,15 +363,17 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
                 selectedIndex={selectedIndex}
                 onSelectIndex={setSelectedIndex}
                 peers={peers}
+                viewState={saved}
+                toolCallId={sortedSeries[selectedIndex]!.toolCallId}
               />
             </Tabs.Content>
           )}
           {hasSite && (
             <Tabs.Content value="site" className="focus-visible:outline-none">
-              <SiteEnvironmentResultView environment={station.site[station.site.length - 1]!.data} />
+              <SiteEnvironmentResultView environment={siteEvidence!.data} />
             </Tabs.Content>
           )}
-          <Tabs.Content value="details" className="space-y-8 focus-visible:outline-none">
+          <Tabs.Content ref={detailsRef} value="details" className="space-y-8 focus-visible:outline-none">
             {sortedSeries.filter((item) => Object.keys(item.data.features ?? {}).length > 0).map((item) => (
               <DetailSection key={item.toolCallId} title={`数值特征 · ${seriesLabel(item.data)}`}>
                 <NumericalResultView data={item.data} />
@@ -343,13 +389,13 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
                 </div>
               </details>
             )}
-            {station.weather.map((item, index) => (
-              <DetailSection key={index} title="同期天气">
+            {station.weather.map((item) => (
+              <div key={item.toolCallId} data-evidence-tool={item.toolCallId}><DetailSection title="同期天气">
                 <WeatherResultView data={item.data} />
-              </DetailSection>
+              </DetailSection></div>
             ))}
           </Tabs.Content>
-          <EvidenceNotes station={station} />
+          <EvidenceNotes station={station} toolCallId={noteToolCallId} />
         </div>
       </Tabs.Root>
     </>
@@ -358,7 +404,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ station, focusToolCallId, stati
 
 /** 核查对象是测点：宽屏与对话并排可继续追问，窄屏全屏查看。 */
 export const StationInspector: FC = () => {
-  const { selection, isClosing, isSplit, openStation, closeInspector } = useStationInspector();
+  const { selection, selectionVersion, isClosing, isSplit, openStation, closeInspector } = useStationInspector();
   const panelRef = useRef<HTMLElement>(null);
   const resize = usePanelResize({
     storageKey: 'lma-inspector-width',
@@ -409,7 +455,8 @@ export const StationInspector: FC = () => {
   const title = <h2 className="min-w-0 truncate text-base font-medium">{station.name}</h2>;
   const selectStation = (stationId: string) => openStation({ messageId: selection.messageId, stationId });
   const close = () => closeInspector();
-  const inspectorKey = `${station.id}:${selection.toolCallId ?? ''}`;
+  const viewKey = `${selection.messageId}:${station.id}`;
+  const inspectorKey = `${viewKey}:${selectionVersion}`;
 
   if (isSplit) {
     return (
@@ -426,6 +473,7 @@ export const StationInspector: FC = () => {
         <PanelResizeHandle label="调整聊天与依据宽度" panelId="station-evidence" edge="left" {...resize.handleProps} />
         <InspectorBody
           key={inspectorKey}
+          viewKey={viewKey}
           station={station}
           focusToolCallId={selection.toolCallId}
           stations={stations}
@@ -455,11 +503,12 @@ export const StationInspector: FC = () => {
         >
           <InspectorBody
             key={inspectorKey}
+            viewKey={viewKey}
             station={station}
             focusToolCallId={selection.toolCallId}
             stations={stations}
             title={<DialogPrimitive.Title asChild>{title}</DialogPrimitive.Title>}
-              onSelectStation={selectStation}
+            onSelectStation={selectStation}
             onClose={close}
           />
         </DialogPrimitive.Content>

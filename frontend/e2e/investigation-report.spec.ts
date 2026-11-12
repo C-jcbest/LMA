@@ -243,7 +243,58 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
 
   await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
   await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
+  // 在面板内换窗口后，再点相同引用仍应回到被引用的窗口。
+  await inspector(page).getByRole('radio', { name: /08-01 至 11-03/ }).click();
+  await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
+  await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
 });
+
+for (const width of [320, 390, 1440]) {
+  test(`${width}px 正文优先、相似窗口折叠，核查后返回阅读位置`, async ({ page }) => {
+    await mockApi(page);
+    await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: proseHistory() }, latest_run: null } }));
+    const chartErrors: string[] = [];
+    page.on('console', (message) => {
+      if (message.text().includes('[ECharts]')) {
+        chartErrors.push(message.text());
+      }
+    });
+    let runs = 0;
+    await page.route('**/api/sessions/*/runs', (route) => {
+      runs += 1;
+      return route.abort();
+    });
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto('/?threadId=report-session');
+    const cards = page.locator('[data-slot="evidence-card"]');
+    await expect(cards).toHaveCount(2);
+    await expect(cards.nth(0)).toHaveAttribute('data-state', 'open');
+    await expect(cards.nth(1)).toHaveAttribute('data-state', 'closed');
+    await cards.nth(0).scrollIntoViewIfNeeded();
+    await expect(cards.nth(0).locator('canvas')).toBeVisible();
+    const answer = page.getByText('测试点 A 需要优先复核，测试点 B 未见明显变化。', { exact: true });
+    const process = page.locator('[data-slot="investigation"]');
+    expect((await answer.boundingBox())!.y).toBeLessThan((await process.boundingBox())!.y);
+    await answer.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `test-results/answer-${width}.png`, animations: 'disabled' });
+    const entry = cards.nth(1).getByRole('button', { name: '展开测试点 A 位移', exact: true });
+    // 输入框固定在底部；先滚到按钮可点击的位置，再记录实际打开时的阅读位置。
+    await entry.click({ trial: true });
+    const entryTop = (await entry.boundingBox())!.y;
+    await page.screenshot({ path: `test-results/reading-${width}.png`, animations: 'disabled' });
+    await entry.click();
+    await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
+    await inspector(page).getByRole('button', { name: '关闭依据' }).click();
+    await expect(inspector(page)).toHaveCount(0);
+    await expect(entry).toBeFocused();
+    if (width < 1024) {
+      await expect.poll(async () => Math.abs((await entry.boundingBox())!.y - entryTop)).toBeLessThan(3);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+    expect(runs).toBe(0);
+    expect(chartErrors).toEqual([]);
+  });
+}
 
 test('今日页只列建议调查的测点，点击进入测点页直接看数据，不调用模型', async ({ page }) => {
   await mockApi(page);

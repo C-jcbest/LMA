@@ -46,5 +46,5 @@ export default function EvidenceChart({ option, label, height }: EvidenceChartPr
     chartRef.current?.setOption(option, { notMerge: true });
   }, [option]);
 
-  return <div ref={containerRef} role="img" aria-label={label} className="w-full" style={{ height }} />;
+  return <div ref={containerRef} role="img" aria-label={label} className="pointer-events-none w-full" style={{ height }} />;
 }

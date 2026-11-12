@@ -1,13 +1,13 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
+import { ChevronDownIcon, Maximize2Icon } from 'lucide-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import type { AxisFeature, ToolArtifactEnvelopeFor } from '@/types/envelope';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import type { ToolArtifactEnvelopeFor } from '@/types/envelope';
 import { useChartColors } from './chartColors';
-import { STATION_MAP_CARD } from './evidence-cards';
-import { formatSigned, MILLIMETER_DIGITS, RATE_DIGITS } from './format';
+import { evidenceNumbers, STATION_MAP_CARD } from './evidence-cards';
 import {
   buildSteps,
   collectStations,
@@ -21,7 +21,6 @@ import {
   buildTimelineOption,
   dailyRainfallWithin,
   displacementBasis,
-  displacementBasisLabel,
   latestHorizontal,
   seriesDuration,
   seriesLabel,
@@ -103,12 +102,14 @@ interface CardShellProps {
   title: string;
   meta?: string;
   onOpen?: () => void;
+  defaultExpanded?: boolean;
+  citationNumber?: number;
   children: ReactNode;
 }
 
 /** 依据卡片可以收起，只留标题行；长对话里回看正文时不必滑过每张图。 */
-const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children }) => {
-  const [isOpen, setIsOpen] = useState(true);
+const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true, citationNumber }) => {
+  const [isOpen, setIsOpen] = useState(defaultExpanded);
   return (
     <figure data-slot="evidence-card" data-state={isOpen ? 'open' : 'closed'} className="evidence-card not-prose">
       <figcaption className="flex min-h-9 items-center justify-between gap-x-3">
@@ -116,21 +117,22 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children }) => {
           type="button"
           aria-expanded={isOpen}
           onClick={() => setIsOpen((value) => !value)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <ChevronDownIcon
             aria-hidden
             className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', !isOpen && '-rotate-90')}
           />
           <span className="min-w-0 text-sm font-medium">
+            {citationNumber && <span className="me-2 text-xs font-normal text-muted-foreground">[{citationNumber}]</span>}
             {title}
-            {meta && <span className="ms-2 text-xs font-normal text-muted-foreground tabular-nums">{meta}</span>}
+            {meta && <span className="mt-0.5 block text-xs font-normal text-muted-foreground tabular-nums">{meta}</span>}
           </span>
         </button>
         {onOpen && (
-          <button type="button" onClick={onOpen}
-            className="inline-flex min-h-8 shrink-0 items-center gap-0.5 rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
-            查看依据<ChevronRightIcon className="size-3.5" aria-hidden />
+          <button type="button" onClick={onOpen} aria-label={`展开${title}`} title={`展开${title}`}
+            className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+            <Maximize2Icon className="size-4" aria-hidden />
           </button>
         )}
       </figcaption>
@@ -150,19 +152,28 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
     [weather, data],
   );
   const hasRainfall = rainfall.length > 0;
+  const narrow = useMediaQuery('(max-width: 599px)');
   const option = useMemo(() => {
     const full = buildTimelineOption({ data, rainfall, peers: [], mode: 'components' }, colors) as Record<string, unknown>;
     // 正文里不缩放，去掉滑块并收回为它预留的底部空间。
+    const { dataZoom, brush, toolbox, ...preview } = full;
     return {
-      ...full,
-      dataZoom: [],
-      brush: undefined,
+      ...preview,
+      // 正文预览不拦截触屏滚动，也不显示与展开视图不同的交互控件。
+      silent: true,
+      tooltip: { show: false },
+      legend: { ...(full.legend as object), selectedMode: false },
       grid: hasRainfall
         ? [{ left: 48, right: 12, top: 40, bottom: 112 }, { left: 48, right: 12, height: 56, bottom: 28 }]
         : [{ left: 48, right: 12, top: 40, bottom: 28 }],
     };
   }, [data, rainfall, hasRainfall, colors]);
-  const height = hasRainfall ? 300 : 240;
+  let height = 240;
+  if (hasRainfall) {
+    height = 260;
+  } else if (narrow) {
+    height = 200;
+  }
   return (
     <WhenVisible minHeight={height}>
       <Suspense fallback={<Skeleton className="w-full" style={{ height }} />}>
@@ -172,63 +183,31 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
   );
 };
 
-const AXIS_NAMES: Record<string, string> = { n: '北向', e: '东向', u: '垂直', h: '水平' };
-
-const formatFeature = (value: unknown, digits: number) =>
-  typeof value === 'number' && Number.isFinite(value) ? formatSigned(value, digits) : '—';
-
-const SUMMARY_AXES = ['n', 'e', 'u', 'h'] as const;
-
-/** 服务端计算的数值放在曲线下方，正文里的数字可随手对照；完整复核在依据面板。 */
-const FeatureSummary: FC<{ features: Record<string, AxisFeature> }> = ({ features }) => (
-  <dl className="grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-x-6 gap-y-3 pt-3">
-    {SUMMARY_AXES.filter((axis) => features[axis]).map((axis) => {
-      const feature = features[axis]!;
-      const hasCumulative = typeof feature.cum_end_mm === 'number';
-      return (
-        <div key={axis} className="min-w-0">
-          <dt className="text-xs text-muted-foreground">{AXIS_NAMES[axis]}{hasCumulative ? '累计' : '本窗口变化'}</dt>
-          <dd className="text-base font-medium tabular-nums">
-            {formatFeature(hasCumulative ? feature.cum_end_mm : feature.net_change_mm, MILLIMETER_DIGITS)}
-            <span className="ms-1 text-xs font-normal text-muted-foreground">mm</span>
-          </dd>
-          <dd className="text-xs text-muted-foreground tabular-nums">
-            {hasCumulative && <>本窗口 {formatFeature(feature.net_change_mm, MILLIMETER_DIGITS)} · </>}
-            {feature.trend_supported ? '速率' : '描述斜率'} {formatFeature(feature.robust_slope_mm_day, RATE_DIGITS)} mm/天
-          </dd>
-        </div>
-      );
-    })}
-  </dl>
-);
-
-const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefined; onOpen?: () => void }> = ({ step, station, onOpen }) => {
+const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefined; onOpen?: () => void; defaultExpanded: boolean; citationNumber?: number }> = ({ step, station, onOpen, defaultExpanded, citationNumber }) => {
   const envelope = step.envelope!;
   switch (envelope.kind) {
     case 'gnss_series': {
-      const features = envelope.data.features ?? {};
       return (
-        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)} · ${displacementBasisLabel(envelope.data)}`} onOpen={onOpen}>
+        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)} · ${displacementBasis(envelope.data) === 'fixed' ? '累计位移' : '窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded} citationNumber={citationNumber}>
           {station ? <SeriesChart station={station} envelope={envelope} /> : null}
-          {Object.keys(features).length > 0 && <FeatureSummary features={features} />}
         </CardShell>
       );
     }
     case 'computation':
       return (
-        <CardShell title={envelope.data.description} meta="基于本次已取得的数据计算">
+        <CardShell title={envelope.data.description} citationNumber={citationNumber}>
           <ComputationResultView data={envelope.data} />
         </CardShell>
       );
     case 'weather':
       return (
-        <CardShell title="同期天气" meta={envelope.data.location.station_name ?? undefined} onOpen={onOpen}>
+        <CardShell title="同期天气" meta={envelope.data.location.station_name ?? undefined} onOpen={onOpen} citationNumber={citationNumber}>
           <WeatherResultView data={envelope.data} />
         </CardShell>
       );
     case 'site_environment':
       return (
-        <CardShell title={`${envelope.data.center_station.station_name} 场地环境`} onOpen={onOpen}>
+        <CardShell title={`${envelope.data.center_station.station_name} 场地环境`} onOpen={onOpen} citationNumber={citationNumber}>
           <WhenVisible minHeight={320}>
             <SiteEnvironmentResultView environment={envelope.data} />
           </WhenVisible>
@@ -254,6 +233,7 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
   return (
     <CardShell
       title="测点位置"
+      defaultExpanded={false}
       meta={mapStations.every((station) => station.cumulative) ? '箭头为最新累计水平位移方向' : '箭头为水平位移方向；无固定参考的测点为本窗口变化'}
     >
       <WhenVisible minHeight={288}>
@@ -286,5 +266,12 @@ export const EvidenceCard: FC<{ cardId: string }> = ({ cardId }) => {
   const onOpen = step.stationId
     ? () => openStation({ messageId, stationId: step.stationId!, toolCallId: step.toolCallId })
     : undefined;
-  return <StepCard step={step} station={station} onOpen={onOpen} />;
+  const numbers = evidenceNumbers(parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n\n'));
+  const citationNumber = numbers.get(cardId);
+  // 同一测点的额外窗口先显示标题，避免多张相似曲线打断阅读；用户仍可独立展开。
+  const hasEarlierSeries = step.envelope?.kind === 'gnss_series' && steps.some((candidate) => (
+    candidate.stationId === step.stationId && candidate.envelope?.kind === 'gnss_series'
+    && (numbers.get(candidate.evidenceId ?? '') ?? Infinity) < (citationNumber ?? Infinity)
+  ));
+  return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries} citationNumber={citationNumber} />;
 };

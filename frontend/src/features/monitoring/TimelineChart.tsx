@@ -36,6 +36,12 @@ export interface ChartRange {
   end: number;
 }
 
+export interface ChartViewState {
+  zoom?: { start: number; end: number };
+  legend?: Record<string, boolean>;
+  selection?: ChartRange | null;
+}
+
 interface TimelineChartProps {
   viewKey: string;
   option: echarts.EChartsCoreOption;
@@ -45,6 +51,8 @@ interface TimelineChartProps {
   /** 把一段时间带入追问；不传时不显示就地追问按钮。 */
   onAsk?: (range: ChartRange) => void;
   askDisabled?: boolean;
+  initialState?: ChartViewState;
+  onStateChange?: (state: ChartViewState) => void;
 }
 
 interface SliderState {
@@ -95,7 +103,7 @@ const formatDay = (time: number) => {
 
 const ASK_BUTTON_CLASS = 'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50';
 
-export default function TimelineChart({ viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false }: TimelineChartProps) {
+export default function TimelineChart({ viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false, initialState, onStateChange }: TimelineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const previousViewRef = useRef<string | null>(null);
@@ -106,10 +114,29 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
   const isSelectingRef = useRef(false);
   const onRangeChangeRef = useRef(onRangeChange);
   onRangeChangeRef.current = onRangeChange;
+  const onStateChangeRef = useRef(onStateChange);
+  onStateChangeRef.current = onStateChange;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+
+  const saveViewState = (selected = selectionRef.current) => {
+    const chart = chartRef.current;
+    if (!chart || !onStateChangeRef.current) {
+      return;
+    }
+    const current = chart.getOption();
+    const slider = (current.dataZoom as SliderState[]).find((item) => item.type === 'slider');
+    const legend = (current.legend as { selected?: Record<string, boolean> }[])?.[0]?.selected;
+    onStateChangeRef.current({
+      zoom: slider ? { start: slider.start, end: slider.end } : undefined,
+      legend, selection: selected,
+    });
+  };
 
   const clearSelection = () => {
     chartRef.current?.dispatchAction({ type: 'brush', areas: [] });
     setSelection(null);
+    saveViewState(null);
   };
 
   useEffect(() => {
@@ -133,7 +160,9 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
         }
         const isFullRange = slider.start <= FULL_RANGE_TOLERANCE && slider.end >= 100 - FULL_RANGE_TOLERANCE;
         onRangeChangeRef.current(isFullRange ? null : { start: slider.startValue, end: slider.endValue });
+        saveViewState(null);
       });
+      chart.on('legendselectchanged', () => saveViewState());
 
       chart.on('updateAxisPointer', (event) => {
         const axis = (event as AxisPointerEvent).axesInfo?.find((info) => info.axisDim === 'x');
@@ -150,7 +179,9 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
         isSelectingRef.current = false;
         const range = (event as BrushEndEvent).areas[0]?.coordRange;
         // 选区保留在图上，由用户决定追问还是放大，而不是松开鼠标就缩放。
-        setSelection(range && range[1] > range[0] ? { start: range[0], end: range[1] } : null);
+        const selected = range && range[1] > range[0] ? { start: range[0], end: range[1] } : null;
+        setSelection(selected);
+        saveViewState(selected);
       });
       setIsReady(true);
     };
@@ -197,6 +228,18 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
       onRangeChangeRef.current(null);
       setSelection(null);
       setHoverTime(null);
+      if (initialState?.legend) {
+        chart.setOption({ legend: { selected: initialState.legend } });
+      }
+      if (initialState?.zoom) {
+        chart.dispatchAction({ type: 'dataZoom', ...initialState.zoom });
+      }
+      if (initialState?.selection) {
+        const { start, end } = initialState.selection;
+        chart.dispatchAction({ type: 'brush', areas: [{ brushType: 'lineX', xAxisIndex: 0, coordRange: [start, end] }] });
+        setSelection(initialState.selection);
+        saveViewState(initialState.selection);
+      }
     }
   }, [option, viewKey, isReady]);
 

@@ -363,7 +363,7 @@ const AssistantMessage: FC = () => {
           {({ part }) => {
             switch (part.type) {
               case "group-investigation":
-                return <InvestigationProcess firstPartIndex={part.indices[0]!} />;
+                return null;
               case "text":
                 return <EvidenceMarkdown />;
               case "tool-call":
@@ -377,6 +377,7 @@ const AssistantMessage: FC = () => {
         </MessagePrimitive.GroupedParts>
         <ConclusionsFallback />
         <MessageError />
+        <InvestigationProcess />
       </div>
 
       {/* 预留固定工具栏高度，显示隐藏按钮时不改变消息布局。 */}

@@ -162,10 +162,9 @@ const headlineOf = (steps: readonly InvestigationStep[], stationCount: number, i
 };
 
 /**
- * 一条回答只呈现一次调查过程：结论紧随其后，细节按需展开。
- * 工具组被模型的说明文字隔开时，只有首组渲染，覆盖整条消息的全部步骤。
+ * 一条回答只呈现一次调查过程，放在正文之后；生成前后不搬动已有正文。
  */
-export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPartIndex }) => {
+export const InvestigationProcess: FC = () => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
   const isRunning = useAuiState(isMessageRunning);
@@ -178,8 +177,7 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
   const failures = steps.filter((step) => step.state === 'failed' && step.envelope?.error);
 
-  const isFirstToolGroup = firstPartIndex === parts.findIndex((part) => part.type === 'tool-call');
-  if (!isFirstToolGroup || steps.length === 0) return null;
+  if (steps.length === 0) return null;
 
   const open = (stationId: string) => openStation({ messageId, stationId });
   let headlineState: StepState = 'complete';
@@ -192,9 +190,9 @@ export const InvestigationProcess: FC<{ firstPartIndex: number }> = ({ firstPart
   }
 
   return (
-    <div data-slot="investigation" className="investigation-process mb-5 flex flex-col gap-2">
+    <div data-slot="investigation" className="investigation-process mt-4 flex flex-col gap-2">
       {steps.length > 0 && <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <CollapsibleTrigger className="group/process flex min-h-10 max-w-full items-center gap-2 rounded-lg border bg-muted/30 px-3 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <CollapsibleTrigger className="group/process flex min-h-10 max-w-full items-center gap-2 rounded-lg px-1 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <StepIcon state={headlineState} />
           <span className={cn('min-w-0 truncate', isRunning && 'text-shimmer')} role={isRunning ? 'status' : undefined}>
             {headlineOf(steps, stations.length, isRunning)}
