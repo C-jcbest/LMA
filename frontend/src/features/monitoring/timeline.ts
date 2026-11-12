@@ -5,6 +5,7 @@ import type {
   GnssPointArtifact,
   WeatherArtifactData,
 } from '@/types/envelope';
+import { formatSigned, MILLIMETER_DIGITS } from './format';
 import { toFiniteGnssNumber } from './tools/gnssUtils';
 
 const MILLIMETERS_PER_METER = 1000;
@@ -205,10 +206,9 @@ export function stepEventsOf(data: GnssArtifactData, axes: readonly (Axis | 'h')
 
 const AXIS_LABELS: Record<Axis | 'h', string> = { n: '北向', e: '东向', u: '垂直', h: '水平' };
 
-const formatSigned = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(1)}`;
 
 export const stepEventText = (event: StepEvent) =>
-  `${AXIS_LABELS[event.axis]}台阶 ${formatSigned(event.stepMillimeters)} mm · ${event.time.slice(5, 16)}${event.status ? ` · ${event.status}` : ''}`;
+  `${AXIS_LABELS[event.axis]}台阶 ${formatSigned(event.stepMillimeters, MILLIMETER_DIGITS)} mm · ${event.time.slice(5, 16)}${event.status ? ` · ${event.status}` : ''}`;
 
 export interface ChartColors {
   text: string;

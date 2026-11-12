@@ -67,8 +67,10 @@ test('主题选择覆盖系统偏好并跨刷新保留，跟随系统仍响应�
   await page.goto('/');
   const root = page.locator('html');
   await expect(page.getByText('外观', { exact: true })).toHaveCount(0);
-  const theme = page.getByRole('radiogroup', { name: '外观主题' });
-  expect((await theme.boundingBox())!.y).toBeLessThan(60);
+  // 外观是低频设置，放在导航底部而不是每个页面的标题栏。
+  const theme = page.getByRole('complementary', { name: '导航' }).getByRole('radiogroup', { name: '外观主题' });
+  await expect(theme).toBeVisible();
+  await expect(page.getByRole('main').getByRole('radiogroup', { name: '外观主题' })).toHaveCount(0);
   await expect(root).toHaveAttribute('data-theme', 'dark');
   await page.getByRole('radio', { name: '浅色主题', exact: true }).click();
   await expect(root).toHaveAttribute('data-theme', 'light');

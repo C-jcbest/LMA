@@ -360,9 +360,21 @@ it('计算结果中的嵌套字典展示为对比表和小表，不显示 JSON �
   }} />);
   expect(screen.queryByText(/\{"days"/)).toBeNull();
   const tables = screen.getAllByRole('table');
-  expect(tables[0]).toHaveTextContent('first_period');
+  // 代码变量式键名整理成可读表头：下划线换成空格，末尾单位放进括号。
+  expect(tables[0]).toHaveTextContent('first period');
+  expect(tables[0]).toHaveTextContent('rain（mm）');
   expect(tables[0]).toHaveTextContent('286.3');
-  expect(screen.getByText('recent_7d_rain_mm')).toBeVisible();
-  expect(screen.getByText('recent_7d_daily')).toBeVisible();
+  expect(screen.getByText('recent 7d rain（mm）')).toBeVisible();
+  expect(screen.getByText('recent 7d daily')).toBeVisible();
   expect(tables[1]).toHaveTextContent('2026-11-06');
+});
+
+it('计算结果的中文键名带单位后缀时显示为“名称（单位）”', () => {
+  render(<ComputationResultView data={{
+    description: '降雨前后速率', code: 'result = {}', truncated: false,
+    inputs: [{ evidence_id: 'E1', description: '测点A 90 天位移' }],
+    result: { 降雨前: { 北向速率_mm每天: -0.12, 有效点: 28 }, 降雨后: { 北向速率_mm每天: -0.15, 有效点: 27 } },
+  }} />);
+  expect(screen.getByRole('columnheader', { name: '北向速率（mm/天）' })).toBeVisible();
+  expect(screen.queryByText(/_/)).toBeNull();
 });

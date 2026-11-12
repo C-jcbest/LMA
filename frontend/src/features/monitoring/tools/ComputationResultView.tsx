@@ -13,6 +13,19 @@ const isScalar = (value: unknown): value is Scalar =>
 const isFlatRecord = (value: unknown): value is Record<string, Scalar> =>
   isRecord(value) && value.type === undefined && Object.values(value).every(isScalar);
 
+// 模型偶尔用代码变量写键名，如“北向速率_mm每天”；末段是单位时改写成“北向速率（mm/天）”。
+const UNIT_SUFFIX = /^(.+?)_((?:mm|cm|m|km|%|天|小时|h|d)(?:每天|每小时|每日|\/天|\/小时|\/d|\/h)?)$/;
+
+/** 把键名整理成表头文字：单位放进括号，其余下划线换成空格。 */
+export const formatLabel = (key: string) => {
+  const match = UNIT_SUFFIX.exec(key);
+  if (match) {
+    const unit = match[2]!.replace(/^(.+?)每(天|日|小时)$/, '$1/$2').replace('/日', '/天');
+    return `${match[1]!.replace(/_+/g, ' ')}（${unit}）`;
+  }
+  return key.replace(/_+/g, ' ');
+};
+
 const formatCell = (value: unknown) => {
   if (value === null || value === undefined) {
     return '—';
@@ -28,18 +41,18 @@ const formatCell = (value: unknown) => {
 
 const Table: FC<{ columns: string[]; rows: unknown[][]; total?: number; caption?: string }> = ({ columns, rows, total, caption }) => (
   <div className="space-y-1.5">
-    {caption && <p className="text-xs text-muted-foreground">{caption}</p>}
+    {caption && <p className="text-xs text-muted-foreground">{formatLabel(caption)}</p>}
     <div className="max-h-80 overflow-auto rounded-md border">
       <table className="w-full text-sm tabular-nums">
         <thead className="sticky top-0 bg-muted text-muted-foreground">
-          <tr>{columns.map((column, index) => <th key={index} scope="col" className="px-3 py-1.5 text-start font-normal whitespace-nowrap">{column}</th>)}</tr>
+          <tr>{columns.map((column, index) => <th key={index} scope="col" className="px-3 py-1.5 text-start font-normal whitespace-nowrap">{formatLabel(column)}</th>)}</tr>
         </thead>
         <tbody>
           {rows.map((row, index) => (
             <tr key={index} className="border-t">
               {row.map((cell, cellIndex) => (
                 <td key={cellIndex} className={cellIndex === 0 ? 'px-3 py-1.5 text-muted-foreground whitespace-nowrap' : 'px-3 py-1.5'}>
-                  {formatCell(cell)}
+                  {cellIndex === 0 && typeof cell === 'string' ? formatLabel(cell) : formatCell(cell)}
                 </td>
               ))}
             </tr>
@@ -57,7 +70,7 @@ const Metrics: FC<{ entries: [string, Scalar][] }> = ({ entries }) => (
   <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-x-6 gap-y-3">
     {entries.map(([key, value]) => (
       <div key={key} className="min-w-0">
-        <dt className="text-xs text-muted-foreground wrap-break-word">{key}</dt>
+        <dt className="text-xs text-muted-foreground wrap-break-word">{formatLabel(key)}</dt>
         <dd className="text-base font-medium tabular-nums wrap-break-word">{formatCell(value)}</dd>
       </div>
     ))}
@@ -91,7 +104,7 @@ const ResultValue: FC<{ value: unknown; caption?: string }> = ({ value, caption 
   }
   return (
     <div>
-      {caption && <p className="text-xs text-muted-foreground">{caption}</p>}
+      {caption && <p className="text-xs text-muted-foreground">{formatLabel(caption)}</p>}
       <p className="text-base font-medium tabular-nums">{formatCell(value)}</p>
     </div>
   );

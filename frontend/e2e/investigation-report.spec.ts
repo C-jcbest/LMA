@@ -395,7 +395,7 @@ for (const scenario of ['单点', '全部平稳', '资料有限']) {
 }
 
 for (const anchor of ['question-1', 'followup']) {
-  test(`调查记录定位 ${anchor}，而不是会话末尾`, async ({ page }) => {
+  test(`调查记录在测点对话栏打开并定位 ${anchor}，而不是会话末尾`, async ({ page }) => {
     await mockApi(page);
     const history = [
       ...messages,
@@ -411,7 +411,9 @@ for (const anchor of ['question-1', 'followup']) {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/?station=测试点 A');
     await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
-    await expect(page).toHaveURL(new RegExp(`result=${anchor}`));
+    // 不离开测点页：窄屏切到 AI 调查，在测点自己的对话栏里打开那次调查。
+    await expect(page).toHaveURL(/station=/);
+    await expect(page.getByRole('radio', { name: 'AI 调查', exact: true })).toHaveAttribute('aria-checked', 'true');
     const target = anchor === 'question-1' ? page.getByText('测试点 A 最近怎么样？') : page.getByText('接下来观察什么？');
     await expect(target).toBeInViewport();
   });
@@ -448,7 +450,8 @@ test('窄屏切换调查保留数据滚动、图表选区与追问草稿', async
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.7, box.y + 140, { steps: 8 });
   await page.mouse.up();
-  const ask = data.getByRole('button', { name: '追问这段' });
+  // 框选后在选区上方就地出现追问按钮，不需要先缩放。
+  const ask = data.getByRole('toolbar', { name: '所选时间段' }).getByRole('button', { name: '问这段' });
   await expect(ask).toBeVisible();
   const originalCanvas = await canvas.elementHandle();
   const scrollTop = await data.evaluate((element) => element.scrollTop);
@@ -584,10 +587,10 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.getByRole('radio', { name: '30 天' }).click();
   await expect.poll(() => timelineQueries.at(-1)).toBe('?days=30');
 
-  // 历次调查从测点的记录里打开；窄屏切到对话面板显示那次的结论。
+  // 历次调查在测点页自己的对话面板里打开，窄屏切到对话显示那次的结论。
   await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
-  await expect(page).toHaveURL(/threadId=report-session/);
-  await expect(page.getByText(fallbackText)).toBeVisible();
+  await expect(page).toHaveURL(/station=/);
+  await expect(page.getByRole('complementary', { name: 'AI 调查' }).getByText(fallbackText)).toBeVisible();
   expect(runRequests).toBe(0);
 });
 

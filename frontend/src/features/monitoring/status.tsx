@@ -1,5 +1,6 @@
 import type { FC } from 'react';
 import { cn } from '@/lib/utils';
+import { formatSigned, MILLIMETER_DIGITS } from './format';
 import type { InspectionStation } from '@/services/api';
 
 // 巡检初筛和调查结论共用一套颜色：红色只留给已调查并需要人工复核的测点。
@@ -38,5 +39,4 @@ export function largestChange(station: Pick<InspectionStation, 'metrics'>): { ax
   return largest;
 }
 
-export const formatMillimeters = (millimeters: number) =>
-  `${millimeters > 0 ? '+' : ''}${millimeters.toFixed(1)}`;
+export const formatMillimeters = (millimeters: number) => formatSigned(millimeters, MILLIMETER_DIGITS);

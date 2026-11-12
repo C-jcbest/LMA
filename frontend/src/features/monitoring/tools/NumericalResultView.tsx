@@ -1,5 +1,6 @@
 import type { FC, ReactNode } from 'react';
 import type { GnssArtifactData } from '@/types/envelope';
+import { formatSigned, MILLIMETER_DIGITS, RATE_DIGITS } from '../format';
 
 const AXIS_NAMES: Record<string, string> = { n: '北向', e: '东向', u: '垂直', h: '水平合成', d: '三维合成' };
 
@@ -13,8 +14,8 @@ const formatNumber = (value: unknown, digits = 1) =>
     ? value.toLocaleString('zh-CN', { maximumFractionDigits: digits, minimumFractionDigits: digits })
     : '—';
 
-const formatSigned = (value: unknown, digits = 1) =>
-  typeof value === 'number' && Number.isFinite(value) && value > 0 ? `+${formatNumber(value, digits)}` : formatNumber(value, digits);
+const formatSignedValue = (value: unknown, digits = MILLIMETER_DIGITS) =>
+  typeof value === 'number' && Number.isFinite(value) ? formatSigned(value, digits) : '—';
 
 const SimpleTable: FC<{ head: ReactNode[]; rows: ReactNode[][]; label: string }> = ({ head, rows, label }) => (
   <div className="overflow-x-auto rounded-lg border">
@@ -36,12 +37,12 @@ const SimpleTable: FC<{ head: ReactNode[]; rows: ReactNode[][]; label: string }>
 );
 
 const slopeText = (feature: Feature) =>
-  `${formatSigned(feature.robust_slope_mm_day, 2)}${feature.trend_supported ? '' : '（描述）'}`;
+  `${formatSignedValue(feature.robust_slope_mm_day, RATE_DIGITS)}${feature.trend_supported ? '' : '（描述）'}`;
 
 const featureRow = (label: string, feature: Feature): ReactNode[] => [
   label,
-  formatSigned(feature.cum_end_mm),
-  formatSigned(feature.net_change_mm),
+  formatSignedValue(feature.cum_end_mm),
+  formatSignedValue(feature.net_change_mm),
   slopeText(feature),
   formatNumber(feature.max_step_mm),
   `${formatNumber(feature.count, 0)}`,
@@ -87,7 +88,7 @@ export function NumericalResultView({ data }: { data: GnssArtifactData }) {
             rows={events.map(({ axis, event }) => [
               AXIS_NAMES[axis] ?? axis,
               String(event.time ?? '—').slice(0, 16),
-              formatSigned(event.step_mm),
+              formatSignedValue(event.step_mm),
               `${String(event.status ?? '—')}${Array.isArray(event.later_unknown_intervals) && event.later_unknown_intervals.length > 0 ? '，之后有缺测' : ''}`,
               `${formatNumber(event.held_hours, 0)} 小时`,
             ])}
@@ -105,7 +106,7 @@ export function NumericalResultView({ data }: { data: GnssArtifactData }) {
               AXIS_NAMES[axis] ?? axis,
               slopeText(windows.first as Feature),
               slopeText(windows.second as Feature),
-              formatSigned(windows.velocity_difference_mm_day, 2),
+              formatSignedValue(windows.velocity_difference_mm_day, RATE_DIGITS),
               formatNumber(windows.speed_ratio, 2),
             ])}
           />

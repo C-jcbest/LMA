@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import type { AxisFeature, ToolArtifactEnvelopeFor } from '@/types/envelope';
 import { useChartColors } from './chartColors';
 import { STATION_MAP_CARD } from './evidence-cards';
+import { formatSigned, MILLIMETER_DIGITS, RATE_DIGITS } from './format';
 import {
   buildSteps,
   collectStations,
@@ -172,10 +173,8 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
 
 const AXIS_NAMES: Record<string, string> = { n: '北向', e: '东向', u: '垂直', h: '水平' };
 
-const formatSigned = (value: unknown) =>
-  typeof value === 'number' && Number.isFinite(value)
-    ? `${value > 0 ? '+' : ''}${value.toFixed(1)}`
-    : '—';
+const formatFeature = (value: unknown, digits: number) =>
+  typeof value === 'number' && Number.isFinite(value) ? formatSigned(value, digits) : '—';
 
 const SUMMARY_AXES = ['n', 'e', 'u', 'h'] as const;
 
@@ -189,12 +188,12 @@ const FeatureSummary: FC<{ features: Record<string, AxisFeature> }> = ({ feature
         <div key={axis} className="min-w-0">
           <dt className="text-xs text-muted-foreground">{AXIS_NAMES[axis]}{hasCumulative ? '累计' : '本窗口变化'}</dt>
           <dd className="text-base font-medium tabular-nums">
-            {formatSigned(hasCumulative ? feature.cum_end_mm : feature.net_change_mm)}
+            {formatFeature(hasCumulative ? feature.cum_end_mm : feature.net_change_mm, MILLIMETER_DIGITS)}
             <span className="ms-1 text-xs font-normal text-muted-foreground">mm</span>
           </dd>
           <dd className="text-xs text-muted-foreground tabular-nums">
-            {hasCumulative && <>本窗口 {formatSigned(feature.net_change_mm)} · </>}
-            {feature.trend_supported ? '速率' : '描述斜率'} {formatSigned(feature.robust_slope_mm_day)} mm/天
+            {hasCumulative && <>本窗口 {formatFeature(feature.net_change_mm, MILLIMETER_DIGITS)} · </>}
+            {feature.trend_supported ? '速率' : '描述斜率'} {formatFeature(feature.robust_slope_mm_day, RATE_DIGITS)} mm/天
           </dd>
         </div>
       );

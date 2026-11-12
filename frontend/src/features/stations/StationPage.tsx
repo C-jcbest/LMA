@@ -17,7 +17,7 @@ import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { StatusDot } from '@/features/monitoring/status';
-import { buildTimelineOption, formatChartTime, rangeQuestion } from '@/features/monitoring/timeline';
+import { buildTimelineOption, displacementBasisLabel, formatChartTime, rangeQuestion } from '@/features/monitoring/timeline';
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { appendToComposerDraft } from '@/lib/composer-draft';
@@ -35,27 +35,54 @@ const WINDOW_OPTIONS: readonly { value: string; label: string }[] = [
 
 type Panel = 'data' | 'chat';
 
-function StationChatActions({ expanded, onExpand, onClose }: { expanded: boolean; onExpand?: () => void; onClose: () => void }) {
+/** 在测点自己的会话运行时里开始新调查；必须渲染在 StationConversation 内。 */
+function NewStationInvestigationButton({ onStarted }: { onStarted: () => void }) {
   const aui = useAui();
   const running = useAuiState((state) => state.thread.isRunning);
   const [failed, setFailed] = useState(false);
   return (
-    <div className="flex min-h-11 shrink-0 items-center gap-1 border-b px-3">
-      <span className="mr-auto text-sm font-medium">AI 调查</span>
+    <>
       {failed && <span role="alert" className="text-xs">请重试</span>}
       <Button variant="ghost" size="icon" title="新调查" aria-label="开始新的测点调查" disabled={running} onClick={async () => {
         setFailed(false);
         try {
           await aui.threads().switchToNewThread();
+          onStarted();
         } catch {
           setFailed(true);
         }
       }}><PlusIcon className="size-4" /></Button>
-      {onExpand && <Button variant="ghost" size="icon" title={expanded ? '恢复分栏' : '展开调查'} aria-label={expanded ? '恢复分栏' : '展开调查'} onClick={onExpand}>
+    </>
+  );
+}
+
+/** 宽屏对话栏的标题行；窄屏这些操作并入测点页顶部的一行。 */
+function StationChatActions({ expanded, onExpand, onClose, onNewInvestigation }: {
+  expanded: boolean;
+  onExpand: () => void;
+  onClose: () => void;
+  onNewInvestigation: () => void;
+}) {
+  return (
+    <div className="flex min-h-11 shrink-0 items-center gap-1 border-b px-3">
+      <span className="mr-auto text-sm font-medium">AI 调查</span>
+      <NewStationInvestigationButton onStarted={onNewInvestigation} />
+      <Button variant="ghost" size="icon" title={expanded ? '恢复分栏' : '展开调查'} aria-label={expanded ? '恢复分栏' : '展开调查'} onClick={onExpand}>
         {expanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-      </Button>}
+      </Button>
       <Button variant="ghost" size="icon" title="关闭调查面板" aria-label="关闭调查面板" onClick={onClose}><XIcon className="size-4" /></Button>
     </div>
+  );
+}
+
+/** 历次调查在测点自己的对话栏里打开，用户不离开正在看的数据。 */
+function StationRecords({ records, onOpened }: { records: readonly StationRecord[]; onOpened: (anchorId: string) => void }) {
+  const aui = useAui();
+  return (
+    <RecordList records={records} onOpen={async (record) => {
+      await aui.threads().switchToThread(record.session_id);
+      onOpened(record.anchor_id);
+    }} />
   );
 }
 
@@ -75,11 +102,8 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
     [data, chartColors],
   );
 
-  const askAboutRange = () => {
-    if (!range) {
-      return;
-    }
-    appendToComposerDraft(aui, rangeQuestion(`${stationName}（UUID：${data.station_uuid}）`, range));
+  const askAbout = (target: ChartRange) => {
+    appendToComposerDraft(aui, rangeQuestion(`${stationName}（UUID：${data.station_uuid}）`, target));
     onAsk();
     requestAnimationFrame(() => composerInputRef.current?.focus());
   };
@@ -88,12 +112,12 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
     <div>
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-muted-foreground min-w-0 truncate text-sm tabular-nums">
-          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : '相对窗口首点的变化'}
+          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : `${displacementBasisLabel(data)}（mm）`}
         </p>
         {range && (
           <div className="flex shrink-0 items-center gap-1">
             <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
-            <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={askAboutRange}>追问这段</Button>
+            <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={() => askAbout(range)}>问当前范围</Button>
           </div>
         )}
       </div>
@@ -105,6 +129,8 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
             label={`${stationName} 位移时间轴`}
             resetSignal={resetSignal}
             onRangeChange={setRange}
+            onAsk={askAbout}
+            askDisabled={isLoading || disabled}
           />
         </Suspense>
       </ErrorBoundary>
@@ -189,7 +215,7 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
 export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningChange: (running: boolean) => void }> = ({ stationUuid, active, onRunningChange }) => {
   const client = useLmaClient();
   const globalAui = useAui();
-  const { returnFromStation, showConversation } = useNavigation();
+  const { returnFromStation } = useNavigation();
   const { latest } = useInspection();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
   const [days, setDays] = useState<TimelineDays>(90);
@@ -198,6 +224,8 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const [reloadCount, setReloadCount] = useState(0);
   const [panel, setPanel] = useState<Panel>('data');
   const [chatMode, setChatMode] = useState<'split' | 'closed' | 'expanded'>('split');
+  // 从调查记录打开的会话定位到那次结论；开始新调查后清除。
+  const [recordAnchor, setRecordAnchor] = useState<string | undefined>(undefined);
   const chatRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const chatResize = usePanelResize({
@@ -295,9 +323,9 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
         {timeline && (
           <div className="mt-9">
             <h2 className="mb-2 text-sm font-medium">调查记录</h2>
-            <RecordList records={timeline.records} onOpen={async (record) => {
-              await globalAui.threads().switchToThread(record.session_id);
-              showConversation(record.anchor_id);
+            <StationRecords records={timeline.records} onOpened={(anchorId) => {
+              setRecordAnchor(anchorId);
+              showChat();
             }} />
           </div>
         )}
@@ -309,6 +337,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     <aside aria-label="AI 调查" className="h-full min-w-0">
       <Thread
         autoFocus={false}
+        resultAnchor={recordAnchor}
         placeholder={stationName ? `问问 ${stationName}…` : undefined}
         welcome={stationName ? <StationAsk stationName={stationName} inspection={inspection} /> : null}
       />
@@ -321,9 +350,11 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   return (
     <StationConversation stationUuid={stationUuid} stationName={stationName} onComplete={investigationCompleted} active={active} onRunningChange={onRunningChange}>
         <div className="flex h-full min-h-0 flex-col">
-          {!isSideBySide && <div className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1.5">
+          {/* 窄屏只保留这一行：返回、测点名、数据/调查切换，调查时附带新调查。 */}
+          {!isSideBySide && <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
             <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
-            <h1 className="min-w-0 truncate text-sm font-medium">{stationName}</h1>
+            <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>
+            {panel === 'chat' && <NewStationInvestigationButton onStarted={() => setRecordAnchor(undefined)} />}
             <Segmented
               label="测点页内容"
               value={panel}
@@ -335,12 +366,10 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             <div className={cn('h-full min-w-0 flex-1', (isSideBySide ? chatMode === 'expanded' : panel !== 'data') && 'hidden')}>{dataPanel(true)}</div>
             <div ref={chatRef} id={`station-chat-${stationUuid}`} style={isSideBySide && chatMode === 'split' ? chatResize.style : undefined}
               className={cn('relative flex h-full min-w-0 flex-col', isSideBySide && chatMode === 'split' ? 'w-[min(var(--panel-width),calc(100%-360px))] shrink-0 border-l' : 'flex-1', (isSideBySide ? chatMode === 'closed' : panel !== 'chat') && 'hidden')}>
-              <StationChatActions expanded={chatMode === 'expanded'}
-                onExpand={isSideBySide ? () => setChatMode(chatMode === 'expanded' ? 'split' : 'expanded') : undefined}
-                onClose={() => {
-                  setChatMode('closed');
-                  setPanel('data');
-                }} />
+              {isSideBySide && <StationChatActions expanded={chatMode === 'expanded'}
+                onExpand={() => setChatMode(chatMode === 'expanded' ? 'split' : 'expanded')}
+                onClose={() => setChatMode('closed')}
+                onNewInvestigation={() => setRecordAnchor(undefined)} />}
               {isSideBySide && chatMode === 'split' && <PanelResizeHandle label="调整数据与调查宽度" panelId={`station-chat-${stationUuid}`} edge="left" {...chatResize.handleProps} />}
               <div className="min-h-0 flex-1">{chatPanel}</div>
             </div>

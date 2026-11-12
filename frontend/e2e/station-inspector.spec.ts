@@ -144,7 +144,7 @@ test('调查过程默认折叠，展开后每一步都能定位到对应测点',
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
 });
 
-test('框选时间段后可带入追问，还原后恢复完整窗口', async ({ page }) => {
+test('框选时间段后就地追问或放大，还原后恢复完整窗口', async ({ page }) => {
   await openInvestigation(page, 1440);
   await page.getByRole('textbox', { name: '输入监测问题' }).fill('也看看东向变化');
   await stationEntry(page).click();
@@ -157,26 +157,39 @@ test('框选时间段后可带入追问，还原后恢复完整窗口', async ({
   await page.mouse.up();
 
   // 外观更新必须保留图表实例和用户正在核查的时间段。
-  await expect(inspector(page).getByRole('button', { name: '追问这段' })).toBeVisible();
+  const selectionBar = inspector(page).getByRole('toolbar', { name: '所选时间段' });
+  await expect(selectionBar.getByRole('button', { name: '问这段' })).toBeVisible();
   const originalCanvas = await canvas.elementHandle();
+  // 依据并排时侧栏收为导航条，外观设置在展开的导航里。
+  await page.getByRole('button', { name: '打开导航' }).click();
   await page.getByRole('radio', { name: '深色主题', exact: true }).click();
+  await page.keyboard.press('Escape');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await expect(inspector(page).getByRole('button', { name: '追问这段' })).toBeVisible();
+  await expect(selectionBar.getByRole('button', { name: '问这段' })).toBeVisible();
   expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);
   await inspector(page).getByRole('tab', { name: '明细', exact: true }).click();
   await expect(canvas).toBeHidden();
   await inspector(page).getByRole('tab', { name: '时间轴', exact: true }).click();
   await expect(canvas).toBeVisible();
-  await expect(inspector(page).getByRole('button', { name: '追问这段' })).toBeVisible();
+  await expect(selectionBar.getByRole('button', { name: '问这段' })).toBeVisible();
   expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);
 
-  await inspector(page).getByRole('button', { name: '追问这段' }).click();
+  await selectionBar.getByRole('button', { name: '问这段' }).click();
   const input = page.getByRole('textbox', { name: '输入监测问题' });
   await expect(input).toHaveValue(/^也看看东向变化\n测试点 A（UUID：test-a） 2026-11-\d\d \d\d:\d\d 至 2026-11-\d\d \d\d:\d\d 这段发生了什么？$/);
   await expect(input).toBeFocused();
 
+  await expect(selectionBar).toHaveCount(0);
+
+  // 放大是选区上的次要操作；放大后可还原。
+  await page.mouse.move(box.x + box.width * 0.3, box.y + 140);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + 140, { steps: 8 });
+  await page.mouse.up();
+  await selectionBar.getByRole('button', { name: '放大所选时间段' }).click();
+  await expect(inspector(page).getByRole('button', { name: '问当前范围' })).toBeVisible();
   await inspector(page).getByRole('button', { name: '还原' }).click();
-  await expect(inspector(page).getByRole('button', { name: '追问这段' })).toHaveCount(0);
+  await expect(inspector(page).getByRole('button', { name: '问当前范围' })).toHaveCount(0);
 });
 
 test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度，窄屏不覆盖桌面偏好', async ({ page }) => {
@@ -215,7 +228,8 @@ test('聊天和依据的分隔线可拖动，关闭重开及刷新保留宽度�
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBeCloseTo(390, 1);
   await page.setViewportSize({ width: 1024, height: 844 });
-  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(664);
+  // 1024 宽时侧栏收为 48px 导航条：1024 - 48 - 360（对话最小宽度）。
+  await expect.poll(async () => (await inspector(page).boundingBox())?.width).toBe(616);
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1024);
   await page.setViewportSize({ width: 1920, height: 900 });

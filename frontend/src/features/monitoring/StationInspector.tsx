@@ -10,6 +10,7 @@ import { appendToComposerDraft } from '@/lib/composer-draft';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import type { EvidenceSource, GnssArtifactData } from '@/types/envelope';
 import { useChartColors } from './chartColors';
+import { formatSigned, MILLIMETER_DIGITS } from './format';
 import { collectStations, type StationEvidence } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
 import {
@@ -36,10 +37,8 @@ const TimelineChart = lazy(() => import('./TimelineChart'));
 
 const MILLIMETERS_PER_METER = 1000;
 
-const formatSigned = (millimeters: number | null | undefined) => {
-  if (millimeters === null || millimeters === undefined) return '—';
-  return `${millimeters > 0 ? '+' : ''}${millimeters.toFixed(1)}`;
-};
+const formatMillimeters = (millimeters: number | null | undefined) =>
+  millimeters === null || millimeters === undefined ? '—' : formatSigned(millimeters, MILLIMETER_DIGITS);
 
 const METRIC_AXES = [
   { axis: 'n', label: '北向' },
@@ -70,11 +69,11 @@ export const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
           <div key={axis} className="min-w-0">
             <dt className="text-sm text-muted-foreground">{label}{hasReference ? '累计' : '本窗口变化'}</dt>
             <dd className="mt-0.5 text-xl font-medium tabular-nums">
-              {formatSigned(hasReference ? latestOf(axis) : windowChange(axis))}
+              {formatMillimeters(hasReference ? latestOf(axis) : windowChange(axis))}
               <span className="ms-1 text-sm font-normal text-muted-foreground">mm</span>
             </dd>
             {hasReference && (
-              <dd className="text-xs text-muted-foreground tabular-nums">本窗口 {formatSigned(windowChange(axis))} mm</dd>
+              <dd className="text-xs text-muted-foreground tabular-nums">本窗口 {formatMillimeters(windowChange(axis))} mm</dd>
             )}
           </div>
         );
@@ -118,10 +117,9 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
     );
   }, [station.weather, data, peerSeries, mode, chartColors]);
 
-  const askAboutRange = () => {
-    if (!range) return;
+  const askAbout = (target: ChartRange) => {
     const stationIdentity = station.uuid ? `${station.name}（UUID：${station.uuid}）` : station.name;
-    appendToComposerDraft(aui, rangeQuestion(stationIdentity, range));
+    appendToComposerDraft(aui, rangeQuestion(stationIdentity, target));
     if (isSplit) {
       composerInputRef.current?.focus();
     } else {
@@ -169,8 +167,8 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
               <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>
                 还原
               </Button>
-              <Button type="button" variant="outline" size="sm" onClick={askAboutRange}>
-                追问这段
+              <Button type="button" variant="outline" size="sm" onClick={() => askAbout(range)}>
+                问当前范围
               </Button>
             </div>
           )}
@@ -183,6 +181,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
               label={`${station.name} ${seriesLabel(data)} 位移时间轴`}
               resetSignal={resetSignal}
               onRangeChange={setRange}
+              onAsk={askAbout}
             />
           </Suspense>
         </ErrorBoundary>
@@ -369,8 +368,10 @@ export const StationInspector: FC = () => {
     side: 'right',
     panelRef,
     availableWidth: () => {
-      const navigation = document.querySelector('[data-navigation-docked]');
-      return window.innerWidth - (navigation?.getBoundingClientRect().width ?? 0) - 360;
+      // 展开的侧栏或收起后的导航条都占用宽度，依据面板不能把对话挤到 360px 以下。
+      const navigationWidth = [...document.querySelectorAll('[data-navigation-docked], [data-navigation-rail]')]
+        .reduce((total, element) => total + element.getBoundingClientRect().width, 0);
+      return window.innerWidth - navigationWidth - 360;
     },
   });
   const messageContent = useAuiState((state) => (

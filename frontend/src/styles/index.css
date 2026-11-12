@@ -331,6 +331,10 @@
   text-underline-offset: 3px;
   cursor: pointer;
 }
+.evidence-map-marker--label-start .evidence-map-marker__label {
+  left: auto;
+  right: calc(100% + 6px);
+}
 .evidence-map-marker:focus-visible .evidence-map-marker__label {
   outline: 2px solid #f2ad3a;
   outline-offset: 2px;

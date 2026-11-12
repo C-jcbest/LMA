@@ -51,6 +51,8 @@ export type ThreadProps = {
   welcome?: ReactNode;
   overview?: ReactNode;
   placeholder?: string | undefined;
+  /** 要定位的历史结论；不传时使用地址栏中的定位（对话页）。 */
+  resultAnchor?: string | undefined;
 };
 
 const DEFAULT_PLACEHOLDER = "询问监测数据、变化趋势、降雨关联或场地环境…";
@@ -89,8 +91,9 @@ const ThreadHistorySkeleton: FC = () => (
   </div>
 );
 
-export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, placeholder = DEFAULT_PLACEHOLDER }) => {
-  const { resultAnchor } = useNavigation();
+export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, placeholder = DEFAULT_PLACEHOLDER, resultAnchor: anchorOverride }) => {
+  const navigation = useNavigation();
+  const resultAnchor = anchorOverride ?? navigation.resultAnchor;
   const messages = useAuiState((state) => state.thread.messages);
   const rootRef = useRef<HTMLDivElement>(null);
   const positionedAnchor = useRef<string | undefined>(undefined);

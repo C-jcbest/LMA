@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { useAuiEvent, useAuiState } from '@assistant-ui/react';
 import { ActivityIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
@@ -59,10 +59,59 @@ const NavigationItem: React.FC<{
   </button>
 );
 
-const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOpenSettings }) => {
-  const { page, goHome, goStations, goRecords, showConversation, startConversation } = useNavigation();
+interface PageEntry {
+  icon: LucideIcon;
+  label: string;
+  isCurrent: boolean;
+  badge?: number;
+  open: () => void;
+}
+
+/** 侧栏与收起后的导航条显示同一组页面入口。 */
+function usePageEntries(): PageEntry[] {
+  const { page, goHome, goStations, goRecords, startConversation } = useNavigation();
   const { latest } = useInspection();
   const attentionCount = latest?.stations.filter((station) => station.screening === '建议调查').length;
+  return [
+    { icon: PlusIcon, label: '新调查', isCurrent: false, open: startConversation },
+    { icon: SunIcon, label: '今日', isCurrent: page === 'home', badge: attentionCount, open: goHome },
+    { icon: ActivityIcon, label: '测点', isCurrent: page === 'stations' || page === 'station', open: goStations },
+    { icon: ListIcon, label: '记录', isCurrent: page === 'records', open: goRecords },
+  ];
+}
+
+/**
+ * 侧栏收起后（用户收起，或依据、测点页需要宽度时自动收起）留下的窄导航条：
+ * 页面入口仍在原位置，用户不会以为导航消失了；第一个按钮展开完整侧栏。
+ */
+const NavigationRail = forwardRef<HTMLButtonElement, { expandLabel: string; onExpand: () => void }>(({ expandLabel, onExpand }, expandButtonRef) => {
+  const entries = usePageEntries();
+  return (
+    <nav aria-label="快捷导航" data-navigation-rail="" className="flex h-full w-12 shrink-0 flex-col items-center gap-0.5 border-r bg-sidebar pt-[max(0.5rem,env(safe-area-inset-top))]">
+      <Button ref={expandButtonRef} type="button" variant="ghost" size="icon" onClick={onExpand} aria-label={expandLabel} title={expandLabel}
+        className="mb-2 text-muted-foreground hover:text-foreground">
+        <PanelLeftOpen className="size-4" />
+      </Button>
+      {entries.map(({ icon: Icon, label, isCurrent, badge, open }) => (
+        <button key={label} type="button" onClick={open} aria-label={label} title={label} aria-current={isCurrent ? 'page' : undefined}
+          className={cn(
+            'relative flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            isCurrent && 'bg-muted text-foreground',
+          )}>
+          <Icon className="size-4" aria-hidden />
+          {badge !== undefined && badge > 0 && (
+            <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-status-attention" aria-hidden />
+          )}
+        </button>
+      ))}
+    </nav>
+  );
+});
+NavigationRail.displayName = 'NavigationRail';
+
+const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOpenSettings }) => {
+  const { showConversation } = useNavigation();
+  const entries = usePageEntries();
 
   const go = (action: () => void) => () => {
     action();
@@ -89,10 +138,9 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
         </Button>
       </div>
       <nav aria-label="页面" className="shrink-0 space-y-0.5 px-2">
-        <NavigationItem icon={PlusIcon} label="新调查" isCurrent={false} onClick={go(startConversation)} />
-        <NavigationItem icon={SunIcon} label="今日" isCurrent={page === 'home'} badge={attentionCount} onClick={go(goHome)} />
-        <NavigationItem icon={ActivityIcon} label="测点" isCurrent={page === 'stations' || page === 'station'} onClick={go(goStations)} />
-        <NavigationItem icon={ListIcon} label="记录" isCurrent={page === 'records'} onClick={go(goRecords)} />
+        {entries.map(({ icon, label, isCurrent, badge, open }) => (
+          <NavigationItem key={label} icon={icon} label={label} isCurrent={isCurrent} badge={badge} onClick={go(open)} />
+        ))}
       </nav>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pt-5">
         <p className="shrink-0 px-2.5 pb-1.5 text-xs text-muted-foreground">最近</p>
@@ -107,6 +155,10 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
         </div>
       </div>
       <div className="shrink-0 space-y-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        {/* 外观是低频设置，放在导航底部，不占用每个页面的标题栏。 */}
+        <div className="px-0.5">
+          <ThemeSelector />
+        </div>
         {onOpenSettings && (
           <Button
             variant="ghost"
@@ -259,6 +311,20 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
         </div>
       )}
 
+      {isDesktop && !isSidebarDocked && (
+        <NavigationRail
+          ref={navigationButtonRef}
+          expandLabel={navigationLabel}
+          onExpand={() => {
+            if (canDockSidebar) {
+              setSidebarCollapsed(false);
+            } else {
+              setIsDrawerOpen(true);
+            }
+          }}
+        />
+      )}
+
       {!canDockSidebar && (
         <Dialog open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
           <DialogContent
@@ -289,25 +355,18 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
 
       <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" style={{ minWidth: isSplit && selection !== null ? 360 : undefined }}>
           <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
-            {!isSidebarDocked && <Button
+            {!isDesktop && <Button
               ref={navigationButtonRef}
               type="button"
               variant="ghost"
               size="icon"
-              onClick={() => {
-                if (canDockSidebar) {
-                  setSidebarCollapsed(false);
-                } else {
-                  setIsDrawerOpen(true);
-                }
-              }}
+              onClick={() => setIsDrawerOpen(true)}
               aria-label={navigationLabel}
               title={navigationLabel}
             >
               <PanelLeftOpen className="size-4" />
             </Button>}
             <span className="min-w-0 flex-1 truncate text-sm font-medium" title={headerTitle}>{headerTitle}</span>
-            <ThemeSelector />
           </header>
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">

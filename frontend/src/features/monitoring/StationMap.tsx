@@ -31,6 +31,9 @@ export interface MapStation {
 
 const MAX_ARROW_PIXELS = 44;
 const MIN_ARROW_PIXELS = 14;
+/** 名称与圆点的间距，以及名称距地图边缘至少留出的空白（px）。 */
+const LABEL_GAP = 10;
+const LABEL_EDGE_MARGIN = 8;
 const DIRECTIONS = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
 
 const horizontalMillimeters = (station: MapStation) =>
@@ -164,6 +167,24 @@ export default function StationMap({ stations, onSelect }: { stations: readonly 
       .setPopup(new Popup({ offset: 14, closeButton: true, maxWidth: '18rem' })
         .setDOMContent(createPopupNode(station, (id) => onSelectRef.current(id))))
       .addTo(map));
+
+    // 名称默认在圆点右侧；右边放不下（如窄屏靠右的测点）时改放左侧，不被地图边框裁掉。
+    const placeLabels = () => {
+      const width = container.clientWidth;
+      for (const marker of markers) {
+        const element = marker.getElement();
+        const label = element.querySelector<HTMLElement>('.evidence-map-marker__label');
+        if (!label) continue;
+        const x = map.project(marker.getLngLat()).x;
+        const roomOnRight = width - x - LABEL_EDGE_MARGIN;
+        const roomOnLeft = x - LABEL_EDGE_MARGIN;
+        const needed = label.offsetWidth + LABEL_GAP;
+        element.classList.toggle('evidence-map-marker--label-start', needed > roomOnRight && roomOnLeft > roomOnRight);
+      }
+    };
+    placeLabels();
+    map.on('move', placeLabels);
+    map.on('resize', placeLabels);
 
     let resizeFrame: number | null = null;
     const observer = new ResizeObserver(() => {
