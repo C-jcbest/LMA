@@ -162,7 +162,8 @@ const headlineOf = (steps: readonly InvestigationStep[], stationCount: number, i
 };
 
 /**
- * 一条回答只呈现一次调查过程，放在正文之后；生成前后不搬动已有正文。
+ * 一条回答只呈现一次调查过程，放在回答顶部：先查数据、后写结论，长回答不用翻到底就能看到查了什么、有没有失败。
+ * 过程收起时只有一行，生成中高度基本不变，不会推动正文。
  */
 export const InvestigationProcess: FC = () => {
   const messageId = useAuiState((state) => state.message.id);
@@ -190,7 +191,7 @@ export const InvestigationProcess: FC = () => {
   }
 
   return (
-    <div data-slot="investigation" className="investigation-process mt-4 flex flex-col gap-2">
+    <div data-slot="investigation" className="investigation-process mb-4 flex flex-col gap-2">
       {steps.length > 0 && <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
         <CollapsibleTrigger className="group/process flex min-h-10 max-w-full items-center gap-2 rounded-lg px-1 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <StepIcon state={headlineState} />

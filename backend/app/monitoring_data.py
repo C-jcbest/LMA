@@ -283,7 +283,13 @@ def displacement_mm(observation: Observation, reference: dict) -> dict:
     return values
 
 
-def series_artifact_data(series: DisplacementSeries, *, features: dict | None = None, comparisons: dict | None = None) -> dict:
+def series_artifact_data(
+    series: DisplacementSeries,
+    *,
+    features: dict | None = None,
+    comparisons: dict | None = None,
+    group_stations: list[Station] | None = None,
+) -> dict:
     """GNSS 序列的客户端展示结构；工具产物与测点页共用，前端用同一张时间轴绘制。"""
     station = series.station
     points = [observation.as_dict() for observation in series.observations]
@@ -321,6 +327,16 @@ def series_artifact_data(series: DisplacementSeries, *, features: dict | None = 
             "latitude": finite_number(station.latitude),
             "longitude": finite_number(station.longitude),
             "coordinate_system": "WGS84",
+            "group_stations": [
+                {
+                    "station_uuid": other.station_uuid,
+                    "station_name": other.station_name,
+                    "station_type": STATION_TYPE_TEXT.get(other.station_type),
+                    "latitude": finite_number(other.latitude),
+                    "longitude": finite_number(other.longitude),
+                }
+                for other in group_stations or []
+            ],
         },
         "raw_points": series.raw_points,
         "points": points,

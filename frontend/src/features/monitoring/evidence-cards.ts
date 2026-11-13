@@ -9,10 +9,26 @@ export const STATION_MAP_CARD = 'station-map';
 const CITATION_PATTERN = /\]\(#evidence-([A-Za-z0-9]+)\)/g;
 const FENCE_PATTERN = /^\s*(```|~~~)/;
 
-const cardMarker = (cardId: string) => `[依据卡片](${CARD_HREF_PREFIX}${cardId})`;
+/** 卡片紧邻模型自己写的表格时带上这个标记，计算结果卡片据此默认收起，避免同一张表出现两遍。 */
+const BESIDE_TABLE_SUFFIX = '?beside-table';
+const TABLE_LINE_PATTERN = /^\s*\|/;
 
-export const cardIdFromHref = (href: string | undefined): string | null =>
-  href?.startsWith(CARD_HREF_PREFIX) ? href.slice(CARD_HREF_PREFIX.length) : null;
+const cardMarker = (cardId: string, besideTable: boolean) =>
+  `[依据卡片](${CARD_HREF_PREFIX}${cardId}${besideTable ? BESIDE_TABLE_SUFFIX : ''})`;
+
+export interface CardReference {
+  cardId: string;
+  besideTable: boolean;
+}
+
+export const cardReferenceFromHref = (href: string | undefined): CardReference | null => {
+  if (!href?.startsWith(CARD_HREF_PREFIX)) {
+    return null;
+  }
+  const marker = href.slice(CARD_HREF_PREFIX.length);
+  const besideTable = marker.endsWith(BESIDE_TABLE_SUFFIX);
+  return { cardId: besideTable ? marker.slice(0, -BESIDE_TABLE_SUFFIX.length) : marker, besideTable };
+};
 
 /** 依次返回正文引用的依据编号，重复引用只记第一次。 */
 export function citedEvidenceIds(markdown: string): string[] {
@@ -32,6 +48,7 @@ export const evidenceNumbers = (markdown: string) =>
 interface Block {
   lines: string[];
   isHeading: boolean;
+  isTable: boolean;
   /** 缩进开头的块属于上一列表项，卡片不能插在它和列表之间。 */
   isContinuation: boolean;
 }
@@ -49,6 +66,7 @@ function splitBlocks(markdown: string): Block[] {
     blocks.push({
       lines: current,
       isHeading: /^#{1,6}\s/.test(first),
+      isTable: TABLE_LINE_PATTERN.test(first),
       isContinuation: /^[ \t]/.test(first),
     });
     current = [];
@@ -97,7 +115,9 @@ export function insertEvidenceCards(markdown: string, options: InsertOptions): s
     }
     const next = blocks[index + 1];
     if (pendingCards.length > 0 && !next?.isContinuation) {
-      output.push(...pendingCards.map(cardMarker));
+      // 引用写在表格里，或写在紧接表格的那句话里，都算正文已经列出了数据。
+      const besideTable = block.isTable || Boolean(next?.isTable);
+      output.push(...pendingCards.map((cardId) => cardMarker(cardId, besideTable)));
       pendingCards = [];
     }
   });

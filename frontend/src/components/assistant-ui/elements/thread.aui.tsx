@@ -361,6 +361,7 @@ const AssistantMessage: FC = () => {
         data-slot="aui_assistant-message-content"
         className="assistant-answer text-foreground min-w-0 px-1 text-[15px] leading-7 wrap-anywhere sm:px-2"
       >
+        <InvestigationProcess />
         <MessagePrimitive.GroupedParts groupBy={messageGroupBy}>
           {({ part }) => {
             switch (part.type) {
@@ -379,7 +380,6 @@ const AssistantMessage: FC = () => {
         </MessagePrimitive.GroupedParts>
         <ConclusionsFallback />
         <MessageError />
-        <InvestigationProcess />
       </div>
 
       {/* 预留固定工具栏高度，显示隐藏按钮时不改变消息布局。 */}

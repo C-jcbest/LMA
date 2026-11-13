@@ -321,7 +321,7 @@ test('天气和计算引用直接打开对应依据，用户消息显示追问�
 });
 
 for (const width of [320, 390, 1440]) {
-  test(`${width}px 正文优先、相似窗口折叠，核查后返回阅读位置`, async ({ page }) => {
+  test(`${width}px 调查过程在回答顶部、相似窗口折叠，核查后返回阅读位置`, async ({ page }) => {
     await mockApi(page);
     await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: proseHistory() }, latest_run: null } }));
     const chartErrors: string[] = [];
@@ -345,7 +345,10 @@ for (const width of [320, 390, 1440]) {
     await expect(cards.nth(0).locator('canvas')).toBeVisible();
     const answer = page.getByText('测试点 A 需要优先复核，测试点 B 未见明显变化。', { exact: true });
     const process = page.locator('[data-slot="investigation"]');
-    expect((await answer.boundingBox())!.y).toBeLessThan((await process.boundingBox())!.y);
+    // 调查过程在回答顶部，收起时很矮，结论紧随其后。
+    const processBox = (await process.boundingBox())!;
+    expect(processBox.y).toBeLessThan((await answer.boundingBox())!.y);
+    expect(processBox.height).toBeLessThan(120);
     await answer.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `test-results/answer-${width}.png`, animations: 'disabled' });
     const entry = cards.nth(1).getByRole('button', { name: '展开测试点 A 位移', exact: true });

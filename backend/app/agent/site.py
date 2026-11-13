@@ -131,7 +131,8 @@ async def inspect_site_environment(
 ) -> tuple[str | ToolMessage, dict[str, Any]]:
     """查询监测点周边的场地环境背景。
 
-    可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差）、
+    可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差；坡向 aspect_degrees 是下坡方向的方位角，
+    来自约 90 m 分辨率地形，代表周边约 200 m 的平均坡面）、
     地质单元及构造线等可用公开资料，适用于需要从场地环境角度补充调查背景的任务。
     """
     async with monitoring() as data:

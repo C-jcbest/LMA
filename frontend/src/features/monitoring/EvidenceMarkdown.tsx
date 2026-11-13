@@ -2,7 +2,7 @@ import { Children, createContext, isValidElement, useCallback, useContext, useMe
 import { useAuiState } from '@assistant-ui/react';
 import { MarkdownText } from '@/components/markdown-text';
 import { cn } from '@/lib/utils';
-import { cardIdFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenceCards } from './evidence-cards';
+import { cardReferenceFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenceCards, type CardReference } from './evidence-cards';
 import { EvidenceCard, hasEvidenceCard, mapStationsOf } from './EvidenceCards';
 import { buildSteps, collectStations, type InvestigationStep } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
@@ -13,7 +13,7 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
   const messageId = useAuiState((state) => state.message.id);
   const { steps, numbers } = useContext(EvidenceContext);
   const { openEvidence } = useStationInspector();
-  if (cardIdFromHref(href) !== null) {
+  if (cardReferenceFromHref(href) !== null) {
     // 卡片标记只应独占一段，由段落组件渲染；混在句中时不显示。
     return null;
   }
@@ -38,18 +38,18 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
 };
 
 /** 预处理插入的卡片标记独占一段，渲染为卡片而不是段落。 */
-const cardIdOfParagraph = (children: ReactNode): string | null => {
+const cardReferenceOfParagraph = (children: ReactNode): CardReference | null => {
   const nodes = Children.toArray(children);
   if (nodes.length !== 1 || !isValidElement<{ href?: string }>(nodes[0])) {
     return null;
   }
-  return cardIdFromHref(nodes[0].props.href);
+  return cardReferenceFromHref(nodes[0].props.href);
 };
 
 const Paragraph: FC<ComponentProps<'p'>> = ({ className, children, ...props }) => {
-  const cardId = cardIdOfParagraph(children);
-  if (cardId !== null) {
-    return <EvidenceCard cardId={cardId} />;
+  const card = cardReferenceOfParagraph(children);
+  if (card !== null) {
+    return <EvidenceCard cardId={card.cardId} besideTable={card.besideTable} />;
   }
   return <p className={cn('aui-md-p my-4 leading-7 first:mt-0 last:mb-0', className)} {...props}>{children}</p>;
 };

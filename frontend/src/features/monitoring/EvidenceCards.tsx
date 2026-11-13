@@ -197,7 +197,7 @@ const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefin
     }
     case 'computation':
       return (
-        <CardShell title={envelope.data.description} onOpen={onOpen}>
+        <CardShell title={envelope.data.description} meta="计算结果" onOpen={onOpen} defaultExpanded={defaultExpanded}>
           <ComputationResultView data={envelope.data} />
         </CardShell>
       );
@@ -253,7 +253,7 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
 };
 
 /** 正文中依据卡片的入口：按卡片编号找到本条回答里的依据。 */
-export const EvidenceCard: FC<{ cardId: string }> = ({ cardId }) => {
+export const EvidenceCard: FC<{ cardId: string; besideTable: boolean }> = ({ cardId, besideTable }) => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
   const { openStation, openEvidence } = useStationInspector();
@@ -276,5 +276,7 @@ export const EvidenceCard: FC<{ cardId: string }> = ({ cardId }) => {
     candidate.stationId === step.stationId && candidate.envelope?.kind === 'gnss_series'
     && (numbers.get(candidate.evidenceId ?? '') ?? Infinity) < (citationNumber ?? Infinity)
   ));
-  return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries} />;
+  // 正文已经用表格列出计算结果时，计算卡片只留标题行供核对，不再展开第二张表。
+  const isComputationBesideTable = besideTable && step.envelope?.kind === 'computation';
+  return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries && !isComputationBesideTable} />;
 };

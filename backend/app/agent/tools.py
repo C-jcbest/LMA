@@ -4,7 +4,7 @@ import asyncio
 
 from langchain_core.tools import tool
 
-from app.agent.numerical import common_period_features, compare_windows, window_features
+from app.agent.numerical import common_period_features, compare_windows, horizontal_direction, window_features
 from app.agent.tool_inputs import DisplacementInput, FindStationsInput
 from app.agent.tool_protocol import ToolFailure, tool_result
 from app.config import get_settings
@@ -94,6 +94,10 @@ async def get_displacement(
         if station.station_type == BASE_STATION_TYPE:
             return BASE_STATION_NOTE, None
         series = await data.displacement(station, begin_time, end_time, sampling, sample_times)
+        group_stations = [
+            item for item in await data.stations()
+            if item.group_uuid == station.group_uuid and item.station_uuid != station.station_uuid
+        ]
         others = []
         for identifier in dict.fromkeys(compare_stations or []):
             other = await data.resolve_station(identifier)
@@ -114,7 +118,7 @@ async def get_displacement(
     if others:
         comparisons.update(_station_comparison(series, others, outcomes))
 
-    display = series_artifact_data(series, features=features, comparisons=comparisons)
+    display = series_artifact_data(series, features=features, comparisons=comparisons, group_stations=group_stations)
     facts = _model_facts(series, features, comparisons, include_points)
     return tool_result(facts, kind="gnss_series", display=display, observed_at=series.acquired_at)
 
@@ -202,6 +206,17 @@ def _model_facts(series: DisplacementSeries, features: dict, comparisons: dict, 
         "quality": _model_quality(series.quality),
         "features": {axis: _model_feature(feature) for axis, feature in features.items()},
     }
+    north, east = features.get("n", {}), features.get("e", {})
+    # 方位与场地坡向（下坡方向）比较，是判断位移是否符合坡体下滑的关键事实；由系统计算，避免模型自行换算角度。
+    direction = {
+        "cumulative": horizontal_direction(north.get("cum_end_mm"), east.get("cum_end_mm")),
+        "window_change": horizontal_direction(north.get("net_change_mm"), east.get("net_change_mm")),
+    }
+    if any(direction.values()):
+        facts["horizontal_direction"] = {
+            **{key: value for key, value in direction.items() if value},
+            "convention": "方位角从正北顺时针；cumulative 为相对固定参考的累计水平位移，window_change 为本窗口首末水平变化",
+        }
     if any(axis in comparisons for axis in features):
         facts["split"] = {
             axis: {
