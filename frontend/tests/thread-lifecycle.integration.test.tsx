@@ -42,6 +42,7 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     vi.restoreAllMocks();
     localStorage.clear();
     mockClient = {
+      getAuthSession: vi.fn().mockResolvedValue({ enabled: false, authenticated: true }),
       suggestQuestions: vi.fn().mockResolvedValue([]),
       listStations: vi.fn().mockResolvedValue([]),
       getLatestInspection: vi.fn().mockResolvedValue({ running: null, latest_attempt: null, inspection: null, stations: [] }),

@@ -12,7 +12,8 @@
 
 ## 腾讯云入口与文件
 
-- 入口示例：https://lma.example.invalid ，HTTPS + Nginx Basic Auth；实际地址和访问口令由部署管理员提供，不进 Git。
+- 入口示例：https://lma.example.invalid ，HTTPS + 应用登录页；实际地址和账号密码由部署管理员提供，不进 Git。
+- 访问保护：/opt/lma/shared/.env 中配置 AUTH_USERNAME（默认 admin）、AUTH_PASSWORD 和至少 32 个字符的 AUTH_SECRET。登录后发放 7 天有效、带签名的 HttpOnly Cookie；修改密码或密钥后所有浏览器需要重新登录。除 /api/health 与 /api/auth/* 外的接口未登录返回 401，部署流水线据此检查 /api/sessions。网关不再使用 Basic Auth。
 - 主机网关：/etc/nginx/sites-available/lma，模板见 ops/nginx.conf。
 - 生产配置：/opt/lma/shared/.env，权限 600，仅由服务器读取；修改后重新部署。
 - 代码版本：/opt/lma/releases/＜commit SHA＞；/opt/lma/current 指向最近成功版本。

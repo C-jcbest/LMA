@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     # 高德 JavaScript API 密钥，运行时下发至已登录浏览器；需配置部署域名白名单。
     amap_token: str = ""
 
+    # 访问保护的登录账号（默认 admin）。单账号，不是用户体系。
+    auth_username: str = "admin"
+    # 登录密码；为空时不启用访问保护（仅限本地开发与测试），生产必须配置。
+    auth_password: str = ""
+    # 登录 Cookie 的签名密钥，配置密码时必填，至少 32 个字符；更换后已登录的浏览器需要重新登录。
+    auth_secret: str = ""
+
 
     # 官方摘要的消息 token 触发阈值（正整数，默认 800000）；使用官方计数，不采用展示估算或窗口比例。
     context_token_threshold: int = Field(default=800_000, gt=0)

@@ -1,6 +1,6 @@
 import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { useAuiEvent, useAuiState } from '@assistant-ui/react';
-import { ActivityIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
+import { ActivityIcon, ListIcon, LogOutIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,8 @@ import { ThemeProvider } from './providers/ThemeProvider';
 
 export interface AppLayoutProps {
   onOpenSettings?: () => void;
+  /** 启用访问保护时提供；未启用时侧栏不显示退出登录。 */
+  onLogout?: () => void;
 }
 
 interface SidebarProps extends AppLayoutProps {
@@ -109,7 +111,7 @@ const NavigationRail = forwardRef<HTMLButtonElement, { expandLabel: string; onEx
 });
 NavigationRail.displayName = 'NavigationRail';
 
-const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOpenSettings }) => {
+const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOpenSettings, onLogout }) => {
   const { showConversation } = useNavigation();
   const entries = usePageEntries();
 
@@ -169,19 +171,29 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
             服务配置
           </Button>
         )}
+        {onLogout && (
+          <Button
+            variant="ghost"
+            className="w-full justify-start gap-2 text-sm text-muted-foreground hover:text-foreground"
+            onClick={onLogout}
+          >
+            <LogOutIcon className="size-4" />
+            退出登录
+          </Button>
+        )}
       </div>
     </aside>
   );
 };
 
 /** 只维护布局偏好和当前页面；会话选择、消息和滚动仍由官方 Runtime 管理。 */
-export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
+export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }) => {
   return (
     <ThemeProvider>
       <NavigationProvider>
         <InspectionProvider>
           <SessionConclusionsProvider>
-            <AppLayoutShell onOpenSettings={onOpenSettings} />
+            <AppLayoutShell onOpenSettings={onOpenSettings} onLogout={onLogout} />
           </SessionConclusionsProvider>
         </InspectionProvider>
       </NavigationProvider>
@@ -189,11 +201,11 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
   );
 };
 
-const AppLayoutShell: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
+const AppLayoutShell: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }) => {
   const { page } = useNavigation();
   return (
     <StationInspectorProvider canSplit={page === 'conversation'}>
-      <AppLayoutContent onOpenSettings={onOpenSettings} />
+      <AppLayoutContent onOpenSettings={onOpenSettings} onLogout={onLogout} />
     </StationInspectorProvider>
   );
 };
@@ -205,7 +217,7 @@ const PAGE_TITLES: Record<Exclude<Page, 'home'>, string> = {
   records: '调查记录',
 };
 
-const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
+const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }) => {
   const { page, stationUuid, showConversation } = useNavigation();
   const { selection, isSplit, closeInspector } = useStationInspector();
   const isDesktop = useMediaQuery('(min-width: 768px)');
@@ -303,6 +315,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
               onClose={() => setSidebarCollapsed(true)}
               closeLabel="折叠侧边栏"
               onOpenSettings={openSettings}
+              onLogout={onLogout}
             />
           </div>
           {isSidebarDocked && (
@@ -347,6 +360,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings }) => {
               closeLabel="关闭导航"
               onNavigate={() => setIsDrawerOpen(false)}
               onOpenSettings={openSettings}
+              onLogout={onLogout}
             />
             <PanelResizeHandle label="调整导航宽度" panelId="session-navigation-drawer" edge="right" {...navigationResize.handleProps} />
           </DialogContent>

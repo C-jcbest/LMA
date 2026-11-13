@@ -11,7 +11,7 @@ from weakref import WeakValueDictionary
 
 import anyio
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +31,7 @@ from app.business_time import BUSINESS_TZ
 from app.config import Settings, get_settings
 from app.inspection.runner import run_inspection
 from app.monitoring_data import build_platform_client, monitoring_scope
+from app.server.auth import auth_enabled, auth_router, require_login
 from app.server.messages import project_message, project_state
 from app.server.stations import TIMELINE_WINDOW_DAYS, find_station, load_station_series
 from app.server.storage import SessionStorage, connection_pool
@@ -223,7 +224,10 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                 if runs:
                     await asyncio.gather(*(run.finished.wait() for run in runs))
 
-    app = FastAPI(title="LMA 自托管 API", lifespan=lifespan)
+    if auth_enabled(settings) and len(settings.auth_secret) < 32:
+        raise ValueError("已配置 AUTH_PASSWORD，必须同时配置至少 32 个字符的 AUTH_SECRET。")
+    app = FastAPI(title="LMA 自托管 API", lifespan=lifespan, dependencies=[Depends(require_login(settings))])
+    app.include_router(auth_router(settings))
     origins = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
     if origins:
         app.add_middleware(
@@ -259,7 +263,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
 
     @app.get("/map-config")
     async def map_config():
-        # 浏览器使用该密钥加载高德 SDK；仅向通过访问保护的用户提供地图配置。
+        # 浏览器使用该密钥加载高德 SDK；仅向已登录的用户提供地图配置。
         return {"amap_token": settings.amap_token or None}
 
     @app.get("/sessions")

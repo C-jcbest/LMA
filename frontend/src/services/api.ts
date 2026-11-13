@@ -89,6 +89,14 @@ export const setStoredApiUrl = (url: string) => {
   if (!import.meta.env.PROD) localStorage.setItem(STORAGE_KEY_CONFIG, url);
 };
 
+/** 任一接口返回 401（未登录或登录过期）时广播，由应用入口切回登录页。 */
+export const UNAUTHORIZED_EVENT = 'lma:unauthorized';
+
+export interface AuthSession {
+  enabled: boolean;
+  authenticated: boolean;
+}
+
 export class LmaClient {
   constructor(private readonly apiUrl: string) {}
 
@@ -97,11 +105,35 @@ export class LmaClient {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
     });
+    if (response.status === 401) {
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
     if (!response.ok) {
       const error = await response.json().catch(() => null);
       throw new Error(typeof error?.detail === 'string' ? error.detail : `服务请求失败（HTTP ${response.status}）。`);
     }
     return response;
+  }
+
+  async getAuthSession(): Promise<AuthSession> {
+    return (await this.request('/auth/session', { signal: AbortSignal.timeout(10000) })).json();
+  }
+
+  /** 账号或密码错误时抛出服务端的中文说明；登录接口的 401 不广播为“登录过期”。 */
+  async login(username: string, password: string): Promise<void> {
+    const response = await fetch(`${this.apiUrl.replace(/\/$/, '')}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      throw new Error(typeof error?.detail === 'string' ? error.detail : `登录失败（HTTP ${response.status}）。`);
+    }
+  }
+
+  async logout(): Promise<void> {
+    await this.request('/auth/logout', { method: 'POST' });
   }
 
   async health(): Promise<{ ok: boolean; service: string }> {
