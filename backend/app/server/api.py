@@ -18,14 +18,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 from sse_starlette import EventSourceResponse
 
 from app.agent.graph import _get_llm, create_lma_agent
 from app.agent.evidence import reconcile_evidence
+from app.agent.message_context import ASK_TARGETS_KEY
 from app.agent.title import generate_title_node
 from app.agent.suggestions import SuggestionService
 from app.beidou.client import BeidouApiError
+from app.business_time import BUSINESS_TZ
 from app.config import Settings, get_settings
 from app.inspection.runner import run_inspection
 from app.monitoring_data import build_platform_client, monitoring_scope
@@ -69,6 +71,20 @@ class ToolCancellation(ApiInput):
     status: Literal["error"]
 
 
+class AskTarget(ApiInput):
+    """用户在图表上选中、要追问的测点时间段；作为结构化上下文随消息保存，不写进正文。"""
+    station_uuid: UUID
+    station_name: str = Field(min_length=1, max_length=100)
+    start: AwareDatetime
+    end: AwareDatetime
+
+    @model_validator(mode="after")
+    def check_range(self):
+        if self.start >= self.end:
+            raise ValueError("追问时间段的开始必须早于结束。")
+        return self
+
+
 class RunInput(ApiInput):
     messages: list[Annotated[UserInput | ToolCancellation, Field(discriminator="type")]] = Field(
         default_factory=list, max_length=65,
@@ -77,6 +93,7 @@ class RunInput(ApiInput):
     # 用户提问时正在查看的测点；只作为模型可见的上下文，不改变消息正文。
     focus_station: str | None = Field(default=None, min_length=1, max_length=100)
     focus_station_uuid: UUID | None = None
+    ask_targets: list[AskTarget] = Field(default_factory=list, max_length=4)
 
 
 class CheckpointInput(ApiInput):
@@ -145,9 +162,23 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
     if set(pending_calls) != cancelled_ids:
         raise HTTPException(409, "上轮有未完成的工具调用，请重新载入会话后提交。")
     for user in users:
-        focus = {"lma_focus_station": body.focus_station} if body.focus_station else {}
-        accepted.append(HumanMessage(id=user.id, content=user.content, additional_kwargs=focus))
+        kwargs = {}
+        if body.focus_station:
+            kwargs["lma_focus_station"] = body.focus_station
+        if body.ask_targets:
+            # metadata 是公开字段：前端从消息历史读出并在用户消息上显示追问对象。
+            kwargs["metadata"] = {ASK_TARGETS_KEY: [ask_target_record(target) for target in body.ask_targets]}
+        accepted.append(HumanMessage(id=user.id, content=user.content, additional_kwargs=kwargs))
     return accepted
+
+
+def ask_target_record(target: AskTarget) -> dict:
+    return {
+        "station_uuid": str(target.station_uuid),
+        "station_name": target.station_name,
+        "start": target.start.astimezone(BUSINESS_TZ).isoformat(timespec="minutes"),
+        "end": target.end.astimezone(BUSINESS_TZ).isoformat(timespec="minutes"),
+    }
 
 
 # 测点页切换 7/30/90 天窗口时复用已取得的数据块。

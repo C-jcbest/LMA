@@ -6,12 +6,13 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
-import { appendToComposerDraft } from '@/lib/composer-draft';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
-import type { EvidenceSource, GnssArtifactData } from '@/types/envelope';
+import type { EvidenceSource, GnssArtifactData, ToolArtifactEnvelope } from '@/types/envelope';
+import { addAskTarget } from './ask-targets';
 import { useChartColors } from './chartColors';
 import { formatSigned, MILLIMETER_DIGITS } from './format';
-import { collectStations, type StationEvidence } from './investigation';
+import { collectStations, findInlineEvidence, formatDateRange, type StationEvidence } from './investigation';
+import { InlineEvidenceResult } from './InvestigationProcess';
 import { useStationInspector, type InspectorViewState } from './StationInspectorContext';
 import {
   buildTimelineOption,
@@ -22,7 +23,6 @@ import {
   formatChartTime,
   peerSeriesFor,
   seriesDuration,
-  rangeQuestion,
   seriesLabel,
   type TimelineMode,
 } from './timeline';
@@ -120,8 +120,8 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
   }, [station.weather, data, peerSeries, mode, chartColors]);
 
   const askAbout = (target: ChartRange) => {
-    const stationIdentity = station.uuid ? `${station.name}（UUID：${station.uuid}）` : station.name;
-    appendToComposerDraft(aui, rangeQuestion(stationIdentity, target));
+    // 时间轴来自位移序列，序列总带测点编号。
+    addAskTarget(aui, { stationUuid: data.station_uuid, stationName: station.name, ...target });
     if (isSplit) {
       composerInputRef.current?.focus();
     } else {
@@ -240,6 +240,27 @@ const EvidenceNotes: FC<{ station: StationEvidence; toolCallId?: string }> = ({ 
   );
 };
 
+/** 引用指向哪类依据就先打开哪一页；从测点入口进入时先看时间轴。 */
+const initialTab = (station: StationEvidence, focusToolCallId: string | undefined): string => {
+  const isFocused = (items: readonly { toolCallId: string }[]) => items.some((item) => item.toolCallId === focusToolCallId);
+  if (isFocused(station.site)) {
+    return 'site';
+  }
+  if (isFocused(station.weather)) {
+    return 'weather';
+  }
+  if (station.series.length > 0) {
+    return 'timeline';
+  }
+  if (station.site.length > 0) {
+    return 'site';
+  }
+  if (station.weather.length > 0) {
+    return 'weather';
+  }
+  return 'details';
+};
+
 const TAB_CLASS = 'min-h-11 border-b-2 border-transparent px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-foreground data-[state=active]:text-foreground';
 
 interface InspectorBodyProps {
@@ -291,14 +312,8 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
   const nextStation = stations[stationIndex + 1];
   const hasTimeline = seriesList.length > 0;
   const hasSite = station.site.length > 0;
-  const isSiteFocused = station.site.some((item) => item.toolCallId === focusToolCallId);
-  let defaultTab = 'details';
-  if (isSiteFocused || (hasSite && !hasTimeline)) {
-    defaultTab = 'site';
-  } else if (hasTimeline && !station.weather.some((item) => item.toolCallId === focusToolCallId)) {
-    defaultTab = 'timeline';
-  }
-  const [activeTab, updateActiveTab] = useState(saved.tab ?? defaultTab);
+  const hasWeather = station.weather.length > 0;
+  const [activeTab, updateActiveTab] = useState(saved.tab ?? initialTab(station, focusToolCallId));
   const setActiveTab = (tab: string) => {
     saved.tab = tab;
     updateActiveTab(tab);
@@ -309,13 +324,16 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
     noteToolCallId = sortedSeries[selectedIndex]?.toolCallId;
   } else if (activeTab === 'site') {
     noteToolCallId = siteEvidence?.toolCallId;
+  } else if (activeTab === 'weather' && station.weather.length === 1) {
+    noteToolCallId = station.weather[0]!.toolCallId;
   }
-  const detailsRef = useRef<HTMLDivElement>(null);
+  const weatherRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (activeTab !== 'details' || !focusToolCallId) {
+    if (activeTab !== 'weather' || !focusToolCallId) {
       return;
     }
-    const target = detailsRef.current?.querySelector<HTMLElement>(`[data-evidence-tool="${CSS.escape(focusToolCallId)}"]`);
+    // 同一测点可能查过多段天气，引用指向哪段就滚到哪段。
+    const target = weatherRef.current?.querySelector<HTMLElement>(`[data-evidence-tool="${CSS.escape(focusToolCallId)}"]`);
     target?.scrollIntoView({ block: 'nearest' });
   }, [activeTab, focusToolCallId]);
 
@@ -349,6 +367,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
       <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
         <Tabs.List aria-label="依据内容" className="flex shrink-0 gap-5 border-b px-4 sm:px-6">
           {hasTimeline && <Tabs.Trigger value="timeline" className={TAB_CLASS}>时间轴</Tabs.Trigger>}
+          {hasWeather && <Tabs.Trigger value="weather" className={TAB_CLASS}>天气</Tabs.Trigger>}
           {hasSite && <Tabs.Trigger value="site" className={TAB_CLASS}>场地</Tabs.Trigger>}
           <Tabs.Trigger value="details" className={TAB_CLASS}>明细</Tabs.Trigger>
         </Tabs.List>
@@ -373,7 +392,18 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
               <SiteEnvironmentResultView environment={siteEvidence!.data} />
             </Tabs.Content>
           )}
-          <Tabs.Content ref={detailsRef} value="details" className="space-y-8 focus-visible:outline-none">
+          {hasWeather && (
+            <Tabs.Content ref={weatherRef} value="weather" className="space-y-8 focus-visible:outline-none">
+              {station.weather.map((item) => (
+                <div key={item.toolCallId} data-evidence-tool={item.toolCallId}>
+                  <DetailSection title={formatDateRange(item.data.query.history_start_date, item.data.query.history_end_date)}>
+                    <WeatherResultView data={item.data} />
+                  </DetailSection>
+                </div>
+              ))}
+            </Tabs.Content>
+          )}
+          <Tabs.Content value="details" className="space-y-8 focus-visible:outline-none">
             {sortedSeries.filter((item) => Object.keys(item.data.features ?? {}).length > 0).map((item) => (
               <DetailSection key={item.toolCallId} title={`数值特征 · ${seriesLabel(item.data)}`}>
                 <NumericalResultView data={item.data} />
@@ -389,11 +419,6 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
                 </div>
               </details>
             )}
-            {station.weather.map((item) => (
-              <div key={item.toolCallId} data-evidence-tool={item.toolCallId}><DetailSection title="同期天气">
-                <WeatherResultView data={item.data} />
-              </DetailSection></div>
-            ))}
           </Tabs.Content>
           <EvidenceNotes station={station} toolCallId={noteToolCallId} />
         </div>
@@ -402,7 +427,39 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
   );
 };
 
-/** 核查对象是测点：宽屏与对话并排可继续追问，窄屏全屏查看。 */
+interface EvidenceBodyProps {
+  envelope: ToolArtifactEnvelope;
+  title: ReactNode;
+  onClose: () => void;
+}
+
+/** 不属于任何测点的依据（如计算结果）：同一面板里只显示这条依据。 */
+const EvidenceBody: FC<EvidenceBodyProps> = ({ envelope, title, onClose }) => {
+  const { canExpand, isFullscreen, toggleFullscreen } = useStationInspector();
+  return (
+    <>
+      <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b px-4 sm:px-6">
+        {title}
+        <div className="flex shrink-0 items-center">
+          {canExpand && <Button type="button" variant="ghost" size="icon" className="size-10" aria-label={isFullscreen ? '恢复依据分栏' : '展开依据全屏'} onClick={toggleFullscreen}>
+            {isFullscreen ? <Minimize2Icon className="size-4" /> : <Maximize2Icon className="size-4" />}
+          </Button>}
+          <Button type="button" variant="ghost" size="icon" className="size-10" aria-label="关闭依据" onClick={onClose}>
+            <XIcon className="size-4" />
+          </Button>
+        </div>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
+        <InlineEvidenceResult envelope={envelope} />
+      </div>
+    </>
+  );
+};
+
+/**
+ * 依据检查器：宽屏与对话并排可继续追问，窄屏全屏查看。
+ * 通常打开一个测点的全部依据；不属于测点的依据单独显示。
+ */
 export const StationInspector: FC = () => {
   const { selection, selectionVersion, isClosing, isSplit, openStation, closeInspector } = useStationInspector();
   const panelRef = useRef<HTMLElement>(null);
@@ -424,16 +481,23 @@ export const StationInspector: FC = () => {
     selection ? state.thread.messages.find((message) => message.id === selection.messageId)?.content : undefined
   ));
   const stations = useMemo(() => (messageContent ? collectStations(messageContent) : []), [messageContent]);
-  const station = stations.find((item) => item.id === selection?.stationId);
+  const station = selection?.stationId ? stations.find((item) => item.id === selection.stationId) : undefined;
+  const evidence = useMemo(() => {
+    if (!messageContent || !selection?.toolCallId || selection.stationId) {
+      return undefined;
+    }
+    return findInlineEvidence(messageContent, selection.toolCallId);
+  }, [messageContent, selection]);
+  const hasContent = station !== undefined || evidence !== undefined;
 
-  const hasLostSelection = selection !== null && !station;
+  const hasLostSelection = selection !== null && !hasContent;
   useEffect(() => {
     if (hasLostSelection) {
       closeInspector();
     }
   }, [hasLostSelection, closeInspector]);
 
-  const isOpenBesideChat = station !== undefined && isSplit;
+  const isOpenBesideChat = hasContent && isSplit;
   useEffect(() => {
     if (!isOpenBesideChat) {
       return;
@@ -448,22 +512,39 @@ export const StationInspector: FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpenBesideChat, closeInspector]);
 
-  if (!station || !selection) {
+  if (!selection || !hasContent) {
     return null;
   }
 
-  const title = <h2 className="min-w-0 truncate text-base font-medium">{station.name}</h2>;
-  const selectStation = (stationId: string) => openStation({ messageId: selection.messageId, stationId });
+  const titleText = station ? station.name : evidence!.title;
   const close = () => closeInspector();
-  const viewKey = `${selection.messageId}:${station.id}`;
+  const viewKey = station ? `${selection.messageId}:${station.id}` : `${selection.messageId}:${selection.toolCallId}`;
   const inspectorKey = `${viewKey}:${selectionVersion}`;
+  const renderBody = (title: ReactNode) => {
+    if (!station) {
+      return <EvidenceBody key={inspectorKey} envelope={evidence!.envelope} title={title} onClose={close} />;
+    }
+    return (
+      <InspectorBody
+        key={inspectorKey}
+        viewKey={viewKey}
+        station={station}
+        focusToolCallId={selection.toolCallId}
+        stations={stations}
+        title={title}
+        onSelectStation={(stationId) => openStation({ messageId: selection.messageId, stationId })}
+        onClose={close}
+      />
+    );
+  };
+  const title = <h2 className="min-w-0 truncate text-base font-medium">{titleText}</h2>;
 
   if (isSplit) {
     return (
       <aside
         id="station-evidence"
         ref={panelRef}
-        aria-label={`${station.name} 依据`}
+        aria-label={`${titleText} 依据`}
         data-station-inspector=""
         data-state={isClosing ? 'closed' : 'open'}
         inert={isClosing}
@@ -471,16 +552,7 @@ export const StationInspector: FC = () => {
         className="inspector-panel relative flex h-full min-w-0 flex-col border-l bg-background pt-[env(safe-area-inset-top)]"
       >
         <PanelResizeHandle label="调整聊天与依据宽度" panelId="station-evidence" edge="left" {...resize.handleProps} />
-        <InspectorBody
-          key={inspectorKey}
-          viewKey={viewKey}
-          station={station}
-          focusToolCallId={selection.toolCallId}
-          stations={stations}
-          title={title}
-          onSelectStation={selectStation}
-          onClose={close}
-        />
+        {renderBody(title)}
       </aside>
     );
   }
@@ -501,16 +573,7 @@ export const StationInspector: FC = () => {
           onCloseAutoFocus={(event) => event.preventDefault()}
           className="inspector-overlay fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none"
         >
-          <InspectorBody
-            key={inspectorKey}
-            viewKey={viewKey}
-            station={station}
-            focusToolCallId={selection.toolCallId}
-            stations={stations}
-            title={<DialogPrimitive.Title asChild>{title}</DialogPrimitive.Title>}
-            onSelectStation={selectStation}
-            onClose={close}
-          />
+          {renderBody(<DialogPrimitive.Title asChild>{title}</DialogPrimitive.Title>)}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

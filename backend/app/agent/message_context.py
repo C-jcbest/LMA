@@ -1,6 +1,7 @@
 """用户消息的服务器时间快照与依据编号，以及仅供模型读取的确定性投影。"""
 
 import hashlib
+from datetime import datetime
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
@@ -10,6 +11,8 @@ from app.agent.tool_feedback import is_tool_feedback
 
 # 接口层写入、发送时并入快照的临时字段：用户提问时正在查看的测点。
 FOCUS_STATION_KEY = "lma_focus_station"
+# 用户消息 metadata 中的追问对象：图表上选中的测点时间段，由接口层校验后写入。
+ASK_TARGETS_KEY = "ask_targets"
 
 
 def stamp_user_message(message: HumanMessage) -> HumanMessage:
@@ -54,17 +57,26 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
         lines.append(f"focus_station: {context['focus_station']}")
     if context.get("focus_identity"):
         lines.append(f"focus_station_uuid: {context['focus_identity']['station_uuid']}")
-    metadata = "<lma_message_context>\n" + "\n".join(lines) + "\n</lma_message_context>"
+    for target in message.additional_kwargs.get("metadata", {}).get(ASK_TARGETS_KEY, []):
+        lines.append(_ask_target_line(target))
+    metadata ="<lma_message_context>\n" + "\n".join(lines) + "\n</lma_message_context>"
     content = message.content
     if isinstance(content, str):
         content = f"{metadata}\n\n{content}"
     else:
         content = [{"type": "text", "text": metadata}, *content]
+    # metadata 只供界面显示，其中的追问对象已经写进上面的上下文。
     kwargs = {
         key: value for key, value in message.additional_kwargs.items()
-        if key != "lma_context"
+        if key not in {"lma_context", "metadata"}
     }
     return message.model_copy(update={"content": content, "additional_kwargs": kwargs})
+
+
+def _ask_target_line(target: dict) -> str:
+    start = datetime.fromisoformat(target["start"]).strftime("%Y-%m-%d %H:%M")
+    end = datetime.fromisoformat(target["end"]).strftime("%Y-%m-%d %H:%M")
+    return f"ask_target: {target['station_name']}（station_uuid: {target['station_uuid']}）{start} 至 {end}"
 
 
 def model_messages(messages: list[BaseMessage]) -> list[BaseMessage]:

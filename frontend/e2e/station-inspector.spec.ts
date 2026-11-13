@@ -134,7 +134,9 @@ test('框选时间段后就地追问或放大，还原后恢复完整窗口', as
 
   await selectionBar.getByRole('button', { name: '问这段' }).click();
   const input = page.getByRole('textbox', { name: '输入监测问题' });
-  await expect(input).toHaveValue(/^也看看东向变化\n测试点 A（UUID：test-a） 2026-11-\d\d \d\d:\d\d 至 2026-11-\d\d \d\d:\d\d 这段发生了什么？$/);
+  // 追问对象作为标签挂在输入框上，草稿里只留用户自己写的话。
+  await expect(input).toHaveValue('也看看东向变化');
+  await expect(page.getByRole('list', { name: '追问对象' }).getByRole('listitem')).toHaveText([/^测试点 A · 11月\d+日/]);
   await expect(input).toBeFocused();
 
   await expect(selectionBar).toHaveCount(0);

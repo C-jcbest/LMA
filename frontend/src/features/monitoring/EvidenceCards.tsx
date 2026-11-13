@@ -12,6 +12,7 @@ import {
   buildSteps,
   collectStations,
   findConclusions,
+  formatDateRange,
   type InvestigationStep,
   type StationEvidence,
 } from './investigation';
@@ -103,40 +104,41 @@ interface CardShellProps {
   meta?: string;
   onOpen?: () => void;
   defaultExpanded?: boolean;
-  citationNumber?: number;
   children: ReactNode;
 }
 
-/** 依据卡片可以收起，只留标题行；长对话里回看正文时不必滑过每张图。 */
-const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true, citationNumber }) => {
+/**
+ * 依据卡片是正文的附图：标题行整体可以收起，放大入口只在悬停或聚焦时出现，平时只看到标题和图。
+ * 卡片紧跟引用它的段落，编号已在句末，标题行不再重复。
+ */
+const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true }) => {
   const [isOpen, setIsOpen] = useState(defaultExpanded);
   return (
     <figure data-slot="evidence-card" data-state={isOpen ? 'open' : 'closed'} className="evidence-card not-prose">
-      <figcaption className="flex min-h-9 items-center justify-between gap-x-3">
+      <figcaption className="flex items-center gap-1">
         <button
           type="button"
           aria-expanded={isOpen}
           onClick={() => setIsOpen((value) => !value)}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-1.5 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
+          <span className="min-w-0 flex-1 truncate">
+            <span className="text-sm font-medium">{title}</span>
+            {meta && <span className="ms-2 text-xs text-muted-foreground tabular-nums">{meta}</span>}
+          </span>
           <ChevronDownIcon
             aria-hidden
             className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', !isOpen && '-rotate-90')}
           />
-          <span className="min-w-0 text-sm font-medium">
-            {citationNumber && <span className="me-2 text-xs font-normal text-muted-foreground">[{citationNumber}]</span>}
-            {title}
-            {meta && <span className="mt-0.5 block text-xs font-normal text-muted-foreground tabular-nums">{meta}</span>}
-          </span>
         </button>
         {onOpen && (
           <button type="button" onClick={onOpen} aria-label={`展开${title}`} title={`展开${title}`}
-            className="inline-flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+            className="evidence-card-open inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
             <Maximize2Icon className="size-4" aria-hidden />
           </button>
         )}
       </figcaption>
-      {isOpen && <div className="pt-2">{children}</div>}
+      {isOpen && <div className="pt-1">{children}</div>}
     </figure>
   );
 };
@@ -183,31 +185,35 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
   );
 };
 
-const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefined; onOpen?: () => void; defaultExpanded: boolean; citationNumber?: number }> = ({ step, station, onOpen, defaultExpanded, citationNumber }) => {
+const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefined; onOpen?: () => void; defaultExpanded: boolean }> = ({ step, station, onOpen, defaultExpanded }) => {
   const envelope = step.envelope!;
   switch (envelope.kind) {
     case 'gnss_series': {
       return (
-        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)} · ${displacementBasis(envelope.data) === 'fixed' ? '累计位移' : '窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded} citationNumber={citationNumber}>
+        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)} · ${displacementBasis(envelope.data) === 'fixed' ? '累计位移' : '窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded}>
           {station ? <SeriesChart station={station} envelope={envelope} /> : null}
         </CardShell>
       );
     }
     case 'computation':
       return (
-        <CardShell title={envelope.data.description} citationNumber={citationNumber}>
+        <CardShell title={envelope.data.description} onOpen={onOpen}>
           <ComputationResultView data={envelope.data} />
         </CardShell>
       );
     case 'weather':
       return (
-        <CardShell title="同期天气" meta={envelope.data.location.station_name ?? undefined} onOpen={onOpen} citationNumber={citationNumber}>
+        <CardShell
+          title={`${envelope.data.location.station_name ?? ''} 同期天气`.trim()}
+          meta={formatDateRange(envelope.data.query.history_start_date, envelope.data.query.history_end_date)}
+          onOpen={onOpen}
+        >
           <WeatherResultView data={envelope.data} />
         </CardShell>
       );
     case 'site_environment':
       return (
-        <CardShell title={`${envelope.data.center_station.station_name} 场地环境`} onOpen={onOpen} citationNumber={citationNumber}>
+        <CardShell title={`${envelope.data.center_station.station_name} 场地环境`} onOpen={onOpen}>
           <WhenVisible minHeight={320}>
             <SiteEnvironmentResultView environment={envelope.data} />
           </WhenVisible>
@@ -233,7 +239,6 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
   return (
     <CardShell
       title="测点位置"
-      defaultExpanded={false}
       meta={mapStations.every((station) => station.cumulative) ? '箭头为最新累计水平位移方向' : '箭头为水平位移方向；无固定参考的测点为本窗口变化'}
     >
       <WhenVisible minHeight={288}>
@@ -251,7 +256,7 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
 export const EvidenceCard: FC<{ cardId: string }> = ({ cardId }) => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
-  const { openStation } = useStationInspector();
+  const { openStation, openEvidence } = useStationInspector();
   const stations = useMemo(() => collectStations(parts), [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
 
@@ -263,9 +268,7 @@ export const EvidenceCard: FC<{ cardId: string }> = ({ cardId }) => {
     return null;
   }
   const station = stations.find((item) => item.id === step.stationId);
-  const onOpen = step.stationId
-    ? () => openStation({ messageId, stationId: step.stationId!, toolCallId: step.toolCallId })
-    : undefined;
+  const onOpen = () => openEvidence({ messageId, stationId: step.stationId, toolCallId: step.toolCallId });
   const numbers = evidenceNumbers(parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n\n'));
   const citationNumber = numbers.get(cardId);
   // 同一测点的额外窗口先显示标题，避免多张相似曲线打断阅读；用户仍可独立展开。
@@ -273,5 +276,5 @@ export const EvidenceCard: FC<{ cardId: string }> = ({ cardId }) => {
     candidate.stationId === step.stationId && candidate.envelope?.kind === 'gnss_series'
     && (numbers.get(candidate.evidenceId ?? '') ?? Infinity) < (citationNumber ?? Infinity)
   ));
-  return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries} citationNumber={citationNumber} />;
+  return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries} />;
 };

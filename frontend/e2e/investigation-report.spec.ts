@@ -211,8 +211,27 @@ test('窄屏切换调查保留数据滚动、图表选区与追问草稿', async
   expect(await data.evaluate((element) => element.scrollTop)).toBe(scrollTop);
   expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);
   await ask.click();
-  await expect(page.getByRole('textbox', { name: '输入监测问题' })).toHaveValue(/^也看一下东向[\s\S]*测试点 A[\s\S]*这段发生了什么/);
+  const composer = page.getByRole('textbox', { name: '输入监测问题' });
+  await expect(composer).toHaveValue('也看一下东向');
+  const askTargets = page.getByRole('list', { name: '追问对象' });
+  await expect(askTargets.getByRole('listitem')).toHaveText([/^测试点 A · 11月\d+日/]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+
+  // 发送时追问对象作为结构化字段提交，正文不夹带测点编号和时间；发出后标签清空。
+  let runBody: { messages: { content: unknown }[]; ask_targets: { station_uuid: string; start: string; end: string }[] } | undefined;
+  await page.route('**/api/sessions', (route) => route.fulfill({ json: { ...session, id: 'station-ask-session' } }));
+  await page.route('**/api/sessions/station-ask-session', (route) => route.fulfill({ json: { ...session, id: 'station-ask-session' } }));
+  await page.route('**/api/title', (route) => route.fulfill({ json: { title: '追问' } }));
+  await page.route('**/api/sessions/station-ask-session/runs', (route) => {
+    runBody = route.request().postDataJSON();
+    return route.fulfill({ status: 503, json: { detail: '测试故障' } });
+  });
+  await page.getByRole('button', { name: '发送消息', exact: true }).click();
+  await expect.poll(() => runBody?.ask_targets.length).toBe(1);
+  expect(runBody!.ask_targets[0]!.station_uuid).toBe(support.station_uuid);
+  expect(Date.parse(runBody!.ask_targets[0]!.start)).toBeLessThan(Date.parse(runBody!.ask_targets[0]!.end));
+  expect(JSON.stringify(runBody!.messages)).not.toContain('测试点 A');
+  await expect(askTargets).toHaveCount(0);
 });
 
 test('测点状态、复制导出及引用定位依据时间窗口', async ({ page, context }) => {
@@ -247,6 +266,58 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
   await inspector(page).getByRole('radio', { name: /08-01 至 11-03/ }).click();
   await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
   await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
+});
+
+test('天气和计算引用直接打开对应依据，用户消息显示追问对象', async ({ page }) => {
+  await mockApi(page);
+  const weather = {
+    type: 'tool', id: 'weather-result', tool_call_id: 'weather', name: 'query_weather', content: '模型专用内容不得展示', status: 'success',
+    artifact: { version: 1, kind: 'weather', status: 'success', evidence_id: 'Ewea', data: {
+      ok: true, location: { station_uuid: support.station_uuid, station_name: '测试点 A', latitude: 30.1, longitude: 103.5 },
+      query: { timezone: 'Asia/Shanghai', history_start_date: '2026-10-26', history_end_date: '2026-10-28', forecast_days: 0 },
+      history: { daily: { time: ['2026-10-26', '2026-10-27', '2026-10-28'], precipitation_sum: [3, 18.2, 6] } },
+    } },
+  };
+  const computation = {
+    type: 'tool', id: 'compute-result', tool_call_id: 'compute', name: 'compute', content: '模型专用内容不得展示', status: 'success',
+    artifact: { version: 1, kind: 'computation', status: 'success', evidence_id: 'Ecmp', data: {
+      description: '降雨前后北向变化对比', code: 'result = {}', inputs: [], result: { 降雨前_mm: 1.2, 降雨后_mm: 2.8 }, truncated: false,
+    } },
+  };
+  const history = [
+    { type: 'human', id: 'question-1', content: '这段时间发生了什么？', additional_kwargs: { metadata: { ask_targets: [{
+      station_uuid: support.station_uuid, station_name: '测试点 A', start: '2026-10-27T00:00+08:00', end: '2026-10-29T00:00+08:00',
+    }] } } },
+    { type: 'ai', id: 'query-1', content: [], tool_calls: [
+      { id: 'gnss-long', name: 'get_displacement', args: {} },
+      { id: 'weather', name: 'query_weather', args: {} },
+      { id: 'compute', name: 'compute', args: {} },
+    ] },
+    { ...gnssResult('gnss-long', '2026-08-01 00:00:00'), artifact: { ...gnssResult('gnss-long', '2026-08-01 00:00:00').artifact, evidence_id: 'Elong' } },
+    weather, computation,
+    { type: 'ai', id: 'answer-1', content: '北向持续变化。[1](#evidence-Elong)\n\n10 月 27 日降雨 18.2 mm。[2](#evidence-Ewea) 降雨后北向变化略大。[3](#evidence-Ecmp)' },
+  ];
+  await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/?threadId=report-session');
+
+  await expect(page.locator('[data-role="user"]').getByRole('list', { name: '追问对象' })).toHaveText('测试点 A · 10月27日–10月28日');
+  // 卡片标题写明对象和时间，编号只留在句末引用上。
+  await expect(page.locator('[data-slot="evidence-card"]').filter({ hasText: '测试点 A 同期天气' })).toContainText('10-26 至 10-28');
+  await expect(page.locator('[data-slot="evidence-card"]').filter({ hasText: /\[\d\]/ })).toHaveCount(0);
+
+  await page.getByRole('button', { name: /查看依据 2：/ }).click();
+  await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
+  await expect(inspector(page).getByRole('tab', { name: '天气', exact: true })).toHaveAttribute('aria-selected', 'true');
+
+  // 不属于测点的计算结果在同一面板里打开，而不是另起弹窗。
+  await page.getByRole('button', { name: /查看依据 3：/ }).click();
+  await expect(inspector(page).getByRole('heading', { name: '降雨前后北向变化对比' })).toBeVisible();
+  await expect(inspector(page).getByRole('cell', { name: '2.8' })).toBeVisible();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await inspector(page).getByRole('button', { name: '关闭依据' }).click();
+  await expect(inspector(page)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /查看依据 3：/ })).toBeFocused();
 });
 
 for (const width of [320, 390, 1440]) {

@@ -7,6 +7,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
+import type { ToolArtifactEnvelope } from '@/types/envelope';
 import { ComputationResultView } from './tools/ComputationResultView';
 import { EmptyResultView } from './tools/EmptyResultView';
 import { StationResultView } from './tools/StationResultView';
@@ -85,8 +86,7 @@ const StepIcon: FC<{ state: StepState }> = ({ state }) => {
   }
 };
 
-export const StepInlineResult: FC<{ step: InvestigationStep }> = ({ step }) => {
-  const envelope = step.inlineEnvelope;
+export const InlineEvidenceResult: FC<{ envelope: ToolArtifactEnvelope | undefined }> = ({ envelope }) => {
   if (envelope?.kind === 'station_list') {
     return <StationResultView data={envelope.data} />;
   }
@@ -130,7 +130,7 @@ const StepRow: FC<{ step: InvestigationStep; onOpenStation: (name: string) => vo
           <ChevronRightIcon className="ms-auto size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/step:rotate-90 motion-reduce:transition-none" aria-hidden />
         </CollapsibleTrigger>
         <CollapsibleContent className="py-2 ps-7">
-          <StepInlineResult step={step} />
+          <InlineEvidenceResult envelope={step.inlineEnvelope} />
         </CollapsibleContent>
       </Collapsible>
     );

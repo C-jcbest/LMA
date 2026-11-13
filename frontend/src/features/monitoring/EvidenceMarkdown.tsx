@@ -1,12 +1,10 @@
-import { Children, createContext, isValidElement, useCallback, useContext, useMemo, useState, type ComponentProps, type FC, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, useCallback, useContext, useMemo, type ComponentProps, type FC, type ReactNode } from 'react';
 import { useAuiState } from '@assistant-ui/react';
 import { MarkdownText } from '@/components/markdown-text';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { cardIdFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenceCards } from './evidence-cards';
 import { EvidenceCard, hasEvidenceCard, mapStationsOf } from './EvidenceCards';
 import { buildSteps, collectStations, type InvestigationStep } from './investigation';
-import { StepInlineResult } from './InvestigationProcess';
 import { useStationInspector } from './StationInspectorContext';
 
 const EvidenceContext = createContext<{ steps: InvestigationStep[]; numbers: Map<string, number> }>({ steps: [], numbers: new Map() });
@@ -14,8 +12,7 @@ const EvidenceContext = createContext<{ steps: InvestigationStep[]; numbers: Map
 const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => {
   const messageId = useAuiState((state) => state.message.id);
   const { steps, numbers } = useContext(EvidenceContext);
-  const { openStation } = useStationInspector();
-  const [expanded, setExpanded] = useState(false);
+  const { openEvidence } = useStationInspector();
   if (cardIdFromHref(href) !== null) {
     // 卡片标记只应独占一段，由段落组件渲染；混在句中时不显示。
     return null;
@@ -31,29 +28,12 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
     return <span className="text-muted-foreground text-xs" title="原始依据未随本次结果提供">依据暂缺</span>;
   }
   return (
-    <>
-      <button
-        type="button"
-        aria-label={`查看依据 ${citationNumber}：${step.detail ?? step.label}`}
-        className="evidence-citation"
-        onClick={() => {
-          if (step.stationId) {
-            openStation({ messageId, stationId: step.stationId, toolCallId: step.toolCallId });
-          } else {
-            setExpanded(true);
-          }
-        }}
-      >{citationNumber}</button>
-      {!step.stationId && (
-        <Dialog open={expanded} onOpenChange={setExpanded}>
-          <DialogContent className="max-h-[85dvh] overflow-y-auto">
-            <DialogTitle>{step.detail ?? step.label}</DialogTitle>
-            <DialogDescription className="sr-only">该引用对应的查询结果</DialogDescription>
-            <StepInlineResult step={step} />
-          </DialogContent>
-        </Dialog>
-      )}
-    </>
+    <button
+      type="button"
+      aria-label={`查看依据 ${citationNumber}：${step.detail ?? step.label}`}
+      className="evidence-citation"
+      onClick={() => openEvidence({ messageId, stationId: step.stationId, toolCallId: step.toolCallId })}
+    >{citationNumber}</button>
   );
 };
 

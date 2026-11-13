@@ -2,6 +2,7 @@
 
 import { MarkdownText } from "@/components/markdown-text";
 import { EvidenceMarkdown } from "@/features/monitoring/EvidenceMarkdown";
+import { ComposerAskTargets, MessageAskTargets } from "@/features/monitoring/AskTargetChips";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -278,8 +279,9 @@ const Composer: FC<{ autoFocus: boolean; placeholder: string }> = ({ autoFocus, 
   return (
     <ComposerPrimitive.Root
       data-slot="aui_composer-shell"
-      className="aui-composer-root bg-card focus-within:border-ring relative flex w-full cursor-text items-end gap-2 rounded-(--composer-radius) border py-2 ps-4 pe-2 shadow-xs transition-[border-color]"
+      className="aui-composer-root bg-card focus-within:border-ring relative flex w-full cursor-text flex-wrap items-end gap-2 rounded-(--composer-radius) border py-2 ps-4 pe-2 shadow-xs transition-[border-color]"
     >
+      <ComposerAskTargets />
       <ComposerPrimitive.Input
         ref={composerInputRef}
         disabled={isLoading}
@@ -418,7 +420,8 @@ const UserMessage: FC = () => {
       className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
     >
-      <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0 pb-8">
+      <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0 space-y-1.5 pb-8">
+        <MessageAskTargets />
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>

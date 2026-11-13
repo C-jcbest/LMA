@@ -26,6 +26,19 @@ class MessageProjectionTests(unittest.TestCase):
         self.assertEqual(public['content'], '最近怎么样')
         self.assertNotIn('44444444', json.dumps(public))
 
+    def test_ask_targets_reach_model_context_and_stay_public_for_display(self):
+        target = {'station_uuid': '44444444-4444-4444-4444-444444444444', 'station_name': '测试点',
+                  'start': '2026-09-03T00:00+08:00', 'end': '2026-09-05T12:00+08:00'}
+        message = HumanMessage(id='ask', content='这段时间发生了什么？',
+                               additional_kwargs={'metadata': {message_context.ASK_TARGETS_KEY: [target]}})
+        projected = message_context.model_messages([message_context.stamp_user_message(message)])[0]
+        self.assertIn('ask_target: 测试点（station_uuid: 44444444-4444-4444-4444-444444444444）'
+                      '2026-09-03 00:00 至 2026-09-05 12:00', projected.content)
+        self.assertNotIn('metadata', projected.additional_kwargs)
+        public = project_message(message)
+        self.assertEqual(public['content'], '这段时间发生了什么？')
+        self.assertEqual(public['additional_kwargs']['metadata'][message_context.ASK_TARGETS_KEY], [target])
+
     def test_conclusions_are_not_citable_evidence(self):
         for kind in ('conclusions',):
             message = ToolMessage(content='完成', tool_call_id=f'{kind}-1', artifact={'version': 1, 'kind': kind, 'data': {}})

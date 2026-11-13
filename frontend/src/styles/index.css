@@ -243,13 +243,19 @@
   .evidence-citation::after { content: ""; position: absolute; inset: -12px -8px; }
 }
 
-/* 正文中的依据卡片：跟随所引用的段落，宽度与正文一致。 */
+/* 正文中的依据卡片：跟随所引用的段落，宽度与正文一致；用浅底色而不是边框和阴影，读起来像附图。 */
 .evidence-card {
   margin-block: 12px 20px;
-  padding: 10px 14px 12px;
-  border: 1px solid var(--border);
+  padding: 2px 6px 10px 12px;
   border-radius: 12px;
-  background: var(--card);
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+.evidence-card[data-state="closed"] { padding-bottom: 2px; }
+/* 放大入口平时隐藏，指针悬停或键盘聚焦到卡片时出现；触屏没有悬停，始终显示。 */
+@media (hover: hover) {
+  .evidence-card-open { opacity: 0; transition: opacity 120ms; }
+  .evidence-card:hover .evidence-card-open,
+  .evidence-card:focus-within .evidence-card-open { opacity: 1; }
 }
 
 /* 地图位置锚点保持小巧，44px 点击区域便于触屏选择；信息标签不改变真实坐标。 */

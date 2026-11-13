@@ -17,10 +17,10 @@ import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { StatusDot } from '@/features/monitoring/status';
-import { buildTimelineOption, displacementBasisLabel, formatChartTime, rangeQuestion } from '@/features/monitoring/timeline';
+import { buildTimelineOption, displacementBasisLabel, formatChartTime } from '@/features/monitoring/timeline';
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { appendToComposerDraft } from '@/lib/composer-draft';
+import { addAskTarget } from '@/features/monitoring/ask-targets';
 import { cn } from '@/lib/utils';
 import type { InspectionStation, StationRecord, StationTimeline, TimelineDays } from '@/services/api';
 import type { GnssArtifactData } from '@/types/envelope';
@@ -112,7 +112,7 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   );
 
   const askAbout = (target: ChartRange) => {
-    appendToComposerDraft(aui, rangeQuestion(`${stationName}（UUID：${data.station_uuid}）`, target));
+    addAskTarget(aui, { stationUuid: data.station_uuid, stationName, ...target });
     onAsk();
     requestAnimationFrame(() => composerInputRef.current?.focus());
   };

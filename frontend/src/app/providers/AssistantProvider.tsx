@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useLangGraphRuntime } from '@assistant-ui/react-langgraph';
 import { AssistantRuntimeProvider, useAui, useAuiState } from '@assistant-ui/react';
 import type { LmaClient } from '@/services/api';
+import { askTargetsOfRunConfig, toAskTargetRecords } from '@/features/monitoring/ask-targets';
 import { createSessionListAdapter } from '@/lib/session-list-adapter';
 import { FocusStationContext, LmaClientContext } from './LmaClientContext';
 
@@ -136,6 +137,7 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
         const events = client.streamRun(externalId, messages, {
           checkpointId: config.checkpointId,
           focusStation: scope?.stationName ?? focusStationRef.current ?? undefined,
+          askTargets: toAskTargetRecords(askTargetsOfRunConfig(config.runConfig)),
           signal: config.abortSignal,
         });
         for await (const event of events) {

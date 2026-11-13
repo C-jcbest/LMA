@@ -1,5 +1,6 @@
 import type { LangChainMessage, LangGraphMessagesEvent } from '@assistant-ui/react-langgraph';
 import type { GnssArtifactData } from '@/types/envelope';
+import type { AskTargetRecord } from '@/features/monitoring/ask-targets';
 import { BytesLineDecoder, IterableReadableStream, SSEDecoder } from '@langchain/langgraph-sdk/utils';
 
 const STORAGE_KEY_CONFIG = 'lma_api_url';
@@ -192,11 +193,16 @@ export class LmaClient {
   async *streamRun(
     id: string,
     messages: LangChainMessage[],
-    options: { checkpointId?: string; focusStation?: string; signal: AbortSignal },
+    options: { checkpointId?: string; focusStation?: string; askTargets: readonly AskTargetRecord[]; signal: AbortSignal },
   ): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
     try {
       const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs`, {
-        method: 'POST', body: JSON.stringify({ messages, checkpoint_id: options.checkpointId, focus_station: options.focusStation }),
+        method: 'POST', body: JSON.stringify({
+          messages,
+          checkpoint_id: options.checkpointId,
+          focus_station: options.focusStation,
+          ask_targets: options.askTargets,
+        }),
         signal: options.signal,
       });
       if (!response.body) throw new Error('服务未返回消息流。');

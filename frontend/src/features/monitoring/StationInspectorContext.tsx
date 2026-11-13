@@ -20,15 +20,27 @@ export interface InspectorViewState {
   charts: Map<string, ChartViewState>;
 }
 
-export interface StationSelection {
+/**
+ * 检查器打开的对象：通常是一个测点（可定位到它的某条依据）；
+ * 计算结果等不属于任何测点的依据没有 stationId，只显示这条依据本身。
+ */
+export interface InspectorSelection {
   messageId: string;
-  stationId: string;
-  /** 从简报依据进入时，定位到这条工具结果。 */
+  stationId?: string;
+  /** 从引用进入时，定位到这条工具结果。 */
   toolCallId?: string;
 }
 
+export interface StationSelection extends InspectorSelection {
+  stationId: string;
+}
+
+export interface EvidenceSelection extends InspectorSelection {
+  toolCallId: string;
+}
+
 interface StationInspectorContextValue {
-  selection: StationSelection | null;
+  selection: InspectorSelection | null;
   selectionVersion: number;
   isClosing: boolean;
   /** 宽度足够时检查器与对话并排，否则全屏覆盖。 */
@@ -39,6 +51,8 @@ interface StationInspectorContextValue {
   viewStates: RefObject<Map<string, InspectorViewState>>;
   composerInputRef: RefObject<HTMLTextAreaElement | null>;
   openStation: (selection: StationSelection) => void;
+  /** 打开引用指向的那条依据：属于测点时在该测点里定位到对应页签和窗口，否则单独显示。 */
+  openEvidence: (selection: EvidenceSelection) => void;
   closeInspector: (options?: { focusComposer?: boolean }) => void;
 }
 
@@ -46,7 +60,7 @@ const StationInspectorContext = createContext<StationInspectorContextValue | nul
 
 /** 保存查看位置和图表交互状态；证据始终从当前消息的官方 tool part 派生。 */
 export function StationInspectorProvider({ children, canSplit = true }: { children: ReactNode; canSplit?: boolean }) {
-  const [selection, setSelection] = useState<StationSelection | null>(null);
+  const [selection, setSelection] = useState<InspectorSelection | null>(null);
   const [selectionVersion, setSelectionVersion] = useState(0);
   const [isClosing, setIsClosing] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -61,9 +75,9 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
   const readingPosition = useRef<{ viewport: HTMLElement; offset: number } | null>(null);
   const restoreReadingPosition = useRef(false);
 
-  const openStation = useCallback((next: StationSelection) => {
+  const open = useCallback((next: InspectorSelection) => {
     setSelectionVersion((version) => version + 1);
-    const saved = viewStates.current.get(`${next.messageId}:${next.stationId}`);
+    const saved = next.stationId ? viewStates.current.get(`${next.messageId}:${next.stationId}`) : undefined;
     if (saved && next.toolCallId) {
       // 引用必须定位指定证据；保留该证据自身的缩放和图例。
       saved.selectedToolCallId = next.toolCallId;
@@ -124,8 +138,11 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
   }, [selection]);
 
   const value = useMemo(
-    () => ({ selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, viewStates, composerInputRef, openStation, closeInspector }),
-    [selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, openStation, closeInspector],
+    () => ({
+      selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, viewStates, composerInputRef,
+      openStation: open, openEvidence: open, closeInspector,
+    }),
+    [selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, open, closeInspector],
   );
 
   return (

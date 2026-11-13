@@ -290,6 +290,24 @@ class SelfHostedApiTests(unittest.TestCase):
             self.assertNotIn("伪造", response.text)
         self.assertEqual(self.state()["values"]["messages"], [])
 
+    def test_ask_targets_are_validated_and_saved_in_business_time(self):
+        target = {"station_uuid": "44444444-4444-4444-4444-444444444444", "station_name": "测试点",
+                  "start": "2026-09-02T16:00:00Z", "end": "2026-09-04T16:00:00Z"}
+        reversed_target = {**target, "start": target["end"], "end": target["start"]}
+        self.assertEqual(self.run_message(ask_targets=[reversed_target]).status_code, 422)
+        self.assertEqual(self.run_message(ask_targets=[target] * 5).status_code, 422)
+        self.assertEqual(self.state()["values"]["messages"], [])
+
+        self.assertEqual(self.run_message("这段时间发生了什么？", ask_targets=[target]).status_code, 200)
+        human = next(item for item in self.state()["values"]["messages"] if item["type"] == "human")
+        self.assertEqual(human["content"], "这段时间发生了什么？")
+        self.assertEqual(human["additional_kwargs"]["metadata"]["ask_targets"], [{
+            "station_uuid": target["station_uuid"], "station_name": "测试点",
+            "start": "2026-09-03T00:00+08:00", "end": "2026-09-05T00:00+08:00",
+        }])
+        self.assertIn("ask_target: 测试点（station_uuid: 44444444-4444-4444-4444-444444444444）"
+                      "2026-09-03 00:00 至 2026-09-05 00:00", self.model.inputs[-1][-1].text)
+
     def test_unknown_checkpoint_does_not_start_run(self):
         response = self.run_message(checkpoint_id="missing")
         self.assertEqual(response.status_code, 404)

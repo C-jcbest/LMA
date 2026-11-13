@@ -282,6 +282,22 @@ const stepStateOf = (part: ToolPart, envelope: ToolArtifactEnvelope | undefined)
   return status.type === 'complete' ? 'complete' : 'running';
 };
 
+/** 不属于任何测点、直接显示结果内容的依据类型。 */
+const INLINE_KINDS = new Set(['station_list', 'weather', 'computation']);
+
+/**
+ * 检查器打开不属于测点的依据时，按调用编号取回结果；标题沿用调查过程里的步骤说明。
+ * 线程消息不带工具状态，这里只认已有结果的调用。
+ */
+export function findInlineEvidence(parts: readonly { type: string }[], toolCallId: string) {
+  const part = parts.filter(isToolCall).find((item) => item.toolCallId === toolCallId);
+  const envelope = part ? decodeToolPart(part) : undefined;
+  if (!envelope || envelope.status === 'error' || !INLINE_KINDS.has(envelope.kind)) {
+    return undefined;
+  }
+  return { title: stepDetail(envelope) ?? '依据', envelope };
+}
+
 /** 结论登记是留档，完成后只体现为测点状态标签。 */
 const HIDDEN_WHEN_SETTLED = new Set([CONCLUSIONS_TOOL_NAME]);
 
@@ -336,9 +352,7 @@ export function buildSteps(
       notice: isEmpty ? presentation.emptyNotice || undefined : undefined,
       stationName,
       stationId,
-      inlineEnvelope: envelope && !stationName && !isEmpty
-        && (envelope.kind === 'station_list' || envelope.kind === 'weather' || envelope.kind === 'computation')
-        ? envelope : undefined,
+      inlineEnvelope: envelope && !stationName && !isEmpty && INLINE_KINDS.has(envelope.kind) ? envelope : undefined,
     });
   }
   return steps.reverse();
