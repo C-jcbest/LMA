@@ -232,19 +232,3 @@ class MonitoringDataCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(platform.requests), first_requests)
         await displacement(platform, 'other', 'another-session', station_name_or_uuid='测试点', **window(days=3))
         self.assertGreater(len(platform.requests), first_requests)
-
-    async def test_horizontal_direction_compares_with_slope_aspect_convention(self):
-        # 北 1 mm、东 2 mm：方位从正北顺时针约 63.4°，累计与本窗口分别给出。
-        hourly = [point(NOW - timedelta(hours=2 - i), 100.001 + i * .001, 200.002 + i * .002) for i in range(3)]
-        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
-        result = await displacement(platform, station_name_or_uuid='测试点', **window(hours=2))
-        direction = json.loads(result.content)['horizontal_direction']
-        self.assertEqual(direction['cumulative']['azimuth_deg'], 63.4)
-        self.assertAlmostEqual(direction['cumulative']['magnitude_mm'], 3 * 5 ** .5, places=3)
-        self.assertEqual(direction['window_change']['azimuth_deg'], 63.4)
-
-    async def test_horizontal_direction_is_omitted_without_fixed_reference_or_change(self):
-        hourly = [point(NOW - timedelta(hours=i), 100) for i in range(3)]
-        platform = FakePlatform([STATION_B], {STATION_B.station_uuid: hourly})
-        result = await displacement(platform, station_name_or_uuid=STATION_B.station_uuid, **window(hours=2))
-        self.assertNotIn('horizontal_direction', json.loads(result.content))

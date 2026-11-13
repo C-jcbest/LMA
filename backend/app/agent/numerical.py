@@ -150,16 +150,6 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     return result
 
 
-def horizontal_direction(north_mm, east_mm):
-    """水平位移矢量的方位角（从正北顺时针，度）；分量缺失或长度为零时为 None。"""
-    if north_mm is None or east_mm is None:
-        return None
-    magnitude = math.hypot(north_mm, east_mm)
-    if magnitude == 0:
-        return None
-    return {'azimuth_deg': round(math.degrees(math.atan2(east_mm, north_mm)) % 360, 1), 'magnitude_mm': round(magnitude, 3)}
-
-
 def compare_windows(first, second):
     """保留覆盖和证据条件；倍率本身不构成持续加速结论。"""
     left = first.get('robust_slope_mm_day')
