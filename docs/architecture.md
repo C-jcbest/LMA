@@ -5,6 +5,7 @@
 ## 运行形态
 
 - 后端 FastAPI + LangChain/LangGraph OSS + PostgreSQL，单 Uvicorn worker 自托管；官方 AsyncPostgresSaver 保存 checkpoint。不使用商业 Agent Server。重启时未结束的 Run 与巡检标记 interrupted，不自动重放。部署与恢复见 [部署说明](deployment.md)。
+- 访问保护在应用内：[auth.py](../backend/app/server/auth.py) 以全局依赖校验签名 Cookie（不用 HTTP middleware，避免包裹 SSE 与取消），`/health` 与 `/auth/*` 公开；未配置 `AUTH_PASSWORD` 时不启用，仅限本地开发与测试。前端任一接口 401 时回到登录页。
 - 主 Agent 是官方 `create_agent` 的工具循环，工厂为 [graph.py](../backend/app/agent/graph.py) 的 `create_lma_agent`。同一会话只允许一个 Run，重复提交返回 409；跨会话不限 Run 数量，受连接池、内存和供应商配额约束。
 - 前端 React + assistant-ui 官方 Runtime，经 useLangGraphRuntime 接入 SSE。页面为今日、测点、记录和测点页，页面状态只存于地址栏（`page`、`station`），与 Runtime 的 `threadId` 各自维护。
 

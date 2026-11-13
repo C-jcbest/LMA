@@ -14,3 +14,4 @@ opentopomap  # 2026-11-12 改为高德
 prd.md  # 2026-11-14 拆分为 docs/product/rules.md 与 roadmap.md
 project-status.md  # 2026-11-14 并入 docs/status.md
 adr/0001-agent-runtime  # 2026-11-14 拆分为 docs/architecture.md 与 docs/decisions/
+auth_basic  # 网关 Basic Auth，2026-11-14 改为应用内登录页
