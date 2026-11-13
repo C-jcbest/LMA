@@ -1,0 +1,24 @@
+name: Check docs and prompts
+
+# 文档改动不触发测试与部署，但仍要检查链接、已删除名称的回流和常驻上下文长度。
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Check docs, prompts and retired names
+        run: python ops/check_docs.py

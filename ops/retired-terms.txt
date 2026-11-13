@@ -1,0 +1,16 @@
+# 已删除的工具、组件、服务与说法。它们再次出现在现行文档、提示词或源码里，通常说明有人照着过时资料写回了旧设计。
+# 删除功能时在这里追加一行：名称 + 空格 + # 删除说明。决策记录（docs/decisions）与验收报告（docs/reviews）是历史，不检查。
+analyze_gnss_chart  # 视觉复核工具，2026-11-12 删除
+update_plan  # 调查计划工具，2026-11-12 删除
+VisionResultView  # 视觉复核卡片，2026-11-12 删除
+VISION_  # 视觉模型配置，2026-11-12 删除
+视觉复核  # 2026-11-12 删除
+视觉候选  # 2026-11-12 删除
+TIANDITU  # 天地图，2026-11-12 改为高德
+天地图  # 2026-11-12 改为高德
+MapLibre  # 2026-11-12 改为高德
+maplibre-gl  # 2026-11-12 改为高德
+opentopomap  # 2026-11-12 改为高德
+prd.md  # 2026-11-14 拆分为 docs/product/rules.md 与 roadmap.md
+project-status.md  # 2026-11-14 并入 docs/status.md
+adr/0001-agent-runtime  # 2026-11-14 拆分为 docs/architecture.md 与 docs/decisions/

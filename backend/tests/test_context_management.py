@@ -12,7 +12,7 @@ from runtime_fixtures import ScriptedModel
 def turn(index):
     return [HumanMessage(id=f"u{index}", content=f"站点甲 第{index}轮 2026-09-15 Asia/Shanghai"),
         AIMessage(id=f"a{index}", content="", tool_calls=[{"id": f"c{index}", "name": "query", "args": {}}]),
-        ToolMessage(id=f"t{index}", content="缺测；视觉候选尚未确认；" + "x" * 20000,
+        ToolMessage(id=f"t{index}", content="缺测；候选跳变尚未确认；" + "x" * 20000,
                     tool_call_id=f"c{index}", name="query"),
         AIMessage(id=f"f{index}", content="证据有限，不能判断滑坡")]
 
@@ -29,7 +29,7 @@ class ContextManagementTests(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(patcher.stop)
         self.config = {"configurable": {"thread_id": "summary-test"}}
         self.summary = ScriptedModel(tags=["nostream"], script=[AIMessage(content=
-            "站点甲；2026-09-15 Asia/Shanghai；缺测，视觉候选未确认，不能推定气象因果。") for _ in range(3)])
+            "站点甲；2026-09-15 Asia/Shanghai；缺测，候选跳变未确认，不能推定气象因果。") for _ in range(3)])
         self.model = ScriptedModel(script=[AIMessage(content="继续核实") for _ in range(3)])
 
     def build(self):
@@ -46,7 +46,7 @@ class ContextManagementTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[-2].id, "current")
         self.assertLessEqual(count_tokens_approximately(messages[1:-1]), 1000)
         self.assertLess(len(messages), len(history))
-        self.assertIn("视觉候选未确认", self.model.inputs[0][1].content)
+        self.assertIn("候选跳变未确认", self.model.inputs[0][1].content)
         self.assertIn("2026-09-15", self.summary.inputs[0][0].content)
         self.assertIn("缺少锚点不得推算", self.summary.inputs[0][0].content)
         next_result = await agent.ainvoke({"messages": [HumanMessage(content="同一站点呢？")]}, self.config)

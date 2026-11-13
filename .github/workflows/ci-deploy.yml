@@ -3,10 +3,10 @@ name: Test and deploy LMA
 on:
   pull_request:
     branches: [main]
-    paths-ignore: ['docs/**', 'README.md', 'AGENTS.md', 'prd.md']
+    paths-ignore: ['docs/**', 'README.md', '**/AGENTS.md']
   push:
     branches: [main]
-    paths-ignore: ['docs/**', 'README.md', 'AGENTS.md', 'prd.md']
+    paths-ignore: ['docs/**', 'README.md', '**/AGENTS.md']
   workflow_dispatch:
 
 permissions:

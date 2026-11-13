@@ -1,6 +1,6 @@
 # 开发指南
 
-开始修改前阅读 [协作规则](../AGENTS.md)，涉及运行链路时阅读 [ADR 0001](adr/0001-agent-runtime.md)。回答、注释和文档优先使用简体中文，代码标识符遵循所在语言惯例。
+开始修改前阅读 [协作规则](../AGENTS.md)，涉及运行链路时阅读 [当前架构](architecture.md)。回答、注释和文档优先使用简体中文，代码标识符遵循所在语言惯例。
 
 ## 本地环境
 
@@ -36,6 +36,18 @@ pnpm --dir frontend dev
 
 前端地址以 Vite 输出为准。开发模式默认将 /api 代理到 127.0.0.1:2025，可通过 LMA_API_PROXY_TARGET 调整；生产固定同源 /api。整套容器启动和重载见 [部署说明](deployment.md#本地容器)。
 
+## 并行任务的工作树
+
+每个任务在仓库目录之外建独立工作树，避免多个会话的改动互相混入提交：
+
+~~~powershell
+git worktree add -b <分支名> ../LMA-wt/<任务名> main
+~~~
+
+- 工作树没有被 Git 忽略的文件：需要自己的 backend/.venv、frontend/node_modules（pnpm 使用全局存储，安装很快）和 backend/.env（复制，不提交）。缺少 .env 时依赖 Settings 的测试会整批报配置校验错误。
+- **不要用目录链接（junction / 符号链接）把主工作区的 .venv 或 node_modules 共享给工作树。** 删除工作树时，`git worktree remove` 可能顺着链接删除主工作区的依赖；2026-11-14 曾因此删掉主环境中一批 Python 包，重装后才恢复。
+- 完成后在主工作区 `git merge --ff-only <分支名>`，再 `git worktree remove ../LMA-wt/<任务名>` 并删除分支。
+
 ## 按改动定位代码
 
 | 改动范围 | 入口 |
@@ -44,7 +56,7 @@ pnpm --dir frontend dev
 | 主业务策略 | [system.md](../backend/app/agent/prompts/system.md) |
 | 监测数据层（测点解析、分片取数、会话缓存） | [monitoring_data.py](../backend/app/monitoring_data.py) |
 | 监测、天气与场地工具 | [tools.py](../backend/app/agent/tools.py)、[weather.py](../backend/app/agent/weather.py)、[site.py](../backend/app/agent/site.py) |
-| 计算、结论登记、计划与以往结论 | [compute.py](../backend/app/agent/compute.py)、[compute_runner.py](../backend/app/agent/compute_runner.py)、[conclusions.py](../backend/app/agent/conclusions.py)、[session_tools.py](../backend/app/agent/session_tools.py) |
+| 计算、结论登记与以往结论 | [compute.py](../backend/app/agent/compute.py)、[compute_runner.py](../backend/app/agent/compute_runner.py)、[conclusions.py](../backend/app/agent/conclusions.py)、[session_tools.py](../backend/app/agent/session_tools.py) |
 | 平台请求与字段 | [beidou](../backend/app/beidou/)、[接口参考](reference/beidou-platform-api.md) |
 | 会话 API、Run 与存储 | [server](../backend/app/server/) |
 | 前端布局与 Runtime | [App.tsx](../frontend/src/App.tsx)、[AssistantProvider.tsx](../frontend/src/app/providers/AssistantProvider.tsx) |
@@ -101,6 +113,6 @@ Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.
 | 窄屏、抽屉、失败原因与草稿保留 | frontend/e2e/layout-feedback.spec.ts；浏览器布局和 HTTP 边界回归 |
 | 慢推荐下首屏可操作、迟到推荐和点击填入 | frontend/e2e/suggestion-readiness.spec.ts；通过显式阻塞/释放推荐响应验证首屏交互，不用固定延迟和多屏宽反复计时 |
 
-新增测试优先补现有入口的独立行为缺口。不要为同一行为重复添加组件挂载测试、SDK 对象取值测试或手写计时器来模拟运行时；跨层测试只保留真实的适配、持久化或浏览器风险。不得通过删掉失败断言掩盖问题。真实服务与真机待验收项统一见 [TODO](TODO.md)。
+新增测试优先补现有入口的独立行为缺口。不要为同一行为重复添加组件挂载测试、SDK 对象取值测试或手写计时器来模拟运行时；跨层测试只保留真实的适配、持久化或浏览器风险。不得通过删掉失败断言掩盖问题。真实服务与真机待验收项统一见 [状态与待办](status.md)。
 
-推荐真实模型评测在 backend 中用 python -m evaluations.run_suggestions --env-file <已有配置文件> 执行，只发送合成摘要；可用 --scenario <场景名> 缩小范围。加 --measure-api 时必须配置隔离 LMA_TEST_DATABASE_URI，在 lma_test 保存本轮合成巡检、测量 SQL/HTTP 冷暖耗时并清理本轮数据，不修改业务库。输出在 Git 忽略的 evaluations/results，结论需人工审阅；复现条件和已审阅实例见[验收报告](suggestion-review-2026-11-13.md)。
+推荐真实模型评测在 backend 中用 python -m evaluations.run_suggestions --env-file <已有配置文件> 执行，只发送合成摘要；可用 --scenario <场景名> 缩小范围。加 --measure-api 时必须配置隔离 LMA_TEST_DATABASE_URI，在 lma_test 保存本轮合成巡检、测量 SQL/HTTP 冷暖耗时并清理本轮数据，不修改业务库。输出在 Git 忽略的 evaluations/results，结论需人工审阅；复现条件和已审阅实例见[验收报告](reviews/suggestion-review-2026-11-13.md)。

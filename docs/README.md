@@ -1,28 +1,42 @@
 # 文档目录
 
-AGENTS.md 保留通用协作规则；本目录提供按任务查阅的项目知识。修改前阅读相关条目，核对代码和测试，不把产品目标或历史验收当成当前运行结果。
+根目录 [AGENTS.md](../AGENTS.md) 是每次都要遵守的协作规则；本目录按任务提供项目知识，只在需要时读。修改前核对代码和测试，不把路线图或历史记录当成当前运行结果。
+
+## 按任务查阅
 
 | 当前任务 | 先读 | 内容归属 |
 | --- | --- | --- |
 | 首次开发、定位代码、执行测试 | [开发指南](development.md) | 本地环境、代码入口、验证范围 |
-| 修改 Agent、会话、工具协议或前端 Runtime | [ADR 0001](adr/0001-agent-runtime.md) | 当前架构、责任边界和实现约束 |
-| 修改监测判断、气象或场地分析 | [产品需求](../prd.md) | 业务语义、证据边界和产品优先级 |
-| 调整部署、数据库或 CI/CD | [部署说明](deployment.md) | 环境隔离、部署和恢复操作 |
-| 对接北斗平台 | [接口参考](reference/beidou-platform-api.md) | 上游请求和字段约定 |
-| 接续未完成工作、判断验收范围 | [待办](TODO.md)、[项目状态](project-status.md) | 未完成事项、已验证事实和限制 |
+| 修改 Agent、会话、工具协议、地图或前端 Runtime | [当前架构](architecture.md) | 现行架构与必须保持的边界 |
+| 修改监测判断、气象或场地分析 | [产品规则](product/rules.md) | 业务语义与证据边界 |
+| 修改运行时提示词 | [提示词修改规则](../backend/app/agent/prompts/AGENTS.md) | 规则放置、评测与长度上限 |
+| 调整部署、数据库或 CI/CD | [部署说明](deployment.md) | 环境隔离、部署和恢复 |
+| 对接北斗平台 | [接口参考](reference/beidou-platform-api.md) | 上游请求和字段 |
+| 接续工作、判断验收范围 | [状态与待办](status.md) | 当前状态、未验证项、待办 |
+| 了解某个设计为什么这样做 | [决策记录](decisions/) | 当时的背景与理由（历史） |
 
-## 维护方式
+## 现状文档与历史记录
 
-- 同一规则只在所属文档维护，其他位置用链接引用。README 只负责项目介绍和入口；AGENTS 不加入发布记录、任务清单或接口细节。
-- 配置默认值、范围与生效边界共同维护在 [Settings](../backend/app/config.py) 和 [.env.example](../backend/.env.example)，新增或修改配置时逐项补充中文说明，不在多个文档复制配置表。
-- 提示词只在 [prompts](../backend/app/agent/prompts/) 维护；代码路径和依赖版本以源码、配置及锁文件为准，不生成另一套符号索引。
-- 待办完成后移除实施步骤，在项目状态保留必要的验收结论与未验证范围。过时决策和已提交的长篇过程记录通过 Git 历史追溯。
-- 当前规模采用一个开发指南、一个架构决策和现有领域文档；仅当出现独立维护的子系统时再拆分，不预建多层 agent 指令或知识库。
+- **现状文档**（architecture、product/rules、status、development、deployment）只写当前是什么样。设计改变时直接改写对应段落，不在末尾追加“某日更新”。
+- **决策记录**（decisions/NNNN-标题.md）一项决定一份，写背景、决定、理由和状态；被取代时只改状态并指向新记录，原文不改。它是历史，不能作为现行规则的依据。
+- **验收报告与过程记录**写进 PR 或提交说明。确需长期保留的放 [reviews](reviews/)，同样是历史。
+- [产品定位与路线图](product/roadmap.md)是方向，不是实施任务。
+
+## 维护规则
+
+- 同一规则只在所属文档维护，其他位置用链接引用。README 只负责介绍和入口；AGENTS 不写发布记录、任务清单或接口细节。
+- 配置默认值、范围与生效边界只在 [Settings](../backend/app/config.py) 和 [.env.example](../backend/.env.example) 维护，新增配置时逐项写中文说明。
+- 提示词只在 [prompts](../backend/app/agent/prompts/) 维护；代码路径和依赖版本以源码、配置及锁文件为准。
+- 不写会很快过期的数字（测试数量、行数、耗时），改为给出验证命令。
+- 删除功能、改名或换掉服务时，在 [ops/retired-terms.txt](../ops/retired-terms.txt) 追加旧名称；`python ops/check_docs.py` 会检查链接、旧名称回流和常驻文件长度，CI 对每次推送运行。
+- 指令文件分层：根 AGENTS.md 放通用规则；backend、frontend 和提示词目录的 AGENTS.md 只放该目录的约定，并在长度上限内。
 
 ## 组织方式参考
 
-本次整理参考以下公开资料的检索摘要，采用按任务查阅和单一内容归属；没有照搬其行数阈值或额外工具链：
+参考以下公开做法，按本项目规模取舍，没有照搬其工具链：
 
+- [AGENTS.md](https://agents.md/) 约定：根目录放通用规则，子目录放就近规则。
 - [HumanLayer：Writing a good CLAUDE.md](https://www.humanlayer.dev/blog/writing-a-good-claude-md)：常驻指令聚焦通用事项，任务细节按需读取。
-- [agent-engineering-toolkit：Progressive disclosure guide](https://github.com/rodrigorjsf/agent-engineering-toolkit/blob/8ab7364e782d65e2253acfe9e5eb5c53780aaee3/skills/init-agents/references/progressive-disclosure-guide.md)：按文档职责组织项目知识。
-- [libretto：Updating AGENTS.md documentation](https://github.com/saffron-health/libretto/blob/41ab782ccea765d7a9a3c9b56b1b2586723962e3/.agents/skills/update-docs/references/updating-agents-docs.md)：给出清晰的阅读触发条件，将大型主题移入专门文档。
+- [Anthropic：Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)：常驻上下文尽量少，细节按需读取。
+- Michael Nygard 的 [ADR](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions) 格式：一项决定一份记录，被取代时标注状态。
+- [Diátaxis](https://diataxis.fr/)：按用途区分操作指南、参考与原理说明。

@@ -25,3 +25,7 @@ Thumbs.db
 # 日志
 *.log
 backend/evaluations/results/
+
+# 仓库内的临时工作树（应建在仓库目录之外，见 AGENTS.md）
+.cindy-worktrees/
+.claude/worktrees/

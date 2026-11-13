@@ -29,7 +29,7 @@ journalctl -u lma-certbot.service --since '2 days ago'
 
 ## GitHub Actions
 
-仓库 C-jcbest/LMA 只保留 .github/workflows/ci-deploy.yml，在面向 main 的 PR、推送 main 和手动触发时运行。只改 docs/、README.md、AGENTS.md 或 prd.md 时不自动触发；提示词 Markdown 不在排除范围内。
+.github/workflows/ci-deploy.yml 在面向 main 的 PR、推送 main 和手动触发时运行测试与部署；只改 docs/、README.md 或 AGENTS.md 时不触发，提示词 Markdown 不在排除范围内。.github/workflows/docs-check.yml 对所有面向 main 的推送和 PR 运行文档检查，不部署。
 
 1. PostgreSQL 隔离数据库上运行后端 unittest。
 2. 前端 Vitest、精简后的 Chromium 关键交互回归与 Vite 生产构建。浏览器只安装 headless shell，测试文件最多并行两个，文件内串行。
