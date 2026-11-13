@@ -152,7 +152,8 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
             await data.resolve_station("MS")
 
     async def test_empty_data_returns_success_status_and_zero_points(self):
-        platform = self.use_platform(FakePlatform(stations=[station(latitude="30.1", longitude="103.2")]))
+        neighbor = station("邻近站", "22222222-2222-2222-2222-222222222222", latitude="30.2", longitude="103.3")
+        platform = self.use_platform(FakePlatform(stations=[station(latitude="30.1", longitude="103.2"), neighbor]))
         message, _ = await self.run_tool(tools.get_displacement, {
             "station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-02 00:00:00"})
         self.assertEqual(message.status, "success")
@@ -160,11 +161,16 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.artifact["data"]["points"], [])
         self.assertEqual(message.artifact["data"]["summary"]["n"]["count"], 0)
         self.assertEqual(json.loads(message.content)["quality"]["missing_samples"], 25)
-        # 位置只给界面绘制地图，不增加模型上下文。
+        # 位置与同组参照点只给界面绘制地图，不增加模型上下文。
         self.assertEqual(message.artifact["data"]["location"], {
             "group_name": "测试组", "latitude": 30.1, "longitude": 103.2, "coordinate_system": "WGS84",
+            "group_stations": [{
+                "station_uuid": neighbor.station_uuid, "station_name": "邻近站", "station_type": "移动站RTK模式",
+                "latitude": 30.2, "longitude": 103.3,
+            }],
         })
         self.assertNotIn("latitude", message.content)
+        self.assertNotIn("邻近站", message.content)
         self.assertEqual(len(platform.requests), 1)
 
     async def test_internal_error_is_logged_but_never_exposed(self):

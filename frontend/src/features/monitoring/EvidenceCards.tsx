@@ -16,12 +16,14 @@ import {
   type InvestigationStep,
   type StationEvidence,
 } from './investigation';
-import type { MapStation } from './StationMap';
+import type { MapStation, ReferenceStation } from './StationMap';
+import { validCoordinates } from './coordinates';
 import { useStationInspector } from './StationInspectorContext';
 import {
   buildTimelineOption,
   dailyRainfallWithin,
   displacementBasis,
+  horizontalTrack,
   latestHorizontal,
   seriesDuration,
   seriesLabel,
@@ -46,16 +48,58 @@ const STATUS_COLOR_TOKENS: Record<string, string> = {
   未见明显变化: '--status-normal',
 };
 
-/** 至少两个测点有位置时，地图才比文字更能说明空间关系。 */
-export const mapStationsOf = (
+/** 场地依据里该测点的下坡方向；只有以它为中心查询过场地环境时才有。 */
+const downslopeAzimuthOf = (station: StationEvidence) => {
+  for (const site of [...station.site].reverse()) {
+    const aspect = site.data.terrain?.aspect_degrees;
+    if (site.data.center_station.station_uuid === station.uuid && typeof aspect === 'number' && Number.isFinite(aspect)) {
+      return aspect;
+    }
+  }
+  return null;
+};
+
+/** 同组但本次没有取得位移的测点，作为地图上的位置参照；单测点调查时尤其需要。 */
+const referenceStationsOf = (stations: readonly StationEvidence[]): ReferenceStation[] => {
+  const evidenceIds = new Set(stations.map((station) => station.uuid ?? station.id));
+  const references = new Map<string, ReferenceStation>();
+  for (const station of stations) {
+    const candidates = [
+      ...station.series.flatMap((item) => item.data.location?.group_stations ?? []),
+      ...station.site.flatMap((item) => item.data.group_stations),
+    ];
+    for (const candidate of candidates) {
+      if (!candidate.station_uuid || evidenceIds.has(candidate.station_uuid) || references.has(candidate.station_uuid)
+          || !validCoordinates(candidate)) {
+        continue;
+      }
+      references.set(candidate.station_uuid, {
+        id: candidate.station_uuid,
+        name: candidate.station_name,
+        stationType: candidate.station_type ?? null,
+        latitude: candidate.latitude,
+        longitude: candidate.longitude,
+      });
+    }
+  }
+  return [...references.values()];
+};
+
+export interface MapContent {
+  stations: MapStation[];
+  references: ReferenceStation[];
+}
+
+/** 有位置的调查测点画在地图上，同组其他测点作灰色参照。 */
+export const mapContentOf = (
   stations: readonly StationEvidence[],
   conclusionsByStation: ReadonlyMap<string, { status: string; reason: string }>,
-): MapStation[] => {
+): MapContent => {
   const located = stations.filter((station) => station.coordinates);
-  if (located.length < 2) {
-    return [];
+  if (located.length === 0) {
+    return { stations: [], references: [] };
   }
-  return located.map((station) => {
+  const mapStations = located.map((station) => {
     const longest = [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data))[0];
     const horizontal = longest ? latestHorizontal(longest.data) : null;
     const conclusion = conclusionsByStation.get(station.id);
@@ -68,11 +112,14 @@ export const mapStationsOf = (
       northMillimeters: horizontal?.north ?? null,
       eastMillimeters: horizontal?.east ?? null,
       cumulative: longest ? displacementBasis(longest.data) === 'fixed' : false,
+      downslopeAzimuth: downslopeAzimuthOf(station),
+      track: longest && station.stationType !== '基准站' ? horizontalTrack(longest.data) : [],
       status: conclusion?.status ?? null,
       reason: conclusion?.reason ?? null,
       colorToken: (conclusion && STATUS_COLOR_TOKENS[conclusion.status]) || '--status-unknown',
     };
   });
+  return { stations: mapStations, references: referenceStationsOf(located) };
 };
 
 /** 卡片进入视口附近才挂载图表或地图，长对话不会一次创建几十个画布。 */
@@ -231,8 +278,8 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
     return new Map((conclusions?.stations ?? []).map((item) => [item.station_uuid, { status: item.status, reason: item.reason }]));
   }, [parts]);
   // 地图只在测点、位置、变化或状态改变时重建，流式输出不触发重绘。
-  const mapKey = JSON.stringify(mapStationsOf(stations, conclusionsByStation));
-  const mapStations = useMemo(() => JSON.parse(mapKey) as MapStation[], [mapKey]);
+  const mapKey = JSON.stringify(mapContentOf(stations, conclusionsByStation));
+  const { stations: mapStations, references } = useMemo(() => JSON.parse(mapKey) as MapContent, [mapKey]);
   if (mapStations.length === 0) {
     return null;
   }
@@ -244,7 +291,7 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
       <WhenVisible minHeight={288}>
         <ErrorBoundary fallbackTitle="地图渲染异常">
           <Suspense fallback={<Skeleton className="h-72 w-full" />}>
-            <StationMap stations={mapStations} onSelect={onOpenStation} />
+            <StationMap stations={mapStations} references={references} onSelect={onOpenStation} />
           </Suspense>
         </ErrorBoundary>
       </WhenVisible>

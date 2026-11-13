@@ -28,6 +28,61 @@ function textElement<K extends keyof HTMLElementTagNameMap>(tag: K, className: s
   return element;
 }
 
+const DIRECTIONS = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+
+export const directionName = (azimuth: number) => DIRECTIONS[Math.round(azimuth / 45) % DIRECTIONS.length]!;
+
+export const directionText = (azimuth: number) => `${directionName(azimuth)}（方位 ${Math.round(azimuth)}°）`;
+
+/** 方位角从正北顺时针计，0–360°；位移为零时没有方向。 */
+export const azimuthOf = (north: number, east: number) =>
+  (Math.atan2(east, north) * (180 / Math.PI) + 360) % 360;
+
+/** 两个方位之间较小的夹角，0–180°。 */
+export const azimuthDifference = (first: number, second: number) => {
+  const difference = Math.abs(first - second) % 360;
+  return difference > 180 ? 360 - difference : difference;
+};
+
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+
+/** 下坡方向画成 ±22.5° 的淡色扇形，放在位移箭头下面，两者夹角一眼可见。 */
+export function appendDownslopeFan(node: HTMLElement, azimuth: number) {
+  const svg = document.createElementNS(SVG_NAMESPACE, 'svg');
+  svg.setAttribute('viewBox', '0 0 80 80');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('evidence-map-marker__slope');
+  svg.style.transform = `translate(-50%, -50%) rotate(${azimuth}deg)`;
+  const wedge = document.createElementNS(SVG_NAMESPACE, 'path');
+  wedge.setAttribute('d', 'M40 40 L26.99 8.59 A34 34 0 0 1 53.01 8.59 Z');
+  svg.append(wedge);
+  node.prepend(svg);
+}
+
+/** 更新或移除位移箭头；回放时每一帧复用同一个元素。 */
+export function setDisplacementArrow(node: HTMLElement, arrow: { azimuth: number; lengthPixels: number } | null) {
+  let element = node.querySelector<HTMLElement>('.evidence-map-marker__arrow');
+  if (!arrow) {
+    element?.remove();
+    return;
+  }
+  if (!element) {
+    element = document.createElement('span');
+    element.className = 'evidence-map-marker__arrow';
+    node.append(element);
+  }
+  element.style.height = `${arrow.lengthPixels}px`;
+  // 屏幕坐标中正北朝上，方位角即旋转角。
+  element.style.transform = `rotate(${arrow.azimuth}deg)`;
+}
+
+export function setMarkerDetail(node: HTMLElement, detail: string) {
+  const value = node.querySelector('.evidence-map-marker__value');
+  if (value) {
+    value.textContent = detail;
+  }
+}
+
 /** 两处地图采用同一套测点标记：小锚点表示真实位置，标签提供可扫读的信息。 */
 export function createMapMarker(content: MapMarkerContent) {
   const node = document.createElement('button');

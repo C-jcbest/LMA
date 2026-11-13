@@ -93,6 +93,14 @@ class GnssSamplingArtifact(ArtifactModel):
     points_limit: int
 
 
+class GroupStationArtifact(ArtifactModel):
+    station_uuid: str
+    station_name: str
+    station_type: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+
 class GnssStationLocationArtifact(ArtifactModel):
     """取数时平台登记的测点位置，供界面在对话中绘制测点地图。"""
 
@@ -100,6 +108,8 @@ class GnssStationLocationArtifact(ArtifactModel):
     latitude: float | None = None
     longitude: float | None = None
     coordinate_system: Literal["WGS84"] = "WGS84"
+    # 同组其他测点只作地图上的位置参照，不是本次取得的位移依据。
+    group_stations: list[GroupStationArtifact] = Field(default_factory=list)
 
 
 class GnssArtifactData(ArtifactModel):

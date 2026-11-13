@@ -3,7 +3,7 @@ import { useAuiState } from '@assistant-ui/react';
 import { MarkdownText } from '@/components/markdown-text';
 import { cn } from '@/lib/utils';
 import { cardReferenceFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenceCards, type CardReference } from './evidence-cards';
-import { EvidenceCard, hasEvidenceCard, mapStationsOf } from './EvidenceCards';
+import { EvidenceCard, hasEvidenceCard, mapContentOf } from './EvidenceCards';
 import { buildSteps, collectStations, type InvestigationStep } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
 
@@ -74,7 +74,7 @@ export const EvidenceMarkdown: FC = () => {
   const earlierTexts = textParts.slice(0, Math.max(0, textParts.indexOf(text)));
   const cardKey = steps.filter(hasEvidenceCard).map((step) => step.evidenceId).join();
   const alreadyShownKey = earlierTexts.flatMap(citedEvidenceIds).join();
-  const includeStationMap = earlierTexts.length === 0 && mapStationsOf(stations, new Map()).length > 0;
+  const includeStationMap = earlierTexts.length === 0 && mapContentOf(stations, new Map()).stations.length > 0;
 
   const preprocess = useCallback(
     (markdown: string) => insertEvidenceCards(markdown, {

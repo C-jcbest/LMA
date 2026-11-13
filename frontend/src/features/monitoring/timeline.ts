@@ -99,6 +99,24 @@ export function latestHorizontal(data: GnssArtifactData): { north: number; east:
   return null;
 }
 
+export interface HorizontalSample {
+  time: string;
+  north: number;
+  east: number;
+}
+
+/** 地图回放用的水平位移轨迹；点数过多时等间隔抽取，保留首末点。 */
+export function horizontalTrack(data: GnssArtifactData, maxSamples = 240): HorizontalSample[] {
+  const samples = displacementOf(data).flatMap((point) => (
+    point.n === null || point.e === null ? [] : [{ time: point.time, north: point.n, east: point.e }]
+  ));
+  if (samples.length <= maxSamples) {
+    return samples;
+  }
+  const step = (samples.length - 1) / (maxSamples - 1);
+  return Array.from({ length: maxSamples }, (_, index) => samples[Math.round(index * step)]!);
+}
+
 export const seriesDuration = (data: GnssArtifactData) =>
   toMillis(data.end_time) - toMillis(data.begin_time);
 

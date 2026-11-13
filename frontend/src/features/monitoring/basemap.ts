@@ -10,7 +10,18 @@ export type BaseLayer = 'satellite' | 'road';
 export interface MapLayerSelection {
   baseLayer: BaseLayer;
   showRoads: boolean;
+  terrain3d: boolean;
 }
+
+export const DEFAULT_LAYER_SELECTION: MapLayerSelection = { baseLayer: 'satellite', showRoads: false, terrain3d: false };
+
+/**
+ * 高德 2.0 的地形起伏只在 3D 视图下生效，且视图模式不能在创建后切换，开关时需要重建地图。
+ * 3D 下仍禁止旋转，保持正北朝上；倾斜后的位移箭头是屏幕上的示意，不随透视变形。
+ */
+export const mapViewOptions = (selection: MapLayerSelection) => (selection.terrain3d
+  ? { viewMode: '3D' as const, terrain: true, pitch: 55, pitchEnable: true }
+  : { viewMode: '2D' as const, pitch: 0, pitchEnable: false });
 export type AMapState = { status: 'loading' } | { status: 'ready'; sdk: typeof AMap } | { status: 'error'; message: string };
 
 /** 只在展示边界转换，观测数据、环境查询和坐标文字仍使用 WGS84。 */

@@ -291,6 +291,20 @@
 .evidence-map-marker[data-current='true'] .evidence-map-marker__dot {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--popover) 55%, transparent), 0 2px 5px rgb(0 0 0 / 30%);
 }
+.evidence-map-marker__slope {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 80px;
+  height: 80px;
+  pointer-events: none;
+}
+.evidence-map-marker__slope path {
+  fill: rgb(255 255 255 / 0.28);
+  stroke: rgb(255 255 255 / 0.9);
+  stroke-width: 1.2;
+  stroke-dasharray: 3 2;
+}
 .evidence-map-marker__arrow {
   position: absolute;
   bottom: 50%;

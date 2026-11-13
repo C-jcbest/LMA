@@ -112,6 +112,14 @@ export interface GnssArtifactData {
     group_name?: string | null;
     latitude?: number | null;
     longitude?: number | null;
+    /** 同组其他测点，只作地图上的位置参照。 */
+    group_stations?: Array<{
+      station_uuid: string;
+      station_name: string;
+      station_type?: string | null;
+      latitude?: number | null;
+      longitude?: number | null;
+    }>;
   } | null;
 }
 
