@@ -233,7 +233,7 @@ test('调查记录滚动加载下一页，整页耗尽后隐藏加载入口，�
   const records = page.getByRole('region', { name: '调查记录' });
   const items = records.locator('[data-slot="aui_thread-list-item"]');
   await expect(items).toHaveCount(20);
-  await expect(page.getByRole('complementary', { name: '导航' }).locator('[data-slot="aui_thread-list-item"]')).toHaveCount(6);
+  await expect(page.getByRole('complementary', { name: '导航' }).locator('[data-slot="aui_thread-list-item"]')).toHaveCount(5);
   const viewport = records.locator('[data-slot="aui_thread-list-viewport"]');
   await expect.poll(() => viewport.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
   const heading = records.getByRole('heading', { name: '调查记录' });

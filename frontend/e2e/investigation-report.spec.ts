@@ -60,9 +60,16 @@ const stationTimeline = {
   }],
 };
 
+const GROUPS: Record<string, string> = { 建议调查: '需要处理', 未见明显变化: '平稳', 数据不足: '数据问题' };
+// 当前判断由服务端给出（station_judgment.py）；这里按巡检结果构造，调查之后有新变化的行另行覆盖。
 const inspectionRow = (name: string, screening: string, fields: Record<string, unknown> = {}) => ({
   station_uuid: name, station_name: name, group_name: 'K3 分组', screening, reasons: [], metrics: {},
-  trend: [0, 1, 2, 3], previous_screening: null, last_conclusion: null, ...fields,
+  trend: [0, 1, 2, 3], previous_screening: null, last_conclusion: null,
+  current: {
+    status: screening, source: '巡检', at: '2026-11-09T08:30:00+08:00', reason: '', group: GROUPS[screening],
+    changed_since_investigation: false, session_id: null,
+  },
+  ...fields,
 });
 
 const inspection = {
@@ -74,8 +81,13 @@ const inspection = {
   inspection: { id: 'inspection-1', finished_at: '2026-11-09T08:30:00+08:00' },
   stations: [
     inspectionRow('测试点 A', '建议调查', {
-      reasons: ['北向 90 天持续同向变化，约 -11.9 mm'], previous_screening: '未见明显变化',
+      reasons: ['近 90 天持续同向变化：北向 -11.9 mm'], previous_screening: '未见明显变化',
+      metrics: { net_change_mm: { n: -11.9, e: 5, u: 0 } },
       last_conclusion: { status: '持续关注', reason: '缓慢累积', session_id: 'report-session', created_at: '2026-11-08T00:00:00Z' },
+      current: {
+        status: '建议调查', source: '巡检', at: '2026-11-09T08:30:00+08:00', reason: '近 90 天持续同向变化：北向 -11.9 mm',
+        group: '需要处理', changed_since_investigation: true, session_id: null,
+      },
     }),
     inspectionRow('测试点 B', '未见明显变化'),
     inspectionRow('测试点 C', '数据不足', { reasons: ['最近 48 小时没有数据'] }),
@@ -241,10 +253,12 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?threadId=report-session');
 
-  // 状态按优先级排列，原因放在提示里，点击打开该测点依据。
-  const statuses = page.getByRole('list', { name: '测点状态' });
-  await expect(statuses.getByRole('button').first()).toHaveAccessibleName('查看 测试点 A 需人工复核 的依据');
-  await expect(statuses.getByRole('button').first()).toHaveAttribute('title', '长期同向变化');
+  // 判断头按优先级排列：状态、测点、时段和原因直接可见，点测点名打开该测点依据。
+  const heads = page.locator('.judgment-head');
+  await expect(heads).toHaveCount(2);
+  await expect(heads.first()).toContainText('需人工复核');
+  await expect(heads.first()).toContainText('长期同向变化');
+  await expect(heads.first().getByRole('button', { name: '查看 测试点 A 的依据' })).toBeVisible();
   await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /已调查 1 个测点 · 2 项查询/ })).toBeVisible();
 
@@ -256,15 +270,22 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
   expect(copied).toContain('## 依据');
   expect(copied).not.toContain('#evidence-');
 
+  // 位移引用不再另开曲线：滚动到该测点的时间轴卡并切到被引用的窗口。
+  const card = page.locator('[data-slot="evidence-card"]').filter({ hasText: '测试点 A 时间轴' });
+  const longTab = card.getByRole('tab', { name: /94 天/ });
+  const shortTab = card.getByRole('tab', { name: /11-01~11-03/ });
   await page.getByRole('button', { name: /查看依据 1：/ }).first().click();
+  await expect(longTab).toHaveAttribute('aria-selected', 'true');
+  await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
+  await expect(shortTab).toHaveAttribute('aria-selected', 'true');
+  await expect(card).toBeInViewport();
+  // 在卡片里换窗口后，再点相同引用仍应回到被引用的窗口。
+  await longTab.click();
+  await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
+  await expect(shortTab).toHaveAttribute('aria-selected', 'true');
+  // 放大入口打开依据面板，停在卡片当前的窗口。
+  await card.getByRole('button', { name: '展开测试点 A 时间轴' }).click();
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
-  await expect(inspector(page).getByRole('radio', { name: /08-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
-
-  await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
-  await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
-  // 在面板内换窗口后，再点相同引用仍应回到被引用的窗口。
-  await inspector(page).getByRole('radio', { name: /08-01 至 11-03/ }).click();
-  await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
   await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
 });
 
@@ -321,7 +342,7 @@ test('天气和计算引用直接打开对应依据，用户消息显示追问�
 });
 
 for (const width of [320, 390, 1440]) {
-  test(`${width}px 调查过程在回答顶部、相似窗口折叠，核查后返回阅读位置`, async ({ page }) => {
+  test(`${width}px 调查过程在回答顶部、一个测点一张时间轴卡，核查后返回阅读位置`, async ({ page }) => {
     await mockApi(page);
     await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: proseHistory() }, latest_run: null } }));
     const chartErrors: string[] = [];
@@ -337,21 +358,27 @@ for (const width of [320, 390, 1440]) {
     });
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/?threadId=report-session');
+    // 两个窗口、三次引用只合成一张时间轴卡，窗口作为卡内标签。
     const cards = page.locator('[data-slot="evidence-card"]');
-    await expect(cards).toHaveCount(2);
+    await expect(cards).toHaveCount(1);
     await expect(cards.nth(0)).toHaveAttribute('data-state', 'open');
-    await expect(cards.nth(1)).toHaveAttribute('data-state', 'closed');
+    await expect(cards.nth(0).getByRole('tab')).toHaveCount(2);
     await cards.nth(0).scrollIntoViewIfNeeded();
     await expect(cards.nth(0).locator('canvas')).toBeVisible();
     const answer = page.getByText('测试点 A 需要优先复核，测试点 B 未见明显变化。', { exact: true });
     const process = page.locator('[data-slot="investigation"]');
-    // 调查过程在回答顶部，收起时很矮，结论紧随其后。
+    // 调查过程在回答顶部，收起时只有一行；判断头紧随其后，正文在判断头之后。
     const processBox = (await process.boundingBox())!;
     expect(processBox.y).toBeLessThan((await answer.boundingBox())!.y);
-    expect(processBox.height).toBeLessThan(120);
+    const processRow = (await process.getByRole('button', { name: /已调查 1 个测点/ }).boundingBox())!;
+    expect(processRow.height).toBeLessThan(60);
+    const judgment = (await page.locator('.judgment-head').first().boundingBox())!;
+    expect(judgment.y).toBeGreaterThan(processRow.y);
+    expect(judgment.y).toBeLessThan((await answer.boundingBox())!.y);
     await answer.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `test-results/answer-${width}.png`, animations: 'disabled' });
-    const entry = cards.nth(1).getByRole('button', { name: '展开测试点 A 位移', exact: true });
+    await cards.nth(0).getByRole('tab', { name: /11-01~11-03/ }).click();
+    const entry = cards.nth(0).getByRole('button', { name: '展开测试点 A 时间轴', exact: true });
     // 输入框固定在底部；先滚到按钮可点击的位置，再记录实际打开时的阅读位置。
     await entry.click({ trial: true });
     const entryTop = (await entry.boundingBox())!.y;
@@ -370,7 +397,7 @@ for (const width of [320, 390, 1440]) {
   });
 }
 
-test('今日页只列建议调查的测点，点击进入测点页直接看数据，不调用模型', async ({ page }) => {
+test('今日页按当前判断分组，点击进入测点页直接看数据，不调用模型', async ({ page }) => {
   await mockApi(page);
   await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: inspection }));
   let runRequests = 0;
@@ -387,12 +414,15 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: /3 个测点.*1 个.*建议调查/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '3 个测点，1 个需要处理' })).toBeVisible();
   expect(await page.getByRole('region', { name: '今日页面', exact: true }).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  await expect(page.getByRole('list', { name: '建议调查的测点' }).getByRole('listitem')).toHaveCount(1);
-  await expect(page.getByText('上次巡检未见明显变化')).toBeVisible();
-  await expect(page.getByText('上次调查：持续关注')).toBeVisible();
-  await expect(page.getByRole('button', { name: /1 个未见明显变化.*1 个数据待核查.*全部测点/ })).toBeVisible();
+  await expect(page.getByRole('region', { name: '需要处理' }).getByRole('listitem')).toHaveCount(1);
+  await expect(page.getByRole('region', { name: '数据问题' }).getByRole('listitem')).toHaveCount(1);
+  // 调查之后巡检又发现变化：用巡检结果并提示，标签写明来源与日期。
+  await expect(page.getByText('上次调查后有新变化')).toBeVisible();
+  await expect(page.getByRole('region', { name: '需要处理' })).toContainText('11-09 巡检');
+  await expect(page.getByRole('region', { name: '需要处理' })).toContainText('mm 水平');
+  await expect(page.getByRole('button', { name: /其余 1 个未见明显变化.*全部测点/ })).toBeVisible();
 
   await page.getByRole('button', { name: '查看 测试点 A' }).click();
   await expect(page).toHaveURL(/station=/);
@@ -441,7 +471,7 @@ test('巡检中断后可重新启动，显示进度并恢复结果', async ({ pa
   expect(startCount).toBe(1);
 
   state = inspection;
-  await expect(page.getByRole('heading', { name: /1 个.*建议调查/ })).toBeVisible({ timeout: 6000 });
+  await expect(page.getByRole('heading', { name: /1 个需要处理/ })).toBeVisible({ timeout: 6000 });
   await expect(page.getByRole('button', { name: '重新巡检' })).toBeEnabled();
   await expect(input).toHaveValue('保留我的调查问题');
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
