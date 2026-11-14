@@ -27,6 +27,7 @@
 
 ## 功能与维护
 
+- [ ] 回答后的“可以继续”：放在消息下方工具栏（复制、导出、重新生成）的下方，点击直接发送；问题来自本次调查没覆盖的部分，不改动回答其余呈现。背景见 [0010](decisions/0010-keep-answer-presentation.md)。
 - [ ] 测点页补充降雨与同组对比：需要不经过模型的降雨读取入口，并确认对上游天气服务的请求量。
 - [ ] 升级 `langchain-deepseek` 时复核思考内容回传；官方 integration 原生通过多轮工具循环回归后删除 `DeepSeekThinkingChatModel`。
 

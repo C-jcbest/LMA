@@ -15,3 +15,6 @@ prd.md  # 2026-11-14 拆分为 docs/product/rules.md 与 roadmap.md
 project-status.md  # 2026-11-14 并入 docs/status.md
 adr/0001-agent-runtime  # 2026-11-14 拆分为 docs/architecture.md 与 docs/decisions/
 auth_basic  # 网关 Basic Auth，2026-11-14 改为应用内登录页
+StationCompass  # 方向罗盘，2026-11-15 否决，单测点保留地图（见 decisions/0010）
+StationTimelineCard  # 一测点一张时间轴卡，2026-11-15 否决，保留每条依据一张卡（见 decisions/0010）
+方向罗盘  # 2026-11-15 否决（见 decisions/0010）
