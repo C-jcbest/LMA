@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
+import { useAui } from '@assistant-ui/react';
 
 export type Page = 'home' | 'conversation' | 'stations' | 'records' | 'station';
 
@@ -14,10 +15,7 @@ interface NavigationValue extends NavigationLocation {
   goHome: () => void;
   /** 回到对话区，保留当前会话。 */
   showConversation: (resultAnchor?: string) => void;
-  /** 新调查从首页开始：回到首页并让输入框获得焦点。 */
   startConversation: () => void;
-  /** 每次请求聚焦首页输入框时加一，首页据此聚焦。 */
-  homeFocusRequest: number;
   returnFromStation: () => void;
   goStations: () => void;
   goRecords: () => void;
@@ -76,8 +74,8 @@ const switchPage = (update: () => void) => {
 
 /** 只保存用户在看哪一页；会话选择仍由官方 Runtime 管理，并各自写入地址栏。 */
 export function NavigationProvider({ children }: { children: ReactNode }) {
+  const aui = useAui();
   const [location, setLocation] = useState(readLocation);
-  const [homeFocusRequest, setHomeFocusRequest] = useState(0);
   const stationOrigin = useRef<NavigationLocation>({ page: 'stations', stationUuid: null });
 
   useEffect(() => {
@@ -93,12 +91,11 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<NavigationValue>(() => ({
     ...location,
-    homeFocusRequest,
     goHome: () => navigate({ page: 'home', stationUuid: null }),
     showConversation: (resultAnchor) => navigate({ page: 'conversation', stationUuid: null, resultAnchor }),
     startConversation: () => {
-      navigate({ page: 'home', stationUuid: null });
-      setHomeFocusRequest((count) => count + 1);
+      void aui.threads().switchToNewThread();
+      navigate({ page: 'conversation', stationUuid: null });
     },
     returnFromStation: () => navigate(stationOrigin.current),
     showStationResult: (resultAnchor) => {
@@ -119,7 +116,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
       }
       navigate({ page: 'station', stationUuid });
     },
-  }), [location, navigate, homeFocusRequest]);
+  }), [aui, location, navigate]);
 
   return <NavigationContext.Provider value={value}>{children}</NavigationContext.Provider>;
 }

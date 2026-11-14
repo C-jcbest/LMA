@@ -598,10 +598,8 @@
   border-left-width: 1px;
 }
 
-/* 展开调查只把对话栏加宽，左侧仍保留曲线，回答引用的窗口能在旁边对照。 */
 .station-chat-panel[data-mode="expanded"] {
-  width: max(60%, calc(100% - 480px));
-  border-left-width: 1px;
+  width: 100%;
 }
 
 .station-chat-panel[data-mode="closed"] {
@@ -735,57 +733,4 @@
   .new-investigation-intro, .new-investigation-question {
     animation: none;
   }
-}
-
-/* 点击正文引用编号后，测点时间轴卡描边脉冲一次，把文字和数据连起来。 */
-.evidence-card-pulse {
-  animation: evidence-card-pulse 600ms ease-out;
-}
-@keyframes evidence-card-pulse {
-  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--foreground) 35%, transparent); }
-  100% { box-shadow: 0 0 0 8px transparent; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .evidence-card-pulse { animation: none; }
-}
-
-/* 调查完成：判断头从过程行下方淡入，左侧状态色由中性过渡到最终色，把“过程”交接给“结论”。 */
-.judgment-enter .judgment-head {
-  animation: judgment-enter 220ms ease-out both;
-}
-@keyframes judgment-enter {
-  from { opacity: 0; transform: translateY(-4px); border-inline-start-color: var(--border); }
-}
-/* “可以继续”在回答结束后依次淡入，不和正文抢注意力。 */
-.follow-up {
-  animation: follow-up-enter 160ms ease-out both;
-}
-@keyframes follow-up-enter {
-  from { opacity: 0; transform: translateY(4px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .judgment-enter .judgment-head,
-  .follow-up { animation: none; }
-}
-
-/* 首页各组的行依次淡入并上移 6px，用户能看出列表刚更新、哪些点进来了。 */
-.row-enter {
-  animation: row-enter 240ms ease-out both;
-}
-@keyframes row-enter {
-  from { opacity: 0; transform: translateY(6px); }
-}
-/* 调查过程新出现的步骤淡入展开。 */
-.step-enter {
-  animation: step-enter 160ms ease-out both;
-}
-@keyframes step-enter {
-  from { opacity: 0; transform: translateY(-2px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .row-enter,
-  .step-enter { animation: fade-only 120ms ease-out both; }
-}
-@keyframes fade-only {
-  from { opacity: 0; }
 }

@@ -11,23 +11,19 @@ import type { EvidenceSource, GnssArtifactData, ToolArtifactEnvelope } from '@/t
 import { addAskTarget } from './ask-targets';
 import { useChartColors } from './chartColors';
 import { formatSigned, MILLIMETER_DIGITS } from './format';
-import { collectStations, findInlineEvidence, formatDateRange, isFromToolCall, type StationEvidence } from './investigation';
+import { collectStations, findInlineEvidence, formatDateRange, type StationEvidence } from './investigation';
 import { InlineEvidenceResult } from './InvestigationProcess';
 import { useStationInspector, type InspectorViewState } from './StationInspectorContext';
 import {
   buildTimelineOption,
-  curveBasisLabel,
   dailyRainfallWithin,
-  defaultCurveBasis,
+  displacementBasisLabel,
   displacementOf,
   referenceOf,
   formatChartTime,
   peerSeriesFor,
   seriesDuration,
   seriesLabel,
-  timelineHeight,
-  timelineSubGridCount,
-  type CurveBasis,
   type TimelineMode,
 } from './timeline';
 import type { ChartRange } from './TimelineChart';
@@ -107,24 +103,21 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
   const { isSplit, composerInputRef, closeInspector } = useStationInspector();
   const chartColors = useChartColors();
   const [mode, setMode] = useState<TimelineMode>(viewState.mode ?? 'components');
-  const [basisChoice, setBasisChoice] = useState<CurveBasis | null>(null);
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
 
   const data = seriesList[selectedIndex]!;
-  const basis = basisChoice ?? defaultCurveBasis(data);
   const peerSeries = useMemo(
     () => peerSeriesFor(data, peers.map((peer) => ({ name: peer.name, series: peer.series.map((item) => item.data) }))),
     [data, peers],
   );
-  const rainfall = useMemo(
-    () => dailyRainfallWithin(station.weather.map((item) => item.data), data.begin_time, data.end_time),
-    [station.weather, data],
-  );
-  const option = useMemo(() => buildTimelineOption(
-    { data, rainfall, peers: peerSeries, mode: peerSeries.length > 0 ? mode : 'components', basis },
-    chartColors,
-  ), [data, rainfall, peerSeries, mode, basis, chartColors]);
+  const option = useMemo(() => {
+    const rainfall = dailyRainfallWithin(station.weather.map((item) => item.data), data.begin_time, data.end_time);
+    return buildTimelineOption(
+      { data, rainfall, peers: peerSeries, mode: peerSeries.length > 0 ? mode : 'components' },
+      chartColors,
+    );
+  }, [station.weather, data, peerSeries, mode, chartColors]);
 
   const askAbout = (target: ChartRange) => {
     // 时间轴来自位移序列，序列总带测点编号。
@@ -149,15 +142,6 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
         ) : (
           <p className="text-sm text-muted-foreground">{seriesLabel(data)}</p>
         )}
-        <Segmented
-          label="曲线基准"
-          value={basis}
-          options={[
-            { value: 'window', label: '本窗口变化' },
-            { value: 'reference', label: '累计位移' },
-          ]}
-          onValueChange={(value) => setBasisChoice(value as CurveBasis)}
-        />
         {peerSeries.length > 0 && (
           <Segmented
             label="曲线内容"
@@ -181,7 +165,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
           <p className="min-w-0 truncate text-sm text-muted-foreground tabular-nums">
             {range
               ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`
-              : `${curveBasisLabel(data, basis)}（mm）· ▲ 台阶 · ◇ 缺测前后位置差`}
+              : `${displacementBasisLabel(data)}（mm）· ▲ 为台阶`}
           </p>
           {range && (
             <div className="flex shrink-0 items-center gap-1">
@@ -197,9 +181,8 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
         <ErrorBoundary fallbackTitle="时间轴渲染异常">
           <Suspense fallback={<Skeleton className="h-96 w-full" />}>
             <TimelineChart
-              viewKey={`${station.id}:${toolCallId}:${mode}:${basis}`}
+              viewKey={`${station.id}:${toolCallId}:${mode}`}
               option={option}
-              height={timelineHeight(timelineSubGridCount(data, rainfall), false)}
               label={`${station.name} ${seriesLabel(data)} 位移时间轴`}
               resetSignal={resetSignal}
               onRangeChange={setRange}
@@ -259,8 +242,7 @@ const EvidenceNotes: FC<{ station: StationEvidence; toolCallId?: string }> = ({ 
 
 /** 引用指向哪类依据就先打开哪一页；从测点入口进入时先看时间轴。 */
 const initialTab = (station: StationEvidence, focusToolCallId: string | undefined): string => {
-  const isFocused = (items: readonly { toolCallId: string; sourceToolCallId: string }[]) =>
-    items.some((item) => isFromToolCall(item, focusToolCallId));
+  const isFocused = (items: readonly { toolCallId: string }[]) => items.some((item) => item.toolCallId === focusToolCallId);
   if (isFocused(station.site)) {
     return 'site';
   }
@@ -308,7 +290,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
   );
   const seriesList = useMemo(() => sortedSeries.map((item) => item.data), [sortedSeries]);
   const [selectedIndex, updateSelectedIndex] = useState(
-    () => Math.max(0, sortedSeries.findIndex((item) => isFromToolCall(item, saved.selectedToolCallId ?? focusToolCallId))),
+    () => Math.max(0, sortedSeries.findIndex((item) => item.toolCallId === (saved.selectedToolCallId ?? focusToolCallId))),
   );
   const setSelectedIndex = (index: number) => {
     saved.selectedToolCallId = sortedSeries[index]?.toolCallId;
@@ -336,7 +318,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
     saved.tab = tab;
     updateActiveTab(tab);
   };
-  const siteEvidence = station.site.find((item) => isFromToolCall(item, focusToolCallId)) ?? station.site.at(-1);
+  const siteEvidence = station.site.find((item) => item.toolCallId === focusToolCallId) ?? station.site.at(-1);
   let noteToolCallId = focusToolCallId;
   if (activeTab === 'timeline') {
     noteToolCallId = sortedSeries[selectedIndex]?.toolCallId;

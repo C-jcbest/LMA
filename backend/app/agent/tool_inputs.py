@@ -111,6 +111,10 @@ class DisplacementInput(TimeWindowInput):
         return self
 
 
+class ChartInput(TimeWindowInput):
+    tool_call_id: Annotated[str, InjectedToolCallId]
+
+
 class SiteEnvironmentInput(StationInput):
     tool_call_id: Annotated[str, InjectedToolCallId]
 

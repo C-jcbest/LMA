@@ -4,14 +4,7 @@ import asyncio
 
 from langchain_core.tools import tool
 
-from app.agent.numerical import (
-    common_period_features,
-    compare_windows,
-    horizontal_direction,
-    horizontal_rate_sequence,
-    window_features,
-)
-from app.agent.progress import displacement_summary
+from app.agent.numerical import common_period_features, compare_windows, horizontal_direction, window_features
 from app.agent.tool_inputs import DisplacementInput, FindStationsInput
 from app.agent.tool_protocol import ToolFailure, tool_result
 from app.config import get_settings
@@ -24,7 +17,6 @@ from app.monitoring_data import (
     displacement_mm,
     monitoring,
     series_artifact_data,
-    station_name_matches,
     station_summary,
 )
 
@@ -60,7 +52,7 @@ async def find_stations(group_name: str | None = None, station_name: str | None 
         groups = matched
         stations = [station for station in stations if station.group_uuid == matched[0].group_uuid]
     if station_name:
-        stations = [station for station in stations if station_name_matches(station_name, station.station_name)]
+        stations = [station for station in stations if station_name in station.station_name]
     if station_status:
         stations = [station for station in stations if STATION_STATUS_TEXT.get(station.station_status) == station_status]
     return tool_result(
@@ -73,7 +65,6 @@ async def find_stations(group_name: str | None = None, station_name: str | None 
             "stations": [station_summary(station) for station in stations],
         },
         kind="station_list",
-        summary=f"找到 {len(stations)} 个测点",
     )
 
 
@@ -91,9 +82,8 @@ async def get_displacement(
     """查询移动站任意时间窗的 GNSS 位移，并直接给出数值特征。
 
     每个方向（北向 N、东向 E、垂向 U、水平合成 H、三维合成 D）给出：相对平台固定参考的累计偏移、
-    窗口净变化（H、D 为首末偏移模长之差 magnitude_change_mm）、Theil–Sen 鲁棒趋势、最大单步变化与候选跳变
-    （是否维持或回落）、缺测前后的位置差、本窗残差离散；按请求采样日历统计的缺测；沿水平主方向的分段速率
-    （rate_sequence，看速率是否逐段增大）。可选前后分段比较速率、与同组测点按共同有效时刻对比。
+    窗口净变化、Theil–Sen 鲁棒趋势、最大单步变化与候选跳变（是否维持或回落）、本窗残差离散；
+    以及按请求采样日历统计的缺测。可选前后分段比较速率、与同组测点按共同有效时刻对比。
 
     这些特征由本系统根据平台观测计算，不是监测平台给出的判定。位移单位 mm，速率 mm/day。
     点数较少时附逐点相对位移（dn/de/du）；需要逐条查看、
@@ -128,15 +118,9 @@ async def get_displacement(
     if others:
         comparisons.update(_station_comparison(series, others, outcomes))
 
-    rate_sequence = horizontal_rate_sequence(series.observations, series.sampling, series.cadence_hours)
-    display = series_artifact_data(
-        series, features=features, rate_sequence=rate_sequence, comparisons=comparisons, group_stations=group_stations,
-    )
-    facts = _model_facts(series, features, rate_sequence, comparisons, include_points)
-    return tool_result(
-        facts, kind="gnss_series", display=display, observed_at=series.acquired_at,
-        summary=displacement_summary(display),
-    )
+    display = series_artifact_data(series, features=features, comparisons=comparisons, group_stations=group_stations)
+    facts = _model_facts(series, features, comparisons, include_points)
+    return tool_result(facts, kind="gnss_series", display=display, observed_at=series.acquired_at)
 
 
 def _split_comparison(series: DisplacementSeries, split_time: str) -> dict:
@@ -173,38 +157,26 @@ def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
     }
 
 
-def round_mm(value):
+def _rounded(value):
     # 位移以 mm 计，0.001 mm 以下只是浮点运算噪声，保留会让模型复述出 1.9999999 这类数字。
     return round(value, 3) if isinstance(value, float) else value
 
 
-# 合成量 H、D 的“净变化”是首末两点偏移模长之差，不是窗口内位移矢量的长度；换个字段名让含义自明。
-_MAGNITUDE_AXES = ("h", "d")
-
-
-def model_feature(feature: dict, axis: str | None = None) -> dict:
+def _model_feature(feature: dict) -> dict:
     compact = {
-        key: round_mm(feature.get(key))
+        key: _rounded(feature.get(key))
         for key in _FEATURE_FIELDS_FOR_MODEL if feature.get(key) not in (None, [], "")
     }
-    if axis in _MAGNITUDE_AXES and "net_change_mm" in compact:
-        compact["magnitude_change_mm"] = compact.pop("net_change_mm")
-    gap_shifts = feature.get("gap_shifts") or []
-    if gap_shifts:
-        compact["gap_shifts"] = [
-            {key: round_mm(item[key]) for key in ("gap_from", "gap_to", "gap_hours", "level_shift_mm", "persistence")}
-            for item in gap_shifts[:_MAX_EVENTS_FOR_MODEL]
-        ]
     events = feature.get("events") or []
     if events:
         compact["events"] = [
-            {key: round_mm(event[key]) for key in ("time", "step_mm", "level_shift_mm", "status", "held_until", "held_hours")}
+            {key: _rounded(event[key]) for key in ("time", "step_mm", "level_shift_mm", "status", "held_until", "held_hours")}
             for event in events[:_MAX_EVENTS_FOR_MODEL]
         ]
     return compact
 
 
-def model_quality(quality: dict) -> dict:
+def _model_quality(quality: dict) -> dict:
     return {
         "expected_samples": quality["expected"],
         "missing_samples": quality["missing"],
@@ -217,9 +189,7 @@ def model_quality(quality: dict) -> dict:
     }
 
 
-def _model_facts(
-    series: DisplacementSeries, features: dict, rate_sequence: dict, comparisons: dict, include_points: bool | None,
-) -> dict:
+def _model_facts(series: DisplacementSeries, features: dict, comparisons: dict, include_points: bool | None) -> dict:
     station = series.station
     facts = {
         "station": {
@@ -233,13 +203,9 @@ def _model_facts(
             axis: "平台固定参考" if value is not None else "固定参考缺失，累计偏移未知"
             for axis, value in series.reference.items()
         },
-        "quality": model_quality(series.quality),
-        "features": {axis: model_feature(feature, axis) for axis, feature in features.items()},
+        "quality": _model_quality(series.quality),
+        "features": {axis: _model_feature(feature) for axis, feature in features.items()},
     }
-    if rate_sequence.get("available"):
-        facts["rate_sequence"] = {
-            key: rate_sequence[key] for key in ("azimuth_deg", "segment_days", "segments", "pattern", "description")
-        }
     north, east = features.get("n", {}), features.get("e", {})
     # 方位与场地坡向（下坡方向）比较，是判断位移是否符合坡体下滑的关键事实；由系统计算，避免模型自行换算角度。
     direction = {
@@ -254,8 +220,8 @@ def _model_facts(
     if any(axis in comparisons for axis in features):
         facts["split"] = {
             axis: {
-                "first": model_feature(comparison["first"], axis), "second": model_feature(comparison["second"], axis),
-                "velocity_difference_mm_day": round_mm(comparison["velocity_difference_mm_day"]),
+                "first": _model_feature(comparison["first"]), "second": _model_feature(comparison["second"]),
+                "velocity_difference_mm_day": _rounded(comparison["velocity_difference_mm_day"]),
                 "comparison_supported": comparison["comparison_supported"],
             }
             for axis, comparison in comparisons.items() if axis in features
@@ -265,7 +231,7 @@ def _model_facts(
             "station_names": comparisons["station_names"],
             "failures": comparisons["failures"],
             "features": {
-                axis: {identifier: model_feature(feature, axis) for identifier, feature in by_station.items()}
+                axis: {identifier: _model_feature(feature) for identifier, feature in by_station.items()}
                 for axis, by_station in comparisons["common_period"].items()
             },
         }

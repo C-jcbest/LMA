@@ -12,7 +12,6 @@ const KNOWN_ARTIFACT_KINDS = new Set<ToolArtifactKind>([
   'computation',
   'station_list',
   'gnss_series',
-  'station_overview',
   'weather',
   'site_environment',
 ]);
@@ -37,21 +36,6 @@ const isStation = (value: unknown) =>
   isRecord(value) &&
   typeof value.station_name === 'string' &&
   value.coordinate_system === 'WGS84';
-
-const isGnssData = (value: unknown) => (
-  isRecord(value) &&
-  typeof value.station_name === 'string' &&
-  typeof value.begin_time === 'string' &&
-  typeof value.end_time === 'string' &&
-  typeof value.timezone === 'string' &&
-  typeof value.total_points === 'number' &&
-  typeof value.returned_points === 'number' &&
-  typeof value.downsampled === 'boolean' &&
-  Array.isArray(value.points) &&
-  value.points.every((point) => isRecord(point) && typeof point.time === 'string') &&
-  isRecord(value.summary) &&
-  Array.isArray(value.summary.gaps)
-);
 
 const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
   if (!isRecord(value)) return false;
@@ -86,14 +70,20 @@ const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
         value.stations.every(isStation)
       );
     case 'gnss_series':
-      return isGnssData(value);
-    case 'station_overview':
       return (
-        typeof value.station_uuid === 'string' &&
         typeof value.station_name === 'string' &&
-        Array.isArray(value.windows) &&
-        value.windows.length > 0 &&
-        value.windows.every(isGnssData)
+        typeof value.begin_time === 'string' &&
+        typeof value.end_time === 'string' &&
+        typeof value.timezone === 'string' &&
+        typeof value.total_points === 'number' &&
+        typeof value.returned_points === 'number' &&
+        typeof value.downsampled === 'boolean' &&
+        Array.isArray(value.points) &&
+        value.points.every(
+          (point) => isRecord(point) && typeof point.time === 'string',
+        ) &&
+        isRecord(value.summary) &&
+        Array.isArray(value.summary.gaps)
       );
     case 'weather':
       return (
@@ -110,7 +100,9 @@ const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
         value.coordinate_system === 'WGS84' &&
         isStation(value.center_station) &&
         Array.isArray(value.group_stations) &&
-        value.group_stations.every(isStation)
+        value.group_stations.every(isStation) &&
+        isRecord(value.faults) &&
+        isRecord(value.layer_sources)
       );
   }
 };
@@ -179,7 +171,6 @@ export function decodeToolArtifact(
     ...(typeof rawArtifact.observedAt === 'string'
       ? { observedAt: rawArtifact.observedAt }
       : {}),
-    ...(typeof rawArtifact.summary === 'string' ? { summary: rawArtifact.summary } : {}),
     ...(Array.isArray(rawArtifact.sources) ? { sources: rawArtifact.sources } : {}),
     ...(isStringArray(rawArtifact.limitations)
       ? { limitations: rawArtifact.limitations }

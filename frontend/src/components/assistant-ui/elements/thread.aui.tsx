@@ -12,7 +12,7 @@ import {
   InvestigationIndicator,
   InvestigationProcess,
 } from "@/features/monitoring/InvestigationProcess";
-import { ConclusionsFallback, AnswerActions, FollowUps } from "@/features/monitoring/InvestigationReport";
+import { ConclusionsFallback, AnswerActions } from "@/features/monitoring/InvestigationReport";
 import { useStationInspector } from "@/features/monitoring/StationInspectorContext";
 import { cn } from "@/lib/utils";
 import { useSessionMetadata } from "@/lib/session-metadata";
@@ -379,7 +379,6 @@ const AssistantMessage: FC = () => {
           }}
         </MessagePrimitive.GroupedParts>
         <ConclusionsFallback />
-        <FollowUps />
         <MessageError />
       </div>
 

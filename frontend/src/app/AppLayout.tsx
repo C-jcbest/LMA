@@ -73,7 +73,7 @@ interface PageEntry {
 function usePageEntries(): PageEntry[] {
   const { page, goHome, goStations, goRecords, startConversation } = useNavigation();
   const { latest } = useInspection();
-  const attentionCount = latest?.stations.filter((station) => station.current?.group === '需要处理').length;
+  const attentionCount = latest?.stations.filter((station) => station.screening === '建议调查').length;
   return [
     { icon: PlusIcon, label: '新调查', isCurrent: false, open: startConversation },
     { icon: SunIcon, label: '今日', isCurrent: page === 'home', badge: attentionCount, open: goHome },
@@ -368,8 +368,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
       )}
 
       <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" style={{ minWidth: isSplit && selection !== null ? 360 : undefined }}>
-          {/* 桌面上各页自己有大标题，标题栏只在对话页（显示会话名）和窄屏（放抽屉入口）出现。 */}
-          {(!isDesktop || page === 'conversation') && <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
+          <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
             {!isDesktop && <Button
               ref={navigationButtonRef}
               type="button"
@@ -382,7 +381,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
               <PanelLeftOpen className="size-4" />
             </Button>}
             <span className="min-w-0 flex-1 truncate text-sm font-medium" title={headerTitle}>{headerTitle}</span>
-          </header>}
+          </header>
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">
           {page === 'home' && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} />}

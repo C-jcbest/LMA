@@ -16,25 +16,13 @@ import { useChartColors } from '@/features/monitoring/chartColors';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
-import { JudgmentBadge, StatusDot } from '@/features/monitoring/status';
-import { StationCompass } from '@/features/monitoring/StationCompass';
-import { EVIDENCE_WINDOW_EVENT, type EvidenceWindowDetail } from '@/features/monitoring/StationTimelineCard';
-import {
-  buildTimelineOption,
-  curveBasisLabel,
-  displacementBasis,
-  latestHorizontal,
-  defaultCurveBasis,
-  formatChartTime,
-  timelineHeight,
-  timelineSubGridCount,
-  type CurveBasis,
-} from '@/features/monitoring/timeline';
+import { StatusDot } from '@/features/monitoring/status';
+import { buildTimelineOption, displacementBasisLabel, formatChartTime } from '@/features/monitoring/timeline';
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { addAskTarget } from '@/features/monitoring/ask-targets';
 import { cn } from '@/lib/utils';
-import type { CurrentJudgment, StationRecord, StationTimeline, TimelineDays } from '@/services/api';
+import type { InspectionStation, StationRecord, StationTimeline, TimelineDays } from '@/services/api';
 import type { GnssArtifactData } from '@/types/envelope';
 
 const TimelineChart = lazy(() => import('@/features/monitoring/TimelineChart'));
@@ -111,36 +99,16 @@ const formatRecordDate = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' }).format(new Date(value));
 };
 
-/** 测点页的方向罗盘：最新累计（或本窗口）水平位移的方位；测点页没有场地坡向，不比较顺坡。 */
-const DirectionCompass: FC<{ data: GnssArtifactData }> = ({ data }) => {
-  const horizontal = latestHorizontal(data);
-  if (!horizontal) return null;
-  const magnitude = Math.hypot(horizontal.north, horizontal.east);
-  if (magnitude === 0) return null;
-  const azimuth = ((Math.atan2(horizontal.east, horizontal.north) * 180) / Math.PI + 360) % 360;
-  return (
-    <StationCompass reading={{ azimuth, magnitudeMillimeters: magnitude, downslopeAzimuth: null, cumulative: displacementBasis(data) === 'fixed' }} />
-  );
-};
-
-const DisplacementChart: FC<{
-  stationName: string;
-  data: GnssArtifactData;
-  highlight: { begin: string; end: string } | null;
-  onAsk: () => void;
-  disabled: boolean;
-}> = ({ stationName, data, highlight, onAsk, disabled }) => {
+const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk: () => void; disabled: boolean }> = ({ stationName, data, onAsk, disabled }) => {
   const aui = useAui();
   const { composerInputRef } = useStationInspector();
   const isLoading = useConversationLoading();
   const chartColors = useChartColors();
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
-  const [basisChoice, setBasisChoice] = useState<CurveBasis | null>(null);
-  const basis = basisChoice ?? defaultCurveBasis(data);
   const option = useMemo(
-    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components', basis, highlight }, chartColors),
-    [data, basis, highlight, chartColors],
+    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components' }, chartColors),
+    [data, chartColors],
   );
 
   const askAbout = (target: ChartRange) => {
@@ -153,19 +121,8 @@ const DisplacementChart: FC<{
     <div>
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-muted-foreground min-w-0 truncate text-sm tabular-nums">
-          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : `${curveBasisLabel(data, basis)}（mm）`}
+          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : `${displacementBasisLabel(data)}（mm）`}
         </p>
-        {!range && (
-          <Segmented
-            label="曲线基准"
-            value={basis}
-            options={[
-              { value: 'window', label: '本窗口变化' },
-              { value: 'reference', label: '累计位移' },
-            ]}
-            onValueChange={(value) => setBasisChoice(value as CurveBasis)}
-          />
-        )}
         {range && (
           <div className="flex shrink-0 items-center gap-1">
             <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
@@ -176,9 +133,8 @@ const DisplacementChart: FC<{
       <ErrorBoundary fallbackTitle="时间轴渲染异常">
         <Suspense fallback={<Skeleton className="h-96 w-full" />}>
           <TimelineChart
-            viewKey={`${data.station_uuid}:${data.begin_time}:${data.end_time}:${basis}`}
+            viewKey={`${data.station_uuid}:${data.begin_time}:${data.end_time}`}
             option={option}
-            height={timelineHeight(timelineSubGridCount(data, []), false)}
             label={`${stationName} 位移时间轴`}
             resetSignal={resetSignal}
             onRangeChange={setRange}
@@ -242,36 +198,23 @@ const RecordList: FC<{ records: readonly StationRecord[]; selected: { sessionId?
   );
 };
 
-/**
- * 一键调查的问题按当前判断写具体：有原因时直接问这条变化为什么、是否仍在继续，
- * 没有原因时退回问近期变化。由前端拼出，不需要模型。
- */
-const quickQuestion = (stationName: string, judgment: CurrentJudgment | null | undefined): string => {
-  const reason = judgment?.reason?.split('；')[0]?.trim();
-  if (!reason) {
-    return `调查 ${stationName} 的近期变化`;
-  }
-  return `${stationName}：${reason}。原因可能是什么？现在是否仍在继续？`;
-};
-
-/** 对话为空时的右侧面板：当前判断需要处理或持续关注时提供一键调查，否则只留输入框。 */
-const StationAsk: FC<{ stationName: string; judgment: CurrentJudgment | null | undefined }> = ({ stationName, judgment }) => {
+/** 对话为空时的右侧面板：有初筛线索就提供一键调查，否则只留输入框。 */
+const StationAsk: FC<{ stationName: string; inspection: InspectionStation | undefined }> = ({ stationName, inspection }) => {
   const aui = useAui();
   const isLoading = useConversationLoading();
-  const worthAsking = judgment?.group === '需要处理' || judgment?.group === '持续关注';
-  const question = quickQuestion(stationName, judgment);
+  const needsLook = inspection?.screening === '建议调查';
 
   return (
     <div className="aui-thread-welcome-root flex flex-col gap-3 py-5">
       <h2 className="text-lg font-semibold">{stationName}</h2>
-      {worthAsking && (
+      {needsLook && (
         <Button
           type="button"
           disabled={isLoading}
-          className="h-auto min-h-9 self-start rounded-2xl py-2 text-left whitespace-normal"
-          onClick={() => aui.thread().append({ role: 'user', content: [{ type: 'text', text: question }] })}
+          className="self-start rounded-full"
+          onClick={() => aui.thread().append({ role: 'user', content: [{ type: 'text', text: `调查 ${stationName} 的近期变化` }] })}
         >
-          {question}
+          调查 {stationName}
         </Button>
       )}
     </div>
@@ -292,20 +235,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const isSwitchingWindow = loaded !== null && loaded.days !== days;
   const [hasError, setHasError] = useState(false);
   const [reloadCount, setReloadCount] = useState(0);
-  // 右侧回答里点开的依据窗口：左侧切到能覆盖它的最短时间范围，并标出这段。
-  const [highlight, setHighlight] = useState<{ begin: string; end: string } | null>(null);
-  useEffect(() => {
-    const onEvidenceWindow = (event: Event) => {
-      const detail = (event as CustomEvent<EvidenceWindowDetail>).detail;
-      if (detail.stationId !== stationUuid) return;
-      const spanDays = (Date.now() - new Date(detail.begin.replace(' ', 'T')).getTime()) / 86400000;
-      const covering = ([7, 30, 90] as const).find((option) => option >= spanDays) ?? 90;
-      setDays(covering);
-      setHighlight({ begin: detail.begin, end: detail.end });
-    };
-    window.addEventListener(EVIDENCE_WINDOW_EVENT, onEvidenceWindow);
-    return () => window.removeEventListener(EVIDENCE_WINDOW_EVENT, onEvidenceWindow);
-  }, [stationUuid]);
   const [panel, setPanel] = useState<Panel>(() => new URL(window.location.href).searchParams.has('stationThread') ? 'chat' : 'data');
   const [chatMode, setChatMode] = useState<'split' | 'closed' | 'expanded'>('split');
   // 从调查记录打开的会话定位到那次结论；开始新调查后清除。
@@ -345,8 +274,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const inspection = latest?.stations.find((station) => station.station_uuid === stationUuid);
   const stationName = timeline?.station_name ?? inspection?.station_name;
   const groupName = timeline?.group_name ?? inspection?.group_name;
-  // 时间轴接口每次读取都带最新的当前判断（调查结束后会重新读取）；读到之前先用首页巡检结果。
-  const judgment = timeline?.current ?? inspection?.current ?? null;
 
   const showChat = () => {
     setPanel('chat');
@@ -362,9 +289,9 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           </Button>}
           {(isSideBySide || !stationName) && <h1 className="min-w-0 text-2xl font-semibold tracking-tight wrap-anywhere">{stationName ?? '测点'}</h1>}
           {groupName && <span className="text-muted-foreground text-sm">{groupName}</span>}
-          {judgment && (
-            <span className="bg-muted inline-flex min-h-7 items-center rounded-full px-3">
-              <JudgmentBadge judgment={judgment} />
+          {inspection && (
+            <span className="bg-muted inline-flex min-h-7 items-center gap-2 rounded-full px-3 text-xs">
+              <StatusDot status={inspection.screening} />{investigationStatusLabel(inspection.screening)}
             </span>
           )}
           <div className="ms-auto">
@@ -372,11 +299,8 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           </div>
           {isSideBySide && chatMode === 'closed' && <Button variant="outline" size="sm" onClick={showChat}>AI 调查</Button>}
         </div>
-        {judgment?.changed_since_investigation && (
-          <p className="mt-2 text-xs font-medium text-status-attention">上次调查后有新变化</p>
-        )}
-        {judgment?.reason && (
-          <p className="text-muted-foreground mt-2 text-sm leading-relaxed wrap-anywhere">{judgment.reason}</p>
+        {inspection && inspection.reasons.length > 0 && (
+          <p className="text-muted-foreground mt-2 text-sm leading-relaxed wrap-anywhere">{inspection.reasons.join('；')}</p>
         )}
 
         <div className="mt-7 space-y-5">
@@ -399,11 +323,8 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               aria-busy={isSwitchingWindow}
               className={cn('space-y-5 transition-opacity duration-200 motion-reduce:transition-none', isSwitchingWindow && 'opacity-50 delay-150')}
             >
-              <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
-                <div className="min-w-0 flex-1 basis-full sm:basis-[24rem]"><WindowMetrics data={timeline.series} /></div>
-                <DirectionCompass data={timeline.series} />
-              </div>
-              <DisplacementChart stationName={timeline.station_name} data={timeline.series} highlight={highlight} onAsk={showChat} disabled={!conversationReady} />
+              <WindowMetrics data={timeline.series} />
+              <DisplacementChart stationName={timeline.station_name} data={timeline.series} onAsk={showChat} disabled={!conversationReady} />
             </div>
           )}
         </div>
@@ -427,7 +348,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
         autoFocus={false}
         resultAnchor={recordAnchor}
         placeholder={stationName ? `问问 ${stationName}…` : undefined}
-        welcome={stationName ? <StationAsk stationName={stationName} judgment={judgment} /> : null}
+        welcome={stationName ? <StationAsk stationName={stationName} inspection={inspection} /> : null}
       />
     </aside>
   );
@@ -451,8 +372,12 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             />
           </div>}
           <div ref={layoutRef} className="flex min-h-0 flex-1">
-            {/* 宽屏两栏都保持渲染，靠对话栏宽度过渡切换分栏、展开（对话加宽，左侧仍保留曲线）与关闭；窄屏一次只显示一栏。 */}
-            <div className={cn('h-full min-w-0 flex-1 overflow-hidden', !isSideBySide && panel !== 'data' && 'hidden')}>
+            {/* 宽屏两栏都保持渲染，靠对话栏宽度过渡切换分栏、展开与关闭；窄屏一次只显示一栏。 */}
+            <div
+              inert={isSideBySide && chatMode === 'expanded'}
+              aria-hidden={isSideBySide && chatMode === 'expanded' ? true : undefined}
+              className={cn('h-full min-w-0 flex-1 overflow-hidden', !isSideBySide && panel !== 'data' && 'hidden')}
+            >
               {dataPanel(true)}
             </div>
             <div ref={chatRef} id={`station-chat-${stationUuid}`} style={isSideBySide ? chatResize.style : undefined}

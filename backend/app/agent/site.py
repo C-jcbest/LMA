@@ -12,7 +12,6 @@ from typing import Any
 import httpx
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
-from app.agent.progress import site_summary
 from app.agent.tool_inputs import SiteEnvironmentInput
 from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
 
@@ -133,8 +132,8 @@ async def inspect_site_environment(
     """查询监测点周边的场地环境背景。
 
     可获取站点空间分布、同组点位置、地形（海拔/坡度/坡向/高差；坡向 aspect_degrees 是下坡方向的方位角，
-    来自约 90 m 分辨率地形，代表周边约 200 m 的平均坡面）和区域地质单元。
-    用户问到场地、坡向或变化是否顺坡，或已发现需要定性的位移变化时使用；只看数值或趋势时不需要。
+    来自约 90 m 分辨率地形，代表周边约 200 m 的平均坡面）、
+    地质单元及构造线等可用公开资料，适用于需要从场地环境角度补充调查背景的任务。
     """
     async with monitoring() as data:
         station = await data.resolve_station(station_name_or_uuid)
@@ -164,7 +163,7 @@ async def inspect_site_environment(
         },
         {
             "name": "Macrostrat",
-            "role": "区域地质单元",
+            "role": "地质单元与断层图层",
             "url": "https://macrostrat.org/",
             "license": "CC BY 4.0",
         },
@@ -179,6 +178,16 @@ async def inspect_site_environment(
         "group_stations": map_stations,
         "terrain": terrain,
         "geology": geology,
+        "faults": {
+            "available": True,
+            "distance_km": None,
+            "note": "断层以 Macrostrat 构造线图层展示；当前公开接口不提供可靠的最近断层距离。",
+        },
+        "layer_sources": {
+            "geology_tiles": "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.mvt",
+            "geology_source_layer": "units",
+            "fault_source_layer": "lines",
+        },
     }
     content = {
         "ok": True,
@@ -186,6 +195,7 @@ async def inspect_site_environment(
         "same_group_station_count": len(map_stations),
         "terrain": terrain,
         "geology": geology,
+        "faults": environment["faults"],
         "limitations": limitations,
         "sources": sources,
     }
@@ -200,7 +210,6 @@ async def inspect_site_environment(
             sources=sources,
             limitations=limitations,
             observed_at=observed_at,
-            summary=site_summary(environment),
         )
     return tool_result(
         content,
@@ -209,5 +218,4 @@ async def inspect_site_environment(
         sources=sources,
         limitations=limitations,
         observed_at=observed_at,
-        summary=site_summary(environment),
     )

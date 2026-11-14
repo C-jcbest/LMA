@@ -3,19 +3,14 @@ import type {
   GapArtifact,
   GnssArtifactData,
   GnssPointArtifact,
-  RateSegment,
   WeatherArtifactData,
 } from '@/types/envelope';
-import { formatSigned, MILLIMETER_DIGITS, RATE_DIGITS } from './format';
+import { formatSigned, MILLIMETER_DIGITS } from './format';
 import { toFiniteGnssNumber } from './tools/gnssUtils';
 
 const MILLIMETERS_PER_METER = 1000;
 const MIN_PEER_OVERLAP_RATIO = 0.5;
 const RAINFALL_SERIES_NAME = '日降雨';
-// 单位写进图例：子图上方的轴名会和位移图最下面的刻度挤在一起。
-const RATE_SERIES_NAME = '水平速率 mm/d';
-/** 短窗口默认看本窗口内的变化：累计位移的量级会把近几天十几毫米的变化压成一条平线。 */
-const WINDOW_CHANGE_MAX_DAYS = 14;
 const BAND_SERIES_NAME = '证据区间';
 const DAY_MILLIS = 24 * 60 * 60 * 1000;
 const AXES = ['n', 'e', 'u'] as const;
@@ -60,15 +55,6 @@ const BASIS_LABELS: Record<DisplacementBasis, string> = {
 
 export const displacementBasisLabel = (data: GnssArtifactData) => BASIS_LABELS[displacementBasis(data)];
 
-/** 曲线相对什么画：平台固定参考（累计位移），或本窗口首个有效点（本窗口变化）。 */
-export type CurveBasis = 'reference' | 'window';
-
-export const defaultCurveBasis = (data: GnssArtifactData): CurveBasis =>
-  seriesDuration(data) <= WINDOW_CHANGE_MAX_DAYS * DAY_MILLIS ? 'window' : 'reference';
-
-export const curveBasisLabel = (data: GnssArtifactData, basis: CurveBasis) =>
-  basis === 'window' ? '本窗口内变化（相对窗口首点）' : displacementBasisLabel(data);
-
 /**
  * 位移（mm）：有固定参考的方向是累计位移，没有的方向退回本窗口首个有效点，
  * 并由 displacementBasisLabel 向用户说明。缺测保持 null，折线在此断开，不转换为 0。
@@ -99,8 +85,7 @@ export function toDisplacement(
   });
 }
 
-export const displacementOf = (data: GnssArtifactData, basis: CurveBasis = 'reference') =>
-  toDisplacement(data.points, basis === 'window' ? undefined : referenceOf(data));
+export const displacementOf = (data: GnssArtifactData) => toDisplacement(data.points, referenceOf(data));
 
 /** 窗口内最后一个水平分量齐全的点；用于地图上的位移方向。 */
 export function latestHorizontal(data: GnssArtifactData): { north: number; east: number } | null {
@@ -215,38 +200,22 @@ export function peerSeriesFor(
 
 export interface StepEvent {
   axis: Axis | 'h';
-  /** 台阶为相邻两点间的单步；缺测为缺测前后的位置差，变化过程未知。 */
-  kind: 'step' | 'gap';
   time: string;
   stepMillimeters: number;
   status: string;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
-
-/** 服务端在本窗口检测到的台阶候选（events）与缺测前后位置差（gap_shifts），不是视觉判断。 */
+/** 服务端在本窗口检测到的台阶候选（数值特征 events），不是视觉判断。 */
 export function stepEventsOf(data: GnssArtifactData, axes: readonly (Axis | 'h')[]): StepEvent[] {
   const events: StepEvent[] = [];
   for (const axis of axes) {
-    const feature = data.features?.[axis];
-    const axisEvents = feature?.events;
-    if (Array.isArray(axisEvents)) {
-      for (const event of axisEvents) {
-        if (!isRecord(event)) continue;
-        const { time, step_mm: step, status } = event;
-        if (typeof time === 'string' && typeof step === 'number') {
-          events.push({ axis, kind: 'step', time, stepMillimeters: step, status: typeof status === 'string' ? status : '' });
-        }
-      }
-    }
-    const gapShifts = feature?.gap_shifts;
-    if (Array.isArray(gapShifts)) {
-      for (const shift of gapShifts) {
-        if (!isRecord(shift)) continue;
-        const { gap_to: time, level_shift_mm: level, persistence } = shift;
-        if (typeof time === 'string' && typeof level === 'number') {
-          events.push({ axis, kind: 'gap', time, stepMillimeters: level, status: typeof persistence === 'string' ? persistence : '' });
-        }
+    const axisEvents = data.features?.[axis]?.events;
+    if (!Array.isArray(axisEvents)) continue;
+    for (const event of axisEvents) {
+      if (typeof event !== 'object' || event === null) continue;
+      const { time, step_mm: step, status } = event as Record<string, unknown>;
+      if (typeof time === 'string' && typeof step === 'number') {
+        events.push({ axis, time, stepMillimeters: step, status: typeof status === 'string' ? status : '' });
       }
     }
   }
@@ -256,10 +225,8 @@ export function stepEventsOf(data: GnssArtifactData, axes: readonly (Axis | 'h')
 const AXIS_LABELS: Record<Axis | 'h', string> = { n: '北向', e: '东向', u: '垂直', h: '水平' };
 
 
-export const stepEventText = (event: StepEvent) => {
-  const what = event.kind === 'gap' ? '缺测前后位置差' : '台阶';
-  return `${AXIS_LABELS[event.axis]}${what} ${formatSigned(event.stepMillimeters, MILLIMETER_DIGITS)} mm · ${event.time.slice(5, 16)}${event.status ? ` · ${event.status}` : ''}`;
-};
+export const stepEventText = (event: StepEvent) =>
+  `${AXIS_LABELS[event.axis]}台阶 ${formatSigned(event.stepMillimeters, MILLIMETER_DIGITS)} mm · ${event.time.slice(5, 16)}${event.status ? ` · ${event.status}` : ''}`;
 
 export interface ChartColors {
   text: string;
@@ -283,12 +250,6 @@ export interface TimelineInput {
   rainfall: readonly DailyRainfall[];
   peers: readonly PeerSeries[];
   mode: TimelineMode;
-  /** 不传时按窗口长短选：短窗口看本窗口变化，长窗口看累计位移。 */
-  basis?: CurveBasis;
-  /** 正文里的预览：不缩放、不框选，去掉滑块和提示框。 */
-  compact?: boolean;
-  /** 需要对照的时间段（如回答里刚点开的依据窗口），画成浅色底带。 */
-  highlight?: { begin: string; end: string } | null;
 }
 
 /** 台阶标在曲线上的发生时刻，悬停看幅度和后续状态；不再用区间色块覆盖曲线。 */
@@ -303,71 +264,10 @@ const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPo
     tooltip: { trigger: 'item', formatter: (params: { name: string }) => params.name },
     data: events.flatMap((event) => {
       const value = valueAt.get(event.time)?.[event.axis];
-      if (typeof value !== 'number') return [];
-      // 缺测前后的位置差用空心菱形，与观测到的台阶区分：中间过程没有观测。
-      const style = event.kind === 'gap' ? { symbol: 'diamond', itemStyle: { color: 'transparent', borderColor: color, borderWidth: 1.5 } } : {};
-      return [{ name: stepEventText(event), coord: [event.time, value], ...style }];
+      return typeof value === 'number' ? [{ name: stepEventText(event), coord: [event.time, value] }] : [];
     }),
   };
 };
-
-/** 有速率的分段；整段样本不足时为空，图上留白，不当作 0。 */
-export const rateSegmentsOf = (data: GnssArtifactData): RateSegment[] =>
-  data.rate_sequence?.available ? (data.rate_sequence.segments ?? []).filter((segment) => segment.rate_mm_day !== null) : [];
-
-/** 速率子图：每段画一条水平线，浅色带为近似不确定度；逐段抬高即在加快。 */
-const rateSeries = (segments: readonly RateSegment[], colors: ChartColors, xAxisIndex: number, yAxisIndex: number) => ({
-  name: RATE_SERIES_NAME,
-  type: 'custom',
-  xAxisIndex,
-  yAxisIndex,
-  clip: true,
-  encode: { x: 0, y: 1 },
-  itemStyle: { color: colors.primary },
-  data: segments.map((segment) => {
-    const start = toMillis(segment.begin_time);
-    const end = toMillis(segment.end_time);
-    const rate = Math.abs(segment.rate_mm_day!);
-    const uncertainty = segment.uncertainty_mm_day ?? 0;
-    return { value: [(start + end) / 2, rate, start, end, Math.max(0, rate - uncertainty), rate + uncertainty] };
-  }),
-  renderItem: (
-    _params: unknown,
-    api: { value: (dimension: number) => number; coord: (value: [number, number]) => [number, number] },
-  ) => {
-    const [left, rateY] = api.coord([api.value(2), api.value(1)]);
-    const [right] = api.coord([api.value(3), api.value(1)]);
-    const [, bandTop] = api.coord([api.value(2), api.value(5)]);
-    const [, bandBottom] = api.coord([api.value(2), api.value(4)]);
-    return {
-      type: 'group',
-      children: [
-        { type: 'rect', shape: { x: left + 1, y: bandTop, width: Math.max(1, right - left - 2), height: bandBottom - bandTop }, style: { fill: colors.gap } },
-        { type: 'line', shape: { x1: left + 1, y1: rateY, x2: right - 1, y2: rateY }, style: { stroke: colors.primary, lineWidth: 2 } },
-      ],
-    };
-  },
-});
-
-const prefersReducedMotion = () =>
-  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-  && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-const MAIN_TOP = 44;
-const SUB_GRID_HEIGHT = 56;
-const SUB_GRID_GAP = 20;
-const SLIDER_SPACE = 64;
-const COMPACT_BOTTOM = 28;
-const COMPACT_MAIN_HEIGHT = 168;
-const FULL_MAIN_MIN_HEIGHT = 240;
-
-/** 图高随子图数量增加；调用方按它设置容器高度，图内各区域互不挤压。 */
-export const timelineHeight = (subGridCount: number, compact: boolean) =>
-  (compact ? COMPACT_MAIN_HEIGHT + COMPACT_BOTTOM : FULL_MAIN_MIN_HEIGHT + SLIDER_SPACE) + MAIN_TOP
-  + subGridCount * (SUB_GRID_HEIGHT + SUB_GRID_GAP);
-
-export const timelineSubGridCount = (data: GnssArtifactData, rainfall: readonly DailyRainfall[]) =>
-  (rainfall.length > 0 ? 1 : 0) + (rateSegmentsOf(data).length > 0 ? 1 : 0);
 
 const displacementLine = (
   name: string,
@@ -436,10 +336,6 @@ const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
   const lines = items.map((item) => {
     const value = Array.isArray(item.value) ? item.value[1] : item.value;
     const text = typeof value === 'number' ? `${value.toFixed(2)} mm` : '缺测';
-    if (item.seriesName === RATE_SERIES_NAME && Array.isArray(item.value)) {
-      const uncertainty = Number(item.value[5]) - Number(item.value[1]);
-      return `${item.marker}水平速率 ${Number(item.value[1]).toFixed(RATE_DIGITS)} ± ${uncertainty.toFixed(RATE_DIGITS)} mm/d`;
-    }
     if (item.seriesName === RAINFALL_SERIES_NAME && Array.isArray(item.value)) {
       const day = formatChartTime(Number(item.value[2])).slice(5, 10);
       return `${item.marker}${day} 日降雨 ${text}`;
@@ -453,22 +349,10 @@ const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
 
 /** 位移、降雨、缺测和台阶共用同一时间轴，时间对齐由图本身完成。 */
 export function buildTimelineOption(input: TimelineInput, colors: ChartColors): EChartsCoreOption {
-  const { data, rainfall, peers, mode, compact = false, highlight = null } = input;
-  const basis = input.basis ?? defaultCurveBasis(data);
-  const displacement = displacementOf(data, basis);
+  const { data, rainfall, peers, mode } = input;
+  const displacement = displacementOf(data);
   const hasRainfall = rainfall.length > 0;
-  const rateSegments = rateSegmentsOf(data);
-  // 位移在最上，其下依次是日降雨、水平速率；只有最下面的时间轴显示刻度。
-  const subGrids = [...(hasRainfall ? ['rain' as const] : []), ...(rateSegments.length > 0 ? ['rate' as const] : [])];
-  const bottomSpace = compact ? COMPACT_BOTTOM : SLIDER_SPACE;
-  const subGridBottom = (index: number) => bottomSpace + (subGrids.length - 1 - index) * (SUB_GRID_HEIGHT + SUB_GRID_GAP);
-  const grids = [
-    { left: 48, right: 12, top: MAIN_TOP, bottom: bottomSpace + subGrids.length * (SUB_GRID_HEIGHT + SUB_GRID_GAP) },
-    ...subGrids.map((_, index) => ({ left: 48, right: 12, height: SUB_GRID_HEIGHT, bottom: subGridBottom(index) })),
-  ];
-  const axisIndexes = grids.map((_, index) => index);
-  const rainIndex = subGrids.indexOf('rain') + 1;
-  const rateIndex = subGrids.indexOf('rate') + 1;
+  const axisIndexes = hasRainfall ? [0, 1] : [0];
 
   const lineValues = (key: 'n' | 'e' | 'u' | 'h') =>
     displacement.map((point) => [point.time, point[key]] as const);
@@ -494,21 +378,9 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       ];
 
   // 缺测带放在独立的空序列上，用图例隐藏某个方向时缺测区间仍然可见。
-  const gapArea = gapBands(data.summary.gaps, colors);
   const bandSeries = {
     ...displacementLine(BAND_SERIES_NAME, [], colors.mutedText, 0),
-    markArea: highlight
-      ? {
-          ...gapArea,
-          data: [
-            ...gapArea.data,
-            [
-              { name: '回答引用', xAxis: highlight.begin, itemStyle: { color: colors.gap, borderColor: colors.primary, borderWidth: 1 } },
-              { xAxis: highlight.end },
-            ],
-          ],
-        }
-      : gapArea,
+    markArea: gapBands(data.summary.gaps, colors),
   };
 
   const axisLine = { lineStyle: { color: colors.border } };
@@ -522,16 +394,16 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     axisTick: { show: false },
     splitLine: { show: false },
   };
-  const lastGridIndex = grids.length - 1;
 
-  const option: Record<string, unknown> = {
-    // 依据面板和测点页切换窗口时曲线平滑过渡，不闪一下重画；正文预览和减弱动效时不动。
-    animation: !compact && !prefersReducedMotion(),
-    animationDuration: 300,
-    animationDurationUpdate: 300,
-    animationEasing: 'cubicOut',
+  return {
+    animation: false,
     textStyle: { fontFamily: 'inherit' },
-    grid: grids,
+    grid: hasRainfall
+      ? [
+          { left: 48, right: 12, top: 44, bottom: 156 },
+          { left: 48, right: 12, height: 64, bottom: 64 },
+        ]
+      : [{ left: 48, right: 12, top: 44, bottom: 64 }],
     legend: {
       top: 0,
       left: 44,
@@ -542,33 +414,21 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       data: [
         ...(mode === 'components' ? lines : lines.slice(-1)).map((line) => line.name),
         ...(hasRainfall ? [RAINFALL_SERIES_NAME] : []),
-        ...(rateSegments.length > 0 ? [RATE_SERIES_NAME] : []),
       ],
-      ...(compact ? { selectedMode: false } : {}),
     },
-    xAxis: grids.map((_, index) => ({
-      ...timeAxis, gridIndex: index, axisLabel: index === lastGridIndex ? axisLabel : { show: false },
-    })),
+    xAxis: hasRainfall
+      ? [
+          { ...timeAxis, gridIndex: 0, axisLabel: { show: false } },
+          { ...timeAxis, gridIndex: 1, axisLabel },
+        ]
+      : [{ ...timeAxis, gridIndex: 0, axisLabel }],
     yAxis: [
       { type: 'value', gridIndex: 0, scale: true, name: 'mm', nameTextStyle: { color: colors.mutedText }, axisLabel, splitLine },
-      ...subGrids.map((kind, index) => (kind === 'rain'
-        ? { type: 'value', gridIndex: index + 1, min: 0, splitNumber: 2, axisLabel, splitLine }
-        : { type: 'value', gridIndex: index + 1, min: 0, splitNumber: 2, axisLabel, splitLine })),
+      ...(hasRainfall
+        ? [{ type: 'value', gridIndex: 1, min: 0, splitNumber: 2, axisLabel, splitLine }]
+        : []),
     ],
     axisPointer: { link: [{ xAxisIndex: 'all' }], lineStyle: { color: colors.mutedText } },
-    series: [
-      bandSeries,
-      ...lines,
-      ...(hasRainfall ? [rainfallSeries(rainfall, colors)] : []).map((series) => ({ ...series, xAxisIndex: rainIndex, yAxisIndex: rainIndex })),
-      ...(rateSegments.length > 0 ? [rateSeries(rateSegments, colors, rateIndex, rateIndex)] : []),
-    ],
-  };
-  if (compact) {
-    // 正文预览不拦截触屏滚动，也不显示与展开视图不同的交互控件。
-    return { ...option, silent: true, tooltip: { show: false } };
-  }
-  return {
-    ...option,
     tooltip: {
       trigger: 'axis',
       confine: true,
@@ -601,6 +461,11 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
         handleStyle: { color: colors.surface, borderColor: colors.mutedText },
         moveHandleSize: 0,
       },
+    ],
+    series: [
+      bandSeries,
+      ...lines,
+      ...(hasRainfall ? [rainfallSeries(rainfall, colors)] : []),
     ],
   };
 }
