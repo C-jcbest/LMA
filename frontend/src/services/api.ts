@@ -21,16 +21,39 @@ export interface SessionState {
 
 export type Screening = '建议调查' | '未见明显变化' | '数据不足' | '暂无法分析';
 
+export type JudgmentGroup = '需要处理' | '持续关注' | '数据问题' | '平稳';
+
+/** 服务端在最近巡检与最新调查结论之间取定的“当前判断”（station_judgment.py）。 */
+export interface CurrentJudgment {
+  status: string;
+  source: '巡检' | '调查';
+  at: string | null;
+  reason: string;
+  group: JudgmentGroup;
+  /** 调查之后的巡检又发现了新变化。 */
+  changed_since_investigation: boolean;
+  session_id: string | null;
+}
+
+export interface InspectionMetrics {
+  /** 近 90 天每日序列首末的变化（mm）。 */
+  net_change_mm?: Partial<Record<'n' | 'e' | 'u', number | null>>;
+  cumulative_offset_mm?: Partial<Record<'n' | 'e' | 'u' | 'h' | 'd', number | null>> | null;
+  rate_sequence?: Partial<Record<'long' | 'recent', { pattern?: string } | null>>;
+}
+
 export interface InspectionStation {
   station_uuid: string;
   station_name: string;
   group_name: string;
   screening: Screening;
   reasons: string[];
-  metrics: { net_change_mm?: Partial<Record<'n' | 'e' | 'u', number>> };
+  metrics: InspectionMetrics;
+  /** 近 90 天水平位移相对首个有效日的大小（mm），与行内数字同一个量。 */
   trend: Array<number | null>;
   previous_screening: Screening | null;
   last_conclusion: { status: string; reason: string; session_id: string; created_at: string } | null;
+  current: CurrentJudgment | null;
 }
 
 export interface LatestInspection {
@@ -71,6 +94,7 @@ export interface StationTimeline {
   group_name: string;
   /** 基准站等没有形变序列的测点为 null。 */
   series: GnssArtifactData | null;
+  current?: CurrentJudgment | null;
   records: StationRecord[];
 }
 

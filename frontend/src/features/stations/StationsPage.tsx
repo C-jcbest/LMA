@@ -5,45 +5,40 @@ import { Input } from '@/components/ui/input';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
-import { investigationStatusLabel } from '@/features/monitoring/investigation';
-import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
+import { horizontalChange, HorizontalChange, JudgmentBadge } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
-import type { InspectionStation, Screening, StationDirectoryEntry } from '@/services/api';
+import type { CurrentJudgment, InspectionStation, JudgmentGroup, Screening, StationDirectoryEntry } from '@/services/api';
 
-interface StationListItem extends Omit<InspectionStation, 'screening'> {
+interface StationListItem extends Omit<InspectionStation, 'screening' | 'current'> {
   screening: Screening | null;
+  current: CurrentJudgment | null;
 }
 
-type Filter = 'all' | 'attention' | 'unavailable';
+type Filter = 'all' | JudgmentGroup;
 
 const FILTERS: readonly { value: Filter; label: string }[] = [
   { value: 'all', label: '全部' },
-  { value: 'attention', label: '建议调查' },
-  { value: 'unavailable', label: '数据待核查' },
+  { value: '需要处理', label: '需要处理' },
+  { value: '持续关注', label: '持续关注' },
+  { value: '数据问题', label: '数据待核查' },
 ];
 
-// 需要看的排在前面，其次是数据有问题的，正常的放最后。
-const SCREENING_ORDER: Record<Screening, number> = {
-  建议调查: 0,
-  数据不足: 1,
-  暂无法分析: 1,
-  未见明显变化: 2,
+// 与首页同一顺序：需要处理、持续关注、数据问题、平稳，未巡检的放最后。
+const GROUP_ORDER: Record<JudgmentGroup, number> = {
+  需要处理: 0,
+  持续关注: 1,
+  数据问题: 2,
+  平稳: 3,
 };
 
-const matchesFilter = (station: StationListItem, filter: Filter) => {
-  if (filter === 'attention') {
-    return station.screening === '建议调查';
-  }
-  if (filter === 'unavailable') {
-    return station.screening === '数据不足' || station.screening === '暂无法分析';
-  }
-  return true;
-};
+const groupRank = (station: StationListItem) => (station.current ? GROUP_ORDER[station.current.group] : 4);
+
+const matchesFilter = (station: StationListItem, filter: Filter) => filter === 'all' || station.current?.group === filter;
 
 const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
   const { openStation } = useNavigation();
-  const change = largestChange(station);
-  const isAttention = station.screening === '建议调查';
+  const change = horizontalChange(station);
+  const isAttention = station.current?.group === '需要处理';
 
   return (
     <li>
@@ -53,16 +48,17 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
         className="station-row hover:bg-muted/60 focus-visible:ring-ring w-full rounded-lg text-start transition-colors focus-visible:ring-2 focus-visible:outline-none"
       >
         <span className="flex min-w-0 items-center gap-2.5">
-          <StatusDot status={station.screening} />
           <span className="min-w-0 truncate font-medium">{station.station_name}</span>
           <span className="text-muted-foreground shrink-0 text-xs">{station.group_name}</span>
         </span>
         <span className="station-row-trend"><TrendLine values={station.trend} emphasized={isAttention} className="h-7" /></span>
-        <span className="station-row-note text-muted-foreground min-w-0 truncate text-sm">
-          {station.reasons[0] ?? (station.screening ? investigationStatusLabel(station.screening) : '未巡检')}
+        <span className="station-row-note min-w-0 truncate text-sm">
+          {station.current
+            ? <JudgmentBadge judgment={station.current} />
+            : <span className="text-muted-foreground">未巡检</span>}
         </span>
-        <span className="text-end text-sm tabular-nums">
-          {change ? `${formatMillimeters(change.millimeters)} mm` : <span className="text-muted-foreground">—</span>}
+        <span className="text-end text-sm">
+          {change ? <HorizontalChange change={change} /> : <span className="text-muted-foreground">—</span>}
         </span>
       </button>
     </li>
@@ -103,7 +99,7 @@ export const StationsPage: FC = () => {
   const stations = useMemo<StationListItem[]>(() => {
     const inspections = new Map(latest?.stations.map((station) => [station.station_uuid, station]));
     return directory.map((station) => ({
-      reasons: [], metrics: {}, trend: [], previous_screening: null, last_conclusion: null, screening: null,
+      reasons: [], metrics: {}, trend: [], previous_screening: null, last_conclusion: null, screening: null, current: null,
       ...inspections.get(station.station_uuid), ...station,
     }));
   }, [directory, latest]);
@@ -116,10 +112,7 @@ export const StationsPage: FC = () => {
         || station.station_name.toLowerCase().includes(query)
         || station.group_name.toLowerCase().includes(query)
       ))
-      .sort((a, b) => (
-        (a.screening ? SCREENING_ORDER[a.screening] : 3) - (b.screening ? SCREENING_ORDER[b.screening] : 3)
-        || a.station_name.localeCompare(b.station_name, 'zh-CN')
-      ));
+      .sort((a, b) => groupRank(a) - groupRank(b) || a.station_name.localeCompare(b.station_name, 'zh-CN'));
   }, [stations, filter, search]);
 
   const hasStations = (stations?.length ?? 0) > 0;

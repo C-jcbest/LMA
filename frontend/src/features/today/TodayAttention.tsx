@@ -5,11 +5,10 @@ import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
-import { investigationStatusLabel } from '@/features/monitoring/investigation';
-import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
+import { horizontalChange, HorizontalChange, JudgmentBadge, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import { cn } from '@/lib/utils';
-import type { InspectionStation, LatestInspection } from '@/services/api';
+import type { InspectionStation, JudgmentGroup, LatestInspection } from '@/services/api';
 
 const formatFinishedAt = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -46,16 +45,9 @@ function useInspectionFinishedWhileOpen(latest: LatestInspection | null) {
 
 const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }> = ({ station, highlightChange }) => {
   const { openStation } = useNavigation();
-  const change = largestChange(station);
-  // 和上次相比有变化、或已经调查过，都影响用户要不要再看一眼。
-  const history: string[] = [];
-  const isScreeningChanged = station.previous_screening !== station.screening;
-  if (station.previous_screening !== null && isScreeningChanged) {
-    history.push(`上次巡检${investigationStatusLabel(station.previous_screening)}`);
-  }
-  if (station.last_conclusion) {
-    history.push(`上次调查：${investigationStatusLabel(station.last_conclusion.status)}`);
-  }
+  const change = horizontalChange(station);
+  const judgment = station.current;
+  const isScreeningChanged = station.previous_screening !== null && station.previous_screening !== station.screening;
 
   return (
     <li>
@@ -69,33 +61,35 @@ const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }>
         )}
       >
         <span className="min-w-0">
-          <span className="flex min-w-0 items-center gap-2.5">
-            <StatusDot status={station.screening} />
+          <span className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
             <span className="min-w-0 wrap-anywhere text-base font-semibold">{station.station_name}</span>
             <span className="text-muted-foreground shrink-0 text-xs">{station.group_name}</span>
+            {judgment && <JudgmentBadge judgment={judgment} />}
           </span>
-          {station.reasons.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-[1.125rem] text-sm leading-relaxed wrap-anywhere">
-              {station.reasons.join('；')}
-            </span>
+          {judgment?.changed_since_investigation && (
+            <span className="mt-1 block text-xs font-medium text-status-attention">上次调查后有新变化</span>
           )}
-          {history.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-[1.125rem] text-xs">{history.join(' · ')}</span>
+          {judgment?.reason && (
+            <span className="text-muted-foreground mt-1 block text-sm leading-relaxed wrap-anywhere">{judgment.reason}</span>
           )}
         </span>
         <span className="today-row-trend"><TrendLine values={station.trend} emphasized /></span>
-        {change && (
-          <span className="today-row-change text-base font-medium tabular-nums">
-            {formatMillimeters(change.millimeters)}
-            <span className="text-muted-foreground ms-1 text-xs font-normal">mm {change.axis}</span>
-          </span>
-        )}
+        {change && <HorizontalChange change={change} className="today-row-change text-base font-medium" />}
       </button>
     </li>
   );
 };
 
-/** 首页先回答“今天有没有要看的”；初筛结果不是调查结论，点测点看数据再决定是否调查。 */
+const LISTED_GROUPS: readonly { group: JudgmentGroup; label: string }[] = [
+  { group: '需要处理', label: '需要处理' },
+  { group: '持续关注', label: '持续关注' },
+  { group: '数据问题', label: '数据问题' },
+];
+
+/**
+ * 首页回答“目前哪些点需要我处理”：每个测点只显示一个当前判断（较新的调查结论优先），
+ * 按需要处理、持续关注、数据问题分组；平稳的测点只给数量，在全部测点里查看。
+ */
 export const TodayAttention: FC = () => {
   const { goStations } = useNavigation();
   const { latest, isLoading, hasLoadError, isStarting, hasStartError, reload, start } = useInspection();
@@ -123,9 +117,10 @@ export const TodayAttention: FC = () => {
   const stations = latest?.stations ?? [];
   const hasResults = stations.length > 0;
   const isRunning = latest?.running != null;
-  const needsLook = stations.filter((station) => station.screening === '建议调查');
-  const quietCount = stations.filter((station) => station.screening === '未见明显变化').length;
-  const unavailableCount = stations.length - needsLook.length - quietCount;
+  // 服务端已按当前判断排序；这里只按组切开。
+  const byGroup = (group: JudgmentGroup) => stations.filter((station) => (station.current?.group ?? '数据问题') === group);
+  const needsAction = byGroup('需要处理');
+  const quietCount = byGroup('平稳').length;
 
   let startLabel = hasResults ? '重新巡检' : '开始巡检';
   if (latest?.running) {
@@ -133,12 +128,12 @@ export const TodayAttention: FC = () => {
   }
 
   let headline = <>今天要查哪个测点？</>;
-  if (hasResults && needsLook.length > 0) {
-    headline = <>{stations.length} 个测点，<em className="text-status-attention not-italic">{needsLook.length} 个</em>建议调查</>;
+  if (hasResults && needsAction.length > 0) {
+    headline = <>{stations.length} 个测点，{needsAction.length} 个需要处理</>;
   } else if (hasResults && quietCount === stations.length) {
     headline = <>{stations.length} 个测点未见明显变化</>;
   } else if (hasResults) {
-    headline = <>{unavailableCount} 个测点的数据待核查</>;
+    headline = <>{stations.length} 个测点，没有需要处理的</>;
   }
 
   return (
@@ -180,13 +175,20 @@ export const TodayAttention: FC = () => {
         </p>
       )}
 
-      {needsLook.length > 0 && (
-        <ul aria-label="建议调查的测点" className="mt-7 -mx-3 space-y-1">
-          {needsLook.map((station) => (
-            <AttentionRow key={station.station_uuid} station={station} highlightChange={isInspectionFinishedWhileOpen} />
-          ))}
-        </ul>
-      )}
+      {LISTED_GROUPS.map(({ group, label }) => {
+        const rows = byGroup(group);
+        if (rows.length === 0) return null;
+        return (
+          <section key={group} aria-label={label} className="mt-7">
+            <h2 className="text-muted-foreground mb-1 text-xs font-medium">{label} · {rows.length}</h2>
+            <ul className="-mx-3 space-y-1">
+              {rows.map((station) => (
+                <AttentionRow key={station.station_uuid} station={station} highlightChange={isInspectionFinishedWhileOpen} />
+              ))}
+            </ul>
+          </section>
+        );
+      })}
 
       {hasResults && (
         <button
@@ -195,10 +197,7 @@ export const TodayAttention: FC = () => {
           className="bg-muted/50 hover:bg-muted focus-visible:ring-ring text-muted-foreground group/all mt-5 flex min-h-12 w-full flex-wrap items-center gap-x-5 gap-y-1 rounded-xl px-4 py-2 text-start text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none"
         >
           {quietCount > 0 && (
-            <span className="inline-flex items-center gap-2"><StatusDot status="未见明显变化" />{quietCount} 个未见明显变化</span>
-          )}
-          {unavailableCount > 0 && (
-            <span className="inline-flex items-center gap-2"><StatusDot status={null} />{unavailableCount} 个数据待核查</span>
+            <span className="inline-flex items-center gap-2"><StatusDot status="未见明显变化" />其余 {quietCount} 个未见明显变化</span>
           )}
           <span className="group-hover/all:text-foreground ms-auto inline-flex items-center gap-1">
             全部测点<ArrowRightIcon className="size-3.5" aria-hidden />

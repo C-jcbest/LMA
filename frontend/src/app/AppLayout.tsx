@@ -73,7 +73,7 @@ interface PageEntry {
 function usePageEntries(): PageEntry[] {
   const { page, goHome, goStations, goRecords, startConversation } = useNavigation();
   const { latest } = useInspection();
-  const attentionCount = latest?.stations.filter((station) => station.screening === '建议调查').length;
+  const attentionCount = latest?.stations.filter((station) => station.current?.group === '需要处理').length;
   return [
     { icon: PlusIcon, label: '新调查', isCurrent: false, open: startConversation },
     { icon: SunIcon, label: '今日', isCurrent: page === 'home', badge: attentionCount, open: goHome },

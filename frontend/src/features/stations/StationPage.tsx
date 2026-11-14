@@ -16,13 +16,13 @@ import { useChartColors } from '@/features/monitoring/chartColors';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
-import { StatusDot } from '@/features/monitoring/status';
+import { JudgmentBadge, StatusDot } from '@/features/monitoring/status';
 import { buildTimelineOption, displacementBasisLabel, formatChartTime } from '@/features/monitoring/timeline';
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { addAskTarget } from '@/features/monitoring/ask-targets';
 import { cn } from '@/lib/utils';
-import type { InspectionStation, StationRecord, StationTimeline, TimelineDays } from '@/services/api';
+import type { CurrentJudgment, StationRecord, StationTimeline, TimelineDays } from '@/services/api';
 import type { GnssArtifactData } from '@/types/envelope';
 
 const TimelineChart = lazy(() => import('@/features/monitoring/TimelineChart'));
@@ -198,23 +198,36 @@ const RecordList: FC<{ records: readonly StationRecord[]; selected: { sessionId?
   );
 };
 
-/** 对话为空时的右侧面板：有初筛线索就提供一键调查，否则只留输入框。 */
-const StationAsk: FC<{ stationName: string; inspection: InspectionStation | undefined }> = ({ stationName, inspection }) => {
+/**
+ * 一键调查的问题按当前判断写具体：有原因时直接问这条变化为什么、是否仍在继续，
+ * 没有原因时退回问近期变化。由前端拼出，不需要模型。
+ */
+const quickQuestion = (stationName: string, judgment: CurrentJudgment | null | undefined): string => {
+  const reason = judgment?.reason?.split('；')[0]?.trim();
+  if (!reason) {
+    return `调查 ${stationName} 的近期变化`;
+  }
+  return `${stationName}：${reason}。原因可能是什么？现在是否仍在继续？`;
+};
+
+/** 对话为空时的右侧面板：当前判断需要处理或持续关注时提供一键调查，否则只留输入框。 */
+const StationAsk: FC<{ stationName: string; judgment: CurrentJudgment | null | undefined }> = ({ stationName, judgment }) => {
   const aui = useAui();
   const isLoading = useConversationLoading();
-  const needsLook = inspection?.screening === '建议调查';
+  const worthAsking = judgment?.group === '需要处理' || judgment?.group === '持续关注';
+  const question = quickQuestion(stationName, judgment);
 
   return (
     <div className="aui-thread-welcome-root flex flex-col gap-3 py-5">
       <h2 className="text-lg font-semibold">{stationName}</h2>
-      {needsLook && (
+      {worthAsking && (
         <Button
           type="button"
           disabled={isLoading}
-          className="self-start rounded-full"
-          onClick={() => aui.thread().append({ role: 'user', content: [{ type: 'text', text: `调查 ${stationName} 的近期变化` }] })}
+          className="h-auto min-h-9 self-start rounded-2xl py-2 text-left whitespace-normal"
+          onClick={() => aui.thread().append({ role: 'user', content: [{ type: 'text', text: question }] })}
         >
-          调查 {stationName}
+          {question}
         </Button>
       )}
     </div>
@@ -274,6 +287,8 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const inspection = latest?.stations.find((station) => station.station_uuid === stationUuid);
   const stationName = timeline?.station_name ?? inspection?.station_name;
   const groupName = timeline?.group_name ?? inspection?.group_name;
+  // 时间轴接口每次读取都带最新的当前判断（调查结束后会重新读取）；读到之前先用首页巡检结果。
+  const judgment = timeline?.current ?? inspection?.current ?? null;
 
   const showChat = () => {
     setPanel('chat');
@@ -289,9 +304,9 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           </Button>}
           {(isSideBySide || !stationName) && <h1 className="min-w-0 text-2xl font-semibold tracking-tight wrap-anywhere">{stationName ?? '测点'}</h1>}
           {groupName && <span className="text-muted-foreground text-sm">{groupName}</span>}
-          {inspection && (
-            <span className="bg-muted inline-flex min-h-7 items-center gap-2 rounded-full px-3 text-xs">
-              <StatusDot status={inspection.screening} />{investigationStatusLabel(inspection.screening)}
+          {judgment && (
+            <span className="bg-muted inline-flex min-h-7 items-center rounded-full px-3">
+              <JudgmentBadge judgment={judgment} />
             </span>
           )}
           <div className="ms-auto">
@@ -299,8 +314,11 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           </div>
           {isSideBySide && chatMode === 'closed' && <Button variant="outline" size="sm" onClick={showChat}>AI 调查</Button>}
         </div>
-        {inspection && inspection.reasons.length > 0 && (
-          <p className="text-muted-foreground mt-2 text-sm leading-relaxed wrap-anywhere">{inspection.reasons.join('；')}</p>
+        {judgment?.changed_since_investigation && (
+          <p className="mt-2 text-xs font-medium text-status-attention">上次调查后有新变化</p>
+        )}
+        {judgment?.reason && (
+          <p className="text-muted-foreground mt-2 text-sm leading-relaxed wrap-anywhere">{judgment.reason}</p>
         )}
 
         <div className="mt-7 space-y-5">
@@ -348,7 +366,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
         autoFocus={false}
         resultAnchor={recordAnchor}
         placeholder={stationName ? `问问 ${stationName}…` : undefined}
-        welcome={stationName ? <StationAsk stationName={stationName} inspection={inspection} /> : null}
+        welcome={stationName ? <StationAsk stationName={stationName} judgment={judgment} /> : null}
       />
     </aside>
   );
