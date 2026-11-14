@@ -65,7 +65,7 @@ class ScreeningTests(unittest.TestCase):
         recent = [point(NOW - timedelta(hours=168-i), 100 + i * 0.0001) for i in range(168)]
         result = screen(daily(lambda i: 0, days=30), recent)
         self.assertEqual(result.screening, "建议调查")
-        self.assertTrue(any("近期小时序列" in reason and "持续同向" in reason for reason in result.reasons))
+        self.assertTrue(any("近 7 天" in reason and "持续同向" in reason for reason in result.reasons))
 
     def test_duplicate_timestamps_do_not_inflate_coverage(self):
         recent = [hourly()[0]] * 168
@@ -94,6 +94,53 @@ class ScreeningTests(unittest.TestCase):
         result = screen(daily(lambda i: 0), recent)
         self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
 
+    def test_step_hidden_inside_daily_gap_is_flagged_and_marked_as_held(self):
+        """台阶与缺测重合时不判单步跳变，但缺测前后位置差仍要提示（审查实测 ST02 被漏掉）。"""
+        points = daily(lambda i: 0 if i < 60 else -9, noise_mm=1.5)
+        del points[59:62]
+        result = screen(points)
+        self.assertEqual(result.screening, "建议调查", result.reasons)
+        reason = next(reason for reason in result.reasons if "缺测" in reason)
+        self.assertIn("北向", reason)
+        self.assertIn("之后一直保持", reason)
+
+    def test_slow_creep_across_long_gap_is_not_a_position_jump(self):
+        points = daily(lambda i: -0.2 * i, noise_mm=0.5)
+        del points[40:50]
+        result = screen(points)
+        self.assertFalse(any("缺测" in reason for reason in result.reasons), result.reasons)
+
+    def test_accelerating_motion_reports_increasing_rate_sequence(self):
+        """速率线性增大（二次加速）时给出逐段速率，而不是依赖模型自己切段。"""
+        result = screen(daily(lambda i: 0 if i < 60 else -0.02 * (i - 60) ** 2, noise_mm=0.5))
+        reason = next((reason for reason in result.reasons if "逐段增大" in reason), None)
+        self.assertIsNotNone(reason, result.reasons)
+        self.assertEqual(result.metrics["rate_sequence"]["long"]["pattern"], "逐段增大")
+
+    def test_steady_motion_is_not_reported_as_accelerating(self):
+        steady = screen(daily(lambda i: -0.3 * i, noise_mm=0.0))
+        self.assertFalse(any("逐段增大" in reason for reason in steady.reasons), steady.reasons)
+        self.assertEqual(steady.metrics["rate_sequence"]["long"]["pattern"], "未见逐段增减")
+
+    def test_reasons_merge_axes_into_one_business_sentence(self):
+        result = screen([
+            point(moment, 100 - 0.2 * i / 1000, 200 + 0.15 * i / 1000)
+            for i, moment in enumerate(datetime.strptime(item.data_time, "%Y-%m-%d %H:%M:%S") for item in daily(lambda i: 0))
+        ])
+        trend = [reason for reason in result.reasons if "持续同向" in reason]
+        self.assertEqual(len(trend), 1, result.reasons)
+        self.assertIn("北向", trend[0])
+        self.assertIn("东向", trend[0])
+        self.assertIn("水平约", trend[0])
+        self.assertFalse(any("分窗复核" in reason or "跨越差值" in reason for reason in result.reasons))
+
+    def test_gaps_alone_are_not_listed_as_reasons_for_stability(self):
+        points = daily(lambda i: 0)
+        del points[30:33]
+        result = screen(points)
+        self.assertEqual(result.screening, "未见明显变化")
+        self.assertEqual(result.reasons, [])
+
     def test_theil_sen_ignores_outliers(self):
         days = [float(i) for i in range(20)]
         values = [0.5 * day for day in days]
@@ -117,7 +164,7 @@ class ScreeningTests(unittest.TestCase):
 
     def test_recent_acceleration_is_reported(self):
         result = screen(daily(lambda i: -0.05 * i if i < 76 else -3.8 - 0.8 * (i - 76), noise_mm=0.5))
-        self.assertTrue(any("快于此前" in reason for reason in result.reasons), result.reasons)
+        self.assertTrue(any("明显变快" in reason for reason in result.reasons), result.reasons)
 
     def test_persistent_step_flags_but_isolated_spike_does_not(self):
         step = screen(daily(lambda i: 0 if i < 50 else 30, noise_mm=0.5))

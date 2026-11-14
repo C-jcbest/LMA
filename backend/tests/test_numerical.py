@@ -210,6 +210,32 @@ class DisplacementToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(common[STATION_A.station_uuid]['count'], 5)
         self.assertAlmostEqual(common[STATION_B.station_uuid]['net_change_mm'], 8)
 
+    async def test_gap_level_shift_and_rate_sequence_reach_the_model(self):
+        """缺测期间的台阶和逐段加快的速率由系统给出，模型不必自己从逐点数据里拼。"""
+        hours = [hour for hour in range(24 * 7) if not 80 <= hour < 92]
+        hourly = [
+            point(NOW - timedelta(hours=24 * 7 - hour), 100 - (0.009 if hour >= 92 else 0) - 0.0000004 * hour ** 2,
+                  200 + 0.0000003 * hour ** 2)
+            for hour in hours
+        ]
+        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
+        result = await displacement(platform, station_name_or_uuid='测试点', **window(days=7))
+        content = json.loads(result.content)
+        shift = content['features']['n']['gap_shifts'][0]
+        self.assertAlmostEqual(shift['level_shift_mm'], -9, delta=1.5)
+        self.assertEqual(shift['persistence'], '之后一直保持')
+        self.assertEqual(content['rate_sequence']['pattern'], '逐段增大')
+        self.assertIn('逐段增大', content['rate_sequence']['description'])
+        self.assertEqual(result.artifact['data']['rate_sequence']['pattern'], '逐段增大')
+
+    async def test_resultant_window_change_is_named_as_magnitude_difference(self):
+        hourly = [point(NOW - timedelta(hours=i), 100.001 + i * .001) for i in range(5)]
+        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
+        content = json.loads((await displacement(platform, station_name_or_uuid='测试点', **window(hours=4))).content)
+        self.assertIn('magnitude_change_mm', content['features']['h'])
+        self.assertNotIn('net_change_mm', content['features']['h'])
+        self.assertIn('net_change_mm', content['features']['n'])
+
     async def test_base_station_is_not_treated_as_missing_displacement(self):
         base = Station(station_uuid='33333333-3333-3333-3333-333333333333', station_name='基准', station_type=1,
                        group_uuid='g', group_name='测试组')

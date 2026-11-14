@@ -1,11 +1,20 @@
 """独立 GNSS 数值计算；描述统计与候选事件分开，不对缺测插值。"""
 from collections import Counter
+from datetime import timedelta
 from statistics import median
 import math
 
 from app.business_time import TIME_FORMAT
-from app.inspection.screening import theil_sen_slope
 from app.observations import finite_number, observation_time, station_reference
+from app.series_features import (
+    HorizontalSeries,
+    gap_level_shifts,
+    main_direction,
+    point_noise,
+    rate_pattern,
+    rate_sequence,
+    theil_sen_slope,
+)
 
 METRIC_NAMES = {
     'n': '北向相对位移N',
@@ -96,7 +105,7 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
         'cadence_hours': cadence_hours, 'effective_span_hours': 0,
         'baseline': '固定初始坐标' if base is not None else '固定参考缺失；仅计算窗口变化',
         'reference_value_m': base, 'trend_supported': False, 'events': [], 'limitations': [],
-        'residual_noise_mm': None,
+        'residual_noise_mm': None, 'gap_shifts': [],
     }
     if any(count > 1 for count in counts.values()):
         result['limitations'].append('重复时间已剔除')
@@ -129,7 +138,8 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     adjacent = {index for index in range(len(days) - 1)
                 if 0 < (days[index + 1] - days[index]) * 24 <= cadence_hours * 1.5}
     if len(adjacent) < len(days) - 1:
-        result['limitations'].append('存在缺测跨越；跨越差值不计入单步和连续保持区间')
+        result['limitations'].append('存在缺测跨越；跨越差值不计入单步和连续保持区间，缺测前后的位置差见 gap_shifts')
+        result['gap_shifts'] = _gap_shifts(moments, days, mm, cadence_hours, result['robust_slope_mm_day'])
     if not adjacent:
         return result
     index = max(sorted(adjacent), key=lambda i: abs(mm[i + 1] - mm[i]))
@@ -148,6 +158,82 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     else:
         result['jump_persistence'] = '未见显著突跳候选'
     return result
+
+
+_GAP_SHIFT_NOISE_MULTIPLE = 6
+
+
+def _gap_shifts(moments, days, mm, cadence_hours, slope):
+    """缺测前后各至多 5 个有效点的位置中位数之差（已扣除整窗趋势），超过相邻观测噪声 6 倍时列出。"""
+    noise = point_noise(days, mm, cadence_hours / 24)
+    if noise is None:
+        return []
+    shifts = gap_level_shifts(days, mm, cadence_hours / 24, slope, max(noise, 1e-6), _GAP_SHIFT_NOISE_MULTIPLE)
+    held_text = {True: '之后一直保持', False: '之后未保持在新位置', None: '缺测后观测不足，是否保持待观察'}
+    return [{
+        'gap_from': moments[days.index(shift.before_day)].strftime(TIME_FORMAT),
+        'gap_to': moments[days.index(shift.after_day)].strftime(TIME_FORMAT),
+        'gap_hours': round((shift.after_day - shift.before_day) * 24, 1),
+        'level_shift_mm': shift.shift_mm,
+        'persistence': held_text[shift.held],
+        'limitation': '缺测期间的变化过程未知；只说明缺测前后位置不同',
+    } for shift in shifts[:10]]
+
+
+def rate_segment_days(sampling, span_days):
+    """速率分段步长：小时数据短窗按天、长窗按周；日采样按周，跨度很长时按 30 天。"""
+    if sampling == 'hourly':
+        return 1.0 if span_days <= 14 else 7.0
+    return 7.0 if span_days <= 180 else 30.0
+
+
+_RATE_MAX_SEGMENTS = 8
+
+
+def horizontal_rate_sequence(observations, sampling, cadence_hours):
+    """沿水平主方向的分段速率；判断加速看速率是否逐段增大，而不是比较任意两段。"""
+    start = None
+    series = HorizontalSeries([], [], [])
+    first = None
+    for observation in observations:
+        if observation.n is None or observation.e is None:
+            continue
+        moment = observation_time(observation.data_time)
+        if first is None:
+            start, first = moment, (observation.n, observation.e)
+        series.days.append((moment - start).total_seconds() / 86400)
+        series.north.append((observation.n - first[0]) * 1000)
+        series.east.append((observation.e - first[1]) * 1000)
+    direction = main_direction(series)
+    if direction is None:
+        return {'available': False, 'note': '水平位移很小或样本不足，主方向不稳定，不计算沿方向速率'}
+    azimuth, along = direction
+    segment_days = rate_segment_days(sampling, series.days[-1] - series.days[0])
+    segments = rate_sequence(series.days, along, cadence_hours / 24, segment_days, _RATE_MAX_SEGMENTS)
+    pattern = rate_pattern(segments)
+    items = [{
+        'begin_time': (start + timedelta(days=segment.start_day)).strftime(TIME_FORMAT),
+        'end_time': (start + timedelta(days=segment.end_day)).strftime(TIME_FORMAT),
+        'rate_mm_day': None if segment.rate_mm_day is None else round(segment.rate_mm_day, 3),
+        'uncertainty_mm_day': None if segment.uncertainty_mm_day is None else round(segment.uncertainty_mm_day, 3),
+        'count': segment.count,
+    } for segment in segments]
+    latest = [item['rate_mm_day'] for item in items[-3:]]
+    if pattern == '样本不足' or None in latest:
+        description = '最近三段中有样本不足的段，不判断速率走势'
+    else:
+        values = ' → '.join(f'{abs(value):.2f}' for value in latest)
+        verdicts = {
+            '逐段增大': '逐段增大且超出不确定度',
+            '逐段减小': '逐段减小且超出不确定度',
+            '未见逐段增减': '未见超出不确定度的逐段增减',
+        }
+        description = f'最近三段沿主方向速率依次 {values} mm/day，{verdicts[pattern]}'
+    return {
+        'available': True, 'azimuth_deg': round(azimuth, 1), 'segment_days': segment_days,
+        'segments': items, 'pattern': pattern, 'description': description,
+        'method': '主方向取北、东分量鲁棒趋势的合成方向；每段 Theil–Sen；不确定度为近似标准误',
+    }
 
 
 def horizontal_direction(north_mm, east_mm):

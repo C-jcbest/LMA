@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from app.agent.numerical import horizontal_rate_sequence
 from app.beidou.schemas import Station
 from app.business_time import TIME_FORMAT, business_now
 from app.monitoring_data import DISPLACEMENT_STATION_TYPES, MonitoringData, series_artifact_data
@@ -23,4 +24,6 @@ async def load_station_series(data: MonitoringData, station: Station, days: int)
     series = await data.displacement(
         station, (now - timedelta(days=days)).strftime(TIME_FORMAT), now.strftime(TIME_FORMAT), sampling,
     )
-    return series_artifact_data(series)
+    # 速率序列供测点页画速率子图，与位移工具同一算法。
+    rate_sequence = horizontal_rate_sequence(series.observations, series.sampling, series.cadence_hours)
+    return series_artifact_data(series, rate_sequence=rate_sequence)

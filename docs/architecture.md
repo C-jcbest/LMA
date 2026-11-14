@@ -36,7 +36,8 @@
 ## 数据层与工具
 
 - [monitoring_data.py](../backend/app/monitoring_data.py) 供模型工具和测点页共用：测点解析、固定日历块分片取数（小时 30 天、每日固定时刻 360 天）、上游并发 4、观测清洗（排序、重复时间剔除、非有限值）与质量统计。同一会话的数据块缓存 10 分钟，缓存不是事实来源。
-- 工具：find_stations、get_displacement（累计偏移、窗口净变化、鲁棒趋势、台阶候选、缺测、水平位移方位，可分段或同组共同时段对比，点数少时附逐点位移）、query_weather（历史最多 366 天，可选逐小时降水）、inspect_site_environment（约 90 m DEM 的坡度坡向、区域地质单元）、compute、record_conclusions，以及有存储时的 get_station_history。
+- 位移序列的共用数值原语（鲁棒斜率、相邻观测噪声、缺测前后位置差、速率序列与水平主方向）在 [series_features.py](../backend/app/series_features.py)，巡检初筛、位移工具和测点页时间轴共用同一口径。
+- 工具：find_stations、get_displacement（累计偏移、窗口净变化、鲁棒趋势、台阶候选、缺测前后位置差、缺测、水平位移方位、沿主方向的速率序列，可分段或同组共同时段对比，点数少时附逐点位移）、query_weather（历史最多 366 天，可选逐小时降水）、inspect_site_environment（约 90 m DEM 的坡度坡向、区域地质单元）、compute、record_conclusions，以及有存储时的 get_station_history。
 - 基准站由位移工具直接说明并返回 `artifact=None`，不生成失败卡片；窗口过长等可修正问题用 `ToolInputError` 作为参数纠错返回模型，前端不当作业务故障。
 - compute 在子进程执行模型写的 pandas/numpy 代码，输入只来自本会话依据：语法树白名单、受限内置函数、`python -I`、超时，Linux 上另有内存与 CPU 上限。不是操作系统级沙箱，多用户开放前需复核。
 - 测点页序列由 `GET /stations/{uuid}/timeline` 直接读平台，不经过模型，与位移工具共用数据层与序列结构。

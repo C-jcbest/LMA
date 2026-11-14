@@ -287,6 +287,7 @@ def series_artifact_data(
     series: DisplacementSeries,
     *,
     features: dict | None = None,
+    rate_sequence: dict | None = None,
     comparisons: dict | None = None,
     group_stations: list[Station] | None = None,
 ) -> dict:
@@ -321,6 +322,7 @@ def series_artifact_data(
             "applicability": "获取时平台登记的固定参考；平台未提供变更历史，不能据此认定迁站或换设备前后可直接拼接",
         },
         "features": features or {},
+        "rate_sequence": rate_sequence,
         "comparisons": comparisons or {},
         "location": {
             "group_name": station.group_name,

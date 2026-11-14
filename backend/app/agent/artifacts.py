@@ -132,6 +132,7 @@ class GnssArtifactData(ArtifactModel):
     quality: dict[str, JsonValue] = Field(default_factory=dict)
     reference: dict[str, JsonValue] = Field(default_factory=dict)
     features: dict[str, JsonValue] = Field(default_factory=dict)
+    rate_sequence: dict[str, JsonValue] | None = None
     comparisons: dict[str, JsonValue] = Field(default_factory=dict)
     raw_points: list[GnssPointArtifact] = Field(default_factory=list)
     location: GnssStationLocationArtifact | None = None
