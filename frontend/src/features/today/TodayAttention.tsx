@@ -43,14 +43,14 @@ function useInspectionFinishedWhileOpen(latest: LatestInspection | null) {
   return baselineInspectionId !== undefined && latest?.inspection != null && latest.inspection.id !== baselineInspectionId;
 }
 
-const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }> = ({ station, highlightChange }) => {
+const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean; index: number }> = ({ station, highlightChange, index }) => {
   const { openStation } = useNavigation();
   const change = horizontalChange(station);
   const judgment = station.current;
   const isScreeningChanged = station.previous_screening !== null && station.previous_screening !== station.screening;
 
   return (
-    <li>
+    <li className="row-enter" style={{ animationDelay: `${index * 40}ms` }}>
       <button
         type="button"
         aria-label={`查看 ${station.station_name}`}
@@ -182,8 +182,8 @@ export const TodayAttention: FC = () => {
           <section key={group} aria-label={label} className="mt-7">
             <h2 className="text-muted-foreground mb-1 text-xs font-medium">{label} · {rows.length}</h2>
             <ul className="-mx-3 space-y-1">
-              {rows.map((station) => (
-                <AttentionRow key={station.station_uuid} station={station} highlightChange={isInspectionFinishedWhileOpen} />
+              {rows.map((station, index) => (
+                <AttentionRow key={station.station_uuid} station={station} index={index} highlightChange={isInspectionFinishedWhileOpen} />
               ))}
             </ul>
           </section>

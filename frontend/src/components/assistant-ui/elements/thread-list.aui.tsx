@@ -3,7 +3,8 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSessionVerdict } from "@/features/records/SessionConclusions";
+import { Segmented } from "@/components/ui/segmented";
+import { useSessionVerdict, useSessionVerdicts } from "@/features/records/SessionConclusions";
 import { investigationStatusLabel } from "@/features/monitoring/investigation";
 import { StatusDot } from "@/features/monitoring/status";
 import { RecordSearchResults } from "@/features/records/RecordSearchResults";
@@ -71,10 +72,54 @@ const ThreadListNavigationContext = createContext<(() => void) | undefined>(unde
 /** 侧栏只放最近几条，行高紧凑；记录页是完整列表，并写出结论。 */
 type ThreadListVariant = "recent" | "all";
 const ThreadListVariantContext = createContext<ThreadListVariant>("all");
-const RECENT_THREAD_COUNT = 6;
+// 侧栏只留最近 5 条；完整列表、筛选在记录页。
+const RECENT_THREAD_COUNT = 5;
+
+/** 记录页按结论筛选：状态取会话里最需要处理的那个，测点取会话涉及的任一测点。 */
+export interface RecordFilter {
+  status: string;
+  station: string;
+}
+
+const ALL = "all";
+const DATA_PROBLEM_LABEL = "数据待核查";
+const STATUS_FILTERS = [
+  { value: ALL, label: "全部" },
+  { value: "需人工复核", label: "需人工复核" },
+  { value: "持续关注", label: "持续关注" },
+  { value: "未见明显变化", label: "未见明显变化" },
+  { value: DATA_PROBLEM_LABEL, label: DATA_PROBLEM_LABEL },
+];
+
+const matchesStatus = (status: string, filter: string) => {
+  if (filter === ALL) return true;
+  if (filter === DATA_PROBLEM_LABEL) return status === "数据不足" || status === "暂无法分析";
+  return status === filter;
+};
+
+const RecordFilters: FC<{ filter: RecordFilter; onChange: (filter: RecordFilter) => void }> = ({ filter, onChange }) => {
+  const verdicts = useSessionVerdicts();
+  const stations = useMemo(
+    () => [...new Set([...verdicts.values()].flatMap((verdict) => verdict.stations))].sort((a, b) => a.localeCompare(b, "zh-CN")),
+    [verdicts],
+  );
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-2 px-0.5">
+      <Segmented label="结论" value={filter.status} options={STATUS_FILTERS} onValueChange={(status) => onChange({ ...filter, status })} />
+      {stations.length > 0 && (
+        <select aria-label="测点" value={filter.station} onChange={(event) => onChange({ ...filter, station: event.target.value })}
+          className="h-8 rounded-md border bg-background px-2 text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          <option value={ALL}>全部测点</option>
+          {stations.map((station) => <option key={station} value={station}>{station}</option>)}
+        </select>
+      )}
+    </div>
+  );
+};
 
 export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => void }> = ({ variant, onNavigate }) => {
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<RecordFilter>({ status: ALL, station: ALL });
   const hasThreads = useAuiState((s) => s.threads.threadIds.length > 0);
 
   return (
@@ -84,6 +129,7 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
           {variant === "all" && (
             <ThreadListSearch value={search} onValueChange={setSearch} />
           )}
+          {variant === "all" && !search.trim() && <RecordFilters filter={filter} onChange={setFilter} />}
           <div
             data-slot="aui_thread-list-viewport"
             className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
@@ -94,7 +140,7 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
               <RecordSearchResults key={search.trim()} query={search.trim()} onOpen={onNavigate} />
             ) : (
               <>
-                <ThreadListItems searchQuery={hasThreads ? search : ""} />
+                <ThreadListItems searchQuery={hasThreads ? search : ""} filter={filter} />
                 <ThreadListPagination autoLoad={!search.trim()} />
               </>
             )}
@@ -208,8 +254,8 @@ export const ThreadListRoot: FC<
 };
 
 export const ThreadListItems: FC<
-  ComponentPropsWithoutRef<"div"> & { searchQuery?: string }
-> = ({ className, searchQuery = "", ...props }) => {
+  ComponentPropsWithoutRef<"div"> & { searchQuery?: string; filter?: RecordFilter }
+> = ({ className, searchQuery = "", filter, ...props }) => {
   return (
     <div
       data-slot="aui_thread-list-items"
@@ -220,7 +266,7 @@ export const ThreadListItems: FC<
         <ThreadListSkeleton />
       </AuiIf>
       <AuiIf condition={(s) => !s.threads.isLoading || s.threads.threadIds.length > 0}>
-        <ThreadListItemGroups searchQuery={searchQuery} />
+        <ThreadListItemGroups searchQuery={searchQuery} filter={filter} />
       </AuiIf>
     </div>
   );
@@ -244,11 +290,13 @@ export type ThreadListGroup = { label: string; indices: number[] };
  * (今天, 昨天, 更早). `groups` is null when no thread carries a
  * date, in which case `filteredIndices` keeps the runtime order.
  */
-export const useThreadListGroups = (searchQuery = "") => {
+export const useThreadListGroups = (searchQuery = "", filter?: RecordFilter) => {
   const threadIds = useAuiState((s) => s.threads.threadIds);
   const threadItems = useAuiState((s) => s.threads.threadItems);
+  const verdicts = useSessionVerdicts();
 
   const query = searchQuery.trim().toLowerCase();
+  const isFiltering = filter !== undefined && (filter.status !== ALL || filter.station !== ALL);
 
   return useMemo(() => {
     const itemsById = new Map(threadItems.map((item) => [item.id, item]));
@@ -262,6 +310,15 @@ export const useThreadListGroups = (searchQuery = "") => {
             .toLowerCase()
             .includes(query),
       )
+      .filter(({ id }) => {
+        if (!isFiltering) return true;
+        const remoteId = itemsById.get(id)?.remoteId;
+        const verdict = remoteId ? verdicts.get(remoteId) : undefined;
+        // 没有登记结论的会话不属于任何状态或测点，筛选时不显示。
+        if (!verdict) return false;
+        return matchesStatus(verdict.status, filter!.status)
+          && (filter!.station === ALL || verdict.stations.includes(filter!.station));
+      })
       .map(({ index }) => index);
     if (!filteredIndices.some((index) => dates[index])) {
       return { threadIds, filteredIndices, groups: null };
@@ -288,15 +345,25 @@ export const useThreadListGroups = (searchQuery = "") => {
       }
     }
     return { threadIds, filteredIndices, groups: result };
-  }, [threadIds, threadItems, query]);
+  }, [threadIds, threadItems, query, verdicts, isFiltering, filter]);
 };
 
-const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
+const ThreadListItemGroups: FC<{ searchQuery?: string; filter?: RecordFilter }> = ({
   searchQuery = "",
+  filter,
 }) => {
   const { threadIds, filteredIndices, groups } =
-    useThreadListGroups(searchQuery);
+    useThreadListGroups(searchQuery, filter);
   const query = searchQuery.trim();
+  const isFiltering = filter !== undefined && (filter.status !== ALL || filter.station !== ALL);
+
+  if (isFiltering && filteredIndices.length === 0) {
+    return (
+      <div data-slot="aui_thread-list-empty" className="text-muted-foreground px-2.5 py-4 text-sm">
+        已加载的记录中没有符合条件的调查
+      </div>
+    );
+  }
 
   if (query && filteredIndices.length === 0) {
     return (

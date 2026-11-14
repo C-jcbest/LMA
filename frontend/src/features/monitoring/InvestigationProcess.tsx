@@ -139,7 +139,7 @@ const StepText: FC<{ step: InvestigationStep }> = ({ step }) => (
   </>
 );
 
-const STEP_ROW_CLASS = 'flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 text-start text-sm';
+const STEP_ROW_CLASS = 'step-enter flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 text-start text-sm';
 const STEP_ACTION_CLASS = `${STEP_ROW_CLASS} transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`;
 
 const StepRow: FC<{ step: InvestigationStep; onOpenStation: (name: string) => void }> = ({

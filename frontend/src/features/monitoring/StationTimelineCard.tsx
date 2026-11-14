@@ -32,6 +32,15 @@ export interface FocusEvidenceDetail {
 
 export const timelineCardId = (messageId: string, stationId: string) => `timeline-${messageId}-${stationId}`;
 
+/** 正文引用定位到某个窗口时同时广播出去：测点页左侧曲线据此切换时间范围并标出这段。 */
+export const EVIDENCE_WINDOW_EVENT = 'lma:evidence-window';
+
+export interface EvidenceWindowDetail {
+  stationId: string;
+  begin: string;
+  end: string;
+}
+
 /** 窗口标签只写长短和采样，如“90 天 · 日”“7 天 · 时”；日期范围在悬停提示里。 */
 const windowLabel = (begin: string, end: string, hourly: boolean) => {
   const days = Math.max(1, Math.round((new Date(end.replace(' ', 'T')).getTime() - new Date(begin.replace(' ', 'T')).getTime()) / DAY_MILLIS));
@@ -89,6 +98,11 @@ export const StationTimelineCard: FC<StationTimelineCardProps> = ({ messageId, s
       const key = keyOfToolCall(detail.toolCallId);
       if (key) {
         setSelectedKey(key);
+        const target = windows.find((item) => windowKey(item.data) === key);
+        if (target) {
+          const window: EvidenceWindowDetail = { stationId: station.id, begin: target.data.begin_time, end: target.data.end_time };
+          globalThis.dispatchEvent(new CustomEvent(EVIDENCE_WINDOW_EVENT, { detail: window }));
+        }
       }
       setIsOpen(true);
       cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -96,7 +110,7 @@ export const StationTimelineCard: FC<StationTimelineCardProps> = ({ messageId, s
     };
     window.addEventListener(FOCUS_EVIDENCE_EVENT, onFocus);
     return () => window.removeEventListener(FOCUS_EVIDENCE_EVENT, onFocus);
-  }, [messageId, station.id, allWindows]);
+  }, [messageId, station.id, allWindows, windows]);
 
   // 流式输出时每个字都会重建依据数组；按依据编号判断内容是否变化，避免逐字重绘图表。
   const weatherKey = station.weather.map((item) => item.toolCallId).join();

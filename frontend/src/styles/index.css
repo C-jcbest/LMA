@@ -598,8 +598,10 @@
   border-left-width: 1px;
 }
 
+/* 展开调查只把对话栏加宽，左侧仍保留曲线，回答引用的窗口能在旁边对照。 */
 .station-chat-panel[data-mode="expanded"] {
-  width: 100%;
+  width: max(60%, calc(100% - 480px));
+  border-left-width: 1px;
 }
 
 .station-chat-panel[data-mode="closed"] {
@@ -764,4 +766,26 @@
 @media (prefers-reduced-motion: reduce) {
   .judgment-enter .judgment-head,
   .follow-up { animation: none; }
+}
+
+/* 首页各组的行依次淡入并上移 6px，用户能看出列表刚更新、哪些点进来了。 */
+.row-enter {
+  animation: row-enter 240ms ease-out both;
+}
+@keyframes row-enter {
+  from { opacity: 0; transform: translateY(6px); }
+}
+/* 调查过程新出现的步骤淡入展开。 */
+.step-enter {
+  animation: step-enter 160ms ease-out both;
+}
+@keyframes step-enter {
+  from { opacity: 0; transform: translateY(-2px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .row-enter,
+  .step-enter { animation: fade-only 120ms ease-out both; }
+}
+@keyframes fade-only {
+  from { opacity: 0; }
 }

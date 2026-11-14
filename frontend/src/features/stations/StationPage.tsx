@@ -17,9 +17,13 @@ import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { JudgmentBadge, StatusDot } from '@/features/monitoring/status';
+import { StationCompass } from '@/features/monitoring/StationCompass';
+import { EVIDENCE_WINDOW_EVENT, type EvidenceWindowDetail } from '@/features/monitoring/StationTimelineCard';
 import {
   buildTimelineOption,
   curveBasisLabel,
+  displacementBasis,
+  latestHorizontal,
   defaultCurveBasis,
   formatChartTime,
   timelineHeight,
@@ -107,7 +111,25 @@ const formatRecordDate = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' }).format(new Date(value));
 };
 
-const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk: () => void; disabled: boolean }> = ({ stationName, data, onAsk, disabled }) => {
+/** 测点页的方向罗盘：最新累计（或本窗口）水平位移的方位；测点页没有场地坡向，不比较顺坡。 */
+const DirectionCompass: FC<{ data: GnssArtifactData }> = ({ data }) => {
+  const horizontal = latestHorizontal(data);
+  if (!horizontal) return null;
+  const magnitude = Math.hypot(horizontal.north, horizontal.east);
+  if (magnitude === 0) return null;
+  const azimuth = ((Math.atan2(horizontal.east, horizontal.north) * 180) / Math.PI + 360) % 360;
+  return (
+    <StationCompass reading={{ azimuth, magnitudeMillimeters: magnitude, downslopeAzimuth: null, cumulative: displacementBasis(data) === 'fixed' }} />
+  );
+};
+
+const DisplacementChart: FC<{
+  stationName: string;
+  data: GnssArtifactData;
+  highlight: { begin: string; end: string } | null;
+  onAsk: () => void;
+  disabled: boolean;
+}> = ({ stationName, data, highlight, onAsk, disabled }) => {
   const aui = useAui();
   const { composerInputRef } = useStationInspector();
   const isLoading = useConversationLoading();
@@ -117,8 +139,8 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   const [basisChoice, setBasisChoice] = useState<CurveBasis | null>(null);
   const basis = basisChoice ?? defaultCurveBasis(data);
   const option = useMemo(
-    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components', basis }, chartColors),
-    [data, basis, chartColors],
+    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components', basis, highlight }, chartColors),
+    [data, basis, highlight, chartColors],
   );
 
   const askAbout = (target: ChartRange) => {
@@ -270,6 +292,20 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const isSwitchingWindow = loaded !== null && loaded.days !== days;
   const [hasError, setHasError] = useState(false);
   const [reloadCount, setReloadCount] = useState(0);
+  // 右侧回答里点开的依据窗口：左侧切到能覆盖它的最短时间范围，并标出这段。
+  const [highlight, setHighlight] = useState<{ begin: string; end: string } | null>(null);
+  useEffect(() => {
+    const onEvidenceWindow = (event: Event) => {
+      const detail = (event as CustomEvent<EvidenceWindowDetail>).detail;
+      if (detail.stationId !== stationUuid) return;
+      const spanDays = (Date.now() - new Date(detail.begin.replace(' ', 'T')).getTime()) / 86400000;
+      const covering = ([7, 30, 90] as const).find((option) => option >= spanDays) ?? 90;
+      setDays(covering);
+      setHighlight({ begin: detail.begin, end: detail.end });
+    };
+    window.addEventListener(EVIDENCE_WINDOW_EVENT, onEvidenceWindow);
+    return () => window.removeEventListener(EVIDENCE_WINDOW_EVENT, onEvidenceWindow);
+  }, [stationUuid]);
   const [panel, setPanel] = useState<Panel>(() => new URL(window.location.href).searchParams.has('stationThread') ? 'chat' : 'data');
   const [chatMode, setChatMode] = useState<'split' | 'closed' | 'expanded'>('split');
   // 从调查记录打开的会话定位到那次结论；开始新调查后清除。
@@ -363,8 +399,11 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               aria-busy={isSwitchingWindow}
               className={cn('space-y-5 transition-opacity duration-200 motion-reduce:transition-none', isSwitchingWindow && 'opacity-50 delay-150')}
             >
-              <WindowMetrics data={timeline.series} />
-              <DisplacementChart stationName={timeline.station_name} data={timeline.series} onAsk={showChat} disabled={!conversationReady} />
+              <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
+                <div className="min-w-0 flex-1 basis-full sm:basis-[24rem]"><WindowMetrics data={timeline.series} /></div>
+                <DirectionCompass data={timeline.series} />
+              </div>
+              <DisplacementChart stationName={timeline.station_name} data={timeline.series} highlight={highlight} onAsk={showChat} disabled={!conversationReady} />
             </div>
           )}
         </div>
@@ -412,12 +451,8 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             />
           </div>}
           <div ref={layoutRef} className="flex min-h-0 flex-1">
-            {/* 宽屏两栏都保持渲染，靠对话栏宽度过渡切换分栏、展开与关闭；窄屏一次只显示一栏。 */}
-            <div
-              inert={isSideBySide && chatMode === 'expanded'}
-              aria-hidden={isSideBySide && chatMode === 'expanded' ? true : undefined}
-              className={cn('h-full min-w-0 flex-1 overflow-hidden', !isSideBySide && panel !== 'data' && 'hidden')}
-            >
+            {/* 宽屏两栏都保持渲染，靠对话栏宽度过渡切换分栏、展开（对话加宽，左侧仍保留曲线）与关闭；窄屏一次只显示一栏。 */}
+            <div className={cn('h-full min-w-0 flex-1 overflow-hidden', !isSideBySide && panel !== 'data' && 'hidden')}>
               {dataPanel(true)}
             </div>
             <div ref={chatRef} id={`station-chat-${stationUuid}`} style={isSideBySide ? chatResize.style : undefined}

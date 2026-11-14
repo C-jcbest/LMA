@@ -368,7 +368,8 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
       )}
 
       <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" style={{ minWidth: isSplit && selection !== null ? 360 : undefined }}>
-          <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
+          {/* 桌面上各页自己有大标题，标题栏只在对话页（显示会话名）和窄屏（放抽屉入口）出现。 */}
+          {(!isDesktop || page === 'conversation') && <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
             {!isDesktop && <Button
               ref={navigationButtonRef}
               type="button"
@@ -381,7 +382,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
               <PanelLeftOpen className="size-4" />
             </Button>}
             <span className="min-w-0 flex-1 truncate text-sm font-medium" title={headerTitle}>{headerTitle}</span>
-          </header>
+          </header>}
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">
           {page === 'home' && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} />}

@@ -287,6 +287,8 @@ export interface TimelineInput {
   basis?: CurveBasis;
   /** 正文里的预览：不缩放、不框选，去掉滑块和提示框。 */
   compact?: boolean;
+  /** 需要对照的时间段（如回答里刚点开的依据窗口），画成浅色底带。 */
+  highlight?: { begin: string; end: string } | null;
 }
 
 /** 台阶标在曲线上的发生时刻，悬停看幅度和后续状态；不再用区间色块覆盖曲线。 */
@@ -346,6 +348,10 @@ const rateSeries = (segments: readonly RateSegment[], colors: ChartColors, xAxis
     };
   },
 });
+
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const MAIN_TOP = 44;
 const SUB_GRID_HEIGHT = 56;
@@ -447,7 +453,7 @@ const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
 
 /** 位移、降雨、缺测和台阶共用同一时间轴，时间对齐由图本身完成。 */
 export function buildTimelineOption(input: TimelineInput, colors: ChartColors): EChartsCoreOption {
-  const { data, rainfall, peers, mode, compact = false } = input;
+  const { data, rainfall, peers, mode, compact = false, highlight = null } = input;
   const basis = input.basis ?? defaultCurveBasis(data);
   const displacement = displacementOf(data, basis);
   const hasRainfall = rainfall.length > 0;
@@ -488,9 +494,21 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       ];
 
   // 缺测带放在独立的空序列上，用图例隐藏某个方向时缺测区间仍然可见。
+  const gapArea = gapBands(data.summary.gaps, colors);
   const bandSeries = {
     ...displacementLine(BAND_SERIES_NAME, [], colors.mutedText, 0),
-    markArea: gapBands(data.summary.gaps, colors),
+    markArea: highlight
+      ? {
+          ...gapArea,
+          data: [
+            ...gapArea.data,
+            [
+              { name: '回答引用', xAxis: highlight.begin, itemStyle: { color: colors.gap, borderColor: colors.primary, borderWidth: 1 } },
+              { xAxis: highlight.end },
+            ],
+          ],
+        }
+      : gapArea,
   };
 
   const axisLine = { lineStyle: { color: colors.border } };
@@ -507,7 +525,11 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
   const lastGridIndex = grids.length - 1;
 
   const option: Record<string, unknown> = {
-    animation: false,
+    // 依据面板和测点页切换窗口时曲线平滑过渡，不闪一下重画；正文预览和减弱动效时不动。
+    animation: !compact && !prefersReducedMotion(),
+    animationDuration: 300,
+    animationDurationUpdate: 300,
+    animationEasing: 'cubicOut',
     textStyle: { fontFamily: 'inherit' },
     grid: grids,
     legend: {

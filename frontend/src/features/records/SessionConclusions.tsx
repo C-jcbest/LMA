@@ -49,6 +49,9 @@ export function SessionConclusionsProvider({ children }: { children: ReactNode }
   return <SessionConclusionsContext.Provider value={verdicts}>{children}</SessionConclusionsContext.Provider>;
 }
 
+/** 记录页筛选用：全部会话的结论。 */
+export const useSessionVerdicts = (): ReadonlyMap<string, SessionVerdict> => useContext(SessionConclusionsContext);
+
 export function useSessionVerdict(sessionId: string | undefined): SessionVerdict | undefined {
   const verdicts = useContext(SessionConclusionsContext);
   return sessionId ? verdicts.get(sessionId) : undefined;
