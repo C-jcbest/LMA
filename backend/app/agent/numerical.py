@@ -7,6 +7,7 @@ import math
 from app.business_time import TIME_FORMAT
 from app.observations import finite_number, observation_time, station_reference
 from app.series_features import (
+    GAP_SHIFT_SIGMAS,
     HorizontalSeries,
     gap_level_shifts,
     main_direction,
@@ -160,15 +161,12 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     return result
 
 
-_GAP_SHIFT_NOISE_MULTIPLE = 6
-
-
 def _gap_shifts(moments, days, mm, cadence_hours, slope):
-    """缺测前后各至多 5 个有效点的位置中位数之差（已扣除整窗趋势），超过相邻观测噪声 6 倍时列出。"""
+    """缺测前后各至多 5 个有效点的位置中位数之差（已扣除整窗趋势），超出两中位数之差不确定度 5 倍时列出。"""
     noise = point_noise(days, mm, cadence_hours / 24)
     if noise is None:
         return []
-    shifts = gap_level_shifts(days, mm, cadence_hours / 24, slope, max(noise, 1e-6), _GAP_SHIFT_NOISE_MULTIPLE)
+    shifts = gap_level_shifts(days, mm, cadence_hours / 24, slope, max(noise, 1e-6), GAP_SHIFT_SIGMAS)
     held_text = {True: '之后一直保持', False: '之后未保持在新位置', None: '缺测后观测不足，是否保持待观察'}
     return [{
         'gap_from': moments[days.index(shift.before_day)].strftime(TIME_FORMAT),

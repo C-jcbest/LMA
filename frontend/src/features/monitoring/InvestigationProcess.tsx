@@ -20,7 +20,8 @@ import {
   type StationEvidence,
   type StepState,
 } from './investigation';
-import { ConclusionStatusStrip } from './InvestigationReport';
+import { JudgmentHeader } from './InvestigationReport';
+import { StationTimelineCard } from './StationTimelineCard';
 import { useStationInspector } from './StationInspectorContext';
 import { displacementOf, seriesDuration } from './timeline';
 
@@ -208,6 +209,10 @@ export const InvestigationProcess: FC = () => {
   const conclusions = useMemo(() => findConclusions(parts), [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
   const failures = steps.filter((step) => step.state === 'failed' && step.envelope?.error);
+  const hasText = parts.some((part) => part.type === 'text' && part.text.trim());
+  // 运行中先给数据：位移取到后就显示测点时间轴，正文写出来后改由正文里的依据卡承担，不重复出现。
+  const earlyStations = isRunning && !hasText ? stations.filter((station) => station.series.length > 0).slice(0, 2) : [];
+  const latestFinding = isRunning ? steps.filter((step) => step.state === 'complete' && step.detail).at(-1)?.detail : undefined;
 
   if (steps.length === 0) return null;
 
@@ -232,6 +237,9 @@ export const InvestigationProcess: FC = () => {
           {isRunning && <RunElapsed messageId={messageId} />}
           <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]/process:rotate-90 motion-reduce:transition-none" aria-hidden />
         </CollapsibleTrigger>
+        {latestFinding && !isExpanded && (
+          <p className="truncate ps-6 text-xs text-muted-foreground" title={latestFinding}>{latestFinding}</p>
+        )}
         <CollapsibleContent>
           <div className="-ms-1.5 flex flex-col py-1">
             {steps.map((step) => (
@@ -240,6 +248,12 @@ export const InvestigationProcess: FC = () => {
           </div>
         </CollapsibleContent>
       </Collapsible>}
+
+      {earlyStations.map((station) => (
+        <div key={station.id} className="animate-in fade-in duration-200 motion-reduce:animate-none">
+          <StationTimelineCard messageId={`${messageId}:early`} station={station} />
+        </div>
+      ))}
 
       {failures.length > 0 && (
         <Collapsible open={showFailures} onOpenChange={setShowFailures}>
@@ -260,8 +274,8 @@ export const InvestigationProcess: FC = () => {
 
       {/* 有登记结论时用测点状态作为入口，否则列出涉及的测点；同一入口只出现一次。调查结束时入口淡入，不突然冒出来。 */}
       {!isRunning && conclusions && (
-        <div className="animate-in fade-in duration-200 motion-reduce:animate-none">
-          <ConclusionStatusStrip conclusions={conclusions} />
+        <div className="judgment-enter">
+          <JudgmentHeader conclusions={conclusions} />
         </div>
       )}
       {!isRunning && !conclusions && stations.length > 0 && (

@@ -57,9 +57,9 @@ class SuggestionTests(unittest.IsolatedAsyncioTestCase):
         context = suggestion_context({"stations": [row]})
         with patch("app.agent.suggestions._get_suggestion_llm", return_value=model):
             questions = await suggest_questions(context)
-        self.assertEqual(questions, [
-            f"演示坡体·演示点A（UUID：{row['station_uuid']}）（2026-08-14至2026-11-12）：位移趋势如何？"
-        ])
+        self.assertEqual(len(questions), 1)
+        self.assertTrue(questions[0].startswith(f"演示坡体·演示点A（UUID：{row['station_uuid']}） "))
+        self.assertTrue(questions[0].endswith("08-14 至 11-12，位移趋势如何？") or questions[0].endswith("2026-08-14 至 2026-11-12，位移趋势如何？"))
         model.ainvoke.assert_awaited_once()
         sent = json.loads(model.ainvoke.call_args.args[0][1].content)
         self.assertEqual(sent["stations"][0]["windows"]["recent"]["quality"]["expected"], 169)
@@ -88,8 +88,19 @@ class SuggestionTests(unittest.IsolatedAsyncioTestCase):
         ]}))
         with patch("app.agent.suggestions._get_suggestion_llm", return_value=model):
             result = await suggest_questions(suggestion_context({"stations": [row]}))
-        self.assertIn("2026-01-01至2026-01-07", result[0])
+        self.assertRegex(result[0], r"(2026-)?01-01 至 (2026-)?01-07")
         self.assertNotIn("2026-11-12", result[0])
+
+    async def test_question_reads_naturally_without_group_prefix_for_current_window(self):
+        today = datetime.now(BUSINESS_TZ).date().isoformat()
+        row = source_station()
+        row["metrics"]["long_quality"]["requested_begin"] = f"{(datetime.fromisoformat(today) - timedelta(days=90)).date()} 16:00:00"
+        row["metrics"]["long_quality"]["requested_end"] = f"{today} 16:00:00"
+        model = AsyncMock()
+        model.ainvoke.return_value = AIMessage(content=json.dumps({"questions": [question_output(row)]}))
+        with patch("app.agent.suggestions._get_suggestion_llm", return_value=model):
+            result = await suggest_questions(suggestion_context({"stations": [row]}))
+        self.assertEqual(result, ["演示点A 近 90 天，位移趋势如何？"])
 
     async def test_all_fabricated_references_are_failure_instead_of_valid_empty_selection(self):
         model = AsyncMock()

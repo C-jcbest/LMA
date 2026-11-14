@@ -418,6 +418,7 @@ _ARTIFACT_ENVELOPE_ADAPTER = TypeAdapter(ToolArtifactEnvelope)
 
 def validate_artifact_envelope(envelope: dict) -> dict:
     """执行最终 envelope 校验，返回可安全发送给客户端的 JSON 数据。"""
+    # by_alias：缺测区间的 from 是 Python 关键字，模型字段叫 from_；不按别名输出时前端读不到起点。
     return _ARTIFACT_ENVELOPE_ADAPTER.validate_python(envelope).model_dump(
-        mode="json", exclude_none=True
+        mode="json", exclude_none=True, by_alias=True
     )

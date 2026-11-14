@@ -6,6 +6,9 @@ import { cardReferenceFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenc
 import { EvidenceCard, hasEvidenceCard, mapContentOf } from './EvidenceCards';
 import { buildSteps, collectStations, type InvestigationStep } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
+import { FOCUS_EVIDENCE_EVENT, timelineCardId, type FocusEvidenceDetail } from './StationTimelineCard';
+
+const SERIES_KINDS = new Set(['gnss_series', 'station_overview']);
 
 const EvidenceContext = createContext<{ steps: InvestigationStep[]; numbers: Map<string, number> }>({ steps: [], numbers: new Map() });
 
@@ -27,12 +30,23 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
   if (!step || !citationNumber || (!step.stationId && !step.inlineEnvelope)) {
     return <span className="text-muted-foreground text-xs" title="原始依据未随本次结果提供">依据暂缺</span>;
   }
+  const open = () => {
+    // 位移依据已在正文里合成测点时间轴卡：滚动过去并切到这个窗口；卡片不在页面上时再打开依据面板。
+    const stationId = step.stationId;
+    const isSeries = step.envelope !== undefined && SERIES_KINDS.has(step.envelope.kind);
+    if (isSeries && stationId && document.getElementById(timelineCardId(messageId, stationId))) {
+      const detail: FocusEvidenceDetail = { messageId, stationId, toolCallId: step.toolCallId };
+      window.dispatchEvent(new CustomEvent(FOCUS_EVIDENCE_EVENT, { detail }));
+      return;
+    }
+    openEvidence({ messageId, stationId, toolCallId: step.toolCallId });
+  };
   return (
     <button
       type="button"
       aria-label={`查看依据 ${citationNumber}：${step.detail ?? step.label}`}
       className="evidence-citation"
-      onClick={() => openEvidence({ messageId, stationId: step.stationId, toolCallId: step.toolCallId })}
+      onClick={open}
     >{citationNumber}</button>
   );
 };

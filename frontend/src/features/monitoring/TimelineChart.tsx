@@ -53,7 +53,11 @@ interface TimelineChartProps {
   askDisabled?: boolean;
   initialState?: ChartViewState;
   onStateChange?: (state: ChartViewState) => void;
+  /** 图高（px）；降雨、速率子图越多越高，见 timelineHeight。 */
+  height?: number;
 }
+
+const DEFAULT_HEIGHT = 384;
 
 interface SliderState {
   type?: string;
@@ -103,7 +107,7 @@ const formatDay = (time: number) => {
 
 const ASK_BUTTON_CLASS = 'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50';
 
-export default function TimelineChart({ viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false, initialState, onStateChange }: TimelineChartProps) {
+export default function TimelineChart({ viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false, initialState, onStateChange, height = DEFAULT_HEIGHT }: TimelineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const previousViewRef = useRef<string | null>(null);
@@ -317,7 +321,7 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
 
   return (
     <div className="relative" onMouseLeave={() => setHoverTime(null)}>
-      <div ref={containerRef} role="img" aria-label={label} className="h-96 w-full" />
+      <div ref={containerRef} role="img" aria-label={label} className="w-full" style={{ height }} />
       {askBar}
     </div>
   );

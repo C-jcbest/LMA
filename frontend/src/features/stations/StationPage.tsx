@@ -17,7 +17,15 @@ import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { JudgmentBadge, StatusDot } from '@/features/monitoring/status';
-import { buildTimelineOption, displacementBasisLabel, formatChartTime } from '@/features/monitoring/timeline';
+import {
+  buildTimelineOption,
+  curveBasisLabel,
+  defaultCurveBasis,
+  formatChartTime,
+  timelineHeight,
+  timelineSubGridCount,
+  type CurveBasis,
+} from '@/features/monitoring/timeline';
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { addAskTarget } from '@/features/monitoring/ask-targets';
@@ -106,9 +114,11 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   const chartColors = useChartColors();
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
+  const [basisChoice, setBasisChoice] = useState<CurveBasis | null>(null);
+  const basis = basisChoice ?? defaultCurveBasis(data);
   const option = useMemo(
-    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components' }, chartColors),
-    [data, chartColors],
+    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components', basis }, chartColors),
+    [data, basis, chartColors],
   );
 
   const askAbout = (target: ChartRange) => {
@@ -121,8 +131,19 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
     <div>
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-muted-foreground min-w-0 truncate text-sm tabular-nums">
-          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : `${displacementBasisLabel(data)}（mm）`}
+          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : `${curveBasisLabel(data, basis)}（mm）`}
         </p>
+        {!range && (
+          <Segmented
+            label="曲线基准"
+            value={basis}
+            options={[
+              { value: 'window', label: '本窗口变化' },
+              { value: 'reference', label: '累计位移' },
+            ]}
+            onValueChange={(value) => setBasisChoice(value as CurveBasis)}
+          />
+        )}
         {range && (
           <div className="flex shrink-0 items-center gap-1">
             <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
@@ -133,8 +154,9 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
       <ErrorBoundary fallbackTitle="时间轴渲染异常">
         <Suspense fallback={<Skeleton className="h-96 w-full" />}>
           <TimelineChart
-            viewKey={`${data.station_uuid}:${data.begin_time}:${data.end_time}`}
+            viewKey={`${data.station_uuid}:${data.begin_time}:${data.end_time}:${basis}`}
             option={option}
+            height={timelineHeight(timelineSubGridCount(data, []), false)}
             label={`${stationName} 位移时间轴`}
             resetSignal={resetSignal}
             onRangeChange={setRange}

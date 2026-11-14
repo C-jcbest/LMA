@@ -17,6 +17,7 @@ from app.beidou.schemas import GnssDataPoint
 from app.business_time import TIME_FORMAT
 from app.observations import finite_number, normalize_observations, observation_quality
 from app.series_features import (
+    GAP_SHIFT_SIGMAS,
     NOISE_FLOOR_MM,
     HorizontalSeries,
     RateSegment,
@@ -178,7 +179,8 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
     )
     if is_trending:
         direction = 1 if slope > 0 else -1
-        findings.append(_Finding("trend", window, axis, value_mm=total_change))
+        # 判定用鲁棒趋势，原因里写窗口首末的实际变化：与首页行内的数字和迷你曲线是同一个量。
+        findings.append(_Finding("trend", window, axis, value_mm=series.values[-1]))
 
     comparison_days = min(ACCELERATION_WINDOW_DAYS, span / 2)
     split_day = series.days[-1] - comparison_days
@@ -198,7 +200,7 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
     # 缺测前后位置差与相邻单步分开判断：跨越缺测的差值不当作单步跳变。
     adjacent_noise = _noise_with_floor(point_noise(series.days, series.values, series.cadence_days))
     for shift in gap_level_shifts(series.days, series.values, series.cadence_days, slope,
-                                  adjacent_noise, _STEP_NOISE_MULTIPLE):
+                                  adjacent_noise, GAP_SHIFT_SIGMAS):
         findings.append(_Finding(
             "gap_shift", window, axis, value_mm=shift.shift_mm,
             at=series.moment(shift.before_day), until=series.moment(shift.after_day), held=shift.held,

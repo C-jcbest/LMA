@@ -4,9 +4,6 @@ import { ChevronDownIcon, Maximize2Icon } from 'lucide-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
-import { useMediaQuery } from '@/hooks/use-media-query';
-import type { ToolArtifactEnvelopeFor } from '@/types/envelope';
-import { useChartColors } from './chartColors';
 import { evidenceNumbers, STATION_MAP_CARD } from './evidence-cards';
 import {
   buildSteps,
@@ -19,14 +16,13 @@ import {
 import type { MapStation, ReferenceStation } from './StationMap';
 import { validCoordinates } from './coordinates';
 import { useStationInspector } from './StationInspectorContext';
+import { StationCompass, type CompassReading } from './StationCompass';
+import { StationTimelineCard } from './StationTimelineCard';
 import {
-  buildTimelineOption,
-  dailyRainfallWithin,
   displacementBasis,
   horizontalTrack,
   latestHorizontal,
   seriesDuration,
-  seriesLabel,
 } from './timeline';
 import { ComputationResultView } from './tools/ComputationResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
@@ -35,7 +31,8 @@ import { WeatherResultView } from './tools/WeatherResultView';
 const EvidenceChart = lazy(() => import('./EvidenceChart'));
 const StationMap = lazy(() => import('./StationMap'));
 
-const CARD_KINDS = new Set(['gnss_series', 'computation', 'weather', 'site_environment']);
+const CARD_KINDS = new Set(['gnss_series', 'station_overview', 'computation', 'weather', 'site_environment']);
+const SERIES_KINDS = new Set(['gnss_series', 'station_overview']);
 
 /** 能在正文中显示卡片的依据：成功取得且有可展示内容。 */
 export const hasEvidenceCard = (step: InvestigationStep) =>
@@ -190,58 +187,9 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultE
   );
 };
 
-const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelopeFor<'gnss_series'> }> = ({ station, envelope }) => {
-  const colors = useChartColors();
-  const data = envelope.data;
-  // 流式输出时每个字都会重建依据数组；按依据编号判断内容是否变化，避免逐字重绘图表。
-  const weatherKey = station.weather.map((item) => item.toolCallId).join();
-  const weather = useMemo(() => station.weather.map((item) => item.data), [weatherKey]);
-  const rainfall = useMemo(
-    () => dailyRainfallWithin(weather, data.begin_time, data.end_time),
-    [weather, data],
-  );
-  const hasRainfall = rainfall.length > 0;
-  const narrow = useMediaQuery('(max-width: 599px)');
-  const option = useMemo(() => {
-    const full = buildTimelineOption({ data, rainfall, peers: [], mode: 'components' }, colors) as Record<string, unknown>;
-    // 正文里不缩放，去掉滑块并收回为它预留的底部空间。
-    const { dataZoom, brush, toolbox, ...preview } = full;
-    return {
-      ...preview,
-      // 正文预览不拦截触屏滚动，也不显示与展开视图不同的交互控件。
-      silent: true,
-      tooltip: { show: false },
-      legend: { ...(full.legend as object), selectedMode: false },
-      grid: hasRainfall
-        ? [{ left: 48, right: 12, top: 40, bottom: 112 }, { left: 48, right: 12, height: 56, bottom: 28 }]
-        : [{ left: 48, right: 12, top: 40, bottom: 28 }],
-    };
-  }, [data, rainfall, hasRainfall, colors]);
-  let height = 240;
-  if (hasRainfall) {
-    height = 260;
-  } else if (narrow) {
-    height = 200;
-  }
-  return (
-    <WhenVisible minHeight={height}>
-      <Suspense fallback={<Skeleton className="w-full" style={{ height }} />}>
-        <EvidenceChart option={option} label={`${data.station_name} ${seriesLabel(data)} 位移曲线`} height={height} />
-      </Suspense>
-    </WhenVisible>
-  );
-};
-
-const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefined; onOpen?: () => void; defaultExpanded: boolean }> = ({ step, station, onOpen, defaultExpanded }) => {
+const StepCard: FC<{ step: InvestigationStep; onOpen?: () => void; defaultExpanded: boolean }> = ({ step, onOpen, defaultExpanded }) => {
   const envelope = step.envelope!;
   switch (envelope.kind) {
-    case 'gnss_series': {
-      return (
-        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)} · ${displacementBasis(envelope.data) === 'fixed' ? '累计位移' : '窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded}>
-          {station ? <SeriesChart station={station} envelope={envelope} /> : null}
-        </CardShell>
-      );
-    }
     case 'computation':
       return (
         <CardShell title={envelope.data.description} meta="计算结果" onOpen={onOpen} defaultExpanded={defaultExpanded}>
@@ -271,30 +219,66 @@ const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefin
   }
 };
 
+const StationMapView: FC<{ content: MapContent; onOpenStation: (stationId: string) => void }> = ({ content, onOpenStation }) => (
+  <WhenVisible minHeight={288}>
+    <ErrorBoundary fallbackTitle="地图渲染异常">
+      <Suspense fallback={<Skeleton className="h-72 w-full" />}>
+        <StationMap stations={content.stations} references={content.references} onSelect={onOpenStation} />
+      </Suspense>
+    </ErrorBoundary>
+  </WhenVisible>
+);
+
+/** 罗盘读数来自地图同一份内容：箭头为最长窗口最新的水平位移，扇形为场地下坡方向。 */
+const compassReadingOf = (station: MapStation): CompassReading | null => {
+  if (station.northMillimeters === null || station.eastMillimeters === null) {
+    return null;
+  }
+  const magnitude = Math.hypot(station.northMillimeters, station.eastMillimeters);
+  if (magnitude === 0) {
+    return null;
+  }
+  const azimuth = ((Math.atan2(station.eastMillimeters, station.northMillimeters) * 180) / Math.PI + 360) % 360;
+  return { azimuth, magnitudeMillimeters: magnitude, downslopeAzimuth: station.downslopeAzimuth, cumulative: station.cumulative };
+};
+
+/**
+ * 多测点时地图承担“哪几个点、在哪、往哪动”的空间对比；单测点时用户只需要方向和是否顺坡，
+ * 用方向罗盘代替，地图按需打开，底图加载失败也不会留下一大块空白。
+ */
 const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: (stationId: string) => void }> = ({ stations, onOpenStation }) => {
   const parts = useAuiState((state) => state.message.parts);
+  const [showMap, setShowMap] = useState(false);
   const conclusionsByStation = useMemo(() => {
     const conclusions = findConclusions(parts);
     return new Map((conclusions?.stations ?? []).map((item) => [item.station_uuid, { status: item.status, reason: item.reason }]));
   }, [parts]);
   // 地图只在测点、位置、变化或状态改变时重建，流式输出不触发重绘。
   const mapKey = JSON.stringify(mapContentOf(stations, conclusionsByStation));
-  const { stations: mapStations, references } = useMemo(() => JSON.parse(mapKey) as MapContent, [mapKey]);
-  if (mapStations.length === 0) {
+  const content = useMemo(() => JSON.parse(mapKey) as MapContent, [mapKey]);
+  if (content.stations.length === 0) {
     return null;
+  }
+  const single = content.stations.length === 1 ? content.stations[0]! : null;
+  const reading = single ? compassReadingOf(single) : null;
+  if (single && reading) {
+    return (
+      <CardShell title={`${single.name} 位移方向`} meta={reading.cumulative ? '最新累计水平位移' : '本窗口水平变化'}>
+        <StationCompass reading={reading} />
+        <button type="button" onClick={() => setShowMap((value) => !value)} aria-expanded={showMap}
+          className="mt-2 min-h-8 rounded-md text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          {showMap ? '收起地图' : '在地图中查看'}
+        </button>
+        {showMap && <div className="mt-2"><StationMapView content={content} onOpenStation={onOpenStation} /></div>}
+      </CardShell>
+    );
   }
   return (
     <CardShell
       title="测点位置"
-      meta={mapStations.every((station) => station.cumulative) ? '箭头为最新累计水平位移方向' : '箭头为水平位移方向；无固定参考的测点为本窗口变化'}
+      meta={content.stations.every((station) => station.cumulative) ? '箭头为最新累计水平位移方向' : '箭头为水平位移方向；无固定参考的测点为本窗口变化'}
     >
-      <WhenVisible minHeight={288}>
-        <ErrorBoundary fallbackTitle="地图渲染异常">
-          <Suspense fallback={<Skeleton className="h-72 w-full" />}>
-            <StationMap stations={mapStations} references={references} onSelect={onOpenStation} />
-          </Suspense>
-        </ErrorBoundary>
-      </WhenVisible>
+      <StationMapView content={content} onOpenStation={onOpenStation} />
     </CardShell>
   );
 };
@@ -314,16 +298,22 @@ export const EvidenceCard: FC<{ cardId: string; besideTable: boolean }> = ({ car
   if (!step) {
     return null;
   }
-  const station = stations.find((item) => item.id === step.stationId);
+  if (step.envelope && SERIES_KINDS.has(step.envelope.kind)) {
+    // 位移依据按测点合成一张时间轴卡，放在该测点第一次被引用的位置；之后的引用只切换卡内窗口。
+    const station = stations.find((item) => item.id === step.stationId);
+    const numbers = evidenceNumbers(parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n\n'));
+    const citationNumber = numbers.get(cardId) ?? Infinity;
+    const isFirstForStation = !steps.some((candidate) => (
+      candidate.stationId === step.stationId && candidate.envelope !== undefined && SERIES_KINDS.has(candidate.envelope.kind)
+      && (numbers.get(candidate.evidenceId ?? '') ?? Infinity) < citationNumber
+    ));
+    if (!station || !isFirstForStation) {
+      return null;
+    }
+    return <StationTimelineCard messageId={messageId} station={station} initialToolCallId={step.toolCallId} />;
+  }
   const onOpen = () => openEvidence({ messageId, stationId: step.stationId, toolCallId: step.toolCallId });
-  const numbers = evidenceNumbers(parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n\n'));
-  const citationNumber = numbers.get(cardId);
-  // 同一测点的额外窗口先显示标题，避免多张相似曲线打断阅读；用户仍可独立展开。
-  const hasEarlierSeries = step.envelope?.kind === 'gnss_series' && steps.some((candidate) => (
-    candidate.stationId === step.stationId && candidate.envelope?.kind === 'gnss_series'
-    && (numbers.get(candidate.evidenceId ?? '') ?? Infinity) < (citationNumber ?? Infinity)
-  ));
   // 正文已经用表格列出计算结果时，计算卡片只留标题行供核对，不再展开第二张表。
   const isComputationBesideTable = besideTable && step.envelope?.kind === 'computation';
-  return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries && !isComputationBesideTable} />;
+  return <StepCard step={step} onOpen={onOpen} defaultExpanded={!isComputationBesideTable} />;
 };

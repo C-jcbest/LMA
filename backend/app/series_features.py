@@ -18,6 +18,9 @@ ADJACENT_CADENCE_FACTOR = 1.5
 # 缺测前后各取至多 5 个有效点求位置中位数，至少 3 个点才比较。
 _GAP_LEVEL_POINTS = 5
 _GAP_MIN_POINTS = 3
+_MEDIAN_EFFICIENCY = 1.2533
+# 缺测前后位置差超过两中位数之差不确定度的这一倍数才列出；初筛与位移工具共用。
+GAP_SHIFT_SIGMAS = 5.0
 # 速率段内有效点至少为应有点数的一半，且不少于 4 个。
 _RATE_MIN_COVERAGE = 0.5
 _RATE_MIN_POINTS = 4
@@ -87,19 +90,27 @@ class GapShift:
     """之后是否一直保持在新位置；缺测后观测太少时为 None。"""
 
 
+def _median_difference_sigma(noise: float, before_count: int, after_count: int) -> float:
+    """两组中位数之差的标准差：正态噪声下中位数的标准差约为均值的 1.2533 倍。"""
+    return _MEDIAN_EFFICIENCY * noise * math.sqrt(1 / before_count + 1 / after_count)
+
+
 def gap_level_shifts(
     days: Sequence[float],
     values: Sequence[float],
     cadence_days: float,
     slope: float,
     noise: float,
-    noise_multiple: float,
+    sigmas: float,
 ) -> list[GapShift]:
     """缺测前后的位置差。
 
     强降雨、断电、通信中断往往和真实位移同时发生，缺测期间变化过程未知，所以不判“单步跳变”；
-    但缺测前后位置差明显超出本点噪声时，仍是需要提示的事实。按整窗趋势扣除缺测期间本应发生的变化，
+    但缺测前后位置差明显超出噪声时，仍是需要提示的事实。按整窗趋势扣除缺测期间本应发生的变化，
     避免把缓慢蠕变在长缺测上的累积当成位置突变。
+
+    显著性看“两个中位数之差”的不确定度，而不是单点噪声：各取 5 点的中位数比单点稳定得多，
+    用单点噪声的倍数会把与噪声同量级的真实台阶（如噪声 1.5 mm 下的 9 mm 台阶）漏掉。
     """
     residuals = [value - slope * day for day, value in zip(days, values)]
     shifts = []
@@ -114,7 +125,7 @@ def gap_level_shifts(
             continue
         before_level = median(before)
         shift = median(after) - before_level
-        if abs(shift) <= noise_multiple * noise:
+        if abs(shift) <= sigmas * _median_difference_sigma(noise, len(before), len(after)):
             continue
         held = None
         if len(after) == _GAP_LEVEL_POINTS:

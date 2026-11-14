@@ -227,6 +227,10 @@ class DisplacementToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(content['rate_sequence']['pattern'], '逐段增大')
         self.assertIn('逐段增大', content['rate_sequence']['description'])
         self.assertEqual(result.artifact['data']['rate_sequence']['pattern'], '逐段增大')
+        # 缺测区间以 from/to 发给前端；按字段名 from_ 输出时界面会把整张图标成缺测。
+        gap = result.artifact['data']['summary']['gaps'][0]
+        self.assertIn('from', gap)
+        self.assertNotIn('from_', gap)
 
     async def test_resultant_window_change_is_named_as_magnitude_difference(self):
         hourly = [point(NOW - timedelta(hours=i), 100.001 + i * .001) for i in range(5)]

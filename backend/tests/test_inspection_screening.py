@@ -96,7 +96,7 @@ class ScreeningTests(unittest.TestCase):
 
     def test_step_hidden_inside_daily_gap_is_flagged_and_marked_as_held(self):
         """台阶与缺测重合时不判单步跳变，但缺测前后位置差仍要提示（审查实测 ST02 被漏掉）。"""
-        points = daily(lambda i: 0 if i < 60 else -9, noise_mm=1.5)
+        points = daily(lambda i: 0 if i < 60 else -7.5, noise_mm=1.5)
         del points[59:62]
         result = screen(points)
         self.assertEqual(result.screening, "建议调查", result.reasons)
