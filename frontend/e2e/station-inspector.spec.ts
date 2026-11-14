@@ -178,8 +178,6 @@ test('场地引用定位原始资料，地图不可用和调整面板不影响�
         version: 1, observed_at: '2026-11-09T00:00:00Z', coordinate_system: 'WGS84',
         center_station: { station_uuid: 'test-a', station_name: '测试点 A', longitude: 120, latitude: 30, coordinate_system: 'WGS84' },
         group_stations: [{ station_uuid: 'invalid', station_name: '坐标填反的测试点', longitude: 39.87, latitude: 116.48, coordinate_system: 'WGS84' }],
-        faults: { available: false, note: '自动化测试数据，无真实断层结论' },
-        layer_sources: { geology_tiles: '', geology_source_layer: 'units', fault_source_layer: 'lines' },
       },
     },
   };

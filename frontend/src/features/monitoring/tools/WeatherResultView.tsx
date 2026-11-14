@@ -49,7 +49,6 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
   const loc = data.location || {};
   const cur = data.current || {};
   const rain = data.rain_summary;
-  const wind = data.wind_summary || {};
   const hist = data.history?.daily;
   const hourly = data.history?.hourly;
   const fc = data.forecast?.daily;
@@ -61,8 +60,7 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
       fc?.time?.length ||
       rain?.recent_24h_window?.available_hours ||
       rain?.history_total_precipitation != null ||
-      rain?.forecast_total_precipitation != null ||
-      Object.values(wind).some((value) => value != null),
+      rain?.forecast_total_precipitation != null,
   );
   if (!hasWeatherData) {
     return <EmptyResultView>该位置和时间范围内暂无天气数据</EmptyResultView>;
@@ -72,23 +70,19 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
   (hist?.time || []).forEach((d: string, i: number) =>
     histRain.set(d, hist?.precipitation_sum?.[i] ?? null)
   );
-  const fcByDate = new Map<
-    string,
-    { rain?: number | null; prob?: number | null; wind?: number | null }
-  >();
+  const fcByDate = new Map<string, { rain?: number | null; prob?: number | null }>();
   (fc?.time || []).forEach((d: string, i: number) =>
     fcByDate.set(d, {
       rain: fc?.precipitation_sum?.[i],
       prob: fc?.precipitation_probability_max?.[i],
-      wind: fc?.wind_speed_10m_max?.[i],
     })
   );
   const dates = [...new Set([...histRain.keys(), ...fcByDate.keys()])].sort();
 
-  // 只查历史时没有预报；预报类条目整组省略，避免一排“-”。
+  // 只保留与位移对照有用的降雨；只查历史时没有预报，预报类条目整组省略，避免一排“-”。
   const cells: { label: string; value: string; forecast?: boolean }[] = [
     {
-      label: '最近 24 个完整小时降雨',
+      label: '最近 24 个完整小时降雨（当前数据）',
       value:
         rain?.recent_24h_precipitation != null
           ? `${rain.recent_24h_precipitation} mm`
@@ -126,28 +120,6 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
           ? `${rain.forecast_max_precipitation_probability}%`
           : '-',
     },
-    {
-      label: '当前风速 / 阵风',
-      value:
-        wind.current_wind_speed != null
-          ? `${wind.current_wind_speed} / ${wind.current_wind_gust ?? '-'} km/h`
-          : '-',
-    },
-    {
-      label: '历史最大风速 / 阵风',
-      value:
-        wind.history_max_wind_speed != null
-          ? `${wind.history_max_wind_speed} / ${wind.history_max_wind_gust ?? '-'} km/h`
-          : '-',
-    },
-    {
-      forecast: true,
-      label: '预报最大风速 / 阵风',
-      value:
-        wind.forecast_max_wind_speed != null
-          ? `${wind.forecast_max_wind_speed} / ${wind.forecast_max_wind_gust ?? '-'} km/h`
-          : '-',
-    },
   ];
 
   const visibleCells = cells.filter((cell) => cell.value !== '-' && (hasForecast || !cell.forecast));
@@ -174,10 +146,10 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
       {data.current && (
         <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
           <CloudRain className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span>{cur.condition ?? '-'}</span>
-          <span className="text-xs font-normal text-muted-foreground">
-            {cur.temperature_2m ?? '-'}℃（体感 {cur.apparent_temperature ?? '-'}℃，湿度 {cur.relative_humidity_2m ?? '-'}%）
-          </span>
+          <span>当前 {cur.condition ?? '-'}</span>
+          {cur.precipitation != null && (
+            <span className="text-xs font-normal text-muted-foreground">当前小时降水 {cur.precipitation} mm</span>
+          )}
         </div>
       )}
       {visibleCells.length > 0 && (
@@ -193,14 +165,13 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
       {dailyRain.length > 1 && <DailyRainBars days={dailyRain} />}
       {dates.length > 0 && (
         <DetailTable summary={`逐日明细（${dates.length} 天）`}>
-          <table className={`${hasForecast ? 'min-w-[34rem]' : ''} w-full border-collapse text-left text-xs`}>
+          <table className={`${hasForecast ? 'min-w-[26rem]' : ''} w-full border-collapse text-left text-xs`}>
             <thead className="sticky top-0 z-10 border-b bg-muted text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-normal whitespace-nowrap">日期</th>
                 <th className="px-3 py-2 font-normal whitespace-nowrap">历史降雨 (mm)</th>
                 {hasForecast && <th className="px-3 py-2 font-normal whitespace-nowrap">预报降雨 (mm)</th>}
                 {hasForecast && <th className="px-3 py-2 font-normal whitespace-nowrap">降水概率 (%)</th>}
-                {hasForecast && <th className="px-3 py-2 font-normal whitespace-nowrap">最大风速 (km/h)</th>}
               </tr>
             </thead>
             <tbody className="divide-y tabular-nums">
@@ -210,7 +181,6 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
                   <td className="px-3 py-1">{histRain.get(date) ?? '-'}</td>
                   {hasForecast && <td className="px-3 py-1">{fcByDate.get(date)?.rain ?? '-'}</td>}
                   {hasForecast && <td className="px-3 py-1">{fcByDate.get(date)?.prob ?? '-'}</td>}
-                  {hasForecast && <td className="px-3 py-1">{fcByDate.get(date)?.wind ?? '-'}</td>}
                 </tr>
               ))}
             </tbody>

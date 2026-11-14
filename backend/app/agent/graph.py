@@ -5,6 +5,7 @@ LMA middleware 维护消息上下文和用量；官方 SummarizationMiddleware �
 """
 
 import logging
+from contextvars import ContextVar
 from uuid import uuid4
 from dataclasses import replace
 from functools import lru_cache, partial
@@ -25,6 +26,7 @@ from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, ToolInputError, raise_tool_validation_error
 from app.agent.tool_feedback import ToolFeedbackMiddleware
 from app.agent.context import build_context_usage
+from app.agent.duplicate_queries import DuplicateQueryMiddleware, answered_duplicate_call_ids
 from app.agent.evidence import EvidenceMiddleware
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
@@ -33,15 +35,21 @@ from app.agent.compute import compute
 from app.agent.conclusions import CONCLUSIONS_TOOL_NAME, record_conclusions
 from app.agent.retry import is_transient_error
 from app.agent.models import create_chat_model, model_max_input_tokens
-from app.agent.session_tools import station_history_tool
+from app.agent.session_tools import (
+    LATEST_INSPECTION_TOOL_NAME,
+    STATION_HISTORY_TOOL_NAME,
+    latest_inspection_tool,
+    station_history_tool,
+)
 from app.agent.site import inspect_site_environment
 from app.business_time import business_now
+from app.agent.overview import get_station_overview
 from app.agent.tools import find_stations, get_displacement
 from app.agent.weather import query_weather
 from app.config import get_settings
 
 tools = [
-    find_stations, get_displacement, query_weather, inspect_site_environment,
+    find_stations, get_station_overview, get_displacement, query_weather, inspect_site_environment,
     compute, record_conclusions,
 ]
 logger = logging.getLogger(__name__)
@@ -66,15 +74,27 @@ class AgentState(BaseAgentState):
     context_usage: dict
 
 
+_answered_duplicates: ContextVar[set[str]] = ContextVar("answered_duplicates", default=set())
+_LOCAL_TOOL_NAMES = {"compute", CONCLUSIONS_TOOL_NAME, STATION_HISTORY_TOOL_NAME, LATEST_INSPECTION_TOOL_NAME}
+
+
 class QueryCallLimitMiddleware(ToolCallLimitMiddleware):
     """查询额度只约束访问外部数据源的工具。
 
-    本地计算、计划、结论登记和读取以往结论不请求监测平台或外部服务；计入额度会让取数用尽后
+    本地计算、结论登记、读取以往结论和最近巡检不请求监测平台或外部服务；计入额度会让取数用尽后
     无法整理已取得的依据。它们反复调用仍受模型调用上限约束。
     """
 
+    async def aafter_model(self, state, runtime):
+        # 官方实现只把单个工具调用交给过滤函数；本次回复中已被去重答复的调用在这里先算出来。
+        token = _answered_duplicates.set(answered_duplicate_call_ids(state.get("messages", [])))
+        try:
+            return await super().aafter_model(state, runtime)
+        finally:
+            _answered_duplicates.reset(token)
+
     def _matches_tool_filter(self, tool_call) -> bool:
-        return tool_call["name"] not in {"compute", CONCLUSIONS_TOOL_NAME, "get_station_history"}
+        return tool_call["name"] not in _LOCAL_TOOL_NAMES and tool_call["id"] not in _answered_duplicates.get()
 
 
 _FINAL_MODEL_CALL_NOTICE = (
@@ -203,7 +223,7 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
     settings = get_settings()
     bound_tools = list(tools if agent_tools is None else agent_tools)
     if storage is not None:
-        bound_tools.append(station_history_tool(storage))
+        bound_tools.extend([station_history_tool(storage), latest_inspection_tool(storage)])
     for agent_tool in bound_tools:
         agent_tool.handle_validation_error = partial(
             raise_tool_validation_error, schema_name=agent_tool.get_input_schema().__name__,
@@ -221,6 +241,8 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
             ),
             ModelCallLimitMiddleware(run_limit=settings.agent_model_run_limit, exit_behavior="error"),
             QueryCallLimitMiddleware(run_limit=settings.agent_tool_run_limit, exit_behavior="continue"),
+            # after_model 按注册顺序倒序执行：去重先答复重复调用，额度统计再跳过它们。
+            DuplicateQueryMiddleware(),
             ModelRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
                 on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
                 max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),

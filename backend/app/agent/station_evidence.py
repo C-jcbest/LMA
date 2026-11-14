@@ -48,6 +48,21 @@ def evidence_by_station(messages: list[BaseMessage]) -> dict[str, StationEvidenc
                 other.evidence_ids.append(identifier)
                 if succeeded and comparisons.get("snapshots", {}).get(other_uuid):
                     other.displacement_windows.append((data["begin_time"], data["end_time"]))
+        elif kind == "station_overview":
+            item = entry(data.get("station_uuid"), data.get("station_name"))
+            if item is None:
+                continue
+            item.evidence_ids.append(identifier)
+            if succeeded:
+                item.displacement_windows.extend(
+                    (window["begin_time"], window["end_time"]) for window in data.get("windows", []) if window.get("points")
+                )
+            # 同组近期对比只给出共同时段的变化，可作为这些测点的依据，但不构成它们的位移窗口。
+            for other in (data.get("group") or {}).get("stations", []):
+                if other.get("station_uuid") != data.get("station_uuid"):
+                    other_entry = entry(other.get("station_uuid"), other.get("station_name"))
+                    if other_entry is not None:
+                        other_entry.evidence_ids.append(identifier)
         elif kind == "acquisition_failure":
             item = entry(data.get("station_uuid"), data.get("station_name"))
             if item is not None:

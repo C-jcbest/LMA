@@ -383,6 +383,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             "station_name": station.station_name,
             "group_name": station.group_name,
             "series": series,
+            "current": await app.state.storage.station_current(station.station_uuid),
             "records": await app.state.storage.station_records(station.station_uuid),
         }
 

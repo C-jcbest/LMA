@@ -252,6 +252,35 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(m.status == "success" for m in results))
         self.assertEqual(len(results), 1 + len(local_tools))
 
+    async def test_identical_query_points_to_existing_evidence_without_running_or_using_budget(self):
+        self.settings.agent_tool_run_limit = 2
+        executions = []
+
+        @tool("get_displacement", response_format="content_and_artifact")
+        def displacement(window: str):
+            """取位移。"""
+            executions.append(window)
+            return "位移证据", {"version": 1, "kind": "station_list", "status": "success", "data": {"total": 0}}
+
+        def request(call_id, window):
+            return AIMessage(content="", tool_calls=[{"id": call_id, "name": "get_displacement", "args": {"window": window}}])
+
+        model = ScriptedModel(script=[
+            request("first", "90d"),
+            request("again", "90d"),
+            request("other", "7d"),
+            AIMessage(content="回答"),
+        ])
+        result = await graph.create_lma_agent(model, agent_tools=[displacement]).ainvoke({"messages": [HumanMessage(content="调查")]})
+        self.assertEqual(executions, ["90d", "7d"])
+        repeated = next(m for m in result["messages"] if m.type == "tool" and m.tool_call_id == "again")
+        self.assertEqual(repeated.status, "success")
+        self.assertIsNone(repeated.artifact)
+        self.assertIn(message_context.evidence_id("first"), repeated.content)
+        # 额度为 2：重复调用不计数，第三次不同窗口的取数仍然执行。
+        other = next(m for m in result["messages"] if m.type == "tool" and m.tool_call_id == "other")
+        self.assertEqual(other.status, "success")
+
     async def test_conclusions_with_answer_text_end_the_turn_but_without_text_return_to_model(self):
         @tool(graph.CONCLUSIONS_TOOL_NAME)
         def conclusions():

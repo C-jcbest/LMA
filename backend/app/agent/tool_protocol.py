@@ -37,6 +37,7 @@ def tool_error_result(
     sources: list[dict[str, Any]] | None = None,
     limitations: list[str] | None = None,
     observed_at: str | None = None,
+    summary: str | None = None,
 ) -> tuple[ToolMessage, dict[str, Any]]:
     """返回保留部分证据的官方错误 ToolMessage；仅用于工具已有可展示结果时。"""
     content = (
@@ -62,6 +63,8 @@ def tool_error_result(
         envelope_data["limitations"] = limitations
     if observed_at is not None:
         envelope_data["observedAt"] = observed_at
+    if summary is not None:
+        envelope_data["summary"] = summary
     envelope = validate_artifact_envelope(envelope_data)
     return ToolMessage(
         content=content,
@@ -81,6 +84,7 @@ def tool_result(
     sources: list[dict[str, Any]] | None = None,
     limitations: list[str] | None = None,
     observed_at: str | None = None,
+    summary: str | None = None,
 ):
     """content 保留模型证据，artifact 符合标准 ToolArtifactEnvelope 规范。"""
     envelope: dict[str, Any] = {
@@ -95,6 +99,8 @@ def tool_result(
         envelope["limitations"] = limitations
     if observed_at is not None:
         envelope["observedAt"] = observed_at
+    if summary is not None:
+        envelope["summary"] = summary
     return json.dumps(facts, ensure_ascii=False), validate_artifact_envelope(envelope)
 
 

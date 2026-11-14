@@ -11,6 +11,7 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import get_settings
+from app.station_judgment import current_judgment, judgment_sort_key
 
 # 只创建当前使用的表；旧版本留下的调查目标等表不再读写，也不在迁移中删除已有数据。
 SCHEMA = """
@@ -193,6 +194,26 @@ class SessionStorage:
             )
             inspection = await cursor.fetchone()
         return {"conclusions": conclusions, "latest_inspection": inspection}
+
+    async def station_current(self, station_uuid: str) -> dict | None:
+        """测点页标题用的当前判断，与首页同一规则。"""
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                """SELECT status, reason, session_id, created_at FROM lma_station_results
+                   WHERE station_uuid = %s ORDER BY created_at DESC LIMIT 1""",
+                (station_uuid,),
+            )
+            conclusion = await cursor.fetchone()
+            cursor = await connection.execute(
+                """SELECT s.screening, s.reasons, i.finished_at
+                   FROM lma_inspection_stations s JOIN lma_inspections i ON i.id = s.inspection_id
+                   WHERE s.station_uuid = %s AND i.status = 'success' ORDER BY i.started_at DESC LIMIT 1""",
+                (station_uuid,),
+            )
+            inspection = await cursor.fetchone()
+        if inspection is None:
+            return current_judgment(None, None, None, conclusion)
+        return current_judgment(inspection["screening"], inspection["reasons"], inspection["finished_at"], conclusion)
 
     async def session_conclusions(self):
         """记录页：每个会话最近一次登记涉及的测点状态。"""
@@ -450,18 +471,22 @@ class SessionStorage:
             )
             conclusions = {row["station_uuid"]: row for row in await cursor.fetchall()}
 
+        inspected_at = finished[0]["finished_at"]
+        rows = []
+        for row in stations:
+            conclusion = conclusions.get(row["station_uuid"])
+            rows.append({
+                **row,
+                "previous_screening": previous.get(row["station_uuid"]),
+                "last_conclusion": conclusion,
+                "current": current_judgment(row["screening"], row["reasons"], inspected_at, conclusion),
+            })
+        rows.sort(key=lambda row: judgment_sort_key(row["current"], row["station_name"]))
         return {
             "running": running,
             "latest_attempt": latest_attempt,
             "inspection": finished[0],
-            "stations": [
-                {
-                    **row,
-                    "previous_screening": previous.get(row["station_uuid"]),
-                    "last_conclusion": conclusions.get(row["station_uuid"]),
-                }
-                for row in stations
-            ],
+            "stations": rows,
         }
 
 

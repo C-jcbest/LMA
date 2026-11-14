@@ -16,7 +16,8 @@
 | 模型/工具路由、并行与消息配对 | `create_agent` 与官方 Runtime |
 | 重试 | `ModelRetryMiddleware`、`ToolRetryMiddleware`，只处理瞬时失败；底层 SDK 不叠加重试 |
 | 最终工具异常 | `ToolErrorMiddleware(on_error=_on_tool_error)`，只返回受控错误 |
-| 每 Run 调用限额 | 官方 `ModelCallLimitMiddleware`、`ToolCallLimitMiddleware`；计算、结论登记和读取以往结论不占取数次数 |
+| 每 Run 调用限额 | 官方 `ModelCallLimitMiddleware`、`ToolCallLimitMiddleware`；计算、结论登记、读取以往结论和最近巡检不占取数次数 |
+| 重复取数 | `DuplicateQueryMiddleware` 在工具执行前把条件完全相同的取数指回已有依据编号：不执行、不新建卡片、不计取数次数 |
 | 历史摘要 | 官方 `SummarizationMiddleware`；子类只把待摘要消息替换为带发送时间的投影 |
 | 提示词与业务时间 | `system_prompt=SYSTEM_PROMPT` 静态不变；发送时固定服务端时间快照，只在模型调用边界投影到用户消息 |
 | 依据存证 | EvidenceMiddleware 在工具完成边界幂等存证；结论登记与测点结论索引同事务写入 |
@@ -37,7 +38,7 @@
 
 - [monitoring_data.py](../backend/app/monitoring_data.py) 供模型工具和测点页共用：测点解析、固定日历块分片取数（小时 30 天、每日固定时刻 360 天）、上游并发 4、观测清洗（排序、重复时间剔除、非有限值）与质量统计。同一会话的数据块缓存 10 分钟，缓存不是事实来源。
 - 位移序列的共用数值原语（鲁棒斜率、相邻观测噪声、缺测前后位置差、速率序列与水平主方向）在 [series_features.py](../backend/app/series_features.py)，巡检初筛、位移工具和测点页时间轴共用同一口径。
-- 工具：find_stations、get_displacement（累计偏移、窗口净变化、鲁棒趋势、台阶候选、缺测前后位置差、缺测、水平位移方位、沿主方向的速率序列，可分段或同组共同时段对比，点数少时附逐点位移）、query_weather（历史最多 366 天，可选逐小时降水）、inspect_site_environment（约 90 m DEM 的坡度坡向、区域地质单元）、compute、record_conclusions，以及有存储时的 get_station_history。
+- 工具：find_stations（名称按字母、数字、汉字分词模糊匹配，数字按数值比较）、get_station_overview（一次给出近 7 天小时与近 90 天日采样的特征和速率序列、同组近期共同时段对比、近 7/30 天降雨合计）、get_displacement（累计偏移、窗口净变化、鲁棒趋势、台阶候选、缺测前后位置差、缺测、水平位移方位、沿主方向的速率序列，可分段或同组共同时段对比，点数少时附逐点位移）、query_weather（只取降雨，历史最多 366 天，可选逐小时降水）、inspect_site_environment（约 90 m DEM 的坡度坡向、区域地质单元）、compute、record_conclusions，以及有存储时的 get_station_history 与 get_latest_inspection（最近巡检的全组当前判断）。
 - 基准站由位移工具直接说明并返回 `artifact=None`，不生成失败卡片；窗口过长等可修正问题用 `ToolInputError` 作为参数纠错返回模型，前端不当作业务故障。
 - compute 在子进程执行模型写的 pandas/numpy 代码，输入只来自本会话依据：语法树白名单、受限内置函数、`python -I`、超时，Linux 上另有内存与 CPU 上限。不是操作系统级沙箱，多用户开放前需复核。
 - 测点页序列由 `GET /stations/{uuid}/timeline` 直接读平台，不经过模型，与位移工具共用数据层与序列结构。
@@ -45,8 +46,8 @@
 ## 工具协议与依据
 
 - 工具使用 Pydantic schema、`content_and_artifact` 和官方 `ToolMessage.status`。content 只给模型判断所需的事实；artifact 只承载可发往客户端的展示数据，不含秘密、请求 URL 或原始异常。展示契约由 [artifacts.py](../backend/app/agent/artifacts.py) 与 [envelope.ts](../frontend/src/types/envelope.ts) 定义，前端在 [artifacts.ts](../frontend/src/features/monitoring/artifacts.ts) 集中校验。
-- 依据种类：gnss_series、weather、site_environment、computation、station_list；conclusions 是留档，不可引用。依据编号由 tool_call_id 确定性派生（`E` + 6 位），只在模型调用边界附加，不写入 checkpoint 正文。
-- 结论登记只校验可确定的条件（测点有依据、数据型状态有覆盖窗口的位移数据）。登记成功且同一回复已有正文时由 LmaMiddleware `jump_to: end` 结束本轮，没有正文则回到模型补写。
+- 依据种类：gnss_series、station_overview（同一测点的长期与近期两个窗口）、weather、site_environment、computation、station_list；conclusions 是留档，不可引用。数据工具的 artifact 带一句 `summary`，由 [progress.py](../backend/app/agent/progress.py) 从结果确定性生成，调查过程用它显示每一步的发现。依据编号由 tool_call_id 确定性派生（`E` + 6 位），只在模型调用边界附加，不写入 checkpoint 正文。
+- 结论登记只校验可确定的条件（测点有依据、数据型状态有覆盖窗口的位移数据）。登记可带现场下一步和至多三个“可以继续”的追问；判断头的关键数（结论窗口内水平变化、累计水平偏移、完整度）由服务端从最接近结论窗口的位移依据计算。登记成功且同一回复已有正文时由 LmaMiddleware `jump_to: end` 结束本轮，没有正文则回到模型补写。
 - 对外消息统一经过 [messages.py](../backend/app/server/messages.py) 按白名单输出；checkpoint 内保留多轮工具协议需要的推理字段。
 
 ## 上下文与预算
@@ -58,6 +59,7 @@
 ## 巡检与推荐
 
 - 批量巡检在单 worker 内以 asyncio 任务运行，规则集中在 [screening.py](../backend/app/inspection/screening.py)，不调用模型；初筛只给调查优先级，不是结论或预警。
+- 每个测点的“当前判断”由 [station_judgment.py](../backend/app/station_judgment.py) 在最近巡检与最新调查结论之间确定（较新的调查优先，调查后巡检又发现新变化时回到初筛），`/inspections/latest`、测点时间轴和 get_latest_inspection 共用。
 - 问题推荐（`POST /suggestions`）只读最近成功巡检与未归档登记结论的有界摘要，最多一次非思考模型调用，不重新取数；按摘要内容与北京时间日期缓存，失败不缓存。
 
 ## 前端展示

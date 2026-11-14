@@ -168,6 +168,21 @@ class ConclusionTests(AgentToolTestCase):
         self.assertTrue(is_tool_feedback(results["r1"]))
         self.assertIn("数据不足", results["r1"].content)
 
+    async def test_key_figures_come_from_evidence_and_follow_ups_are_kept(self):
+        args = self.conclusion("持续关注")
+        args["stations"][0]["next_step"] = "现场核查观测墩"
+        args["follow_ups"] = [{"question": "对比同组之后是否同步", "station_uuid": OTHER,
+                               "begin_time": "2026-10-01 00:00:00", "end_time": "2026-10-03 00:00:00"}]
+        results = await self.run_calls(call("d1", "displacement"), call("r1", "record_conclusions", args, text="正文"))
+        data = results["r1"].artifact["data"]
+        recorded = data["stations"][0]
+        self.assertEqual(recorded["next_step"], "现场核查观测墩")
+        # 北向 10-01 00:00 到 10-03 00:00 增加 2 mm；累计相对固定参考同样是 2 mm。
+        self.assertEqual(recorded["key_figures"]["window_horizontal_change_mm"], 2.0)
+        self.assertEqual(recorded["key_figures"]["cumulative_horizontal_mm"], 2.0)
+        self.assertEqual(data["follow_ups"][0]["station_uuid"], OTHER)
+        self.assertEqual(data["follow_ups"][0]["begin_time"], "2026-10-01 00:00:00")
+
     async def test_station_without_any_evidence_cannot_be_recorded(self):
         results = await self.run_calls(call("r1", "record_conclusions", self.conclusion("数据不足", station="33333333-3333-3333-3333-333333333333")))
         self.assertTrue(is_tool_feedback(results["r1"]))

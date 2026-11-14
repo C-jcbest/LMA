@@ -120,7 +120,7 @@ describe('会话关键路径集成回归', () => {
             history_end_date: '2026-09-02',
             forecast_days: 7,
           },
-          units: { temperature: 'celsius', wind_speed: 'km/h', precipitation: 'mm' },
+          units: { precipitation: 'mm' },
           current: null,
           rain_summary: {
             recent_24h_window: {
@@ -135,7 +135,6 @@ describe('会话关键路径集成回归', () => {
             history_total_precipitation: null,
             forecast_total_precipitation: null,
           },
-          wind_summary: {},
           history: { daily: { time: [] } },
           forecast: { daily: { time: [] } },
           source: { provider: 'Open-Meteo' },

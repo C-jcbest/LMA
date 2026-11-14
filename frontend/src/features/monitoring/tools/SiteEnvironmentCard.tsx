@@ -131,7 +131,6 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
 
   const terrain = environment.terrain;
   const geology = environment.geology;
-  const faults = environment.faults;
   return (
     <div className="space-y-4">
       <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
@@ -161,10 +160,6 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
         <div>
           <dt className="text-muted-foreground">地质</dt>
           <dd>{geology ? [geology.name, geology.lithology || geology.age].filter(Boolean).join(' · ') || '暂无地层名称' : '暂无地质数据'}</dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">构造</dt>
-          <dd className="wrap-break-word">{faults.note}</dd>
         </div>
       </dl>
     </div>

@@ -11,7 +11,7 @@ import type { EvidenceSource, GnssArtifactData, ToolArtifactEnvelope } from '@/t
 import { addAskTarget } from './ask-targets';
 import { useChartColors } from './chartColors';
 import { formatSigned, MILLIMETER_DIGITS } from './format';
-import { collectStations, findInlineEvidence, formatDateRange, type StationEvidence } from './investigation';
+import { collectStations, findInlineEvidence, formatDateRange, isFromToolCall, type StationEvidence } from './investigation';
 import { InlineEvidenceResult } from './InvestigationProcess';
 import { useStationInspector, type InspectorViewState } from './StationInspectorContext';
 import {
@@ -242,7 +242,8 @@ const EvidenceNotes: FC<{ station: StationEvidence; toolCallId?: string }> = ({ 
 
 /** 引用指向哪类依据就先打开哪一页；从测点入口进入时先看时间轴。 */
 const initialTab = (station: StationEvidence, focusToolCallId: string | undefined): string => {
-  const isFocused = (items: readonly { toolCallId: string }[]) => items.some((item) => item.toolCallId === focusToolCallId);
+  const isFocused = (items: readonly { toolCallId: string; sourceToolCallId: string }[]) =>
+    items.some((item) => isFromToolCall(item, focusToolCallId));
   if (isFocused(station.site)) {
     return 'site';
   }
@@ -290,7 +291,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
   );
   const seriesList = useMemo(() => sortedSeries.map((item) => item.data), [sortedSeries]);
   const [selectedIndex, updateSelectedIndex] = useState(
-    () => Math.max(0, sortedSeries.findIndex((item) => item.toolCallId === (saved.selectedToolCallId ?? focusToolCallId))),
+    () => Math.max(0, sortedSeries.findIndex((item) => isFromToolCall(item, saved.selectedToolCallId ?? focusToolCallId))),
   );
   const setSelectedIndex = (index: number) => {
     saved.selectedToolCallId = sortedSeries[index]?.toolCallId;
@@ -318,7 +319,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
     saved.tab = tab;
     updateActiveTab(tab);
   };
-  const siteEvidence = station.site.find((item) => item.toolCallId === focusToolCallId) ?? station.site.at(-1);
+  const siteEvidence = station.site.find((item) => isFromToolCall(item, focusToolCallId)) ?? station.site.at(-1);
   let noteToolCallId = focusToolCallId;
   if (activeTab === 'timeline') {
     noteToolCallId = sortedSeries[selectedIndex]?.toolCallId;

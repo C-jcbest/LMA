@@ -15,3 +15,6 @@ prd.md  # 2026-11-14 拆分为 docs/product/rules.md 与 roadmap.md
 project-status.md  # 2026-11-14 并入 docs/status.md
 adr/0001-agent-runtime  # 2026-11-14 拆分为 docs/architecture.md 与 docs/decisions/
 auth_basic  # 网关 Basic Auth，2026-11-14 改为应用内登录页
+layer_sources  # 场地结果中的地质瓦片配置，2026-11-14 删除（不再提供地层/构造叠加）
+wind_summary  # 天气中的风况汇总，2026-11-14 删除（天气只取降雨）
+ChartInput  # 未使用的看图工具参数，2026-11-14 删除

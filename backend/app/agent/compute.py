@@ -43,6 +43,10 @@ def _dataset(identifier: str, message: ToolMessage | None) -> tuple[dict, str]:
         raise ToolInputError(f"依据 {identifier} 是失败的查询，没有可计算的数据")
     data = artifact["data"]
     kind = artifact["kind"]
+    if kind == "station_overview":
+        # 概览的最后一个窗口是近期小时序列；长期序列的自定义计算由模型另取该窗口。
+        data = data["windows"][-1]
+        kind = "gnss_series"
     if kind == "gnss_series":
         reference = data.get("reference", {}).get("coordinates_m", {})
         payload = {

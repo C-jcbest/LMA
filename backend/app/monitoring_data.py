@@ -49,6 +49,38 @@ DISPLACEMENT_STATION_TYPES = {2, 3}
 BASE_STATION_NOTE = "未查询形变数据：该监测点为基准站，仅提供差分基准，不适用移动站形变序列分析；这不表示监测异常。"
 
 _UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+_NAME_TOKEN_PATTERN = re.compile(r"[a-z]+|\d+|[一-鿿]+")
+# 口语里指代测点的通用说法，不参与名称匹配：“3 号点”只看 3。
+_GENERIC_NAME_WORDS = ("监测点", "测点", "号点", "号", "点", "站")
+
+
+def _name_tokens(text: str) -> list[str]:
+    tokens = []
+    for token in _NAME_TOKEN_PATTERN.findall(text.lower()):
+        for word in _GENERIC_NAME_WORDS:
+            token = token.replace(word, "")
+        if token:
+            tokens.append(token)
+    return tokens
+
+
+def station_name_matches(query: str, name: str) -> bool:
+    """名称模糊匹配：按字母、数字、汉字分词比较，查询里的每个词都要在名称里找到对应。
+
+    用户常说“ST3”“3 号点”“st-03”，平台名称是“DEMO-ST03”：数字按数值比较（3 与 03 相同，
+    1 与 10 不同，避免 MS1 命中 MS10），字母和汉字按包含比较，分隔符忽略。
+    """
+    query_tokens = _name_tokens(query)
+    name_tokens = _name_tokens(name)
+    if not query_tokens:
+        return False
+
+    def token_found(token: str) -> bool:
+        if token.isdigit():
+            return any(item.isdigit() and int(item) == int(token) for item in name_tokens)
+        return any(token in item for item in name_tokens)
+
+    return all(token_found(token) for token in query_tokens)
 
 
 def build_platform_client() -> BeidouClient:
@@ -171,10 +203,10 @@ class MonitoringData:
                 if station.station_uuid == name_or_uuid:
                     return station
             raise ToolFailure("未找到指定 UUID 对应的监测点，请确认站点。")
-        matched = [station for station in stations if name_or_uuid in station.station_name]
+        matched = [station for station in stations if station_name_matches(name_or_uuid, station.station_name)]
         if not matched:
             raise ToolFailure(f"未找到名称包含“{name_or_uuid}”的监测点")
-        # 名称按“包含”匹配：MS1 会同时命中 MS10，名称完全一致的站点优先。
+        # 模糊匹配可能命中多个测点，名称完全一致的站点优先。
         exact = [station for station in matched if station.station_name == name_or_uuid]
         if len(exact) == 1:
             return exact[0]

@@ -38,8 +38,6 @@ const site = (aspect: number): SiteEnvironmentArtifactData => ({
   center_station: { station_uuid: 'uuid-A', station_name: '测点A', latitude: 30.1, longitude: 103.2, coordinate_system: 'WGS84' },
   group_stations: [],
   terrain: { aspect_degrees: aspect, slope_degrees: 30 },
-  faults: { available: true, distance_km: null, note: '' },
-  layer_sources: {},
 } as unknown as SiteEnvironmentArtifactData);
 
 const station = (fields: Partial<StationEvidence> = {}): StationEvidence => ({

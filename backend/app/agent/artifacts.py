@@ -138,6 +138,16 @@ class GnssArtifactData(ArtifactModel):
     location: GnssStationLocationArtifact | None = None
 
 
+class StationOverviewArtifactData(ArtifactModel):
+    """测点概览：同一测点的长期每日与近期小时两个窗口，加同组近期对比和降雨合计。"""
+
+    station_uuid: str
+    station_name: str
+    windows: list[GnssArtifactData] = Field(min_length=1)
+    group: dict[str, JsonValue] | None = None
+    rainfall: dict[str, JsonValue] | None = None
+
+
 class WeatherLocationArtifact(ArtifactModel):
     station_uuid: str | None = None
     station_name: str | None = None
@@ -156,13 +166,8 @@ class WeatherQueryArtifact(ArtifactModel):
 
 class WeatherCurrentArtifact(ArtifactModel):
     time: str | None = None
-    temperature_2m: float | None = None
-    apparent_temperature: float | None = None
-    relative_humidity_2m: float | None = None
     condition: str | None = None
     precipitation: float | None = None
-    wind_speed_10m: float | None = None
-    wind_gusts_10m: float | None = None
 
 
 class WeatherWindowArtifact(ArtifactModel):
@@ -190,24 +195,11 @@ class RainSummaryArtifact(ArtifactModel):
     forecast_max_precipitation_probability: float | None = None
 
 
-class WindSummaryArtifact(ArtifactModel):
-    current_wind_speed: float | None = None
-    current_wind_gust: float | None = None
-    history_max_wind_speed: float | None = None
-    history_max_wind_gust: float | None = None
-    forecast_max_wind_speed: float | None = None
-    forecast_max_wind_gust: float | None = None
-
-
 class WeatherDailyArtifact(ArtifactModel):
     time: list[str]
     precipitation_sum: list[float | None] | None = None
     precipitation_hours: list[float | None] | None = None
     precipitation_probability_max: list[float | None] | None = None
-    temperature_2m_max: list[float | None] | None = None
-    temperature_2m_min: list[float | None] | None = None
-    wind_speed_10m_max: list[float | None] | None = None
-    wind_gusts_10m_max: list[float | None] | None = None
 
 
 class WeatherHourlyArtifact(ArtifactModel):
@@ -223,8 +215,6 @@ class WeatherSeriesArtifact(ArtifactModel):
 
 
 class WeatherUnitsArtifact(ArtifactModel):
-    temperature: Literal["celsius"]
-    wind_speed: Literal["km/h"]
     precipitation: Literal["mm"]
 
 
@@ -239,7 +229,6 @@ class WeatherArtifactData(ArtifactModel):
     units: WeatherUnitsArtifact | None = None
     current: WeatherCurrentArtifact | None = None
     rain_summary: RainSummaryArtifact | None = None
-    wind_summary: WindSummaryArtifact | None = None
     history: WeatherSeriesArtifact | None = None
     forecast: WeatherSeriesArtifact | None = None
     source: WeatherSourceArtifact | None = None
@@ -264,18 +253,6 @@ class GeologyArtifact(ArtifactModel):
     source_reference: str | None = None
 
 
-class FaultArtifact(ArtifactModel):
-    available: bool
-    distance_km: float | None = None
-    note: str
-
-
-class LayerSourcesArtifact(ArtifactModel):
-    geology_tiles: str
-    geology_source_layer: str
-    fault_source_layer: str
-
-
 class SiteEnvironmentArtifactData(ArtifactModel):
     version: Literal[1]
     observed_at: str
@@ -284,8 +261,6 @@ class SiteEnvironmentArtifactData(ArtifactModel):
     group_stations: list[StationArtifact]
     terrain: TerrainArtifact | None = None
     geology: GeologyArtifact | None = None
-    faults: FaultArtifact
-    layer_sources: LayerSourcesArtifact
 
 
 class AcquisitionFailureArtifactData(ArtifactModel):
@@ -300,18 +275,38 @@ class AcquisitionFailureArtifactData(ArtifactModel):
 InvestigationStatus = Literal["未见明显变化", "持续关注", "需人工复核", "数据不足", "暂无法分析"]
 
 
+class KeyFiguresArtifact(ArtifactModel):
+    """判断头的关键数，由服务端从与结论窗口最接近的位移依据计算。"""
+
+    begin_time: str
+    end_time: str
+    window_horizontal_change_mm: float | None = None
+    cumulative_horizontal_mm: float | None = None
+    completeness: float | None = None
+
+
 class ConclusionStationArtifact(ArtifactModel):
     station_uuid: str
     station_name: str
     status: InvestigationStatus
     reason: str
+    next_step: str | None = None
     begin_time: str
     end_time: str
     evidence: list[str] = Field(description="服务端关联的本会话依据编号")
+    key_figures: KeyFiguresArtifact | None = None
+
+
+class FollowUpArtifact(ArtifactModel):
+    question: str
+    station_uuid: str | None = None
+    begin_time: str | None = None
+    end_time: str | None = None
 
 
 class ConclusionsArtifactData(ArtifactModel):
     stations: list[ConclusionStationArtifact]
+    follow_ups: list[FollowUpArtifact] = Field(default_factory=list)
 
 
 class ComputationInputArtifact(ArtifactModel):
@@ -333,6 +328,7 @@ ARTIFACT_DATA_MODELS: dict[str, type[ArtifactModel]] = {
     "computation": ComputationArtifactData,
     "station_list": StationListArtifactData,
     "gnss_series": GnssArtifactData,
+    "station_overview": StationOverviewArtifactData,
     "weather": WeatherArtifactData,
     "site_environment": SiteEnvironmentArtifactData,
 }
@@ -352,6 +348,8 @@ class ArtifactEnvelopeBase(ArtifactModel):
     sources: list[EvidenceSource] | None = None
     limitations: list[str] | None = None
     observedAt: str | None = None
+    # 调查过程中这一步的一句发现，由服务端从结果确定性生成（progress.py）。
+    summary: str | None = None
     error: ToolArtifactError | None = None
 
     @model_validator(mode="after")
@@ -371,6 +369,11 @@ class StationListArtifactEnvelope(ArtifactEnvelopeBase):
 class GnssArtifactEnvelope(ArtifactEnvelopeBase):
     kind: Literal["gnss_series"]
     data: GnssArtifactData
+
+
+class StationOverviewArtifactEnvelope(ArtifactEnvelopeBase):
+    kind: Literal["station_overview"]
+    data: StationOverviewArtifactData
 
 
 class WeatherArtifactEnvelope(ArtifactEnvelopeBase):
@@ -404,6 +407,7 @@ ToolArtifactEnvelope = Annotated[
     | ComputationArtifactEnvelope
     | StationListArtifactEnvelope
     | GnssArtifactEnvelope
+    | StationOverviewArtifactEnvelope
     | WeatherArtifactEnvelope
     | SiteEnvironmentArtifactEnvelope,
     Field(discriminator="kind"),

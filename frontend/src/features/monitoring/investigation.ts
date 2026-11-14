@@ -31,6 +31,14 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     cancelled: '已取消查询监测点',
     emptyNotice: '未查询到符合条件的监测点。',
   },
+  get_station_overview: {
+    kind: 'station_overview',
+    running: '正在获取测点概览…',
+    complete: '已获取测点概览',
+    failed: '本次未取得测点概览',
+    cancelled: '已取消获取测点概览',
+    emptyNotice: '该测点暂无位移数据。',
+  },
   get_displacement: {
     kind: 'gnss_series',
     running: '正在获取位移数据…',
@@ -38,6 +46,13 @@ const TOOL_PRESENTATIONS: Record<string, ToolPresentation> = {
     failed: '本次未取得位移数据',
     cancelled: '已取消获取位移数据',
     emptyNotice: '该时间范围内暂无位移数据。',
+  },
+  get_latest_inspection: {
+    running: '正在读取最近巡检…',
+    complete: '已读取最近巡检',
+    failed: '最近巡检未能读取',
+    cancelled: '已取消读取最近巡检',
+    emptyNotice: '',
   },
   get_station_history: {
     running: '正在读取以往调查结论…',
@@ -91,7 +106,16 @@ const UNKNOWN_TOOL_PRESENTATION: ToolPresentation = {
 const presentationOf = (toolName: string) =>
   TOOL_PRESENTATIONS[toolName] ?? UNKNOWN_TOOL_PRESENTATION;
 
-type Located<K extends ToolArtifactKind> = ToolArtifactEnvelopeFor<K> & { toolCallId: string };
+/**
+ * toolCallId 在测点内唯一，用作界面键；测点概览一次调用产生两个窗口，各自带后缀，
+ * sourceToolCallId 保留真实的工具调用，引用和定位按它匹配。
+ */
+type Located<K extends ToolArtifactKind> = ToolArtifactEnvelopeFor<K> & { toolCallId: string; sourceToolCallId: string };
+
+export const isFromToolCall = (item: { toolCallId: string; sourceToolCallId: string }, toolCallId: string | undefined) =>
+  toolCallId !== undefined && (item.toolCallId === toolCallId || item.sourceToolCallId === toolCallId);
+
+const OVERVIEW_WINDOW_SUFFIXES = ['long', 'recent'];
 
 export interface StationEvidence {
   id: string;
@@ -134,6 +158,9 @@ const hasChartableData = (envelope: ToolArtifactEnvelope) => {
   if (envelope.kind === 'gnss_series') {
     return envelope.data.points.length > 0;
   }
+  if (envelope.kind === 'station_overview') {
+    return envelope.data.windows.some((window) => window.points.length > 0);
+  }
   return true;
 };
 
@@ -141,6 +168,7 @@ const stationNameOf = (envelope: ToolArtifactEnvelope): string | null => {
   switch (envelope.kind) {
     case 'acquisition_failure':
     case 'gnss_series':
+    case 'station_overview':
       return envelope.data.station_name;
     case 'weather':
       return envelope.data.location.station_name ?? null;
@@ -155,6 +183,7 @@ const stationUuidOf = (envelope: ToolArtifactEnvelope): string | null => {
   switch (envelope.kind) {
     case 'acquisition_failure':
     case 'gnss_series':
+    case 'station_overview':
       return envelope.data.station_uuid || null;
     case 'weather':
       return envelope.data.location.station_uuid || null;
@@ -203,17 +232,32 @@ export function collectStations(parts: readonly { type: string }[]): StationEvid
       stations.set(id, station);
     }
     const toolCallId = part.toolCallId;
+    const located = { toolCallId, sourceToolCallId: toolCallId };
     switch (envelope.kind) {
       case 'gnss_series':
-        station.series.push({ ...envelope, toolCallId });
+        station.series.push({ ...envelope, ...located });
         station.group = envelope.data.location?.group_name ?? station.group;
         station.coordinates = coordinatesOf(envelope.data.location) ?? station.coordinates;
         break;
+      case 'station_overview': {
+        // 概览的每个窗口当作一份位移序列，与单独取得的窗口放在同一条时间轴里。
+        const { data, ...rest } = envelope;
+        data.windows.forEach((window, index) => {
+          if (window.points.length === 0) return;
+          station!.series.push({
+            ...rest, kind: 'gnss_series', data: window,
+            toolCallId: `${toolCallId}:${OVERVIEW_WINDOW_SUFFIXES[index] ?? index}`, sourceToolCallId: toolCallId,
+          });
+          station!.group = window.location?.group_name ?? station!.group;
+          station!.coordinates = coordinatesOf(window.location) ?? station!.coordinates;
+        });
+        break;
+      }
       case 'weather':
-        station.weather.push({ ...envelope, toolCallId });
+        station.weather.push({ ...envelope, ...located });
         break;
       case 'site_environment':
-        station.site.push({ ...envelope, toolCallId });
+        station.site.push({ ...envelope, ...located });
         break;
     }
   }
@@ -252,12 +296,18 @@ const shortDate = (value: string) => value.slice(5, 10);
 export const formatDateRange = (begin: string, end: string) =>
   `${shortDate(begin)} 至 ${shortDate(end)}`;
 
+/** 步骤说明优先用服务端给出的一句发现；旧依据没有时退回对象与时段。 */
 const stepDetail = (envelope: ToolArtifactEnvelope): string | undefined => {
+  if (envelope.summary && envelope.status !== 'error') {
+    return envelope.summary;
+  }
   switch (envelope.kind) {
     case 'acquisition_failure':
       return envelope.data.station_name;
     case 'gnss_series':
       return `${envelope.data.station_name} · ${formatDateRange(envelope.data.begin_time, envelope.data.end_time)}`;
+    case 'station_overview':
+      return `${envelope.data.station_name} · 近 7 天与近 90 天`;
     case 'weather':
       return envelope.data.location.station_name ?? undefined;
     case 'site_environment':
@@ -419,6 +469,10 @@ export function evidenceDescription(step: InvestigationStep | undefined): string
       details.push(envelope.data.sampling?.mode === 'sample_times'
         ? `每日 ${(envelope.data.sampling.sample_times ?? []).join('、')} 采样`
         : '小时采样');
+      break;
+    case 'station_overview':
+      details.push(envelope.data.station_name);
+      details.push(...envelope.data.windows.map((window) => `${window.begin_time} 至 ${window.end_time}`));
       break;
     case 'weather':
       details.push(envelope.data.location.station_name ?? '天气资料');
