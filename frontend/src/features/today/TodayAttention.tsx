@@ -3,12 +3,13 @@ import { isInspectionFromToday } from './inspection-date';
 import { ArrowRightIcon, RefreshCwIcon } from 'lucide-react';
 import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import { cn } from '@/lib/utils';
-import type { InspectionStation } from '@/services/api';
+import type { InspectionStation, LatestInspection } from '@/services/api';
 
 const formatFinishedAt = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -17,12 +18,39 @@ const formatFinishedAt = (value: string) => {
   }).format(new Date(value));
 };
 
-const AttentionRow: FC<{ station: InspectionStation }> = ({ station }) => {
+/** 首次读取巡检结果时的占位；延迟出现，读取很快时不闪一下，也不先显示“开始巡检”再跳成结果。 */
+const TodaySkeleton: FC = () => (
+  <div aria-hidden className="animate-in fade-in fill-mode-both [animation-delay:150ms] [animation-duration:200ms]">
+    <Skeleton className="h-8 w-3/5 motion-reduce:animate-none" />
+    <Skeleton className="mt-3 h-4 w-40 motion-reduce:animate-none" />
+    <div className="mt-7 space-y-3">
+      <Skeleton className="h-16 w-full rounded-xl motion-reduce:animate-none" />
+      <Skeleton className="h-16 w-full rounded-xl motion-reduce:animate-none" />
+    </div>
+  </div>
+);
+
+/**
+ * 页面打开期间完成了一次新巡检时返回 true，用来提示这次结果里哪些测点变了。
+ * 以打开页面时已有的巡检为基准；之后再打开页面，不重复提示。
+ */
+function useInspectionFinishedWhileOpen(latest: LatestInspection | null) {
+  const [baselineInspectionId, setBaselineInspectionId] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (baselineInspectionId === undefined && latest) {
+      setBaselineInspectionId(latest.inspection?.id ?? null);
+    }
+  }, [latest, baselineInspectionId]);
+  return baselineInspectionId !== undefined && latest?.inspection != null && latest.inspection.id !== baselineInspectionId;
+}
+
+const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }> = ({ station, highlightChange }) => {
   const { openStation } = useNavigation();
   const change = largestChange(station);
   // 和上次相比有变化、或已经调查过，都影响用户要不要再看一眼。
   const history: string[] = [];
-  if (station.previous_screening !== null && station.previous_screening !== station.screening) {
+  const isScreeningChanged = station.previous_screening !== station.screening;
+  if (station.previous_screening !== null && isScreeningChanged) {
     history.push(`上次巡检${investigationStatusLabel(station.previous_screening)}`);
   }
   if (station.last_conclusion) {
@@ -35,7 +63,10 @@ const AttentionRow: FC<{ station: InspectionStation }> = ({ station }) => {
         type="button"
         aria-label={`查看 ${station.station_name}`}
         onClick={() => openStation(station.station_uuid)}
-        className="today-row hover:bg-muted/60 focus-visible:ring-ring w-full rounded-xl text-start transition-colors focus-visible:ring-2 focus-visible:outline-none"
+        className={cn(
+          'today-row hover:bg-muted/60 focus-visible:ring-ring w-full rounded-xl text-start transition-colors focus-visible:ring-2 focus-visible:outline-none',
+          highlightChange && isScreeningChanged && 'row-changed',
+        )}
       >
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-2.5">
@@ -79,6 +110,15 @@ export const TodayAttention: FC = () => {
     };
   }, []);
   const historical = Boolean(latest?.inspection && !isInspectionFromToday(latest.inspection.finished_at, now));
+  const isInspectionFinishedWhileOpen = useInspectionFinishedWhileOpen(latest);
+
+  if (!latest && isLoading) {
+    return (
+      <section aria-label="今日" aria-busy className="aui-thread-welcome-root today mb-8">
+        <TodaySkeleton />
+      </section>
+    );
+  }
 
   const stations = latest?.stations ?? [];
   const hasResults = stations.length > 0;
@@ -142,7 +182,9 @@ export const TodayAttention: FC = () => {
 
       {needsLook.length > 0 && (
         <ul aria-label="建议调查的测点" className="mt-7 -mx-3 space-y-1">
-          {needsLook.map((station) => <AttentionRow key={station.station_uuid} station={station} />)}
+          {needsLook.map((station) => (
+            <AttentionRow key={station.station_uuid} station={station} highlightChange={isInspectionFinishedWhileOpen} />
+          ))}
         </ul>
       )}
 

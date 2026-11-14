@@ -229,7 +229,10 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const { latest } = useInspection();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
   const [days, setDays] = useState<TimelineDays>(90);
-  const [timeline, setTimeline] = useState<StationTimeline | null>(null);
+  // 记下数据属于哪个窗口：切换窗口时旧图留在原处等新数据，页面不清空、不跳动。
+  const [loaded, setLoaded] = useState<{ days: TimelineDays; timeline: StationTimeline } | null>(null);
+  const timeline = loaded?.timeline ?? null;
+  const isSwitchingWindow = loaded !== null && loaded.days !== days;
   const [hasError, setHasError] = useState(false);
   const [reloadCount, setReloadCount] = useState(0);
   const [panel, setPanel] = useState<Panel>(() => new URL(window.location.href).searchParams.has('stationThread') ? 'chat' : 'data');
@@ -242,8 +245,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     side: 'right', panelRef: chatRef,
     availableWidth: () => (layoutRef.current?.clientWidth ?? window.innerWidth) - 360,
   });
-  const loadedKeyRef = useRef('');
-
   // 一轮调查结束后结论可能更新，重新读取这个测点的记录。
   const investigationCompleted = () => {
     setReloadCount((count) => count + 1);
@@ -251,20 +252,15 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   };
 
   useEffect(() => {
+    // 每个测点页按测点挂载，这里只会换窗口或刷新，新数据到达前保留已显示的内容。
     const controller = new AbortController();
-    const key = `${stationUuid}:${days}`;
-    // 换测点或窗口时清掉旧图；同一视图的刷新保留已显示的内容。
-    if (loadedKeyRef.current !== key) {
-      setTimeline(null);
-    }
     setHasError(false);
     client.getStationTimeline(stationUuid, days, controller.signal).then(
       (result) => {
         if (controller.signal.aborted) {
           return;
         }
-        loadedKeyRef.current = key;
-        setTimeline(result);
+        setLoaded({ days, timeline: result });
       },
       () => {
         if (!controller.signal.aborted) {
@@ -322,10 +318,14 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             <p className="text-muted-foreground text-sm">这段时间没有监测数据。</p>
           )}
           {timeline?.series && timeline.series.points.length > 0 && (
-            <>
+            // 等新窗口时调暗旧图；延迟变暗，数据很快到达时不闪一下。
+            <div
+              aria-busy={isSwitchingWindow}
+              className={cn('space-y-5 transition-opacity duration-200 motion-reduce:transition-none', isSwitchingWindow && 'opacity-50 delay-150')}
+            >
               <WindowMetrics data={timeline.series} />
               <DisplacementChart stationName={timeline.station_name} data={timeline.series} onAsk={showChat} disabled={!conversationReady} />
-            </>
+            </div>
           )}
         </div>
 
@@ -372,9 +372,19 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             />
           </div>}
           <div ref={layoutRef} className="flex min-h-0 flex-1">
-            <div className={cn('h-full min-w-0 flex-1', (isSideBySide ? chatMode === 'expanded' : panel !== 'data') && 'hidden')}>{dataPanel(true)}</div>
-            <div ref={chatRef} id={`station-chat-${stationUuid}`} style={isSideBySide && chatMode === 'split' ? chatResize.style : undefined}
-              className={cn('relative flex h-full min-w-0 flex-col', isSideBySide && chatMode === 'split' ? 'w-[min(var(--panel-width),calc(100%-360px))] shrink-0 border-l' : 'flex-1', (isSideBySide ? chatMode === 'closed' : panel !== 'chat') && 'hidden')}>
+            {/* 宽屏两栏都保持渲染，靠对话栏宽度过渡切换分栏、展开与关闭；窄屏一次只显示一栏。 */}
+            <div
+              inert={isSideBySide && chatMode === 'expanded'}
+              aria-hidden={isSideBySide && chatMode === 'expanded' ? true : undefined}
+              className={cn('h-full min-w-0 flex-1 overflow-hidden', !isSideBySide && panel !== 'data' && 'hidden')}
+            >
+              {dataPanel(true)}
+            </div>
+            <div ref={chatRef} id={`station-chat-${stationUuid}`} style={isSideBySide ? chatResize.style : undefined}
+              data-mode={isSideBySide ? chatMode : undefined}
+              inert={isSideBySide && chatMode === 'closed'}
+              aria-hidden={isSideBySide && chatMode === 'closed' ? true : undefined}
+              className={cn('relative flex h-full min-w-0 flex-col', isSideBySide ? 'station-chat-panel' : 'flex-1', !isSideBySide && panel !== 'chat' && 'hidden')}>
               {isSideBySide && <StationChatActions expanded={chatMode === 'expanded'}
                 onExpand={() => setChatMode(chatMode === 'expanded' ? 'split' : 'expanded')}
                 onClose={() => setChatMode('closed')}

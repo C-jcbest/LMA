@@ -587,6 +587,27 @@
   }
 }
 
+/* 测点页宽屏的对话栏：分栏、展开、关闭之间过渡宽度，数据区随之伸缩，用户能看到数据去了哪里。 */
+.station-chat-panel {
+  flex-shrink: 0;
+  transition: width 200ms ease, opacity 160ms ease;
+}
+
+.station-chat-panel[data-mode="split"] {
+  width: min(var(--panel-width), calc(100% - 360px));
+  border-left-width: 1px;
+}
+
+.station-chat-panel[data-mode="expanded"] {
+  width: 100%;
+}
+
+.station-chat-panel[data-mode="closed"] {
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+}
+
 /* 宽度跟随指针时不能再叠加缓动，否则分隔线会落后于鼠标。 */
 [data-resizing] {
   transition: none;
@@ -671,6 +692,7 @@
 @media (prefers-reduced-motion: reduce) {
   .navigation-panel,
   .inspector-panel,
+  .station-chat-panel,
   .panel-resize-handle::after { transition: none; }
 
   [data-slot="collapsible-content"],
@@ -679,13 +701,32 @@
   .inspector-overlay { animation: none !important; }
 }
 
+/* 换页的淡入淡出要短：过渡期间页面不接收点击，过长会让人觉得点了没反应。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 160ms;
+}
+
+/* 新巡检完成后，结论有变化的行底色亮起一次再褪去，告诉用户“这几行是新的”。 */
+.row-changed {
+  animation: row-changed 1600ms ease-out;
+}
+
+@keyframes row-changed {
+  from { background-color: color-mix(in oklab, var(--status-attention) 18%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-changed { animation: none; }
+}
+
 @keyframes investigation-enter {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 .new-investigation-intro, .new-investigation-question {
-  animation: investigation-enter 420ms ease-out both;
+  animation: investigation-enter 240ms ease-out both;
 }
 
 @media (prefers-reduced-motion: reduce) {

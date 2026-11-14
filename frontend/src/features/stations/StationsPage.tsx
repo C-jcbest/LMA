@@ -3,6 +3,7 @@ import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { useNavigation } from '@/app/navigation';
 import { Input } from '@/components/ui/input';
 import { Segmented } from '@/components/ui/segmented';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
@@ -145,6 +146,15 @@ export const StationsPage: FC = () => {
             测点尚未载入。
             <button type="button" disabled={isLoading} className="ms-1 underline underline-offset-4 disabled:opacity-50" onClick={reload}>重试</button>
           </p>
+        )}
+        {!hasStations && isLoading && (
+          // 延迟出现，读取很快时不闪一下。
+          <div aria-hidden className="animate-in fade-in fill-mode-both mt-5 space-y-2 [animation-delay:150ms] [animation-duration:200ms]">
+            <Skeleton className="h-8 w-64 motion-reduce:animate-none" />
+            {Array.from({ length: 5 }, (_, index) => (
+              <Skeleton key={index} className="h-11 w-full motion-reduce:animate-none" />
+            ))}
+          </div>
         )}
         {!hasStations && !isLoading && !hasLoadError && (
           <p className="text-muted-foreground mt-4 text-sm">暂无测点。</p>

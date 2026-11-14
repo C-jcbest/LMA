@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { flushSync } from 'react-dom';
 import { useAui } from '@assistant-ui/react';
 
 export type Page = 'home' | 'conversation' | 'stations' | 'records' | 'station';
@@ -60,6 +61,17 @@ const writeLocation = (location: NavigationLocation) => {
   }
 };
 
+/** 换页时用浏览器的视图过渡做一次短暂的淡入淡出；浏览器不支持或用户减弱动效时直接切换。 */
+const switchPage = (update: () => void) => {
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!document.startViewTransition || prefersReducedMotion) {
+    update();
+    return;
+  }
+  // 浏览器在回调里截取新页面，React 必须在回调返回前完成渲染。
+  document.startViewTransition(() => flushSync(update));
+};
+
 /** 只保存用户在看哪一页；会话选择仍由官方 Runtime 管理，并各自写入地址栏。 */
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const aui = useAui();
@@ -67,14 +79,14 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const stationOrigin = useRef<NavigationLocation>({ page: 'stations', stationUuid: null });
 
   useEffect(() => {
-    const onPopState = () => setLocation(readLocation());
+    const onPopState = () => switchPage(() => setLocation(readLocation()));
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
   const navigate = useCallback((next: NavigationLocation) => {
-    setLocation(next);
     writeLocation(next);
+    switchPage(() => setLocation(next));
   }, []);
 
   const value = useMemo<NavigationValue>(() => ({

@@ -1,4 +1,4 @@
-import { useMemo, useState, type FC } from 'react';
+import { useEffect, useMemo, useState, type FC } from 'react';
 import { useAuiState, type AssistantState } from '@assistant-ui/react';
 import { AlertCircleIcon, CheckIcon, ChevronRightIcon, MinusIcon } from 'lucide-react';
 import {
@@ -29,6 +29,37 @@ const SPARKLINE_WIDTH = 40;
 const SPARKLINE_HEIGHT = 14;
 
 const isMessageRunning = (state: AssistantState) => state.message.status?.type === 'running';
+
+/** 一次调查常要一分钟以上，等过这么久后告诉用户可以先去做别的。 */
+const LEAVE_HINT_AFTER_SECONDS = 30;
+
+// 切换页面后同一条回答会重新挂载；开始时间按消息记住，用时不会从零重新计。
+// 刷新页面后接上的运行从重新打开时算起。
+const runStartTimes = new Map<string, number>();
+
+/** 只在回答运行中渲染；不放进 status 区域，每秒变化的数字不应反复打断读屏。 */
+const RunElapsed: FC<{ messageId: string }> = ({ messageId }) => {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  let startedAt = runStartTimes.get(messageId);
+  if (startedAt === undefined) {
+    startedAt = Date.now();
+    runStartTimes.set(messageId, startedAt);
+  }
+  const seconds = Math.floor((now - startedAt) / 1000);
+  if (seconds < 1) {
+    return null;
+  }
+  return (
+    <span className="shrink-0 text-muted-foreground tabular-nums">
+      {seconds} 秒{seconds >= LEAVE_HINT_AFTER_SECONDS && ' · 可先离开，调查会继续'}
+    </span>
+  );
+};
 
 /** 测点没有可绘制序列时不画趋势，用名称本身作入口。 */
 export const StationSparkline: FC<{ station: StationEvidence }> = ({ station }) => {
@@ -198,6 +229,7 @@ export const InvestigationProcess: FC = () => {
           <span className={cn('min-w-0 truncate', isRunning && 'text-shimmer')} role={isRunning ? 'status' : undefined}>
             {headlineOf(steps, stations.length, isRunning)}
           </span>
+          {isRunning && <RunElapsed messageId={messageId} />}
           <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]/process:rotate-90 motion-reduce:transition-none" aria-hidden />
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -226,10 +258,14 @@ export const InvestigationProcess: FC = () => {
         </Collapsible>
       )}
 
-      {/* 有登记结论时用测点状态作为入口，否则列出涉及的测点；同一入口只出现一次。 */}
-      {!isRunning && conclusions && <ConclusionStatusStrip conclusions={conclusions} />}
+      {/* 有登记结论时用测点状态作为入口，否则列出涉及的测点；同一入口只出现一次。调查结束时入口淡入，不突然冒出来。 */}
+      {!isRunning && conclusions && (
+        <div className="animate-in fade-in duration-200 motion-reduce:animate-none">
+          <ConclusionStatusStrip conclusions={conclusions} />
+        </div>
+      )}
       {!isRunning && !conclusions && stations.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="animate-in fade-in flex flex-wrap items-center gap-1.5 duration-200 motion-reduce:animate-none">
           {stations.slice(0, MAX_VISIBLE_STATIONS).map((station) => {
             const isSelected = selection?.messageId === messageId && selection.stationId === station.id;
             return (
@@ -266,7 +302,13 @@ export const InvestigationProcess: FC = () => {
 
 /** 还没有任何工具调用时的等待提示；有调查过程后由过程行承担。 */
 export const InvestigationIndicator: FC = () => {
+  const messageId = useAuiState((state) => state.message.id);
   const hasToolCall = useAuiState((state) => state.message.parts.some((part) => part.type === 'tool-call'));
   if (hasToolCall) return null;
-  return <span role="status" className="text-shimmer text-sm">正在分析问题…</span>;
+  return (
+    <span className="flex items-center gap-2 text-sm">
+      <span role="status" className="text-shimmer">正在分析问题…</span>
+      <RunElapsed messageId={messageId} />
+    </span>
+  );
 };
