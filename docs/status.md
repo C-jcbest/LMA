@@ -1,10 +1,10 @@
 # 状态与待办
 
-更新：2026-11-14。只写**现在**是什么样、还有什么没做或没验证。不写测试数量等会很快过期的数字，验证方法见 [开发指南](development.md#验证)；逐轮过程通过 Git 历史与 PR 追溯。架构见 [architecture.md](architecture.md)，规则见 [产品规则](product/rules.md)。
+更新：2026-11-16。只写**现在**是什么样、还有什么没做或没验证。不写测试数量等会很快过期的数字，验证方法见 [开发指南](development.md#验证)；逐轮过程通过 Git 历史与 PR 追溯。架构见 [architecture.md](architecture.md)，规则见 [产品规则](product/rules.md)。
 
 ## 当前状态
 
-- 最近发布：2f68487（含应用内登录页，以及地图坡向、单点地图、位移回放与 3D 地形）已通过 CI 并部署。以 GitHub Actions 记录为准。
+- 发布：推送 main 后由 CI 测试并部署，最近一次发布以 GitHub Actions 记录为准。
 - 能力概览见 [architecture.md](architecture.md)；单 worker 自托管，部署重启会中断正在运行的调查。
 - 访问保护为应用内登录页（单账号，配置见部署说明）；生产主机网关已去掉 Basic Auth。
 - 已知限制：调查质量、天气与场地只在合成数据或单元测试中验证；compute 不是操作系统级沙箱；生产备份只在本服务器。

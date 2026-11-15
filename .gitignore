@@ -22,6 +22,9 @@ playwright-report/
 .DS_Store
 Thumbs.db
 
+# 构建缓存
+*.tsbuildinfo
+
 # 日志
 *.log
 backend/evaluations/results/
@@ -29,3 +32,6 @@ backend/evaluations/results/
 # 仓库内的临时工作树（应建在仓库目录之外，见 AGENTS.md）
 .cindy-worktrees/
 .claude/worktrees/
+
+# 本机预览配置（指向线上地址，地址不进 Git）
+.claude/launch.json

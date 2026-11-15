@@ -6,9 +6,9 @@
 
 本部署面向单台小型服务器，固定 **一个 Uvicorn worker**，采用异步方式处理并发请求；API 不设置跨会话 Run 数量上限，Uvicorn 不配置 limit_concurrency（官方默认 None）。同一会话只允许一个 Run，重复提交返回 409，避免历史冲突。运行不具备分布式队列或跨进程接管能力；服务重启后，未结束 Run 显式标为 interrupted，不自动重放请求。重新生成与编辑使用官方 checkpoint fork，界面展示最新回答；用户已选择暂不提供旧回答分支切换。
 
-不设置 Run 数量上限不代表资源无限。并发增加时，数据库连接池仍会等待可用连接，模型和监测服务仍受供应商配额约束；可能出现响应变慢、外部 429 或等待超时。后端容器内存上限仍为 768 MiB，内存耗尽可能导致进程被终止并重启，正在运行的流会中断。此变更不调整单轮模型/工具调用预算或上下文窗口；这些限制属于不同层次。
+不设置 Run 数量上限不代表资源无限。并发增加时，数据库连接池仍会等待可用连接，模型和监测服务仍受供应商配额约束；可能出现响应变慢、外部 429 或等待超时。后端容器内存上限为 768 MiB，内存耗尽可能导致进程被终止并重启，正在运行的流会中断。单轮模型/工具调用预算和上下文窗口是另一层限制，见 [当前架构](architecture.md#上下文与预算)。
 
-云端使用独立 lma-cloud Compose 项目和 lma-cloud_oss_pgdata 卷，从新会话开始。本机原 lma 项目、lma_pgdata 和已有会话不迁移、不清除；新本地 Compose 名称为 lma-oss。本次不提供旧 Agent Server 数据格式兼容。
+云端使用独立 lma-cloud Compose 项目和 lma-cloud_oss_pgdata 卷；本地 Compose 项目名为 lma-oss。本机旧 lma 项目和 lma_pgdata 卷保留，不迁移、不清除；不兼容旧 Agent Server 数据格式。
 
 ## 腾讯云入口与文件
 
@@ -33,10 +33,10 @@ journalctl -u lma-certbot.service --since '2 days ago'
 .github/workflows/ci-deploy.yml 在面向 main 的 PR、推送 main 和手动触发时运行测试与部署；只改 docs/、README.md 或 AGENTS.md 时不触发，提示词 Markdown 不在排除范围内。.github/workflows/docs-check.yml 对所有面向 main 的推送和 PR 运行文档检查，不部署。
 
 1. PostgreSQL 隔离数据库上运行后端 unittest。
-2. 前端 Vitest、精简后的 Chromium 关键交互回归与 Vite 生产构建。浏览器只安装 headless shell，测试文件最多并行两个，文件内串行。
+2. 前端 Vitest、Chromium 关键交互回归与 Vite 生产构建。浏览器只安装 headless shell，测试文件最多并行两个，文件内串行。
 3. 仅 main 且测试成功时，在 production environment 自动部署相同 commit。PR 不读取部署密钥、不发布。
 
-同一分支的新提交取消仍在运行的旧测试；部署仍使用独立串行锁，已开始的部署不会因新测试被取消。不再重复运行一套 Windows 测试和构建。
+同一分支的新提交取消仍在运行的旧测试；部署使用独立串行锁，已开始的部署不会因新测试被取消。CI 只在 Linux 上运行。
 
 production environment 中配置：
 
@@ -47,11 +47,11 @@ production environment 中配置：
 | LMA_SSH_USER | Variable | lma-deploy，仅用于部署 |
 | LMA_SSH_KNOWN_HOSTS | Variable | 管理连接核验过的服务器 SSH host key，禁止关闭严格校验 |
 
-CI 和人工发布统一使用 `ops/package-release.py` 打包指定提交，不上传 .env 或工作区未提交文件。`.gitattributes` 的 `export-ignore` 排除测试、文档和 CI 配置，发布包只保留运行和构建需要的文件；前端 `.dockerignore` 同时排除测试及其配置，单改测试不再使生产构建层失效。脚本固定禁用 Git 换行转换并输出 tar.gz；构建输入和发布脚本另由 .gitattributes 固定 LF，避免 Windows 与 Linux 的依赖文件内容不同而误失效缓存。服务器 forced-command 密钥只允许部署入口，参数必须为 40 位十六进制 SHA，不开放交互 shell、端口转发或 root SSH 密钥。发布串行执行，允许相同归档重跑；同 SHA 内容不同或解压不完整会拒绝。
+CI 和人工发布统一使用 `ops/package-release.py` 打包指定提交，不上传 .env 或工作区未提交文件。`.gitattributes` 的 `export-ignore` 排除测试、文档和 CI 配置，发布包只保留运行和构建需要的文件；前端 `.dockerignore` 同时排除测试及其配置，单改测试不会使生产构建层失效。脚本固定禁用 Git 换行转换并输出 tar.gz；构建输入和发布脚本另由 .gitattributes 固定 LF，避免 Windows 与 Linux 的依赖文件内容不同而误失效缓存。服务器 forced-command 密钥只允许部署入口，参数必须为 40 位十六进制 SHA，不开放交互 shell、端口转发或 root SSH 密钥。发布串行执行，允许相同归档重跑；同 SHA 内容不同或解压不完整会拒绝。
 
 用户明确要求本次跳过测试时，可在提交中使用 `[skip ci]` 跳过自动流水线，再通过管理员连接调用同一服务器部署程序；构建、数据库备份、迁移和上线健康检查仍保留。在 Windows 仓库根目录使用 `backend/.venv/Scripts/python.exe ops/package-release.py --output <归档文件>`，Linux 使用 `python3 ops/package-release.py --output <归档文件>`，均默认打包 HEAD；`--revision` 可指定提交。将归档上传为独立临时文件，再执行 `/usr/local/sbin/lma-deploy <脚本输出的完整提交 SHA> < <临时归档路径>`；临时文件不能使用部署程序写入的 `/opt/lma/incoming/<SHA>.tar.gz`，否则重定向读取时会被截断。
 
-后端 pip 和前端 pnpm 使用 BuildKit 缓存挂载保存已下载的包；依赖清单变化后也可复用下载，依赖清单未变化时仍优先命中整个安装层。缓存只留在构建器中，不进入运行镜像；不要在每次发布前清空构建缓存。首次启用缓存挂载会重新安装依赖以填充缓存。
+后端 pip 和前端 pnpm 使用 BuildKit 缓存挂载保存已下载的包；依赖清单变化后也可复用下载，依赖清单未变化时仍优先命中整个安装层。缓存只留在构建器中，不进入运行镜像；不要在每次发布前清空构建缓存。
 
 后端包源由 Compose 构建参数 `LMA_PIP_INDEX_URL` 控制，默认 `https://pypi.org/simple`。腾讯云生产服务器在 `/opt/lma/shared/.env` 配置 `LMA_PIP_INDEX_URL=https://mirrors.cloud.tencent.com/pypi/simple/`，仅在构建安装时使用该包源；不自动切换其他来源。当前固定版本的直接依赖已核验可从腾讯镜像取得，间接依赖和平台适配以实际构建结果为准。迁移服务和 API 服务共用同一后端构建配置。
 

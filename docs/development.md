@@ -92,7 +92,7 @@ pnpm test:gate
 
 test:gate 包含 Vitest、Playwright 和生产构建。浏览器测试需要后端依赖，使用 21420 / 25174 / 19090 独立端口和 HTTP stub，不调用真实模型或监测账号。
 
-浏览器回归保留 19 个关键场景，覆盖会话归属与恢复、停止与编辑、分页、引用定位、图表追问、地图失败、巡检恢复和推荐迟到。相同交互只用代表屏宽，不为中间尺寸、主题、面板尺寸记忆、静态文案或纯渲染重复整条流程；低层已经覆盖的业务校验不再重复启动浏览器。成功用例不额外保存截图，失败仍保留截图和 trace。
+浏览器回归只保留关键场景，覆盖会话归属与恢复、停止与编辑、分页、引用定位、图表追问、地图失败、巡检恢复和推荐迟到。相同交互只用代表屏宽，不为中间尺寸、主题、面板尺寸记忆、静态文案或纯渲染重复整条流程；低层已经覆盖的业务校验不再重复启动浏览器。成功用例不额外保存截图，失败仍保留截图和 trace。
 
 本地验证按改动范围选择相关入口，集中运行一次；没有新改动、失败或未解决疑点时，不重复完整门禁。发布仍由 CI 跑关键回归与构建。数值正确性、工具边界和 PostgreSQL 持久化测试保留，避免为削减短步骤丢失重要保障。
 
@@ -110,6 +110,8 @@ Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.
 | PostgreSQL checkpoint、消息注入拒绝、编辑与并发 | backend/tests/test_self_hosted_api.py |
 | 领域显示、artifact 校验、服务失败与 SSE | frontend/tests/；单元测试覆盖可精确定位的边界 |
 | 导航、Stop、刷新、编辑、复制与分页 | frontend/e2e/thread-lifecycle.spec.ts；使用真实前端、API 与隔离数据库 |
+| 首页与测点页调查、引用定位依据、今日页与巡检恢复 | frontend/e2e/investigation-report.spec.ts；HTTP mock，页面与会话运行时使用生产实现 |
+| 测点时间轴、框选追问、场地引用与地图失败 | frontend/e2e/station-inspector.spec.ts；HTTP mock，图表与布局使用生产实现 |
 | 窄屏、抽屉、失败原因与草稿保留 | frontend/e2e/layout-feedback.spec.ts；浏览器布局和 HTTP 边界回归 |
 | 慢推荐下首屏可操作、迟到推荐和点击填入 | frontend/e2e/suggestion-readiness.spec.ts；通过显式阻塞/释放推荐响应验证首屏交互，不用固定延迟和多屏宽反复计时 |
 
