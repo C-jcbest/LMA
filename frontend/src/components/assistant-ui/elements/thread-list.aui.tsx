@@ -400,7 +400,7 @@ export const ThreadListItem: FC = () => {
             onNavigate?.();
           }}
           data-slot="aui_thread-list-item-trigger"
-          className="focus-visible:ring-ring/50 flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
+          className="flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9"
         >
           {/* 侧栏“最近”里，状态点居中在导航图标的位置上，标题与上方导航文字对齐。 */}
           {isRunning ? (

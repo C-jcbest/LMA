@@ -182,7 +182,7 @@ const RecordList: FC<{ records: readonly StationRecord[]; selected: { sessionId?
                 setOpening(null);
               }
             }}
-            className="record-row hover:bg-muted/60 aria-[current=true]:bg-muted focus-visible:ring-ring w-full rounded-lg text-start text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none"
+            className="record-row w-full rounded-lg text-start text-sm transition hover:bg-muted/60 active:scale-99 disabled:opacity-50 aria-[current=true]:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             <span className="text-muted-foreground tabular-nums">{formatRecordDate(record.created_at)}</span>
             <span className="inline-flex items-center gap-2 whitespace-nowrap">
@@ -321,7 +321,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             // 等新窗口时调暗旧图；延迟变暗，数据很快到达时不闪一下。
             <div
               aria-busy={isSwitchingWindow}
-              className={cn('space-y-5 transition-opacity duration-200 motion-reduce:transition-none', isSwitchingWindow && 'opacity-50 delay-150')}
+              className={cn('space-y-5 transition-opacity duration-200', isSwitchingWindow && 'opacity-50 delay-150')}
             >
               <WindowMetrics data={timeline.series} />
               <DisplacementChart stationName={timeline.station_name} data={timeline.series} onAsk={showChat} disabled={!conversationReady} />

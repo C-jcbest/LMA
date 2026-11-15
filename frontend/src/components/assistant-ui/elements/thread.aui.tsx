@@ -78,16 +78,16 @@ const ThreadHistorySkeleton: FC = () => (
     className="animate-in fade-in fill-mode-both flex flex-col gap-y-6 [animation-delay:150ms] [animation-duration:200ms]"
   >
     <span className="sr-only">正在载入会话</span>
-    <Skeleton className="ml-auto h-9 w-2/5 rounded-xl motion-reduce:animate-none" />
+    <Skeleton className="ml-auto h-9 w-2/5 rounded-xl" />
     <div className="flex flex-col gap-y-2">
-      <Skeleton className="h-4 w-11/12 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-4/5 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-3/5 motion-reduce:animate-none" />
+      <Skeleton className="h-4 w-11/12" />
+      <Skeleton className="h-4 w-4/5" />
+      <Skeleton className="h-4 w-3/5" />
     </div>
-    <Skeleton className="ml-auto h-9 w-1/3 rounded-xl motion-reduce:animate-none" />
+    <Skeleton className="ml-auto h-9 w-1/3 rounded-xl" />
     <div className="flex flex-col gap-y-2">
-      <Skeleton className="h-4 w-10/12 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-2/3 motion-reduce:animate-none" />
+      <Skeleton className="h-4 w-10/12" />
+      <Skeleton className="h-4 w-2/3" />
     </div>
   </div>
 );
@@ -194,7 +194,7 @@ const ThreadSummaryMessageView: FC<{ text: string }> = ({ text }) => {
         <span>更早的对话已压缩为摘要</span>
         <ChevronDownIcon
           className={cn(
-            "size-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
+            "size-3.5 shrink-0 transition-transform duration-200",
             expanded && "rotate-180",
           )}
         />

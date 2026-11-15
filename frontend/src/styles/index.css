@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 @source "../../node_modules/streamdown/dist/*.js";
 @source "../../node_modules/@streamdown/code/dist/*.js";
@@ -110,6 +111,12 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+
+  /* 动效只用两条曲线：进入和状态反馈用减速曲线，离开用加速曲线。 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --default-transition-duration: 150ms;
+  --default-transition-timing-function: var(--ease-out);
 }
 
 @custom-variant data-open (&:where([data-state="open"], [data-open]:not([data-open="false"])));
@@ -131,6 +138,45 @@
     color: var(--foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* Tailwind v4 把按钮指针改回了箭头；这里恢复手型，让可点击的依据、测点和入口一眼可辨。 */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not(:disabled),
+  summary {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--ring) 35%, transparent);
+  }
+}
+
+/*
+ * 动效时长三档：反馈 120ms、状态切换 200ms、面板和视图 300ms。
+ * 自定义 CSS 用这里的变量，Tailwind 类用 duration-150 / duration-200 / duration-300。
+ */
+:root {
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 300ms;
+}
+
+/* 系统要求减少动态效果时统一关闭位移和动画，组件里不再逐个写 motion-reduce。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }
 
@@ -239,9 +285,10 @@
   font-variant-numeric: tabular-nums;
   line-height: 1;
   vertical-align: 0.15em;
-  transition: color 120ms, border-color 120ms;
+  transition: color var(--duration-fast), border-color var(--duration-fast), background-color var(--duration-fast);
 }
 .evidence-citation:hover { color: var(--foreground); border-color: var(--ring); }
+.evidence-citation:active { background: var(--accent); }
 .evidence-citation:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 @media (pointer: coarse) {
   .evidence-citation::after { content: ""; position: absolute; inset: -12px -8px; }
@@ -257,7 +304,7 @@
 .evidence-card[data-state="closed"] { padding-bottom: 2px; }
 /* 放大入口平时隐藏，指针悬停或键盘聚焦到卡片时出现；触屏没有悬停，始终显示。 */
 @media (hover: hover) {
-  .evidence-card-open { opacity: 0; transition: opacity 120ms; }
+  .evidence-card-open { opacity: 0; transition: opacity var(--duration-fast); }
   .evidence-card:hover .evidence-card-open,
   .evidence-card:focus-within .evidence-card-open { opacity: 1; }
 }
@@ -556,7 +603,7 @@
 .navigation-panel {
   width: min(var(--panel-width), calc(100vw - 360px));
   overflow: clip;
-  transition: width 200ms ease;
+  transition: width var(--duration-slow) var(--ease-out);
 }
 
 .navigation-panel .panel-inner {
@@ -567,6 +614,7 @@
   width: 0;
 }
 
+/* 窄屏导航抽屉沿用侧栏宽度偏好，但始终给右侧留出可点击关闭的空白。 */
 .session-drawer {
   width: min(var(--panel-width), calc(100vw - 2rem));
 }
@@ -574,7 +622,7 @@
 .inspector-panel {
   width: var(--panel-width);
   flex-shrink: 1;
-  transition: width 200ms ease, opacity 160ms ease;
+  transition: width var(--duration-slow) var(--ease-out), opacity var(--duration-base) var(--ease-out);
 }
 
 .inspector-panel[data-state="closed"] {
@@ -594,7 +642,7 @@
 /* 测点页宽屏的对话栏：分栏、展开、关闭之间过渡宽度，数据区随之伸缩，用户能看到数据去了哪里。 */
 .station-chat-panel {
   flex-shrink: 0;
-  transition: width 200ms ease, opacity 160ms ease;
+  transition: width var(--duration-slow) var(--ease-out), opacity var(--duration-base) var(--ease-out);
 }
 
 .station-chat-panel[data-mode="split"] {
@@ -639,7 +687,7 @@
   background: var(--ring);
   content: '';
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--duration-fast) var(--ease-out);
 }
 
 .panel-resize-handle[data-edge="left"]::after { left: 0; }
@@ -655,11 +703,11 @@
 
 /* 使用 Radix 的测量高度及退场生命周期，内容关闭后才卸载。 */
 [data-slot="collapsible-content"][data-state="open"] {
-  animation: disclosure-open 180ms ease-out;
+  animation: disclosure-open var(--duration-base) var(--ease-out);
 }
 
 [data-slot="collapsible-content"][data-state="closed"] {
-  animation: disclosure-close 180ms ease-in;
+  animation: disclosure-close var(--duration-base) var(--ease-in);
 }
 
 [data-slot="collapsible-content"] { overflow: hidden; }
@@ -674,36 +722,11 @@
   to { height: 0; opacity: 0; }
 }
 
-[data-slot="dialog-overlay"][data-state="open"] { animation: surface-fade-in 200ms ease; }
-[data-slot="dialog-overlay"][data-state="closed"] { animation: surface-fade-out 200ms ease; }
-[data-slot="dialog-content"][data-state="open"] { animation: dialog-in 200ms ease-out; }
-[data-slot="dialog-content"][data-state="closed"] { animation: dialog-out 200ms ease-in; }
-
-.session-drawer[data-state="open"] { animation: drawer-in 200ms ease-out; }
-.session-drawer[data-state="closed"] { animation: drawer-out 200ms ease-in; }
-.inspector-overlay[data-state="open"] { animation: evidence-in 200ms ease-out; }
-.inspector-overlay[data-state="closed"] { animation: evidence-out 200ms ease-in; }
-
-@keyframes surface-fade-in { from { opacity: 0; } }
-@keyframes surface-fade-out { to { opacity: 0; } }
-@keyframes dialog-in { from { opacity: 0; transform: scale(0.97); } }
-@keyframes dialog-out { to { opacity: 0; transform: scale(0.97); } }
-@keyframes drawer-in { from { transform: translateX(-100%); } }
-@keyframes drawer-out { to { transform: translateX(-100%); } }
+/* 窄屏的依据面板全屏覆盖，从右侧滑入，和宽屏面板出现的方向一致。 */
+.inspector-overlay[data-state="open"] { animation: evidence-in var(--duration-slow) var(--ease-out); }
+.inspector-overlay[data-state="closed"] { animation: evidence-out var(--duration-base) var(--ease-in); }
 @keyframes evidence-in { from { opacity: 0; transform: translateX(24px); } }
 @keyframes evidence-out { to { opacity: 0; transform: translateX(24px); } }
-
-@media (prefers-reduced-motion: reduce) {
-  .navigation-panel,
-  .inspector-panel,
-  .station-chat-panel,
-  .panel-resize-handle::after { transition: none; }
-
-  [data-slot="collapsible-content"],
-  [data-slot="dialog-overlay"],
-  [data-slot="dialog-content"],
-  .inspector-overlay { animation: none !important; }
-}
 
 /* 换页的淡入淡出要短：过渡期间页面不接收点击，过长会让人觉得点了没反应。 */
 ::view-transition-old(root),
@@ -713,15 +736,11 @@
 
 /* 新巡检完成后，结论有变化的行底色亮起一次再褪去，告诉用户“这几行是新的”。 */
 .row-changed {
-  animation: row-changed 1600ms ease-out;
+  animation: row-changed 1600ms var(--ease-out);
 }
 
 @keyframes row-changed {
   from { background-color: color-mix(in oklab, var(--status-attention) 18%, transparent); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .row-changed { animation: none; }
 }
 
 @keyframes investigation-enter {
@@ -730,11 +749,5 @@
 }
 
 .new-investigation-intro, .new-investigation-question {
-  animation: investigation-enter 240ms ease-out both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .new-investigation-intro, .new-investigation-question {
-    animation: none;
-  }
+  animation: investigation-enter var(--duration-slow) var(--ease-out) both;
 }

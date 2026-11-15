@@ -21,11 +21,11 @@ const formatFinishedAt = (value: string) => {
 /** 首次读取巡检结果时的占位；延迟出现，读取很快时不闪一下，也不先显示“开始巡检”再跳成结果。 */
 const TodaySkeleton: FC = () => (
   <div aria-hidden className="animate-in fade-in fill-mode-both [animation-delay:150ms] [animation-duration:200ms]">
-    <Skeleton className="h-8 w-3/5 motion-reduce:animate-none" />
-    <Skeleton className="mt-3 h-4 w-40 motion-reduce:animate-none" />
+    <Skeleton className="h-8 w-3/5" />
+    <Skeleton className="mt-3 h-4 w-40" />
     <div className="mt-7 space-y-3">
-      <Skeleton className="h-16 w-full rounded-xl motion-reduce:animate-none" />
-      <Skeleton className="h-16 w-full rounded-xl motion-reduce:animate-none" />
+      <Skeleton className="h-16 w-full rounded-xl" />
+      <Skeleton className="h-16 w-full rounded-xl" />
     </div>
   </div>
 );
@@ -64,7 +64,7 @@ const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }>
         aria-label={`查看 ${station.station_name}`}
         onClick={() => openStation(station.station_uuid)}
         className={cn(
-          'today-row hover:bg-muted/60 focus-visible:ring-ring w-full rounded-xl text-start transition-colors focus-visible:ring-2 focus-visible:outline-none',
+          'today-row w-full rounded-lg text-start transition hover:bg-muted/60 active:scale-99 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
           highlightChange && isScreeningChanged && 'row-changed',
         )}
       >
@@ -154,7 +154,7 @@ export const TodayAttention: FC = () => {
           onClick={start}
           className={cn(hasResults && '-ms-2 text-muted-foreground')}
         >
-          <RefreshCwIcon className={cn('size-3.5', (isRunning || isStarting) && 'animate-spin motion-reduce:animate-none')} aria-hidden />
+          <RefreshCwIcon className={cn('size-3.5', (isRunning || isStarting) && 'animate-spin')} aria-hidden />
           {startLabel}
         </Button>
       </div>
@@ -192,7 +192,7 @@ export const TodayAttention: FC = () => {
         <button
           type="button"
           onClick={goStations}
-          className="bg-muted/50 hover:bg-muted focus-visible:ring-ring text-muted-foreground group/all mt-5 flex min-h-12 w-full flex-wrap items-center gap-x-5 gap-y-1 rounded-xl px-4 py-2 text-start text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          className="group/all mt-5 flex min-h-12 w-full flex-wrap items-center gap-x-5 gap-y-1 rounded-lg bg-muted/50 px-4 py-2 text-start text-sm text-muted-foreground transition hover:bg-muted active:scale-99 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           {quietCount > 0 && (
             <span className="inline-flex items-center gap-2"><StatusDot status="未见明显变化" />{quietCount} 个未见明显变化</span>

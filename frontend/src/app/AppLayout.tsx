@@ -4,7 +4,7 @@ import { ActivityIcon, ListIcon, LogOutIcon, Mountain, PanelLeftClose, PanelLeft
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import { InspectionProvider, useInspection } from '@/features/inspection/InspectionContext';
 import { StationInspector } from '@/features/monitoring/StationInspector';
@@ -49,7 +49,7 @@ const NavigationItem: React.FC<{
     aria-current={isCurrent ? 'page' : undefined}
     onClick={onClick}
     className={cn(
-      'flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+      'flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
       isCurrent && 'bg-muted font-medium text-foreground',
     )}
   >
@@ -97,7 +97,7 @@ const NavigationRail = forwardRef<HTMLButtonElement, { expandLabel: string; onEx
       {entries.map(({ icon: Icon, label, isCurrent, badge, open }) => (
         <button key={label} type="button" onClick={open} aria-label={label} title={label} aria-current={isCurrent ? 'page' : undefined}
           className={cn(
-            'relative flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            'relative flex size-9 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
             isCurrent && 'bg-muted text-foreground',
           )}>
           <Icon className="size-4" aria-hidden />
@@ -326,10 +326,11 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
       )}
 
       {!canDockSidebar && (
-        <Dialog open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
-          <DialogContent
+        <Sheet open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
+          <SheetContent
             id="session-navigation-drawer"
             ref={drawerPanelRef}
+            side="left"
             style={navigationResize.style}
             showCloseButton={false}
             onEscapeKeyDown={navigationResize.onEscapeKeyDown}
@@ -337,10 +338,10 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
               event.preventDefault();
               navigationButtonRef.current?.focus();
             }}
-            className="session-drawer top-0 bottom-0 left-0 flex h-dvh max-w-none translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-y-0 border-l-0 p-0"
+            className="session-drawer gap-0 sm:max-w-none"
           >
-            <DialogTitle className="sr-only">导航</DialogTitle>
-            <DialogDescription className="sr-only">切换页面，或打开最近的调查。</DialogDescription>
+            <SheetTitle className="sr-only">导航</SheetTitle>
+            <SheetDescription className="sr-only">切换页面，或打开最近的调查。</SheetDescription>
             <ThreadListLoadError />
             <Sidebar
               onClose={() => setIsDrawerOpen(false)}
@@ -350,8 +351,8 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
               onLogout={onLogout}
             />
             <PanelResizeHandle label="调整导航宽度" panelId="session-navigation-drawer" edge="right" {...navigationResize.handleProps} />
-          </DialogContent>
-        </Dialog>
+          </SheetContent>
+        </Sheet>
       )}
 
       <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" style={{ minWidth: isSplit && selection !== null ? 360 : undefined }}>

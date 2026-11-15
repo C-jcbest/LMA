@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
 import type { LmaClient } from '@/services/api';
 
 // 登录成功后先让卡片淡出，再切换到应用，避免整页瞬间替换。
-const EXIT_DURATION_MS = 180;
+const EXIT_DURATION_MS = 200;
 
 export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; expired: boolean; onSuccess: () => void }) {
   const [username, setUsername] = useState('');
@@ -46,9 +46,9 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
         onSubmit={submit}
         aria-label="登录"
         className={cn(
-          'w-full max-w-[22rem] transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-opacity motion-reduce:duration-150',
-          phase === 'entering' && 'translate-y-2 opacity-0 motion-reduce:translate-y-0',
-          phase === 'leaving' && 'scale-[0.98] opacity-0 duration-[180ms] ease-in motion-reduce:scale-100',
+          'w-full max-w-sm transition duration-300 ease-out',
+          phase === 'entering' && 'translate-y-2 opacity-0',
+          phase === 'leaving' && 'scale-98 opacity-0 duration-200 ease-in',
         )}
       >
         <div className="mb-8 flex flex-col items-center text-center">
@@ -105,7 +105,7 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
         </p>
 
         <Button type="submit" className="mt-2 h-10 w-full" disabled={submitting || !username.trim() || !password}>
-          {submitting && <Loader2Icon aria-hidden className="size-4 animate-spin motion-reduce:animate-none" />}
+          {submitting && <Loader2Icon aria-hidden className="size-4 animate-spin" />}
           登录
         </Button>
       </form>

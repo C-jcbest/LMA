@@ -50,7 +50,7 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
       <button
         type="button"
         onClick={() => openStation(station.station_uuid)}
-        className="station-row hover:bg-muted/60 focus-visible:ring-ring w-full rounded-lg text-start transition-colors focus-visible:ring-2 focus-visible:outline-none"
+        className="station-row w-full rounded-lg text-start transition hover:bg-muted/60 active:scale-99 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
         <span className="flex min-w-0 items-center gap-2.5">
           <StatusDot status={station.screening} />
@@ -151,9 +151,9 @@ export const StationsPage: FC = () => {
         {!hasStations && isLoading && (
           // 延迟出现，读取很快时不闪一下。
           <div aria-hidden className="animate-in fade-in fill-mode-both mt-5 space-y-2 [animation-delay:150ms] [animation-duration:200ms]">
-            <Skeleton className="h-8 w-64 motion-reduce:animate-none" />
+            <Skeleton className="h-8 w-64" />
             {Array.from({ length: 5 }, (_, index) => (
-              <Skeleton key={index} className="h-11 w-full motion-reduce:animate-none" />
+              <Skeleton key={index} className="h-11 w-full" />
             ))}
           </div>
         )}

@@ -55,7 +55,7 @@ export function RecordSearchResults({ query, onOpen }: { query: string; onOpen?:
       {openFailed && <p role="alert" className="p-2 text-sm">这条记录尚未打开，请重试。</p>}
       {records.map((record) => (
         <button key={record.id} type="button" disabled={opening !== null}
-          className="flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm transition hover:bg-muted active:scale-99 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={async () => {
             setOpening(record.id);
             setOpenFailed(false);

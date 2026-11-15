@@ -3,7 +3,7 @@ import { useAuiState } from '@assistant-ui/react';
 import { ChevronDownIcon, Maximize2Icon } from 'lucide-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import type { ToolArtifactEnvelopeFor } from '@/types/envelope';
 import { useChartColors } from './chartColors';
@@ -161,33 +161,30 @@ interface CardShellProps {
 const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true }) => {
   const [isOpen, setIsOpen] = useState(defaultExpanded);
   return (
-    <figure data-slot="evidence-card" data-state={isOpen ? 'open' : 'closed'} className="evidence-card not-prose">
+    <Collapsible asChild open={isOpen} onOpenChange={setIsOpen}>
+    <figure data-slot="evidence-card" className="evidence-card not-prose">
       {/* 卡片内容左右留白一致；标题行的图标按钮自带内边距，向右伸出一点，让图标与卡片边缘的距离和左侧标题相近。 */}
       <figcaption className="-me-1.5 flex items-center gap-1">
-        <button
-          type="button"
-          aria-expanded={isOpen}
-          onClick={() => setIsOpen((value) => !value)}
-          className="flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        >
+        <CollapsibleTrigger className="group/card flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           <span className="min-w-0 flex-1 truncate">
             <span className="text-sm font-medium">{title}</span>
             {meta && <span className="ms-2 text-xs text-muted-foreground tabular-nums">{meta}</span>}
           </span>
           <ChevronDownIcon
             aria-hidden
-            className={cn('size-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none', !isOpen && '-rotate-90')}
+            className="size-4 shrink-0 text-muted-foreground transition group-hover/card:text-foreground group-data-[state=closed]/card:-rotate-90"
           />
-        </button>
+        </CollapsibleTrigger>
         {onOpen && (
           <button type="button" onClick={onOpen} aria-label={`展开${title}`} title={`展开${title}`}
-            className="evidence-card-open inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+            className="evidence-card-open inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-background hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
             <Maximize2Icon className="size-4" aria-hidden />
           </button>
         )}
       </figcaption>
-      {isOpen && <div className="pt-1">{children}</div>}
+      <CollapsibleContent className="pt-1">{children}</CollapsibleContent>
     </figure>
+    </Collapsible>
   );
 };
 
