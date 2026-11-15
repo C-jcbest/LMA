@@ -19,7 +19,6 @@
   "dependencies": {
     "@amap/amap-jsapi-loader": "1.0.1",
     "@assistant-ui/react": "0.15.21",
-    "@assistant-ui/react-langchain": "0.0.32",
     "@assistant-ui/react-langgraph": "0.14.29",
     "@assistant-ui/react-streamdown": "0.3.16",
     "@langchain/core": "^1.2.11",
@@ -34,8 +33,7 @@
     "radix-ui": "^1.6.7",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "streamdown": "^2.6.0",
-    "zustand": "^5.0.15"
+    "streamdown": "^2.6.0"
   },
   "devDependencies": {
     "@amap/amap-jsapi-types": "0.0.15",
