@@ -18,3 +18,5 @@ auth_basic  # 网关 Basic Auth，2026-11-14 改为应用内登录页
 StationCompass  # 方向罗盘，2026-11-15 否决，单测点保留地图（见 decisions/0010）
 StationTimelineCard  # 一测点一张时间轴卡，2026-11-15 否决，保留每条依据一张卡（见 decisions/0010）
 方向罗盘  # 2026-11-15 否决（见 decisions/0010）
+@/lib/utils  # cn 的透传，2026-11-16 删除，统一从 cn 包引入
+inspection-progress  # 原生 progress 样式，2026-11-16 改用 ui/progress

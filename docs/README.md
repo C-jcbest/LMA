@@ -9,6 +9,7 @@
 | 首次开发、定位代码、执行测试 | [开发指南](development.md) | 本地环境、代码入口、验证范围 |
 | 修改 Agent、会话、工具协议、地图或前端 Runtime | [当前架构](architecture.md) | 现行架构与必须保持的边界 |
 | 修改监测判断、气象或场地分析 | [产品规则](product/rules.md) | 业务语义与证据边界 |
+| 修改前端界面、样式、组件或动效 | [设计规范](../DESIGN.md) | Token、组件、交互状态与动效约束 |
 | 修改运行时提示词 | [提示词修改规则](../backend/app/agent/prompts/AGENTS.md) | 规则放置、评测与长度上限 |
 | 调整部署、数据库或 CI/CD | [部署说明](deployment.md) | 环境隔离、部署和恢复 |
 | 对接北斗平台 | [接口参考](reference/beidou-platform-api.md) | 上游请求和字段 |
