@@ -255,21 +255,6 @@
   }
 }
 
-.inspection-progress {
-  width: 100%;
-  height: 4px;
-  margin-top: 16px;
-  accent-color: var(--primary);
-}
-.inspection-progress::-webkit-progress-bar {
-  background: var(--muted);
-  border-radius: 4px;
-}
-.inspection-progress::-webkit-progress-value {
-  background: var(--primary);
-  border-radius: 4px;
-}
-
 /* 句末引用编号：小号圆角标记，不打断行高；触屏用透明外扩区域保证点按面积。 */
 .evidence-citation {
   position: relative;

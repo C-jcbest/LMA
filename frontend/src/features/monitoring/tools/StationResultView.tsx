@@ -1,6 +1,8 @@
 import React from 'react';
+import { cn } from '@/lib/utils';
 import type { StationListArtifactData } from '@/types/envelope';
 import { EmptyResultView } from './EmptyResultView';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const STATUS_DOT_STYLES: Record<string, string> = {
   正常: 'bg-status-normal',
@@ -13,14 +15,12 @@ export const StationStatus: React.FC<{ status: unknown }> = ({ status }) => {
   const isKnown = typeof status === 'string' && Object.hasOwn(STATUS_DOT_STYLES, status);
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5 text-sm text-muted-foreground">
-      <span className={`size-1.5 rounded-full ${isKnown ? STATUS_DOT_STYLES[status] : 'bg-status-unknown'}`} aria-hidden />
+      <span className={cn('size-1.5 rounded-full', isKnown ? STATUS_DOT_STYLES[status] : 'bg-status-unknown')} aria-hidden />
       {isKnown ? status : '未知'}
     </span>
   );
 };
 
-const HEADER_CELL_CLASS = 'whitespace-nowrap px-3 py-2 font-medium';
-const CELL_CLASS = 'px-3 py-2';
 
 /** 测点查询同时返回分组与测点：有测点时列测点，只有分组时列分组。 */
 export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({ data }) => {
@@ -29,53 +29,49 @@ export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({
       return <EmptyResultView>暂无符合条件的监测点</EmptyResultView>;
     }
     return (
-      <div className="overflow-x-auto rounded-lg border">
-        <table className="w-full border-collapse text-left text-sm">
-          <thead className="border-b bg-muted/50 text-muted-foreground">
-            <tr>
-              <th className={HEADER_CELL_CLASS}>分组</th>
-              <th className={HEADER_CELL_CLASS}>测点</th>
-              <th className={HEADER_CELL_CLASS}>说明</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
+      <Table containerClassName="rounded-lg border">
+          <TableHeader>
+            <TableRow>
+              <TableHead>分组</TableHead>
+              <TableHead>测点</TableHead>
+              <TableHead>说明</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {data.groups.map((group, index) => (
-              <tr key={index}>
-                <td className={`${CELL_CLASS} whitespace-nowrap font-medium`}>{group.group_name}</td>
-                <td className={`${CELL_CLASS} whitespace-nowrap tabular-nums`}>{group.station_count}</td>
-                <td className={`${CELL_CLASS} text-muted-foreground`}>{group.description || '—'}</td>
-              </tr>
+              <TableRow key={index}>
+                <TableCell className="whitespace-nowrap font-medium">{group.group_name}</TableCell>
+                <TableCell className="whitespace-nowrap">{group.station_count}</TableCell>
+                <TableCell className="text-muted-foreground">{group.description || '—'}</TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
-      </div>
+          </TableBody>
+      </Table>
     );
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full border-collapse text-left text-sm">
-        <thead className="border-b bg-muted/50 text-muted-foreground">
-          <tr>
-            <th className={HEADER_CELL_CLASS}>测点</th>
-            <th className={HEADER_CELL_CLASS}>状态</th>
-            <th className={HEADER_CELL_CLASS}>分组 / 位置</th>
-            <th className={HEADER_CELL_CLASS}>类型</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
+    <Table containerClassName="rounded-lg border">
+        <TableHeader>
+          <TableRow>
+            <TableHead>测点</TableHead>
+            <TableHead>状态</TableHead>
+            <TableHead>分组 / 位置</TableHead>
+            <TableHead>类型</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {data.stations.map((station, index) => (
-            <tr key={station.station_uuid || index}>
-              <td className={`${CELL_CLASS} whitespace-nowrap font-medium`}>{station.station_name}</td>
-              <td className={CELL_CLASS}><StationStatus status={station.station_status} /></td>
-              <td className={`${CELL_CLASS} text-muted-foreground`}>{station.location || station.group_name || '—'}</td>
-              <td className={`${CELL_CLASS} whitespace-nowrap text-muted-foreground`}>
+            <TableRow key={station.station_uuid || index}>
+              <TableCell className="whitespace-nowrap font-medium">{station.station_name}</TableCell>
+              <TableCell><StationStatus status={station.station_status} /></TableCell>
+              <TableCell className="text-muted-foreground">{station.location || station.group_name || '—'}</TableCell>
+              <TableCell className="whitespace-nowrap text-muted-foreground">
                 {typeof station.station_type === 'string' && station.station_type.trim() ? station.station_type : '未知'}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </TableBody>
+    </Table>
   );
 };

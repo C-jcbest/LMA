@@ -3,6 +3,7 @@ import { isInspectionFromToday } from './inspection-date';
 import { ArrowRightIcon, RefreshCwIcon } from 'lucide-react';
 import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
@@ -159,7 +160,11 @@ export const TodayAttention: FC = () => {
         </Button>
       </div>
       {latest?.running && (
-        <progress className="inspection-progress" aria-label="巡检进度" max={Math.max(1, latest.running.total_stations)} value={latest.running.completed_stations} />
+        <Progress
+          className="mt-4 h-1 bg-muted"
+          aria-label="巡检进度"
+          value={(latest.running.completed_stations / Math.max(1, latest.running.total_stations)) * 100}
+        />
       )}
 
       {hasLoadError && (

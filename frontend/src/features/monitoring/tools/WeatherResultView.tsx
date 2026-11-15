@@ -1,7 +1,9 @@
 import React from 'react';
 import { CloudRain } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import type { WeatherArtifactData } from '@/types/envelope';
 import { EmptyResultView } from './EmptyResultView';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 interface DailyRain {
   date: string;
@@ -193,48 +195,48 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
       {dailyRain.length > 1 && <DailyRainBars days={dailyRain} />}
       {dates.length > 0 && (
         <DetailTable summary={`逐日明细（${dates.length} 天）`}>
-          <table className={`${hasForecast ? 'min-w-[34rem]' : ''} w-full border-collapse text-left text-xs`}>
-            <thead className="sticky top-0 z-10 border-b bg-muted text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-normal whitespace-nowrap">日期</th>
-                <th className="px-3 py-2 font-normal whitespace-nowrap">历史降雨 (mm)</th>
-                {hasForecast && <th className="px-3 py-2 font-normal whitespace-nowrap">预报降雨 (mm)</th>}
-                {hasForecast && <th className="px-3 py-2 font-normal whitespace-nowrap">降水概率 (%)</th>}
-                {hasForecast && <th className="px-3 py-2 font-normal whitespace-nowrap">最大风速 (km/h)</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y tabular-nums">
+          <Table containerClassName="overflow-visible" className={cn('text-xs', hasForecast && 'min-w-136')}>
+            <TableHeader className="sticky top-0 z-10 bg-muted">
+              <TableRow>
+                <TableHead>日期</TableHead>
+                <TableHead>历史降雨 (mm)</TableHead>
+                {hasForecast && <TableHead>预报降雨 (mm)</TableHead>}
+                {hasForecast && <TableHead>降水概率 (%)</TableHead>}
+                {hasForecast && <TableHead>最大风速 (km/h)</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {dates.map((date) => (
-                <tr key={date}>
-                  <td className="px-3 py-1 whitespace-nowrap text-muted-foreground">{date}</td>
-                  <td className="px-3 py-1">{histRain.get(date) ?? '-'}</td>
-                  {hasForecast && <td className="px-3 py-1">{fcByDate.get(date)?.rain ?? '-'}</td>}
-                  {hasForecast && <td className="px-3 py-1">{fcByDate.get(date)?.prob ?? '-'}</td>}
-                  {hasForecast && <td className="px-3 py-1">{fcByDate.get(date)?.wind ?? '-'}</td>}
-                </tr>
+                <TableRow key={date}>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">{date}</TableCell>
+                  <TableCell>{histRain.get(date) ?? '-'}</TableCell>
+                  {hasForecast && <TableCell>{fcByDate.get(date)?.rain ?? '-'}</TableCell>}
+                  {hasForecast && <TableCell>{fcByDate.get(date)?.prob ?? '-'}</TableCell>}
+                  {hasForecast && <TableCell>{fcByDate.get(date)?.wind ?? '-'}</TableCell>}
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </DetailTable>
       )}
       {hourly && hourly.time.length > 0 && (
         <DetailTable summary={`逐小时降水（${hourly.time.length} 小时）`}>
-          <table className="w-full border-collapse text-left text-xs">
-            <thead className="sticky top-0 z-10 border-b bg-muted text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-normal whitespace-nowrap">时间（该时刻前一小时）</th>
-                <th className="px-3 py-2 font-normal whitespace-nowrap">降水 (mm)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y tabular-nums">
+          <Table containerClassName="overflow-visible" className="text-xs">
+            <TableHeader className="sticky top-0 z-10 bg-muted">
+              <TableRow>
+                <TableHead>时间（该时刻前一小时）</TableHead>
+                <TableHead>降水 (mm)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {hourly.time.map((time, index) => (
-                <tr key={time}>
-                  <td className="px-3 py-1 whitespace-nowrap text-muted-foreground">{time.replace('T', ' ')}</td>
-                  <td className="px-3 py-1">{hourly.precipitation[index] ?? '缺测'}</td>
-                </tr>
+                <TableRow key={time}>
+                  <TableCell className="whitespace-nowrap text-muted-foreground">{time.replace('T', ' ')}</TableCell>
+                  <TableCell>{hourly.precipitation[index] ?? '缺测'}</TableCell>
+                </TableRow>
               ))}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </DetailTable>
       )}
     </div>

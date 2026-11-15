@@ -1,5 +1,6 @@
 import type { FC } from 'react';
 import type { ComputationArtifactData } from '@/types/envelope';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 type Scalar = string | number | boolean | null;
 
@@ -39,26 +40,26 @@ const formatCell = (value: unknown) => {
   return typeof value === 'string' ? value : JSON.stringify(value);
 };
 
-const Table: FC<{ columns: string[]; rows: unknown[][]; total?: number; caption?: string }> = ({ columns, rows, total, caption }) => (
+const ResultTable: FC<{ columns: string[]; rows: unknown[][]; total?: number; caption?: string }> = ({ columns, rows, total, caption }) => (
   <div className="space-y-1.5">
     {caption && <p className="text-xs text-muted-foreground">{formatLabel(caption)}</p>}
     <div className="max-h-80 overflow-auto rounded-md border">
-      <table className="w-full text-sm tabular-nums">
-        <thead className="sticky top-0 bg-muted text-muted-foreground">
-          <tr>{columns.map((column, index) => <th key={index} scope="col" className="px-3 py-1.5 text-start font-normal whitespace-nowrap">{formatLabel(column)}</th>)}</tr>
-        </thead>
-        <tbody>
+      <Table containerClassName="overflow-visible">
+        <TableHeader className="sticky top-0 z-10 bg-muted">
+          <TableRow>{columns.map((column, index) => <TableHead key={index} scope="col">{formatLabel(column)}</TableHead>)}</TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row, index) => (
-            <tr key={index} className="border-t">
+            <TableRow key={index}>
               {row.map((cell, cellIndex) => (
-                <td key={cellIndex} className={cellIndex === 0 ? 'px-3 py-1.5 text-muted-foreground whitespace-nowrap' : 'px-3 py-1.5'}>
+                <TableCell key={cellIndex} className={cellIndex === 0 ? 'whitespace-nowrap text-muted-foreground' : undefined}>
                   {cellIndex === 0 && typeof cell === 'string' ? formatLabel(cell) : formatCell(cell)}
-                </td>
+                </TableCell>
               ))}
-            </tr>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
       {total !== undefined && Number.isFinite(total) && total > rows.length && (
         <p className="px-3 py-1.5 text-xs text-muted-foreground">共 {total} 行，仅显示前 {rows.length} 行</p>
       )}
@@ -80,12 +81,12 @@ const Metrics: FC<{ entries: [string, Scalar][] }> = ({ entries }) => (
 /** 单个值按形状展示：服务端序列化的表格、序列、平铺字典、数组或数值。 */
 const ResultValue: FC<{ value: unknown; caption?: string }> = ({ value, caption }) => {
   if (isRecord(value) && value.type === 'table' && Array.isArray(value.columns) && Array.isArray(value.rows)) {
-    return <Table caption={caption} columns={value.columns.map(String)} rows={value.rows as unknown[][]} total={Number(value.row_count)} />;
+    return <ResultTable caption={caption} columns={value.columns.map(String)} rows={value.rows as unknown[][]} total={Number(value.row_count)} />;
   }
   if (isRecord(value) && value.type === 'series' && Array.isArray(value.index) && Array.isArray(value.values)) {
     const values = value.values;
     return (
-      <Table
+      <ResultTable
         caption={caption}
         columns={['', value.name ? String(value.name) : '值']}
         rows={value.index.map((key, index) => [key, values[index]])}
@@ -94,10 +95,10 @@ const ResultValue: FC<{ value: unknown; caption?: string }> = ({ value, caption 
     );
   }
   if (isFlatRecord(value)) {
-    return <Table caption={caption} columns={['项目', '值']} rows={Object.entries(value)} />;
+    return <ResultTable caption={caption} columns={['项目', '值']} rows={Object.entries(value)} />;
   }
   if (Array.isArray(value)) {
-    return <Table caption={caption} columns={['值']} rows={value.map((item) => [item])} />;
+    return <ResultTable caption={caption} columns={['值']} rows={value.map((item) => [item])} />;
   }
   if (isRecord(value)) {
     return <DictionaryResult value={value} />;
@@ -134,7 +135,7 @@ const DictionaryResult: FC<{ value: Record<string, unknown> }> = ({ value }) => 
     <div className="space-y-4">
       {scalars.length > 0 && <Metrics entries={scalars} />}
       {comparison.length > 0 && (
-        <Table columns={['', ...columns]} rows={comparison.map(([key, group]) => [key, ...columns.map((column) => group[column])])} />
+        <ResultTable columns={['', ...columns]} rows={comparison.map(([key, group]) => [key, ...columns.map((column) => group[column])])} />
       )}
       {others.map(([key, item]) => <ResultValue key={key} value={item} caption={key} />)}
     </div>
