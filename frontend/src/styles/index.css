@@ -33,6 +33,8 @@
   --status-attention: hsl(36 92% 46%);
   --status-critical: hsl(2 72% 48%);
   --status-unknown: hsl(240 4% 66%);
+  /* 界面提醒（如上下文将满）沿用“需注意”的色相，但语义独立于业务状态。 */
+  --warning: var(--status-attention);
 
   --chart-north: hsl(212 86% 46%);
   --chart-east: hsl(168 72% 32%);
@@ -104,6 +106,7 @@
   --color-status-attention: var(--status-attention);
   --color-status-critical: var(--status-critical);
   --color-status-unknown: var(--status-unknown);
+  --color-warning: var(--warning);
   --color-chart-north: var(--chart-north);
   --color-chart-rain: var(--chart-rain);
 
