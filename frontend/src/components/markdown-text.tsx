@@ -227,6 +227,8 @@ const defaultComponents: StreamdownTextComponents = {
 
 export type MarkdownTextProps = StreamdownTextPrimitiveProps;
 
+const STREAMING_REVEAL = { animation: "fadeIn", duration: 200, easing: "cubic-bezier(0.22, 1, 0.36, 1)", sep: "word" } as const;
+
 const MarkdownTextImpl: FC<MarkdownTextProps> = ({
   className,
   components,
@@ -245,6 +247,8 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
         ...components,
       }}
       defer
+      // 流式生成时新到的词淡入，避免整块文字跳出；历史消息不在生成中，不触发。
+      animated={STREAMING_REVEAL}
       {...props}
     />
   );

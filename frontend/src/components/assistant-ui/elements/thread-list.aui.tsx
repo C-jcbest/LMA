@@ -300,7 +300,19 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
 }) => {
   const { threadIds, filteredIndices, groups } =
     useThreadListGroups(searchQuery);
+  const hasLoadError = useAuiState((s) => s.threads.loadError != null);
   const query = searchQuery.trim();
+
+  if (threadIds.length === 0) {
+    return (
+      <div
+        data-slot="aui_thread-list-empty"
+        className="text-muted-foreground px-2.5 py-4 text-sm"
+      >
+        {hasLoadError ? "记录尚未载入，可在页面顶部重试。" : "还没有调查记录。"}
+      </div>
+    );
+  }
 
   if (query && filteredIndices.length === 0) {
     return (

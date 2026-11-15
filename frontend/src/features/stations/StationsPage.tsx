@@ -9,6 +9,7 @@ import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import type { InspectionStation, Screening, StationDirectoryEntry } from '@/services/api';
+import { Button } from '@/components/ui/button';
 
 interface StationListItem extends Omit<InspectionStation, 'screening'> {
   screening: Screening | null;
@@ -145,7 +146,7 @@ export const StationsPage: FC = () => {
         {hasLoadError && (
           <p role="alert" className="text-muted-foreground mt-4 text-sm">
             测点尚未载入。
-            <button type="button" disabled={isLoading} className="ms-1 underline underline-offset-4 disabled:opacity-50" onClick={reload}>重试</button>
+            <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" disabled={isLoading} onClick={reload}>重试</Button>
           </p>
         )}
         {!hasStations && isLoading && (

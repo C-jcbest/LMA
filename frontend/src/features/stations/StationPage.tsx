@@ -307,7 +307,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           {hasError && (
             <p role="alert" className="text-muted-foreground text-sm">
               监测数据尚未载入。
-              <button type="button" className="ms-1 underline underline-offset-4" onClick={() => setReloadCount((count) => count + 1)}>重试</button>
+              <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" onClick={() => setReloadCount((count) => count + 1)}>重试</Button>
             </p>
           )}
           {!timeline && !hasError && <Skeleton className="h-120 w-full" />}

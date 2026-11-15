@@ -5,6 +5,7 @@ import type { LmaClient } from '@/services/api';
 import { askTargetsOfRunConfig, toAskTargetRecords } from '@/features/monitoring/ask-targets';
 import { createSessionListAdapter } from '@/lib/session-list-adapter';
 import { FocusStationContext, LmaClientContext } from './LmaClientContext';
+import { Button } from '@/components/ui/button';
 
 const getUrlThreadId = () => new URL(window.location.href).searchParams.get('threadId') || undefined;
 const getStationThreadId = (stationUuid: string) => {
@@ -72,9 +73,9 @@ export function RecoveryNotice() {
   return (
     <div role="alert" className="flex items-center justify-between gap-3 rounded-md border bg-background p-3 text-sm">
       <span>{error === 'history' ? '会话内容尚未载入。' : '本次回答未完成。'}</span>
-      <button type="button" className="shrink-0 underline underline-offset-4" onClick={retry}>
+      <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={retry}>
         {error === 'history' ? '重新载入' : '重试'}
-      </button>
+      </Button>
     </div>
   );
 }

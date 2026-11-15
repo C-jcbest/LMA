@@ -170,7 +170,7 @@ export const TodayAttention: FC = () => {
       {hasLoadError && (
         <p role="alert" className="text-muted-foreground mt-3 text-sm">
           巡检结果尚未载入。
-          <button type="button" disabled={isLoading || isStarting} className="ms-1 underline underline-offset-4 disabled:opacity-50" onClick={reload}>重试</button>
+          <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" disabled={isLoading || isStarting} onClick={reload}>重试</Button>
         </p>
       )}
       {hasStartError && <p role="alert" className="text-destructive mt-3 text-sm">巡检未能启动，请稍后重试。</p>}
