@@ -86,7 +86,11 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
           )}
           <div
             data-slot="aui_thread-list-viewport"
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+            // 最近只有几条，通常不滚动；不预留滚动条位置，条目才能和上方导航一样宽。
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+              variant === "all" && "[scrollbar-gutter:stable]",
+            )}
           >
             {variant === "recent" ? (
               <RecentThreadListItems />
@@ -398,15 +402,22 @@ export const ThreadListItem: FC = () => {
           data-slot="aui_thread-list-item-trigger"
           className="focus-visible:ring-ring/50 flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
         >
+          {/* 侧栏“最近”里，状态点居中在导航图标的位置上，标题与上方导航文字对齐。 */}
           {isRunning ? (
             <Loader2Icon
               aria-hidden
               data-slot="aui_thread-list-item-running"
-              className="text-muted-foreground me-2 size-3.5 shrink-0 animate-spin"
+              className={cn(
+                "text-muted-foreground size-3.5 shrink-0 animate-spin",
+                variant === "recent" ? "ms-0.5 me-2.5" : "me-2",
+              )}
             />
           ) : (
             // 没有结论的记录留出同样的位置，标题才能对齐。
-            <StatusDot status={verdict?.status} className={cn("me-2.5", !verdict && "invisible")} />
+            <StatusDot
+              status={verdict?.status}
+              className={cn(variant === "recent" ? "ms-1 me-3.5" : "me-2.5", !verdict && "invisible")}
+            />
           )}
           <span
             data-slot="aui_thread-list-item-title"

@@ -156,30 +156,17 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
           />
         </div>
       </div>
-      <div className="shrink-0 space-y-2 p-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        {/* 外观是低频设置，放在导航底部，不占用每个页面的标题栏。 */}
-        <div className="px-0.5">
+      {/* 外观与账号是低频设置，放在导航底部，不占用每个页面的标题栏；行高和缩进与上方页面入口一致。 */}
+      <div className="shrink-0 space-y-0.5 border-t px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <div className="flex h-9 items-center justify-between gap-2 ps-2.5">
+          <span className="text-sm text-muted-foreground">外观</span>
           <ThemeSelector />
         </div>
         {onOpenSettings && (
-          <Button
-            variant="ghost"
-            className="w-full justify-start gap-2 text-sm text-muted-foreground hover:text-foreground"
-            onClick={onOpenSettings}
-          >
-            <Settings className="size-4" />
-            服务配置
-          </Button>
+          <NavigationItem icon={Settings} label="服务配置" isCurrent={false} onClick={onOpenSettings} />
         )}
         {onLogout && (
-          <Button
-            variant="ghost"
-            className="w-full justify-start gap-2 text-sm text-muted-foreground hover:text-foreground"
-            onClick={onLogout}
-          >
-            <LogOutIcon className="size-4" />
-            退出登录
-          </Button>
+          <NavigationItem icon={LogOutIcon} label="退出登录" isCurrent={false} onClick={onLogout} />
         )}
       </div>
     </aside>

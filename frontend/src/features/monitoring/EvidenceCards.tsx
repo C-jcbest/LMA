@@ -162,7 +162,8 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultE
   const [isOpen, setIsOpen] = useState(defaultExpanded);
   return (
     <figure data-slot="evidence-card" data-state={isOpen ? 'open' : 'closed'} className="evidence-card not-prose">
-      <figcaption className="flex items-center gap-1">
+      {/* 卡片内容左右留白一致；标题行的图标按钮自带内边距，向右伸出一点，让图标与卡片边缘的距离和左侧标题相近。 */}
+      <figcaption className="-me-1.5 flex items-center gap-1">
         <button
           type="button"
           aria-expanded={isOpen}

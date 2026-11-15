@@ -54,8 +54,9 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
       >
         <span className="flex min-w-0 items-center gap-2.5">
           <StatusDot status={station.screening} />
-          <span className="min-w-0 truncate font-medium">{station.station_name}</span>
-          <span className="text-muted-foreground shrink-0 text-xs">{station.group_name}</span>
+          {/* 测点名是区分各行的唯一依据，空间不够时先截断分组名。 */}
+          <span className="max-w-full shrink-0 truncate font-medium">{station.station_name}</span>
+          <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
         </span>
         <span className="station-row-trend"><TrendLine values={station.trend} emphasized={isAttention} className="h-7" /></span>
         <span className="station-row-note text-muted-foreground min-w-0 truncate text-sm">
@@ -165,7 +166,7 @@ export const StationsPage: FC = () => {
             <div className="mt-5">
               <Segmented label="筛选" value={filter} options={FILTERS} onValueChange={(value) => setFilter(value as Filter)} />
             </div>
-            <ul aria-label="测点列表" className="mt-3 -mx-3 divide-y divide-transparent">
+            <ul aria-label="测点列表" className="station-list mt-3 -mx-3 divide-y divide-transparent">
               {visible.map((station) => <StationRow key={station.station_uuid} station={station} />)}
             </ul>
             {visible.length === 0 && <p className="text-muted-foreground mt-4 text-sm">没有符合条件的测点。</p>}

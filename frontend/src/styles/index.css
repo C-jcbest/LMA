@@ -192,9 +192,13 @@
     order: 0;
   }
 }
-@media (min-width: 720px) {
+/* 按列表自身宽度切换：侧栏或依据面板占去宽度时，窗口宽不代表列表放得下四列。 */
+.station-list {
+  container-type: inline-size;
+}
+@container (min-width: 640px) {
   .station-row {
-    grid-template-columns: minmax(9rem, 1.1fr) 120px minmax(0, 1.6fr) 88px;
+    grid-template-columns: minmax(12rem, 1.4fr) 120px minmax(0, 1.3fr) 88px;
   }
   .station-row-trend,
   .station-row-note {
@@ -246,7 +250,7 @@
 /* 正文中的依据卡片：跟随所引用的段落，宽度与正文一致；用浅底色而不是边框和阴影，读起来像附图。 */
 .evidence-card {
   margin-block: 12px 20px;
-  padding: 2px 6px 10px 12px;
+  padding: 2px 12px 10px;
   border-radius: 12px;
   background: color-mix(in oklab, var(--muted) 55%, transparent);
 }

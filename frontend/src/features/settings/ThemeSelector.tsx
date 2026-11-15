@@ -28,7 +28,7 @@ export function ThemeSelector() {
           value={value}
           aria-label={label}
           title={label}
-          className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-muted data-[state=on]:text-foreground"
+          className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-muted data-[state=on]:text-foreground"
         >
           <Icon className="size-4" aria-hidden />
         </ToggleGroup.Item>
