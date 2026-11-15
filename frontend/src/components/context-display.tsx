@@ -6,7 +6,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn } from 'cn';
 import {
   createContext,
   useContext,
@@ -358,7 +358,7 @@ function BarVisual() {
           style={{ width: `${percent}%` }}
         />
       </div>
-      <span className="text-muted-foreground text-[10px] tabular-nums">
+      <span className="text-muted-foreground text-xs tabular-nums">
         {formatTokenCount(totalTokens)} ({Math.round(percent)}%)
       </span>
     </div>

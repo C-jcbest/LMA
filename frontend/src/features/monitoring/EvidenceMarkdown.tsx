@@ -1,7 +1,7 @@
 import { Children, createContext, isValidElement, useCallback, useContext, useMemo, type ComponentProps, type FC, type ReactNode } from 'react';
 import { useAuiState } from '@assistant-ui/react';
 import { MarkdownText } from '@/components/markdown-text';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import { cardReferenceFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenceCards, type CardReference } from './evidence-cards';
 import { EvidenceCard, hasEvidenceCard, mapContentOf } from './EvidenceCards';
 import { buildSteps, collectStations, type InvestigationStep } from './investigation';

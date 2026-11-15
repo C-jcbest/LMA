@@ -3,7 +3,7 @@ import { useAuiState } from '@assistant-ui/react';
 import { CheckIcon, CopyIcon, DownloadIcon } from 'lucide-react';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { ConclusionsArtifactData } from '@/types/envelope';
 import {
   answerToMarkdown,

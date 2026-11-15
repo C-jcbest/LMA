@@ -110,6 +110,10 @@
   --color-chart-north: var(--chart-north);
   --color-chart-rain: var(--chart-rain);
 
+  /* 回答正文的阅读字号：介于 text-sm 与 text-base 之间，长段落更紧凑。 */
+  --text-reading: 0.9375rem;
+  --text-reading--line-height: 1.75rem;
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

@@ -7,7 +7,7 @@ import { useSessionVerdict } from "@/features/records/SessionConclusions";
 import { investigationStatusLabel } from "@/features/monitoring/investigation";
 import { StatusDot } from "@/features/monitoring/status";
 import { RecordSearchResults } from "@/features/records/RecordSearchResults";
-import { cn } from "@/lib/utils";
+import { cn } from 'cn';
 import {
   AuiIf,
   ThreadListItemMorePrimitive,
@@ -429,7 +429,7 @@ export const ThreadListItem: FC = () => {
           {variant === "all" && verdict && (
             <span
               data-slot="aui_thread-list-item-verdict"
-              className="text-muted-foreground ms-3 max-w-[45%] shrink-0 truncate text-xs"
+              className="text-muted-foreground ms-3 max-w-2/5 shrink-0 truncate text-xs"
             >
               {verdict.stations.join("、")} · {investigationStatusLabel(verdict.status)}
             </span>

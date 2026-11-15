@@ -20,7 +20,7 @@ import { StationsPage } from '@/features/stations/StationsPage';
 import { TodayPage } from '@/features/today/TodayPage';
 import { NewInvestigation } from '@/features/today/NewInvestigation';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import { NavigationProvider, useNavigation, type Page } from './navigation';
 import { ThemeProvider } from './providers/ThemeProvider';
 

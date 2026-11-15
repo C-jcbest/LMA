@@ -1,5 +1,5 @@
 import React from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { StationListArtifactData } from '@/types/envelope';
 import { EmptyResultView } from './EmptyResultView';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';

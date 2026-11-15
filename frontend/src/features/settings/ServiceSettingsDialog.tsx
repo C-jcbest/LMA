@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { cn } from 'cn';
 import {
   Dialog,
   DialogContent,
@@ -114,7 +115,7 @@ export function ServiceSettingsDialog({
             aria-invalid={status === 'error' && !normalizedUrl}
           />
           {status !== 'idle' && (
-            <p role={status === 'error' ? 'alert' : 'status'} className={`text-sm ${STATUS_TEXT_CLASS[status]}`}>
+            <p role={status === 'error' ? 'alert' : 'status'} className={cn('text-sm', STATUS_TEXT_CLASS[status])}>
               {statusMessage}
             </p>
           )}

@@ -14,6 +14,7 @@ import {
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import { XIcon, ZoomInIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 echarts.use([
   CustomChart,
@@ -100,8 +101,6 @@ const formatDay = (time: number) => {
   const date = new Date(time);
   return `${date.getMonth() + 1}月${date.getDate()}日`;
 };
-
-const ASK_BUTTON_CLASS = 'inline-flex h-6 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-50';
 
 export default function TimelineChart({ viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false, initialState, onStateChange }: TimelineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -287,16 +286,16 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
     if (left !== null) {
       askBar = (
         <div role="toolbar" aria-label="所选时间段" className="absolute flex -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-0.5 shadow-sm" style={{ left, top: ASK_BAR_TOP }}>
-          <button type="button" disabled={askDisabled} onClick={() => ask(selection)} className={`${ASK_BUTTON_CLASS} bg-primary text-primary-foreground hover:bg-primary/90`}>问这段</button>
-          <button type="button" aria-label="放大所选时间段" title="放大" className={`${ASK_BUTTON_CLASS} px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground`}
+          <Button type="button" size="xs" disabled={askDisabled} onClick={() => ask(selection)} className="rounded-full px-2.5">问这段</Button>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label="放大所选时间段" title="放大" className="rounded-full text-muted-foreground"
             onClick={() => {
               chartRef.current?.dispatchAction({ type: 'dataZoom', startValue: selection.start, endValue: selection.end });
             }}>
-            <ZoomInIcon className="size-3.5" aria-hidden />
-          </button>
-          <button type="button" aria-label="取消选择" title="取消选择" onClick={clearSelection} className={`${ASK_BUTTON_CLASS} px-1.5 text-muted-foreground hover:bg-muted hover:text-foreground`}>
-            <XIcon className="size-3.5" aria-hidden />
-          </button>
+            <ZoomInIcon aria-hidden />
+          </Button>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label="取消选择" title="取消选择" onClick={clearSelection} className="rounded-full text-muted-foreground">
+            <XIcon aria-hidden />
+          </Button>
         </div>
       );
     }
@@ -305,12 +304,12 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
     const day = dayAround(hoverTime);
     if (left !== null) {
       askBar = (
-        <button type="button" disabled={askDisabled} onClick={() => ask(day)}
+        <Button type="button" variant="outline" size="xs" disabled={askDisabled} onClick={() => ask(day)}
           aria-label={`追问 ${formatDay(hoverTime)}`}
-          className={`${ASK_BUTTON_CLASS} absolute -translate-x-1/2 border bg-popover text-foreground shadow-sm hover:bg-muted`}
+          className="absolute -translate-x-1/2 rounded-full bg-popover px-2.5 shadow-sm"
           style={{ left, top: ASK_BAR_TOP }}>
           问{formatDay(hoverTime)}
-        </button>
+        </Button>
       );
     }
   }

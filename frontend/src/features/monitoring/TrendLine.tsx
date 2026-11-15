@@ -1,5 +1,5 @@
 import type { FC } from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 
 const VIEW_WIDTH = 200;
 const VIEW_HEIGHT = 40;

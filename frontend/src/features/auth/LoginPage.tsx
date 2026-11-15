@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Loader2Icon, Mountain } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { LmaClient } from '@/services/api';
 
 // 登录成功后先让卡片淡出，再切换到应用，避免整页瞬间替换。
@@ -52,7 +52,7 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
         )}
       >
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-5 flex size-12 items-center justify-center rounded-2xl border bg-card shadow-xs">
+          <div className="mb-5 flex size-12 items-center justify-center rounded-xl border bg-card shadow-xs">
             <Mountain aria-hidden className="size-6 text-foreground/80" />
           </div>
           <h1 className="text-xl font-semibold tracking-tight">LMA Monitor</h1>

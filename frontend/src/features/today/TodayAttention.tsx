@@ -9,7 +9,7 @@ import { useInspection } from '@/features/inspection/InspectionContext';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { InspectionStation, LatestInspection } from '@/services/api';
 
 const formatFinishedAt = (value: string) => {
@@ -76,12 +76,12 @@ const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }>
             <span className="text-muted-foreground shrink-0 text-xs">{station.group_name}</span>
           </span>
           {station.reasons.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-[1.125rem] text-sm leading-relaxed wrap-anywhere">
+            <span className="text-muted-foreground mt-1 block ps-4.5 text-sm leading-relaxed wrap-anywhere">
               {station.reasons.join('；')}
             </span>
           )}
           {history.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-[1.125rem] text-xs">{history.join(' · ')}</span>
+            <span className="text-muted-foreground mt-1 block ps-4.5 text-xs">{history.join(' · ')}</span>
           )}
         </span>
         <span className="today-row-trend"><TrendLine values={station.trend} emphasized /></span>
@@ -144,7 +144,7 @@ export const TodayAttention: FC = () => {
 
   return (
     <section aria-label="今日" className="aui-thread-welcome-root today mb-8">
-      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-[1.75rem]">{historical && <>上次巡检 · </>}{headline}</h1>
+      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{historical && <>上次巡检 · </>}{headline}</h1>
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{formatFinishedAt(latest.inspection.finished_at)} 巡检</time>}
         <Button

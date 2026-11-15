@@ -1,5 +1,5 @@
 import type { FC } from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import { formatSigned, MILLIMETER_DIGITS } from './format';
 import type { InspectionStation } from '@/services/api';
 

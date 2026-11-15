@@ -41,7 +41,7 @@ function InvestigationWelcome() {
   return (
     <section aria-label="新调查" className="new-investigation mx-auto flex w-full max-w-xl flex-1 flex-col justify-center py-10 sm:py-16">
       <div className="new-investigation-intro mb-8">
-        <div className="mb-6 flex size-12 items-center justify-center rounded-2xl border bg-card shadow-xs">
+        <div className="mb-6 flex size-12 items-center justify-center rounded-xl border bg-card shadow-xs">
           <Mountain aria-hidden className="size-6 text-foreground/80" />
         </div>
         <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">从一个问题开始</h1>

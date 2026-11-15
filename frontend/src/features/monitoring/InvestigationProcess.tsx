@@ -6,7 +6,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { ToolArtifactEnvelope } from '@/types/envelope';
 import { ComputationResultView } from './tools/ComputationResultView';
 import { EmptyResultView } from './tools/EmptyResultView';
@@ -107,7 +107,7 @@ export const Sparkline: FC<{ values: readonly (number | null)[] }> = ({ values }
 const StepIcon: FC<{ state: StepState }> = ({ state }) => {
   switch (state) {
     case 'running':
-      return <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/30 border-t-muted-foreground" aria-hidden />;
+      return <span className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" aria-hidden />;
     case 'failed':
       return <AlertCircleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
     case 'cancelled':

@@ -1,6 +1,6 @@
 import React from 'react';
 import { CloudRain } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { WeatherArtifactData } from '@/types/envelope';
 import { EmptyResultView } from './EmptyResultView';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -24,7 +24,7 @@ const DailyRainBars: React.FC<{ days: readonly DailyRain[] }> = ({ days }) => {
           const height = largest > 0 && day.value ? Math.max(2, (day.value / largest) * BAR_AREA_HEIGHT) : 0;
           return (
             <div key={day.date} className="flex h-full min-w-0 flex-1 items-end" title={`${day.date} ${day.value ?? '缺测'} mm${day.isForecast ? '（预报）' : ''}`}>
-              <div className="w-full rounded-t-[1px] bg-chart-rain" style={{ height, opacity: day.isForecast ? 0.45 : 1 }} />
+              <div className="w-full rounded-t-xs bg-chart-rain" style={{ height, opacity: day.isForecast ? 0.45 : 1 }} />
             </div>
           );
         })}

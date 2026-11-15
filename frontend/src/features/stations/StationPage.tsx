@@ -21,7 +21,7 @@ import { buildTimelineOption, displacementBasisLabel, formatChartTime } from '@/
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { addAskTarget } from '@/features/monitoring/ask-targets';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { InspectionStation, StationRecord, StationTimeline, TimelineDays } from '@/services/api';
 import type { GnssArtifactData } from '@/types/envelope';
 
@@ -310,7 +310,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               <button type="button" className="ms-1 underline underline-offset-4" onClick={() => setReloadCount((count) => count + 1)}>重试</button>
             </p>
           )}
-          {!timeline && !hasError && <Skeleton className="h-[30rem] w-full" />}
+          {!timeline && !hasError && <Skeleton className="h-120 w-full" />}
           {timeline && !timeline.series && (
             <p className="text-muted-foreground text-sm">这个测点是基准站或中继站，没有位移序列。</p>
           )}
