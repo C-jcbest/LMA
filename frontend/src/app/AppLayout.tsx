@@ -1,5 +1,6 @@
 import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { useAuiEvent, useAuiState } from '@assistant-ui/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ActivityIcon, ListIcon, LogOutIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
@@ -175,16 +176,23 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
 
 /** 只维护布局偏好和当前页面；会话选择、消息和滚动仍由官方 Runtime 管理。 */
 export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }) => {
+  // 页面数据（测点目录、测点时间轴、记录搜索、结论标记）的缓存跟随布局：
+  // 切换服务地址时布局随 Runtime 重建，缓存一起丢弃。失败只自动重试一次，随后显示可重试的提示。
+  const [queryClient] = useState(() => new QueryClient({
+    defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 30_000 } },
+  }));
   return (
-    <ThemeProvider>
-      <NavigationProvider>
-        <InspectionProvider>
-          <SessionConclusionsProvider>
-            <AppLayoutShell onOpenSettings={onOpenSettings} onLogout={onLogout} />
-          </SessionConclusionsProvider>
-        </InspectionProvider>
-      </NavigationProvider>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <NavigationProvider>
+          <InspectionProvider>
+            <SessionConclusionsProvider>
+              <AppLayoutShell onOpenSettings={onOpenSettings} onLogout={onLogout} />
+            </SessionConclusionsProvider>
+          </InspectionProvider>
+        </NavigationProvider>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 };
 

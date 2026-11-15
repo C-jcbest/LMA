@@ -1,5 +1,6 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState, type FC } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/react';
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeftIcon, Maximize2, Minimize2, PlusIcon, XIcon } from 'lucide-react';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import { useNavigation } from '@/app/navigation';
@@ -22,7 +23,7 @@ import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { addAskTarget } from '@/features/monitoring/ask-targets';
 import { cn } from 'cn';
-import type { InspectionStation, StationRecord, StationTimeline, TimelineDays } from '@/services/api';
+import type { InspectionStation, StationRecord, TimelineDays } from '@/services/api';
 import type { GnssArtifactData } from '@/types/envelope';
 
 const TimelineChart = lazy(() => import('@/features/monitoring/TimelineChart'));
@@ -228,13 +229,17 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const { returnFromStation, resultAnchor: recordAnchor, showStationResult: setRecordAnchor } = useNavigation();
   const { latest } = useInspection();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
+  const queryClient = useQueryClient();
   const [days, setDays] = useState<TimelineDays>(90);
-  // 记下数据属于哪个窗口：切换窗口时旧图留在原处等新数据，页面不清空、不跳动。
-  const [loaded, setLoaded] = useState<{ days: TimelineDays; timeline: StationTimeline } | null>(null);
-  const timeline = loaded?.timeline ?? null;
-  const isSwitchingWindow = loaded !== null && loaded.days !== days;
-  const [hasError, setHasError] = useState(false);
-  const [reloadCount, setReloadCount] = useState(0);
+  // 切换窗口时旧图留在原处等新数据，页面不清空、不跳动。
+  const timelineQuery = useQuery({
+    queryKey: ['station-timeline', stationUuid, days],
+    queryFn: ({ signal }) => client.getStationTimeline(stationUuid, days, signal),
+    placeholderData: keepPreviousData,
+  });
+  const timeline = timelineQuery.data ?? null;
+  const isSwitchingWindow = timelineQuery.isPlaceholderData;
+  const hasError = timelineQuery.isError;
   const [panel, setPanel] = useState<Panel>(() => new URL(window.location.href).searchParams.has('stationThread') ? 'chat' : 'data');
   const [chatMode, setChatMode] = useState<'split' | 'closed' | 'expanded'>('split');
   // 从调查记录打开的会话定位到那次结论；开始新调查后清除。
@@ -247,29 +252,9 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   });
   // 一轮调查结束后结论可能更新，重新读取这个测点的记录。
   const investigationCompleted = () => {
-    setReloadCount((count) => count + 1);
+    void queryClient.invalidateQueries({ queryKey: ['station-timeline', stationUuid] });
     void globalAui.threads().reload();
   };
-
-  useEffect(() => {
-    // 每个测点页按测点挂载，这里只会换窗口或刷新，新数据到达前保留已显示的内容。
-    const controller = new AbortController();
-    setHasError(false);
-    client.getStationTimeline(stationUuid, days, controller.signal).then(
-      (result) => {
-        if (controller.signal.aborted) {
-          return;
-        }
-        setLoaded({ days, timeline: result });
-      },
-      () => {
-        if (!controller.signal.aborted) {
-          setHasError(true);
-        }
-      },
-    );
-    return () => controller.abort();
-  }, [client, stationUuid, days, reloadCount]);
 
   const inspection = latest?.stations.find((station) => station.station_uuid === stationUuid);
   const stationName = timeline?.station_name ?? inspection?.station_name;
@@ -307,7 +292,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           {hasError && (
             <p role="alert" className="text-muted-foreground text-sm">
               监测数据尚未载入。
-              <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" onClick={() => setReloadCount((count) => count + 1)}>重试</Button>
+              <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" onClick={() => void timelineQuery.refetch()}>重试</Button>
             </p>
           )}
           {!timeline && !hasError && <Skeleton className="h-120 w-full" />}

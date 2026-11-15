@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type FC } from 'react';
+import { useMemo, useState, type FC } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { useNavigation } from '@/app/navigation';
 import { Input } from '@/components/ui/input';
@@ -41,13 +42,15 @@ const matchesFilter = (station: StationListItem, filter: Filter) => {
   return true;
 };
 
+const EMPTY_DIRECTORY: StationDirectoryEntry[] = [];
+
 const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
   const { openStation } = useNavigation();
   const change = largestChange(station);
   const isAttention = station.screening === '建议调查';
 
   return (
-    <li>
+    <li className="animate-in fade-in duration-200">
       <button
         type="button"
         onClick={() => openStation(station.station_uuid)}
@@ -75,30 +78,16 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
 export const StationsPage: FC = () => {
   const { latest } = useInspection();
   const client = useLmaClient();
-  const [directory, setDirectory] = useState<StationDirectoryEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadError, setHasLoadError] = useState(false);
-  const [reloadCount, setReloadCount] = useState(0);
-  const reload = () => setReloadCount((count) => count + 1);
-  useEffect(() => {
-    const controller = new AbortController();
-    setIsLoading(true);
-    setHasLoadError(false);
-    client.listStations(controller.signal).then((stations) => {
-      if (!controller.signal.aborted) {
-        setDirectory(stations);
-      }
-    }, () => {
-      if (!controller.signal.aborted) {
-        setHasLoadError(true);
-      }
-    }).finally(() => {
-      if (!controller.signal.aborted) {
-        setIsLoading(false);
-      }
-    });
-    return () => controller.abort();
-  }, [client, reloadCount]);
+  const stationsQuery = useQuery({
+    queryKey: ['stations'],
+    queryFn: ({ signal }) => client.listStations(signal),
+  });
+  const directory = stationsQuery.data ?? EMPTY_DIRECTORY;
+  const isLoading = stationsQuery.isFetching;
+  const hasLoadError = stationsQuery.isError;
+  const reload = () => {
+    void stationsQuery.refetch();
+  };
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
 

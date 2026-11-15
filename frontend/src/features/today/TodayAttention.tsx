@@ -59,7 +59,7 @@ const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }>
   }
 
   return (
-    <li>
+    <li className="animate-in fade-in duration-200">
       <button
         type="button"
         aria-label={`查看 ${station.station_name}`}
