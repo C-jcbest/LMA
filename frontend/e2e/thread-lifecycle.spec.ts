@@ -257,6 +257,8 @@ test('最新用户消息可编辑重新生成、复制，悬停不改变消息�
     const assistant = page.locator('[data-role="assistant"]').last();
     await page.getByRole('textbox', { name: '输入监测问题' }).hover();
     await expect(user.getByRole('button', { name: '编辑消息' })).toHaveCount(0);
+    // 消息有入场动效（淡入并上移），等它结束再量位置，只比较悬停带来的变化。
+    await assistant.evaluate((element) => Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)));
     const before = await assistant.boundingBox();
     await user.hover();
     await user.getByRole('button', { name: '复制消息' }).click();
