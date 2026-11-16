@@ -6,7 +6,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { ToolArtifactEnvelope } from '@/types/envelope';
 import { ComputationResultView } from './tools/ComputationResultView';
 import { EmptyResultView } from './tools/EmptyResultView';
@@ -107,7 +107,7 @@ export const Sparkline: FC<{ values: readonly (number | null)[] }> = ({ values }
 const StepIcon: FC<{ state: StepState }> = ({ state }) => {
   switch (state) {
     case 'running':
-      return <span className="size-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/30 border-t-muted-foreground motion-reduce:animate-none" aria-hidden />;
+      return <span className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" aria-hidden />;
     case 'failed':
       return <AlertCircleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
     case 'cancelled':
@@ -139,7 +139,7 @@ const StepText: FC<{ step: InvestigationStep }> = ({ step }) => (
 );
 
 const STEP_ROW_CLASS = 'flex min-h-8 w-full items-center gap-2 rounded-md px-1.5 text-start text-sm';
-const STEP_ACTION_CLASS = `${STEP_ROW_CLASS} transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`;
+const STEP_ACTION_CLASS = cn(STEP_ROW_CLASS, 'transition hover:bg-muted active:scale-99 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring');
 
 const StepRow: FC<{ step: InvestigationStep; onOpenStation: (name: string) => void }> = ({
   step,
@@ -158,7 +158,7 @@ const StepRow: FC<{ step: InvestigationStep; onOpenStation: (name: string) => vo
       <Collapsible>
         <CollapsibleTrigger className={cn(STEP_ACTION_CLASS, 'group/step')}>
           <StepText step={step} />
-          <ChevronRightIcon className="ms-auto size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/step:rotate-90 motion-reduce:transition-none" aria-hidden />
+          <ChevronRightIcon className="ms-auto size-3.5 shrink-0 text-muted-foreground transition-transform group-data-[state=open]/step:rotate-90" aria-hidden />
         </CollapsibleTrigger>
         <CollapsibleContent className="py-2 ps-7">
           <InlineEvidenceResult envelope={step.inlineEnvelope} />
@@ -230,7 +230,7 @@ export const InvestigationProcess: FC = () => {
             {headlineOf(steps, stations.length, isRunning)}
           </span>
           {isRunning && <RunElapsed messageId={messageId} />}
-          <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]/process:rotate-90 motion-reduce:transition-none" aria-hidden />
+          <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]/process:rotate-90" aria-hidden />
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="-ms-1.5 flex flex-col py-1">
@@ -260,12 +260,12 @@ export const InvestigationProcess: FC = () => {
 
       {/* 有登记结论时用测点状态作为入口，否则列出涉及的测点；同一入口只出现一次。调查结束时入口淡入，不突然冒出来。 */}
       {!isRunning && conclusions && (
-        <div className="animate-in fade-in duration-200 motion-reduce:animate-none">
+        <div className="animate-in fade-in duration-200">
           <ConclusionStatusStrip conclusions={conclusions} />
         </div>
       )}
       {!isRunning && !conclusions && stations.length > 0 && (
-        <div className="animate-in fade-in flex flex-wrap items-center gap-1.5 duration-200 motion-reduce:animate-none">
+        <div className="animate-in fade-in flex flex-wrap items-center gap-1.5 duration-200">
           {stations.slice(0, MAX_VISIBLE_STATIONS).map((station) => {
             const isSelected = selection?.messageId === messageId && selection.stationId === station.id;
             return (
@@ -276,7 +276,7 @@ export const InvestigationProcess: FC = () => {
                 aria-pressed={isSelected}
                 onClick={() => open(station.id)}
                 className={cn(
-                  'flex min-h-9 max-w-full items-center gap-2 rounded-full border px-3 text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  'flex min-h-9 max-w-full items-center gap-2 rounded-full border px-3 text-sm transition hover:bg-muted active:scale-98 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   isSelected && 'border-foreground/40 bg-muted',
                 )}
               >
@@ -289,7 +289,7 @@ export const InvestigationProcess: FC = () => {
             <button
               type="button"
               onClick={() => setIsExpanded(true)}
-              className="flex min-h-9 items-center rounded-full px-2 text-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="flex min-h-9 items-center rounded-full px-2 text-sm text-muted-foreground transition hover:text-foreground active:scale-98 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               另外 {stations.length - MAX_VISIBLE_STATIONS} 个
             </button>

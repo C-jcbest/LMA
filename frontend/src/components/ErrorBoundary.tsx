@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertCircle, RefreshCw, EyeOff, RotateCcw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   children: ReactNode;
@@ -59,56 +60,44 @@ export class ErrorBoundary extends Component<Props, State> {
 
       if (isWindow) {
         return (
-          <div className="flex-1 h-full flex flex-col items-center justify-center p-6 bg-background text-foreground">
-            <div className="max-w-md w-full rounded-2xl border border-red-200/80 bg-red-50/50 p-6 text-center shadow-sm space-y-4">
-              <div className="w-10 h-10 mx-auto rounded-xl bg-red-100/80 flex items-center justify-center text-red-600">
-                <AlertCircle className="w-5 h-5" />
+          <div className="flex h-full flex-1 flex-col items-center justify-center bg-background p-6 text-foreground">
+            <div className="w-full max-w-md space-y-4 rounded-lg border bg-card p-6 text-center">
+              <div className="mx-auto flex size-10 items-center justify-center rounded-lg bg-destructive/10 text-destructive">
+                <AlertCircle className="size-5" aria-hidden />
               </div>
               <div>
-                <h3 className="text-sm font-semibold text-foreground">
+                <h3 className="text-sm font-semibold">
                   {this.props.fallbackTitle || '会话界面加载异常'}
                 </h3>
                 <p className="mt-1 text-xs text-muted-foreground">
                   请重新载入页面。
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={this.handleReload}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-background border border-border text-xs font-medium text-foreground hover:bg-muted/50 shadow-xs transition-all active:scale-95"
-              >
-                <RefreshCw className="w-3.5 h-3.5 text-muted-foreground" />
-                <span>刷新页面</span>
-              </button>
+              <Button type="button" variant="outline" size="sm" onClick={this.handleReload}>
+                <RefreshCw className="text-muted-foreground" aria-hidden />
+                刷新页面
+              </Button>
             </div>
           </div>
         );
       }
 
       return (
-        <div className="my-2 rounded-xl border border-border bg-muted/50 p-3 text-xs text-foreground shadow-xs">
-          <div className="flex items-center justify-between">
+        <div className="my-2 rounded-lg border bg-muted/50 p-3 text-xs text-foreground">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-muted-foreground shrink-0" />
+              <AlertCircle className="size-4 shrink-0 text-muted-foreground" aria-hidden />
               <span>{this.props.fallbackTitle || '该内容暂时无法显示'}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={this.handleReload}
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-background border border-border text-xs font-medium text-foreground hover:bg-muted transition-colors"
-              >
-                <RotateCcw className="w-3 h-3 text-muted-foreground" />
-                <span>重新加载</span>
-              </button>
-              <button
-                type="button"
-                onClick={this.handleHide}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <EyeOff className="w-3 h-3" />
-                <span>隐藏</span>
-              </button>
+            <div className="flex items-center gap-1">
+              <Button type="button" variant="outline" size="xs" onClick={this.handleReload}>
+                <RotateCcw className="text-muted-foreground" aria-hidden />
+                重新加载
+              </Button>
+              <Button type="button" variant="ghost" size="xs" className="text-muted-foreground" onClick={this.handleHide}>
+                <EyeOff aria-hidden />
+                隐藏
+              </Button>
             </div>
           </div>
         </div>

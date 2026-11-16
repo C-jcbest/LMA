@@ -1,6 +1,6 @@
 import type { FC } from "react";
 import { ContextDisplay } from "@/components/context-display";
-import { cn } from "@/lib/utils";
+import { cn } from 'cn';
 
 const VISIBLE_USAGE_RATIO = 0.8;
 

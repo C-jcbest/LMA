@@ -1,52 +1,44 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { useAui } from '@assistant-ui/react';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { Button } from '@/components/ui/button';
 import type { Session } from '@/services/api';
 
 const PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 250;
 
 export function RecordSearchResults({ query, onOpen }: { query: string; onOpen?: () => void }) {
   const client = useLmaClient();
   const aui = useAui();
-  const [records, setRecords] = useState<Session[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [failed, setFailed] = useState(false);
   const [opening, setOpening] = useState<string | null>(null);
   const [openFailed, setOpenFailed] = useState(false);
-  const controller = useRef<AbortController | null>(null);
+  // 组件按搜索词挂载（ThreadList 以搜索词为 key）；停止输入一小段时间后再请求。
+  const [isDebounced, setIsDebounced] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIsDebounced(true), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
 
-  const load = async (offset: number, signal: AbortSignal) => {
-    setLoading(true);
-    setFailed(false);
-    try {
-      const result = await client.listSessions({ search: query, offset, limit: PAGE_SIZE + 1 }, signal);
-      if (signal.aborted) {
-        return;
-      }
-      setRecords((previous) => offset === 0 ? result.slice(0, PAGE_SIZE) : [...previous, ...result.slice(0, PAGE_SIZE)]);
-      setHasMore(result.length > PAGE_SIZE);
-    } catch {
-      if (!signal.aborted) {
-        setFailed(true);
-      }
-    } finally {
-      if (!signal.aborted) {
-        setLoading(false);
-      }
+  const search = useInfiniteQuery({
+    queryKey: ['session-search', query],
+    queryFn: ({ pageParam, signal }) => client.listSessions({ search: query, offset: pageParam, limit: PAGE_SIZE + 1 }, signal),
+    initialPageParam: 0,
+    // 每页多取一条，用来判断是否还有下一页。
+    getNextPageParam: (lastPage, allPages) => (lastPage.length > PAGE_SIZE ? allPages.length * PAGE_SIZE : undefined),
+    enabled: isDebounced,
+  });
+  const records = search.data?.pages.flatMap((page) => page.slice(0, PAGE_SIZE)) ?? [];
+  const loading = !isDebounced || search.isFetching;
+  const failed = search.isError;
+  const hasMore = search.hasNextPage;
+  const loadMoreOrRetry = () => {
+    if (search.data) {
+      void search.fetchNextPage();
+    } else {
+      void search.refetch();
     }
   };
-
-  useEffect(() => {
-    const request = new AbortController();
-    controller.current = request;
-    const timer = window.setTimeout(() => { void load(0, request.signal); }, 250);
-    return () => {
-      window.clearTimeout(timer);
-      request.abort();
-    };
-  }, [client, query]);
 
   return (
     <div aria-label="搜索结果" aria-busy={loading}>
@@ -55,7 +47,7 @@ export function RecordSearchResults({ query, onOpen }: { query: string; onOpen?:
       {openFailed && <p role="alert" className="p-2 text-sm">这条记录尚未打开，请重试。</p>}
       {records.map((record) => (
         <button key={record.id} type="button" disabled={opening !== null}
-          className="flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-h-11 w-full items-center gap-3 rounded-md px-2.5 py-2 text-left text-sm transition hover:bg-muted active:scale-99 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={async () => {
             setOpening(record.id);
             setOpenFailed(false);
@@ -75,11 +67,7 @@ export function RecordSearchResults({ query, onOpen }: { query: string; onOpen?:
         </button>
       ))}
       {failed && <p role="alert" className="px-2.5 py-2 text-sm">搜索结果尚未载入</p>}
-      {(failed || hasMore) && <Button variant="ghost" className="w-full" disabled={loading} onClick={() => {
-        if (controller.current) {
-          void load(records.length, controller.current.signal);
-        }
-      }}>{failed ? '重试' : loading ? '加载中…' : '加载更多结果'}</Button>}
+      {(failed || hasMore) && <Button variant="ghost" className="w-full" disabled={loading} onClick={loadMoreOrRetry}>{failed ? '重试' : loading ? '加载中…' : '加载更多结果'}</Button>}
     </div>
   );
 }

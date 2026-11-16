@@ -3,7 +3,7 @@ import { useAuiState } from '@assistant-ui/react';
 import { CheckIcon, CopyIcon, DownloadIcon } from 'lucide-react';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { ConclusionsArtifactData } from '@/types/envelope';
 import {
   answerToMarkdown,
@@ -54,7 +54,7 @@ export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }>
               onClick={() => openStation({ messageId, stationId: item.station_uuid })}
               className={cn(
                 chipClass,
-                'transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                'transition hover:bg-muted active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                 isSelected && 'border-foreground/40 bg-muted',
               )}
             >

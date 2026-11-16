@@ -3,12 +3,13 @@ import { isInspectionFromToday } from './inspection-date';
 import { ArrowRightIcon, RefreshCwIcon } from 'lucide-react';
 import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
-import { cn } from '@/lib/utils';
+import { cn } from 'cn';
 import type { InspectionStation, LatestInspection } from '@/services/api';
 
 const formatFinishedAt = (value: string) => {
@@ -21,11 +22,11 @@ const formatFinishedAt = (value: string) => {
 /** 首次读取巡检结果时的占位；延迟出现，读取很快时不闪一下，也不先显示“开始巡检”再跳成结果。 */
 const TodaySkeleton: FC = () => (
   <div aria-hidden className="animate-in fade-in fill-mode-both [animation-delay:150ms] [animation-duration:200ms]">
-    <Skeleton className="h-8 w-3/5 motion-reduce:animate-none" />
-    <Skeleton className="mt-3 h-4 w-40 motion-reduce:animate-none" />
+    <Skeleton className="h-8 w-3/5" />
+    <Skeleton className="mt-3 h-4 w-40" />
     <div className="mt-7 space-y-3">
-      <Skeleton className="h-16 w-full rounded-xl motion-reduce:animate-none" />
-      <Skeleton className="h-16 w-full rounded-xl motion-reduce:animate-none" />
+      <Skeleton className="h-16 w-full rounded-xl" />
+      <Skeleton className="h-16 w-full rounded-xl" />
     </div>
   </div>
 );
@@ -58,13 +59,13 @@ const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }>
   }
 
   return (
-    <li>
+    <li className="animate-in fade-in duration-200">
       <button
         type="button"
         aria-label={`查看 ${station.station_name}`}
         onClick={() => openStation(station.station_uuid)}
         className={cn(
-          'today-row hover:bg-muted/60 focus-visible:ring-ring w-full rounded-xl text-start transition-colors focus-visible:ring-2 focus-visible:outline-none',
+          'today-row w-full rounded-lg text-start transition hover:bg-muted/60 active:scale-99 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
           highlightChange && isScreeningChanged && 'row-changed',
         )}
       >
@@ -75,12 +76,12 @@ const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }>
             <span className="text-muted-foreground shrink-0 text-xs">{station.group_name}</span>
           </span>
           {station.reasons.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-[1.125rem] text-sm leading-relaxed wrap-anywhere">
+            <span className="text-muted-foreground mt-1 block ps-4.5 text-sm leading-relaxed wrap-anywhere">
               {station.reasons.join('；')}
             </span>
           )}
           {history.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-[1.125rem] text-xs">{history.join(' · ')}</span>
+            <span className="text-muted-foreground mt-1 block ps-4.5 text-xs">{history.join(' · ')}</span>
           )}
         </span>
         <span className="today-row-trend"><TrendLine values={station.trend} emphasized /></span>
@@ -143,7 +144,7 @@ export const TodayAttention: FC = () => {
 
   return (
     <section aria-label="今日" className="aui-thread-welcome-root today mb-8">
-      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-[1.75rem]">{historical && <>上次巡检 · </>}{headline}</h1>
+      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{historical && <>上次巡检 · </>}{headline}</h1>
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{formatFinishedAt(latest.inspection.finished_at)} 巡检</time>}
         <Button
@@ -154,18 +155,22 @@ export const TodayAttention: FC = () => {
           onClick={start}
           className={cn(hasResults && '-ms-2 text-muted-foreground')}
         >
-          <RefreshCwIcon className={cn('size-3.5', (isRunning || isStarting) && 'animate-spin motion-reduce:animate-none')} aria-hidden />
+          <RefreshCwIcon className={cn('size-3.5', (isRunning || isStarting) && 'animate-spin')} aria-hidden />
           {startLabel}
         </Button>
       </div>
       {latest?.running && (
-        <progress className="inspection-progress" aria-label="巡检进度" max={Math.max(1, latest.running.total_stations)} value={latest.running.completed_stations} />
+        <Progress
+          className="mt-4 h-1 bg-muted"
+          aria-label="巡检进度"
+          value={(latest.running.completed_stations / Math.max(1, latest.running.total_stations)) * 100}
+        />
       )}
 
       {hasLoadError && (
         <p role="alert" className="text-muted-foreground mt-3 text-sm">
           巡检结果尚未载入。
-          <button type="button" disabled={isLoading || isStarting} className="ms-1 underline underline-offset-4 disabled:opacity-50" onClick={reload}>重试</button>
+          <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" disabled={isLoading || isStarting} onClick={reload}>重试</Button>
         </p>
       )}
       {hasStartError && <p role="alert" className="text-destructive mt-3 text-sm">巡检未能启动，请稍后重试。</p>}
@@ -192,7 +197,7 @@ export const TodayAttention: FC = () => {
         <button
           type="button"
           onClick={goStations}
-          className="bg-muted/50 hover:bg-muted focus-visible:ring-ring text-muted-foreground group/all mt-5 flex min-h-12 w-full flex-wrap items-center gap-x-5 gap-y-1 rounded-xl px-4 py-2 text-start text-sm transition-colors focus-visible:ring-2 focus-visible:outline-none"
+          className="group/all mt-5 flex min-h-12 w-full flex-wrap items-center gap-x-5 gap-y-1 rounded-lg bg-muted/50 px-4 py-2 text-start text-sm text-muted-foreground transition hover:bg-muted active:scale-99 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           {quietCount > 0 && (
             <span className="inline-flex items-center gap-2"><StatusDot status="未见明显变化" />{quietCount} 个未见明显变化</span>

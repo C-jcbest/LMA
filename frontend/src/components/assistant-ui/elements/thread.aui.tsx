@@ -14,7 +14,7 @@ import {
 } from "@/features/monitoring/InvestigationProcess";
 import { ConclusionsFallback, AnswerActions } from "@/features/monitoring/InvestigationReport";
 import { useStationInspector } from "@/features/monitoring/StationInspectorContext";
-import { cn } from "@/lib/utils";
+import { cn } from 'cn';
 import { useSessionMetadata } from "@/lib/session-metadata";
 import { useNavigation } from "@/app/navigation";
 import { RecoveryNotice, useConversationLoading } from "@/app/providers/AssistantProvider";
@@ -78,16 +78,16 @@ const ThreadHistorySkeleton: FC = () => (
     className="animate-in fade-in fill-mode-both flex flex-col gap-y-6 [animation-delay:150ms] [animation-duration:200ms]"
   >
     <span className="sr-only">正在载入会话</span>
-    <Skeleton className="ml-auto h-9 w-2/5 rounded-xl motion-reduce:animate-none" />
+    <Skeleton className="ml-auto h-9 w-2/5 rounded-xl" />
     <div className="flex flex-col gap-y-2">
-      <Skeleton className="h-4 w-11/12 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-4/5 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-3/5 motion-reduce:animate-none" />
+      <Skeleton className="h-4 w-11/12" />
+      <Skeleton className="h-4 w-4/5" />
+      <Skeleton className="h-4 w-3/5" />
     </div>
-    <Skeleton className="ml-auto h-9 w-1/3 rounded-xl motion-reduce:animate-none" />
+    <Skeleton className="ml-auto h-9 w-1/3 rounded-xl" />
     <div className="flex flex-col gap-y-2">
-      <Skeleton className="h-4 w-10/12 motion-reduce:animate-none" />
-      <Skeleton className="h-4 w-2/3 motion-reduce:animate-none" />
+      <Skeleton className="h-4 w-10/12" />
+      <Skeleton className="h-4 w-2/3" />
     </div>
   </div>
 );
@@ -129,7 +129,7 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, p
       )}
       style={{
         ["--thread-max-width" as string]: "52rem",
-        ["--composer-radius" as string]: "1.25rem",
+        ["--composer-radius" as string]: "var(--radius-xl)",
       }}
     >
       <ThreadPrimitive.Viewport
@@ -194,7 +194,7 @@ const ThreadSummaryMessageView: FC<{ text: string }> = ({ text }) => {
         <span>更早的对话已压缩为摘要</span>
         <ChevronDownIcon
           className={cn(
-            "size-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
+            "size-3.5 shrink-0 transition-transform duration-200",
             expanded && "rotate-180",
           )}
         />
@@ -359,7 +359,7 @@ const AssistantMessage: FC = () => {
     >
       <div
         data-slot="aui_assistant-message-content"
-        className="assistant-answer text-foreground min-w-0 px-1 text-[15px] leading-7 wrap-anywhere sm:px-2"
+        className="assistant-answer text-foreground min-w-0 px-1 text-reading wrap-anywhere sm:px-2"
       >
         <InvestigationProcess />
         <MessagePrimitive.GroupedParts groupBy={messageGroupBy}>
@@ -463,7 +463,7 @@ const EditComposer: FC = () => {
       data-slot="aui_edit-composer-wrapper"
       className="flex flex-col px-2 [contain-intrinsic-size:auto_200px] [content-visibility:auto]"
     >
-      <ComposerPrimitive.Root className="aui-edit-composer-root bg-card focus-within:border-ring ms-auto flex w-full max-w-[85%] cursor-text flex-col rounded-(--composer-radius) border transition-[border-color]">
+      <ComposerPrimitive.Root className="aui-edit-composer-root bg-card focus-within:border-ring ms-auto flex w-full max-w-5/6 cursor-text flex-col rounded-(--composer-radius) border transition-[border-color]">
         <ComposerPrimitive.Input
           aria-label="编辑用户消息"
           className="aui-edit-composer-input text-foreground min-h-14 w-full resize-none bg-transparent px-4 pt-3 pb-1 text-base outline-none"

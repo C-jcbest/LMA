@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { ChevronLeftIcon, ChevronRightIcon, Maximize2Icon, Minimize2Icon, XIcon } from 'lucide-react';
-import { Dialog as DialogPrimitive, Tabs } from 'radix-ui';
+import { Dialog as DialogPrimitive } from 'radix-ui';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
@@ -261,7 +262,8 @@ const initialTab = (station: StationEvidence, focusToolCallId: string | undefine
   return 'details';
 };
 
-const TAB_CLASS = 'min-h-11 border-b-2 border-transparent px-1 text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:border-foreground data-[state=active]:text-foreground';
+// 下划线页签贴住列表底边：指示条下移 1px 与分隔线重合。
+const TAB_CLASS = 'h-11 flex-none px-1 font-normal text-muted-foreground group-data-[orientation=horizontal]/tabs:after:-bottom-px';
 
 interface InspectorBodyProps {
   viewKey: string;
@@ -364,18 +366,18 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
         </div>
       </header>
 
-      <Tabs.Root value={activeTab} onValueChange={setActiveTab} className="flex min-h-0 flex-1 flex-col">
-        <Tabs.List aria-label="依据内容" className="flex shrink-0 gap-5 border-b px-4 sm:px-6">
-          {hasTimeline && <Tabs.Trigger value="timeline" className={TAB_CLASS}>时间轴</Tabs.Trigger>}
-          {hasWeather && <Tabs.Trigger value="weather" className={TAB_CLASS}>天气</Tabs.Trigger>}
-          {hasSite && <Tabs.Trigger value="site" className={TAB_CLASS}>场地</Tabs.Trigger>}
-          <Tabs.Trigger value="details" className={TAB_CLASS}>明细</Tabs.Trigger>
-        </Tabs.List>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="min-h-0 flex-1 gap-0">
+        <TabsList variant="line" aria-label="依据内容" className="w-full shrink-0 justify-start gap-5 rounded-none border-b p-0 px-4 group-data-[orientation=horizontal]/tabs:h-auto sm:px-6">
+          {hasTimeline && <TabsTrigger value="timeline" className={TAB_CLASS}>时间轴</TabsTrigger>}
+          {hasWeather && <TabsTrigger value="weather" className={TAB_CLASS}>天气</TabsTrigger>}
+          {hasSite && <TabsTrigger value="site" className={TAB_CLASS}>场地</TabsTrigger>}
+          <TabsTrigger value="details" className={TAB_CLASS}>明细</TabsTrigger>
+        </TabsList>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
           {/* 只保留当前测点的时间轴，切页签保留缩放与图例；换测点或关闭时释放。 */}
           {hasTimeline && (
-            <Tabs.Content value="timeline" forceMount hidden={activeTab !== 'timeline'} className="focus-visible:outline-none">
+            <TabsContent value="timeline" forceMount hidden={activeTab !== 'timeline'}>
               <TimelineView
                 station={station}
                 seriesList={seriesList}
@@ -385,15 +387,15 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
                 viewState={saved}
                 toolCallId={sortedSeries[selectedIndex]!.toolCallId}
               />
-            </Tabs.Content>
+            </TabsContent>
           )}
           {hasSite && (
-            <Tabs.Content value="site" className="focus-visible:outline-none">
+            <TabsContent value="site">
               <SiteEnvironmentResultView environment={siteEvidence!.data} />
-            </Tabs.Content>
+            </TabsContent>
           )}
           {hasWeather && (
-            <Tabs.Content ref={weatherRef} value="weather" className="space-y-8 focus-visible:outline-none">
+            <TabsContent ref={weatherRef} value="weather" className="space-y-8">
               {station.weather.map((item) => (
                 <div key={item.toolCallId} data-evidence-tool={item.toolCallId}>
                   <DetailSection title={formatDateRange(item.data.query.history_start_date, item.data.query.history_end_date)}>
@@ -401,9 +403,9 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
                   </DetailSection>
                 </div>
               ))}
-            </Tabs.Content>
+            </TabsContent>
           )}
-          <Tabs.Content value="details" className="space-y-8 focus-visible:outline-none">
+          <TabsContent value="details" className="space-y-8">
             {sortedSeries.filter((item) => Object.keys(item.data.features ?? {}).length > 0).map((item) => (
               <DetailSection key={item.toolCallId} title={`数值特征 · ${seriesLabel(item.data)}`}>
                 <NumericalResultView data={item.data} />
@@ -419,10 +421,10 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
                 </div>
               </details>
             )}
-          </Tabs.Content>
+          </TabsContent>
           <EvidenceNotes station={station} toolCallId={noteToolCallId} />
         </div>
-      </Tabs.Root>
+      </Tabs>
     </>
   );
 };

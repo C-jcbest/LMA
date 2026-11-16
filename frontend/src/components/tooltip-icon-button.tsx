@@ -10,7 +10,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn } from 'cn';
 
 export type TooltipIconButtonProps = ComponentPropsWithRef<typeof Button> & {
   tooltip: string;
@@ -30,7 +30,7 @@ export const TooltipIconButton = forwardRef<
             size="icon"
             {...rest}
             className={cn(
-              "aui-button-icon size-6 p-1 active:scale-90",
+              "aui-button-icon size-6 p-1 active:scale-95",
               className,
             )}
             ref={ref}

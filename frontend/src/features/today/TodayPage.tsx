@@ -36,12 +36,12 @@ export function TodayPage({ draft, onDraftChange }: { draft: string; onDraftChan
 
   return (
     <section aria-label="今日页面" className="@container h-full overflow-y-auto [scrollbar-gutter:stable]">
-      <div className="mx-auto flex min-h-full w-full max-w-[52rem] flex-col px-4 pt-6 sm:px-6 sm:pt-8">
+      <div className="mx-auto flex min-h-full w-full max-w-208 flex-col px-4 pt-6 sm:px-6 sm:pt-8">
         <TodayAttention />
         <form className="sticky bottom-0 mt-auto bg-background pb-[max(1rem,env(safe-area-inset-bottom))] pt-3"
           onSubmit={(event) => { event.preventDefault(); void send(); }}>
           {hasError && <p role="alert" className="mb-2 text-sm">新调查尚未打开，请重试。</p>}
-          <div className="aui-composer-root relative flex items-end gap-2 rounded-[1.25rem] border bg-card py-2 ps-4 pe-2 shadow-xs focus-within:border-ring">
+          <div className="aui-composer-root relative flex items-end gap-2 rounded-xl border bg-card py-2 ps-4 pe-2 shadow-xs focus-within:border-ring">
             <textarea aria-label="输入监测问题" placeholder="询问监测数据、变化趋势、降雨关联或场地环境…"
               value={draft} onChange={(event) => onDraftChange(event.target.value)} disabled={sending}
               rows={2} enterKeyHint="send"

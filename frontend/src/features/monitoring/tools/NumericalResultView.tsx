@@ -1,6 +1,7 @@
 import type { FC, ReactNode } from 'react';
 import type { GnssArtifactData } from '@/types/envelope';
 import { formatSigned, MILLIMETER_DIGITS, RATE_DIGITS } from '../format';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const AXIS_NAMES: Record<string, string> = { n: '北向', e: '东向', u: '垂直', h: '水平合成', d: '三维合成' };
 
@@ -18,22 +19,20 @@ const formatSignedValue = (value: unknown, digits = MILLIMETER_DIGITS) =>
   typeof value === 'number' && Number.isFinite(value) ? formatSigned(value, digits) : '—';
 
 const SimpleTable: FC<{ head: ReactNode[]; rows: ReactNode[][]; label: string }> = ({ head, rows, label }) => (
-  <div className="overflow-x-auto rounded-lg border">
-    <table aria-label={label} className="w-full min-w-[32rem] border-collapse text-left text-sm tabular-nums">
-      <thead className="border-b bg-muted/50 text-xs text-muted-foreground">
-        <tr>{head.map((cell, index) => <th key={index} className="px-3 py-2 font-normal whitespace-nowrap">{cell}</th>)}</tr>
-      </thead>
-      <tbody className="divide-y">
-        {rows.map((row, index) => (
-          <tr key={index}>
-            {row.map((cell, cellIndex) => (
-              <td key={cellIndex} className={cellIndex === 0 ? 'px-3 py-1.5 whitespace-nowrap text-muted-foreground' : 'px-3 py-1.5'}>{cell}</td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
+  <Table aria-label={label} containerClassName="rounded-lg border" className="min-w-lg">
+    <TableHeader className="text-xs">
+      <TableRow>{head.map((cell, index) => <TableHead key={index}>{cell}</TableHead>)}</TableRow>
+    </TableHeader>
+    <TableBody>
+      {rows.map((row, index) => (
+        <TableRow key={index}>
+          {row.map((cell, cellIndex) => (
+            <TableCell key={cellIndex} className={cellIndex === 0 ? 'whitespace-nowrap text-muted-foreground' : undefined}>{cell}</TableCell>
+          ))}
+        </TableRow>
+      ))}
+    </TableBody>
+  </Table>
 );
 
 const slopeText = (feature: Feature) =>

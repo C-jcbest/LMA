@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState, type FC } from 'react';
+import { useMemo, useState, type FC } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { useNavigation } from '@/app/navigation';
 import { Input } from '@/components/ui/input';
@@ -9,6 +10,7 @@ import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import type { InspectionStation, Screening, StationDirectoryEntry } from '@/services/api';
+import { Button } from '@/components/ui/button';
 
 interface StationListItem extends Omit<InspectionStation, 'screening'> {
   screening: Screening | null;
@@ -40,17 +42,19 @@ const matchesFilter = (station: StationListItem, filter: Filter) => {
   return true;
 };
 
+const EMPTY_DIRECTORY: StationDirectoryEntry[] = [];
+
 const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
   const { openStation } = useNavigation();
   const change = largestChange(station);
   const isAttention = station.screening === '建议调查';
 
   return (
-    <li>
+    <li className="animate-in fade-in duration-200">
       <button
         type="button"
         onClick={() => openStation(station.station_uuid)}
-        className="station-row hover:bg-muted/60 focus-visible:ring-ring w-full rounded-lg text-start transition-colors focus-visible:ring-2 focus-visible:outline-none"
+        className="station-row w-full rounded-lg text-start transition hover:bg-muted/60 active:scale-99 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
         <span className="flex min-w-0 items-center gap-2.5">
           <StatusDot status={station.screening} />
@@ -74,30 +78,16 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
 export const StationsPage: FC = () => {
   const { latest } = useInspection();
   const client = useLmaClient();
-  const [directory, setDirectory] = useState<StationDirectoryEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasLoadError, setHasLoadError] = useState(false);
-  const [reloadCount, setReloadCount] = useState(0);
-  const reload = () => setReloadCount((count) => count + 1);
-  useEffect(() => {
-    const controller = new AbortController();
-    setIsLoading(true);
-    setHasLoadError(false);
-    client.listStations(controller.signal).then((stations) => {
-      if (!controller.signal.aborted) {
-        setDirectory(stations);
-      }
-    }, () => {
-      if (!controller.signal.aborted) {
-        setHasLoadError(true);
-      }
-    }).finally(() => {
-      if (!controller.signal.aborted) {
-        setIsLoading(false);
-      }
-    });
-    return () => controller.abort();
-  }, [client, reloadCount]);
+  const stationsQuery = useQuery({
+    queryKey: ['stations'],
+    queryFn: ({ signal }) => client.listStations(signal),
+  });
+  const directory = stationsQuery.data ?? EMPTY_DIRECTORY;
+  const isLoading = stationsQuery.isFetching;
+  const hasLoadError = stationsQuery.isError;
+  const reload = () => {
+    void stationsQuery.refetch();
+  };
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
 
@@ -145,15 +135,15 @@ export const StationsPage: FC = () => {
         {hasLoadError && (
           <p role="alert" className="text-muted-foreground mt-4 text-sm">
             测点尚未载入。
-            <button type="button" disabled={isLoading} className="ms-1 underline underline-offset-4 disabled:opacity-50" onClick={reload}>重试</button>
+            <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" disabled={isLoading} onClick={reload}>重试</Button>
           </p>
         )}
         {!hasStations && isLoading && (
           // 延迟出现，读取很快时不闪一下。
           <div aria-hidden className="animate-in fade-in fill-mode-both mt-5 space-y-2 [animation-delay:150ms] [animation-duration:200ms]">
-            <Skeleton className="h-8 w-64 motion-reduce:animate-none" />
+            <Skeleton className="h-8 w-64" />
             {Array.from({ length: 5 }, (_, index) => (
-              <Skeleton key={index} className="h-11 w-full motion-reduce:animate-none" />
+              <Skeleton key={index} className="h-11 w-full" />
             ))}
           </div>
         )}

@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import type { GnssArtifactData } from '@/types/envelope';
 import { formatGnssValue } from './gnssUtils';
 import { EmptyResultView } from './EmptyResultView';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const PAGE_SIZE = 100;
 
@@ -23,28 +24,26 @@ export const GnssResultView: React.FC<{ data: GnssArtifactData }> = ({ data }) =
         {data.begin_time} 至 {data.end_time} · {data.timezone} · {allPoints.length} / {data.total_points} 条
         {data.downsampled ? ' · 已降采样' : ''}
       </p>
-      <div className="min-w-0 rounded-lg border">
-        <table className="w-full table-fixed border-collapse text-left text-xs sm:text-sm">
-          <thead className="border-b bg-muted/50 text-muted-foreground">
-            <tr>
-              <th className="w-[34%] px-2 py-2 font-medium">采样时刻</th>
-              <th className="px-2 py-2 font-medium">N (m)</th>
-              <th className="px-2 py-2 font-medium">E (m)</th>
-              <th className="px-2 py-2 font-medium">U (m)</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y tabular-nums">
-            {visiblePoints.map((point, index) => (
-              <tr key={firstRow + index}>
-                <td className="px-2 py-1.5 text-muted-foreground [overflow-wrap:anywhere]">{point.time}</td>
-                <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.n)}</td>
-                <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.e)}</td>
-                <td className="px-2 py-1.5 [overflow-wrap:anywhere]">{formatGnssValue(point.u)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Table containerClassName="min-w-0 rounded-lg border" className="table-fixed text-xs sm:text-sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-1/3 whitespace-normal">采样时刻</TableHead>
+            <TableHead>N (m)</TableHead>
+            <TableHead>E (m)</TableHead>
+            <TableHead>U (m)</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {visiblePoints.map((point, index) => (
+            <TableRow key={firstRow + index}>
+              <TableCell className="text-muted-foreground wrap-anywhere">{point.time}</TableCell>
+              <TableCell className="wrap-anywhere">{formatGnssValue(point.n)}</TableCell>
+              <TableCell className="wrap-anywhere">{formatGnssValue(point.e)}</TableCell>
+              <TableCell className="wrap-anywhere">{formatGnssValue(point.u)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
       {pageCount > 1 && (
         <nav aria-label="GNSS 数据分页" className="flex flex-wrap items-center gap-2">
           <Button type="button" variant="outline" size="sm" disabled={currentPage === 0} onClick={() => setPageIndex(currentPage - 1)}>

@@ -7,7 +7,7 @@ import { useSessionVerdict } from "@/features/records/SessionConclusions";
 import { investigationStatusLabel } from "@/features/monitoring/investigation";
 import { StatusDot } from "@/features/monitoring/status";
 import { RecordSearchResults } from "@/features/records/RecordSearchResults";
-import { cn } from "@/lib/utils";
+import { cn } from 'cn';
 import {
   AuiIf,
   ThreadListItemMorePrimitive,
@@ -300,7 +300,19 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
 }) => {
   const { threadIds, filteredIndices, groups } =
     useThreadListGroups(searchQuery);
+  const hasLoadError = useAuiState((s) => s.threads.loadError != null);
   const query = searchQuery.trim();
+
+  if (threadIds.length === 0) {
+    return (
+      <div
+        data-slot="aui_thread-list-empty"
+        className="text-muted-foreground px-2.5 py-4 text-sm"
+      >
+        {hasLoadError ? "记录尚未载入，可在页面顶部重试。" : "还没有调查记录。"}
+      </div>
+    );
+  }
 
   if (query && filteredIndices.length === 0) {
     return (
@@ -400,7 +412,7 @@ export const ThreadListItem: FC = () => {
             onNavigate?.();
           }}
           data-slot="aui_thread-list-item-trigger"
-          className="focus-visible:ring-ring/50 flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9 focus-visible:ring-1"
+          className="flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9"
         >
           {/* 侧栏“最近”里，状态点居中在导航图标的位置上，标题与上方导航文字对齐。 */}
           {isRunning ? (
@@ -429,7 +441,7 @@ export const ThreadListItem: FC = () => {
           {variant === "all" && verdict && (
             <span
               data-slot="aui_thread-list-item-verdict"
-              className="text-muted-foreground ms-3 max-w-[45%] shrink-0 truncate text-xs"
+              className="text-muted-foreground ms-3 max-w-2/5 shrink-0 truncate text-xs"
             >
               {verdict.stations.join("、")} · {investigationStatusLabel(verdict.status)}
             </span>

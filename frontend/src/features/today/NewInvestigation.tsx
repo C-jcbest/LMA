@@ -41,7 +41,7 @@ function InvestigationWelcome() {
   return (
     <section aria-label="新调查" className="new-investigation mx-auto flex w-full max-w-xl flex-1 flex-col justify-center py-10 sm:py-16">
       <div className="new-investigation-intro mb-8">
-        <div className="mb-6 flex size-12 items-center justify-center rounded-2xl border bg-card shadow-xs">
+        <div className="mb-6 flex size-12 items-center justify-center rounded-xl border bg-card shadow-xs">
           <Mountain aria-hidden className="size-6 text-foreground/80" />
         </div>
         <h1 className="text-2xl font-medium tracking-tight sm:text-3xl">从一个问题开始</h1>
@@ -50,7 +50,7 @@ function InvestigationWelcome() {
         {!draft.trim() && loading && (
           <div aria-hidden className="space-y-3">
             {[80, 95, 70].map((width) => (
-              <div key={width} className="h-11 animate-pulse rounded-xl bg-muted/50 motion-reduce:animate-none" style={{ width: `${width}%` }} />
+              <div key={width} className="h-11 animate-pulse rounded-xl bg-muted/50" style={{ width: `${width}%` }} />
             ))}
           </div>
         )}
@@ -58,7 +58,7 @@ function InvestigationWelcome() {
           <div className="space-y-2">
             {questions.map((question, index) => (
               <button key={question} type="button"
-                className="new-investigation-question group flex min-h-12 w-full items-center justify-between gap-4 rounded-xl border border-transparent px-3 py-3 text-left text-sm leading-6 text-muted-foreground transition-colors hover:border-border hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="new-investigation-question group flex min-h-12 w-full items-center justify-between gap-4 rounded-lg border border-transparent px-3 py-3 text-left text-sm leading-6 text-muted-foreground transition hover:border-border hover:bg-card hover:text-foreground active:scale-99 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 style={{ animationDelay: `${index * 70}ms` }}
                 onClick={() => {
                   aui.composer().setText(question);

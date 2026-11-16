@@ -1,5 +1,5 @@
 import { Monitor, Moon, Sun } from 'lucide-react';
-import { ToggleGroup } from 'radix-ui';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useTheme, type ThemePreference } from '@/app/providers/ThemeProvider';
 
 const choices = [
@@ -11,8 +11,10 @@ const choices = [
 export function ThemeSelector() {
   const { preference, setPreference } = useTheme();
   return (
-    <ToggleGroup.Root
+    <ToggleGroup
       type="single"
+      size="sm"
+      spacing={0.5}
       value={preference}
       aria-label="外观主题"
       onValueChange={(next) => {
@@ -20,19 +22,19 @@ export function ThemeSelector() {
           setPreference(next as ThemePreference);
         }
       }}
-      className="flex shrink-0 items-center gap-0.5 rounded-lg border p-0.5"
+      className="shrink-0 rounded-lg border p-0.5"
     >
       {choices.map(({ value, label, icon: Icon }) => (
-        <ToggleGroup.Item
+        <ToggleGroupItem
           key={value}
           value={value}
           aria-label={label}
           title={label}
-          className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=on]:bg-muted data-[state=on]:text-foreground"
+          className="size-7 min-w-7 px-0 text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-muted data-[state=on]:text-foreground"
         >
-          <Icon className="size-4" aria-hidden />
-        </ToggleGroup.Item>
+          <Icon aria-hidden />
+        </ToggleGroupItem>
       ))}
-    </ToggleGroup.Root>
+    </ToggleGroup>
   );
 }

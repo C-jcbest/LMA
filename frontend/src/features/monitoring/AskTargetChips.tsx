@@ -1,6 +1,7 @@
 import type { FC } from 'react';
 import { useAui, useAuiEvent, useAuiState } from '@assistant-ui/react';
 import { ChartLineIcon, XIcon } from 'lucide-react';
+import { cn } from 'cn';
 import { askTargetLabel, askTargetsOfMessage, askTargetsOfRunConfig, clearAskTargets, removeAskTarget } from './ask-targets';
 
 const CHIP_CLASS = 'inline-flex h-7 max-w-full items-center gap-1.5 rounded-md bg-muted px-2 text-xs text-foreground tabular-nums';
@@ -24,14 +25,14 @@ export const ComposerAskTargets: FC = () => {
       {targets.map((target) => {
         const label = askTargetLabel(target);
         return (
-          <li key={label} className={`${CHIP_CLASS} pe-0.5`}>
+          <li key={label} className={cn(CHIP_CLASS, 'pe-0.5')}>
             <ChartLineIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate">{label}</span>
             <button
               type="button"
               aria-label={`移除追问对象 ${label}`}
               onClick={() => removeAskTarget(aui, target)}
-              className="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition hover:bg-background hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
               <XIcon aria-hidden className="size-3.5" />
             </button>

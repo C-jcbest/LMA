@@ -12,7 +12,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { cn } from "@/lib/utils";
+import { cn } from 'cn';
 
 // StreamdownTextComponents 的索引签名尚未保留 CodeHeaderProps。
 const CodeHeader: FC<any> = ({ language, code }: CodeHeaderProps) => {
@@ -207,7 +207,7 @@ const defaultComponents: StreamdownTextComponents = {
   pre: ({ className, ...props }) => (
     <pre
       className={cn(
-        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-[13px] leading-relaxed",
+        "aui-md-pre border-border/50 bg-muted/30 overflow-x-auto rounded-t-none rounded-b-xl border border-t-0 p-3.5 text-xs leading-relaxed",
         className,
       )}
       {...props}
@@ -216,7 +216,7 @@ const defaultComponents: StreamdownTextComponents = {
   code: ({ className, ...props }) => (
     <code
       className={cn(
-        "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-[0.85em]",
+        "aui-md-inline-code bg-muted rounded-md px-1.5 py-0.5 font-mono text-sm",
         className,
       )}
       {...props}
@@ -226,6 +226,8 @@ const defaultComponents: StreamdownTextComponents = {
 };
 
 export type MarkdownTextProps = StreamdownTextPrimitiveProps;
+
+const STREAMING_REVEAL = { animation: "fadeIn", duration: 200, easing: "cubic-bezier(0.22, 1, 0.36, 1)", sep: "word" } as const;
 
 const MarkdownTextImpl: FC<MarkdownTextProps> = ({
   className,
@@ -245,6 +247,8 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
         ...components,
       }}
       defer
+      // 流式生成时新到的词淡入，避免整块文字跳出；历史消息不在生成中，不触发。
+      animated={STREAMING_REVEAL}
       {...props}
     />
   );
