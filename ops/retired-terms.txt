@@ -20,3 +20,7 @@ StationTimelineCard  # 一测点一张时间轴卡，2026-11-15 否决，保留�
 方向罗盘  # 2026-11-15 否决（见 decisions/0010）
 @/lib/utils  # cn 的透传，2026-11-16 删除，统一从 cn 包引入
 inspection-progress  # 原生 progress 样式，2026-11-16 改用 ui/progress
+FaultArtifact  # 2026-11-17 清理旧地图构造线展示契约，保留地质与 DEM 分析查询
+LayerSourcesArtifact  # 2026-11-17 删除旧地图瓦片来源契约
+layer_sources  # 2026-11-17 删除旧地图瓦片来源字段
+geology_tiles  # 2026-11-17 删除旧地图地质瓦片地址

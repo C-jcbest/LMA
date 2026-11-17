@@ -25,7 +25,7 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
   const step = steps.find((item) => item.evidenceId === id && item.state === 'complete');
   // 不存在或尚未收到的依据不生成跳转，避免暴露内部编号和伪造引用。
   if (!step || !citationNumber || (!step.stationId && !step.inlineEnvelope)) {
-    return <span className="text-muted-foreground text-xs" title="原始依据未随本次结果提供">依据暂缺</span>;
+    return null;
   }
   return (
     <button

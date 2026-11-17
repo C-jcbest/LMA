@@ -258,21 +258,8 @@ class GeologyArtifact(ArtifactModel):
     lithology: str | None = None
     age: str | None = None
     description: str | None = None
-    color: str | None = None
     source_id: str | int | None = None
     source_reference: str | None = None
-
-
-class FaultArtifact(ArtifactModel):
-    available: bool
-    distance_km: float | None = None
-    note: str
-
-
-class LayerSourcesArtifact(ArtifactModel):
-    geology_tiles: str
-    geology_source_layer: str
-    fault_source_layer: str
 
 
 class SiteEnvironmentArtifactData(ArtifactModel):
@@ -283,8 +270,6 @@ class SiteEnvironmentArtifactData(ArtifactModel):
     group_stations: list[StationArtifact]
     terrain: TerrainArtifact | None = None
     geology: GeologyArtifact | None = None
-    faults: FaultArtifact
-    layer_sources: LayerSourcesArtifact
 
 
 class AcquisitionFailureArtifactData(ArtifactModel):

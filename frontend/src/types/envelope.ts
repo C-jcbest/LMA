@@ -214,16 +214,9 @@ export interface SiteEnvironmentArtifactData {
     lithology?: string | null;
     age?: string | null;
     description?: string | null;
-    color?: string | null;
     source_id?: string | number | null;
     source_reference?: string | null;
   } | null;
-  faults: { available: boolean; distance_km?: number | null; note: string };
-  layer_sources: {
-    geology_tiles: string;
-    geology_source_layer: string;
-    fault_source_layer: string;
-  };
 }
 
 export type InvestigationStatus = '未见明显变化' | '持续关注' | '需人工复核' | '数据不足' | '暂无法分析';

@@ -178,8 +178,8 @@ test('场地引用定位原始资料，地图不可用和调整面板不影响�
         version: 1, observed_at: '2026-11-09T00:00:00Z', coordinate_system: 'WGS84',
         center_station: { station_uuid: 'test-a', station_name: '测试点 A', longitude: 120, latitude: 30, coordinate_system: 'WGS84' },
         group_stations: [{ station_uuid: 'invalid', station_name: '坐标填反的测试点', longitude: 39.87, latitude: 116.48, coordinate_system: 'WGS84' }],
-        faults: { available: false, note: '自动化测试数据，无真实断层结论' },
-        layer_sources: { geology_tiles: '', geology_source_layer: 'units', fault_source_layer: 'lines' },
+        terrain: { dem_elevation_m: 2193, slope_degrees: 12, aspect: '东南', aspect_degrees: 135, relief_500m_m: 180, resolution_m: 90 },
+        geology: { name: '测试地层', lithology: '石灰岩', age: '泥盆纪' },
       },
     },
   };
@@ -212,6 +212,9 @@ test('场地引用定位原始资料，地图不可用和调整面板不影响�
   await expect(inspector(page).getByText('未配置高德地图密钥，暂时无法加载地图。')).toBeVisible();
   await expect(inspector(page).getByText(/以下测点坐标缺失或超出经纬度范围，未绘制：坐标填反的测试点/)).toBeVisible();
   await expect(inspector(page).getByText('30.000000, 121.000000')).toBeVisible();
+  await expect(inspector(page).getByText('高程 2193 m · 坡度 12° · 坡向 东南 · 500 m 起伏 180 m')).toBeVisible();
+  await expect(inspector(page).getByText('测试地层 · 石灰岩')).toBeVisible();
+  await expect(inspector(page).getByText('构造', { exact: true })).toHaveCount(0);
   await expect(inspector(page).getByRole('radio', { name: '卫星图', exact: true })).toBeChecked();
   const roads = inspector(page).getByRole('checkbox', { name: '道路与地名', exact: true });
   await expect(roads).not.toBeChecked();

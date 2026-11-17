@@ -29,6 +29,19 @@ journalctl -u lma-certbot.service --since '2 days ago'
 /opt/lma-certbot/bin/certbot certificates
 ~~~
 
+## 生产外部数据服务 DNS
+
+腾讯云主机使用 systemd-resolved。Open-Meteo 域名按路由交给 Cloudflare 的两个递归 DNS（1.1.1.1、1.0.0.1）；eth0 的 `~.` 路由让其他域名继续走原腾讯云 DNS。配置只指定解析器，不保存天气服务 IP，不修改 HTTPS 域名、SNI 或证书校验。Docker 当前通过宿主机 stub 转发外部解析，容器内仍保留 Docker 服务名解析。
+
+- [解析路由配置](../ops/dns/open-meteo-resolved.conf) 安装到 `/etc/systemd/resolved.conf.d/60-lma-open-meteo.conf`。
+- [默认路由配置](../ops/dns/default-route.network.conf) 安装到 `/etc/systemd/network/10-netplan-eth0.network.d/60-lma-default-dns-route.conf`。该路径对应当前 `networkctl status eth0` 显示的 Network File；更换网卡或基础网络文件时需同步核对。
+- 两份配置必须配套：仅增加全局 DNS 而不指定 eth0 的 `~.`，可能影响其他域名。自动发布不覆盖主机配置。
+- 生效使用 `systemctl restart systemd-resolved`、`networkctl reload`、`resolvectl domain eth0 '~.'` 和 `resolvectl flush-caches`；持久文件供服务重启及主机重启时加载。无需重启 Docker 或修改网卡地址、网关。
+- 检查 `resolvectl status` 的全局 `~open-meteo.com` 与 eth0 的 `~.`，并从 API 容器调用天气、地形和地质查询。只验证宿主机 curl 不足以证明运行容器恢复。
+- 回退时只移除上述两份本次添加的配置文件，重启 resolved、执行 `networkctl reload` 与 `resolvectl domain eth0 ''` 并清缓存，恢复原腾讯云 DNS；不得覆盖其他主机配置。
+
+该配置解决已复现的解析节点 TLS 可达性差异，不保证外部服务永久可用。若再次超时，先核对动态解析、TCP 与 TLS 阶段，再检查供应商状态，不固定某次成功的服务 IP。
+
 ## GitHub Actions
 
 .github/workflows/ci-deploy.yml 在面向 main 的 PR、推送 main 和手动触发时运行测试与部署；只改 docs/、README.md 或 AGENTS.md 时不触发，提示词 Markdown 不在排除范围内。.github/workflows/docs-check.yml 对所有面向 main 的推送和 PR 运行文档检查，不部署。

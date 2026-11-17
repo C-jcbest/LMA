@@ -100,9 +100,7 @@ const isArtifactData = (kind: ToolArtifactKind, value: unknown) => {
         value.coordinate_system === 'WGS84' &&
         isStation(value.center_station) &&
         Array.isArray(value.group_stations) &&
-        value.group_stations.every(isStation) &&
-        isRecord(value.faults) &&
-        isRecord(value.layer_sources)
+        value.group_stations.every(isStation)
       );
   }
 };
