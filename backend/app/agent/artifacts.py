@@ -171,7 +171,6 @@ class WeatherWindowArtifact(ArtifactModel):
     expected_hours: int
     complete: bool
     precipitation: float | None = None
-    note: str
 
 
 class DailyMaximumArtifact(ArtifactModel):

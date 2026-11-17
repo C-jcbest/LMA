@@ -129,17 +129,17 @@ describe('测点时间轴数据', () => {
     expect([middle, value, start, end]).toEqual([day('2026-11-02T12:00:00'), 7, day('2026-11-02T00:00:00'), day('2026-11-03T00:00:00')]);
   });
 
-  it('数值检测到的台阶标在对应方向曲线的发生时刻，附幅度与后续状态', () => {
+  it('数值检测到的台阶标在对应方向曲线的发生时刻，附方向、幅度与时刻', () => {
     const option = buildTimelineOption({
       data: series({
-        features: { n: { events: [{ time: '2026-11-03 00:00:00', step_mm: 4, status: '持续' }] } },
+        features: { n: { events: [{ time: '2026-11-03 00:00:00', step_mm: 4 }] } },
       }),
       rainfall: [],
       peers: [],
       mode: 'components',
     }, colors) as Record<string, any>;
     const north = option.series[1];
-    expect(north.markPoint.data).toEqual([{ name: '北向台阶 +4.0 mm · 11-03 00:00 · 持续', coord: ['2026-11-03 00:00:00', 4] }]);
+    expect(north.markPoint.data).toEqual([{ name: '北向台阶 +4.0 mm · 11-03 00:00', coord: ['2026-11-03 00:00:00', 4] }]);
     expect(option.series[2].markPoint).toBeUndefined();
   });
 

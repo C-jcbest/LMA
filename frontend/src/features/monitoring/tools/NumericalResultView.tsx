@@ -49,6 +49,13 @@ const featureRow = (label: string, feature: Feature): ReactNode[] => [
 
 const FEATURE_HEAD = ['方向', '累计 (mm)', '本窗口 (mm)', '速率 (mm/天)', '最大单步 (mm)', '有效点'];
 
+/** 已观察到的保持时长；之后出现缺测时注明，避免把未观察的时段读成仍在保持。 */
+const heldText = (event: Feature) => {
+  const held = `${formatNumber(event.held_hours, 0)} 小时`;
+  const hasLaterGap = Array.isArray(event.later_unknown_intervals) && event.later_unknown_intervals.length > 0;
+  return hasLaterGap ? `${held}，之后有缺测` : held;
+};
+
 const eventsOf = (features: Record<string, Feature>) =>
   Object.entries(features).flatMap(([axis, feature]) => (
     Array.isArray(feature.events)
@@ -66,9 +73,6 @@ export function NumericalResultView({ data }: { data: GnssArtifactData }) {
   const windowComparisons = Object.entries(features)
     .map(([axis]) => [axis, comparisons[axis]] as const)
     .filter((entry): entry is readonly [string, Feature] => isRecord(entry[1]) && isRecord(entry[1].first) && isRecord(entry[1].second));
-  const limitations = [...new Set(Object.values(features).flatMap((feature) => (
-    Array.isArray(feature.limitations) ? feature.limitations.map(String) : []
-  )))];
 
   return (
     <div className="space-y-5 text-sm wrap-break-word">
@@ -83,13 +87,14 @@ export function NumericalResultView({ data }: { data: GnssArtifactData }) {
           <h4 className="font-medium">台阶候选</h4>
           <SimpleTable
             label="台阶候选"
-            head={['方向', '发生时刻', '单步 (mm)', '后续', '已观察保持']}
+            head={['方向', '发生时刻', '单步 (mm)', '相对跳前 (mm)', '末段相对跳前 (mm)', '已观察保持']}
             rows={events.map(({ axis, event }) => [
               AXIS_NAMES[axis] ?? axis,
               String(event.time ?? '—').slice(0, 16),
               formatSignedValue(event.step_mm),
-              `${String(event.status ?? '—')}${Array.isArray(event.later_unknown_intervals) && event.later_unknown_intervals.length > 0 ? '，之后有缺测' : ''}`,
-              `${formatNumber(event.held_hours, 0)} 小时`,
+              formatSignedValue(event.level_shift_mm),
+              formatSignedValue(event.tail_shift_mm),
+              heldText(event),
             ])}
           />
         </section>
@@ -109,9 +114,6 @@ export function NumericalResultView({ data }: { data: GnssArtifactData }) {
               formatNumber(windows.speed_ratio, 2),
             ])}
           />
-          {windowComparisons.map(([axis, windows]) => typeof windows.limitation === 'string' && (
-            <p key={axis} className="text-xs text-muted-foreground">{windows.limitation}</p>
-          ))}
         </section>
       )}
 
@@ -130,12 +132,6 @@ export function NumericalResultView({ data }: { data: GnssArtifactData }) {
             />
           ))}
         </section>
-      )}
-
-      {limitations.length > 0 && (
-        <ul className="space-y-1 text-xs text-muted-foreground">
-          {limitations.map((note) => <li key={note}>{note}</li>)}
-        </ul>
       )}
     </div>
   );

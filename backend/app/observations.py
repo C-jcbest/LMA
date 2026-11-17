@@ -145,7 +145,6 @@ def observation_quality(points, begin_time, end_time, *, frequency_minutes=60, s
         "off_calendar": sum(time not in expected_set for time in by_time),
         "gaps": gaps[:100], "gap_count": len(gaps), "gaps_truncated": len(gaps) > 100,
         "cleaning": cleaning or {},
-        "basis": "请求采样日历；质量在展示抽稀前计算，抽稀不计作平台缺测",
     }
 
 

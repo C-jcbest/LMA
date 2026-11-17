@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { decodeToolArtifact } from '../src/features/monitoring/artifacts';
@@ -55,7 +55,8 @@ describe('会话关键路径集成回归', () => {
   it('数值特征展示两窗口和共同覆盖，缺失速度不显示为零', () => {
     const feature = { count: 4, net_change_mm: 3, robust_slope_mm_day: null,
       begin_time: '2026-11-02 00:00:00', end_time: '2026-11-03 00:00:00',
-      jump_persistence: '待观察', method: 'Theil–Sen', limitations: [] };
+      events: [{ time: '2026-11-02 12:00:00', step_mm: 8, level_shift_mm: 7.6, tail_shift_mm: 0.4,
+        held_hours: 2, later_unknown_intervals: [{ from: '2026-11-02 18:00:00', to: '2026-11-02 21:00:00' }] }] };
     render(<NumericalResultView data={{
       station_uuid: 'a', station_name: '测点A', points: [], timezone: 'Asia/Shanghai',
       total_points: 0, returned_points: 0, downsampled: false,
@@ -63,7 +64,7 @@ describe('会话关键路径集成回归', () => {
       sampling: { mode: 'hourly', points_limit: 0 },
       begin_time: '2026-11-01 00:00:00', end_time: '2026-11-04 00:00:00',
       features: { n: feature }, comparisons: {
-        n: { first: feature, second: feature, velocity_difference_mm_day: null, speed_ratio: null, limitation: '倍率不构成加速结论' },
+        n: { first: feature, second: feature, velocity_difference_mm_day: null, speed_ratio: null },
         station_names: { b: '测点B' }, common_period: { n: { b: feature } },
       },
     }} />);
@@ -73,7 +74,12 @@ describe('会话关键路径集成回归', () => {
     // 缺失速度显示为“—”，不显示为 0。
     expect(screen.getAllByText('—（描述）').length).toBeGreaterThanOrEqual(4);
     expect(screen.queryByText('0.00')).toBeNull();
-    expect(screen.getByText('倍率不构成加速结论')).toBeVisible();
+    // 台阶候选只展示数值事实，之后的缺测单独标注，不出现服务端判定标签。
+    const steps = screen.getByRole('table', { name: '台阶候选' });
+    expect(within(steps).getByText('+8.0')).toBeVisible();
+    expect(within(steps).getByText('+7.6')).toBeVisible();
+    expect(within(steps).getByText('+0.4')).toBeVisible();
+    expect(within(steps).getByText('2 小时，之后有缺测')).toBeVisible();
   });
 
   it('结论缺少时间窗或依据时拒绝渲染，不让畸形字段使界面崩溃', () => {
@@ -130,7 +136,6 @@ describe('会话关键路径集成回归', () => {
               expected_hours: 24,
               complete: false,
               precipitation: null,
-              note: '暂无数据',
             },
             history_total_precipitation: null,
             forecast_total_precipitation: null,

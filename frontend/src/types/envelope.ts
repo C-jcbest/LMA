@@ -174,7 +174,6 @@ export interface WeatherArtifactData {
       expected_hours: number;
       complete: boolean;
       precipitation?: number | null;
-      note: string;
     };
     history_total_precipitation?: number | null;
     history_max_daily_precipitation?: { date: string; value: number } | null;

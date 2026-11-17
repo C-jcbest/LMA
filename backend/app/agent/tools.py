@@ -24,10 +24,14 @@ _MAX_REQUESTED_POINTS = 1000
 _MAX_EVENTS_FOR_MODEL = 5
 # 这些字段只服务于复核界面或审计，模型判断不需要，避免占用上下文。
 _FEATURE_FIELDS_FOR_MODEL = (
-    "metric_name", "count", "begin_time", "end_time", "effective_span_hours", "baseline",
+    "metric_name", "count", "begin_time", "end_time", "effective_span_hours",
     "cum_start_mm", "cum_end_mm", "net_change_mm", "robust_slope_mm_day", "trend_supported",
-    "residual_noise_mm", "max_step_mm", "max_step_time", "level_shift_mm", "jump_persistence",
-    "event_count", "limitations",
+    "residual_noise_mm", "max_step_mm", "max_step_time", "level_shift_mm",
+    "event_count", "gap_crossing_count",
+)
+_EVENT_FIELDS_FOR_MODEL = (
+    "time", "step_mm", "level_shift_mm", "followup_shifts_mm", "tail_shift_mm",
+    "observed_until", "held_until", "held_hours",
 )
 
 
@@ -81,13 +85,33 @@ async def get_displacement(
 ):
     """查询移动站任意时间窗的 GNSS 位移，并直接给出数值特征。
 
-    每个方向（北向 N、东向 E、垂向 U、水平合成 H、三维合成 D）给出：相对平台固定参考的累计偏移、
-    窗口净变化、Theil–Sen 鲁棒趋势、最大单步变化与候选跳变（是否维持或回落）、本窗残差离散；
-    以及按请求采样日历统计的缺测。可选前后分段比较速率、与同组测点按共同有效时刻对比。
+    这些特征由本系统根据平台观测计算，不是监测平台给出的判定。位移单位 mm，速率 mm/day，缺失值为 null 或省略，不是 0。
+    可选前后分段比较速率（split_time）、与同组测点按共同有效时刻对比（compare_stations）。
 
-    这些特征由本系统根据平台观测计算，不是监测平台给出的判定。位移单位 mm，速率 mm/day。
-    点数较少时附逐点相对位移（dn/de/du）；需要逐条查看、
-    自定义统计时把本结果的依据编号交给 compute 计算，不必重新取数。
+    结果字段：
+    - reference_m：获取时平台登记的固定参考坐标（m），平台不提供变更历史；为 null 的方向累计偏移未知。
+    - quality：按请求采样日历统计，expected_samples 应有样本数，missing_samples 缺测数，gaps 为连续缺测段。
+    - features 按方向（n 北向、e 东向、u 垂向、h 水平合成、d 三维合成）给出：
+      count 有效点数；effective_span_hours 首末有效点跨度；
+      cum_start_mm / cum_end_mm 窗口首末点相对固定参考的累计偏移；net_change_mm 窗口末点减首点；
+      robust_slope_mm_day Theil–Sen 鲁棒速率；trend_supported 样本数、跨度与完整度是否足以把速率当作趋势，
+      为 false 时速率只是描述；residual_noise_mm 去趋势后残差的稳健离散，只描述本窗波动，不是仪器精度；
+      max_step_mm 相邻采样间最大单步变化的绝对值；gap_crossing_count 跨越缺测的相邻间隔数，这些间隔不计入单步；
+      event_count 候选跳变总数（单步明显超出本窗噪声），events 只列前 5 个，level_shift_mm 为其中最大候选的偏移。
+    - events 中每个候选跳变：time 跳后首点时刻；step_mm 该单步变化；
+      以下偏移都是相对跳前水平（跳前至多 6 个连续点的中位数）的差值，与累计偏移无关：
+      level_shift_mm 跳后首点的偏移；followup_shifts_mm 跳后至多 5 个连续观测各自的偏移；
+      tail_shift_mm 跳后连续段（到缺测或下一个候选为止）末尾 3 点中位数的偏移，跳后不足 3 点时省略；
+      observed_until 跳后连续段的最后时刻；held_until / held_hours 跳后各点与跳后首点之差保持在容差内
+      （3 倍噪声与偏移 20% 中的较大者）的最后时刻与时长；later_gap_count 跳后到窗口末尾的缺测段数。
+      是维持、回落还是继续变化，据这些数值判断。
+    - split：分段比较时各方向的 first / second 两段特征（字段同上），velocity_difference_mm_day 后段减前段速率，
+      comparison_supported 两段都满足 trend_supported。
+    - common_period：同组对比时按各测点都有有效观测的同一时刻计算的特征，failures 为未取得数据的测点。
+    - horizontal_direction：方位角 azimuth_deg 从正北顺时针，magnitude_mm 为长度；
+      cumulative 为相对固定参考的累计水平位移，window_change 为本窗口首末水平变化。
+    - points：点数较少时附逐点相对固定参考的位移（dn/de/du）。需要逐条查看、
+      自定义统计时把本结果的依据编号交给 compute 计算，不必重新取数。
     """
     async with monitoring() as data:
         station = await data.resolve_station(station_name_or_uuid)
@@ -159,7 +183,17 @@ def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
 
 def _rounded(value):
     # 位移以 mm 计，0.001 mm 以下只是浮点运算噪声，保留会让模型复述出 1.9999999 这类数字。
-    return round(value, 3) if isinstance(value, float) else value
+    if isinstance(value, float):
+        return round(value, 3)
+    if isinstance(value, list):
+        return [_rounded(item) for item in value]
+    return value
+
+
+def _model_event(event: dict) -> dict:
+    compact = {key: _rounded(event[key]) for key in _EVENT_FIELDS_FOR_MODEL if event.get(key) is not None}
+    compact["later_gap_count"] = len(event["later_unknown_intervals"])
+    return compact
 
 
 def _model_feature(feature: dict) -> dict:
@@ -169,10 +203,7 @@ def _model_feature(feature: dict) -> dict:
     }
     events = feature.get("events") or []
     if events:
-        compact["events"] = [
-            {key: _rounded(event[key]) for key in ("time", "step_mm", "level_shift_mm", "status", "held_until", "held_hours")}
-            for event in events[:_MAX_EVENTS_FOR_MODEL]
-        ]
+        compact["events"] = [_model_event(event) for event in events[:_MAX_EVENTS_FOR_MODEL]]
     return compact
 
 
@@ -199,10 +230,7 @@ def _model_facts(series: DisplacementSeries, features: dict, comparisons: dict, 
             "begin_time": series.begin_time, "end_time": series.end_time,
             "sampling": series.sampling, "sample_times": series.sample_times, "acquired_at": series.acquired_at,
         },
-        "reference": {
-            axis: "平台固定参考" if value is not None else "固定参考缺失，累计偏移未知"
-            for axis, value in series.reference.items()
-        },
+        "reference_m": series.reference,
         "quality": _model_quality(series.quality),
         "features": {axis: _model_feature(feature) for axis, feature in features.items()},
     }
@@ -213,10 +241,7 @@ def _model_facts(series: DisplacementSeries, features: dict, comparisons: dict, 
         "window_change": horizontal_direction(north.get("net_change_mm"), east.get("net_change_mm")),
     }
     if any(direction.values()):
-        facts["horizontal_direction"] = {
-            **{key: value for key, value in direction.items() if value},
-            "convention": "方位角从正北顺时针；cumulative 为相对固定参考的累计水平位移，window_change 为本窗口首末水平变化",
-        }
+        facts["horizontal_direction"] = {key: value for key, value in direction.items() if value}
     if any(axis in comparisons for axis in features):
         facts["split"] = {
             axis: {

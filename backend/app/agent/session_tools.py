@@ -23,7 +23,6 @@ def station_history_tool(storage):
         return json.dumps({
             "station": {"station_uuid": station.station_uuid, "station_name": station.station_name},
             **history,
-            "note": "以往结论和巡检初筛反映当时的数据，不代表当前状况",
         }, ensure_ascii=False, default=str)
 
     return get_station_history

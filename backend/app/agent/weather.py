@@ -158,7 +158,6 @@ def _recent_precipitation(payload: dict, now: datetime) -> dict:
         "expected_hours": 24,
         "complete": len(samples) == 24,
         "precipitation": round(sum(samples.values()), 3) if len(samples) == 24 else None,
-        "note": "来自天气服务小时数据；缺测时不输出完整24小时总量，不等同于现场雨量计实测。",
     }
 
 

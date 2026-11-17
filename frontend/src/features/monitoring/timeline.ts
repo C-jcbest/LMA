@@ -202,7 +202,6 @@ export interface StepEvent {
   axis: Axis | 'h';
   time: string;
   stepMillimeters: number;
-  status: string;
 }
 
 /** 服务端在本窗口检测到的台阶候选（数值特征 events），不是视觉判断。 */
@@ -213,9 +212,9 @@ export function stepEventsOf(data: GnssArtifactData, axes: readonly (Axis | 'h')
     if (!Array.isArray(axisEvents)) continue;
     for (const event of axisEvents) {
       if (typeof event !== 'object' || event === null) continue;
-      const { time, step_mm: step, status } = event as Record<string, unknown>;
+      const { time, step_mm: step } = event as Record<string, unknown>;
       if (typeof time === 'string' && typeof step === 'number') {
-        events.push({ axis, time, stepMillimeters: step, status: typeof status === 'string' ? status : '' });
+        events.push({ axis, time, stepMillimeters: step });
       }
     }
   }
@@ -226,7 +225,7 @@ const AXIS_LABELS: Record<Axis | 'h', string> = { n: '北向', e: '东向', u: '
 
 
 export const stepEventText = (event: StepEvent) =>
-  `${AXIS_LABELS[event.axis]}台阶 ${formatSigned(event.stepMillimeters, MILLIMETER_DIGITS)} mm · ${event.time.slice(5, 16)}${event.status ? ` · ${event.status}` : ''}`;
+  `${AXIS_LABELS[event.axis]}台阶 ${formatSigned(event.stepMillimeters, MILLIMETER_DIGITS)} mm · ${event.time.slice(5, 16)}`;
 
 export interface ChartColors {
   text: string;

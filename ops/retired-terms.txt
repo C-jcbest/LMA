@@ -24,3 +24,4 @@ FaultArtifact  # 2026-11-17 清理旧地图构造线展示契约，保留地质�
 LayerSourcesArtifact  # 2026-11-17 删除旧地图瓦片来源契约
 layer_sources  # 2026-11-17 删除旧地图瓦片来源字段
 geology_tiles  # 2026-11-17 删除旧地图地质瓦片地址
+jump_persistence  # 跳变保持判定标签，2026-11-17 改为数值事实，由模型判断

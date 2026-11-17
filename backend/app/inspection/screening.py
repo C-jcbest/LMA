@@ -202,10 +202,7 @@ def _cumulative_offset(points: Sequence[GnssDataPoint], reference: dict[str, flo
     valid_times = [time for time in observed_at.values() if time is not None]
     if not valid_times:
         return None
-    return {
-        **offsets, 'observed_at': max(valid_times), 'observed_at_by_metric': observed_at,
-        'baseline': '获取时平台登记的固定初始坐标；未提供历史变更时间',
-    }
+    return {**offsets, 'observed_at': max(valid_times), 'observed_at_by_metric': observed_at}
 
 
 def _horizontal_trend(north: AxisSeries, east: AxisSeries) -> list[float | None]:

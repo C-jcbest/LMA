@@ -16,7 +16,12 @@ METRIC_NAMES = {
 }
 
 
+# 跳变后逐点给出的连续观测数；足以区分孤立尖峰与保持，又不把长序列塞给模型。
+_FOLLOWUP_POINTS = 5
+
+
 def _candidate_events(moments, mm, adjacent):
+    """候选跳变只给数值事实；是否保持、回落或继续变化由模型结合上下文判断。"""
     steps = [mm[index + 1] - mm[index] for index in sorted(adjacent)]
     center = median(steps)
     noise = 1.4826 * median(abs(step - center) for step in steps)
@@ -33,9 +38,8 @@ def _candidate_events(moments, mm, adjacent):
             if after_end in candidates:
                 break
             after_end += 1
-        before = mm[before_start:index + 1]
+        previous_level = median(mm[before_start:index + 1])
         after = mm[index + 1:after_end + 1]
-        previous_level = median(before)
         shift = mm[index + 1] - previous_level
         tolerance = max(3 * noise, .2 * abs(shift), 1e-6)
         held_end = index + 1
@@ -43,22 +47,12 @@ def _candidate_events(moments, mm, adjacent):
             if abs(mm[following] - mm[index + 1]) > tolerance:
                 break
             held_end = following
-        status = '待观察'
-        if len(before) >= 3 and len(after) >= 3:
-            tail = median(after[-3:])
-            if abs(tail - previous_level) < abs(shift) / 2:
-                status = '回落'
-            elif held_end - index >= 3:
-                status = '持续'
-            elif (tail - mm[index + 1]) * shift > 0:
-                status = '继续变化，未稳定'
-            else:
-                status = '水平变化，需复核'
-        # 相邻反向候选可构成孤立尖峰；仍保留两个单步，不把回落当持续台阶。
-        recovery = mm[index + 2:index + 5]
-        if len(before) >= 3 and len(recovery) >= 3 and all(i in adjacent for i in range(index + 1, index + 4)):
-            if all(abs(value - previous_level) <= tolerance for value in recovery):
-                status = '回落'
+        # 跳后连续观测相对跳前水平的偏移，不受后续候选截断，孤立尖峰的回落也能直接看到。
+        followup_end = index + 1
+        while followup_end < len(mm) - 1 and followup_end in adjacent and followup_end - index < _FOLLOWUP_POINTS:
+            followup_end += 1
+        followup_shifts = [mm[following] - previous_level for following in range(index + 1, followup_end + 1)]
+        tail_shift = median(after[-3:]) - previous_level if len(after) >= 3 else None
         unknown = []
         for gap in range(index + 1, len(mm) - 1):
             if gap not in adjacent:
@@ -66,13 +60,13 @@ def _candidate_events(moments, mm, adjacent):
         events.append({
             'time': moments[index + 1].strftime(TIME_FORMAT),
             'step_mm': mm[index + 1] - mm[index], 'level_shift_mm': shift,
-            'noise_mm': noise, 'candidate_threshold_mm': threshold, 'status': status,
+            'followup_shifts_mm': followup_shifts, 'tail_shift_mm': tail_shift,
+            'noise_mm': noise, 'candidate_threshold_mm': threshold,
             'observed_from': moments[index + 1].strftime(TIME_FORMAT),
             'observed_until': moments[after_end].strftime(TIME_FORMAT),
             'held_until': moments[held_end].strftime(TIME_FORMAT),
             'held_hours': (moments[held_end] - moments[index + 1]).total_seconds() / 3600,
             'followup_count': len(after), 'later_unknown_intervals': unknown[:100],
-            'limitation': '仅描述候选附近已观察区间；缺测期间未知，候选不代表灾害或基准变化成因',
         })
     return events
 
@@ -80,6 +74,7 @@ def _candidate_events(moments, mm, adjacent):
 def axis_features(times, values, base=None, cadence_hours=1.0):
     counts = Counter(times)
     valid = []
+    duplicate_timestamps = sum(count > 1 for count in counts.values())
     for time, value in zip(times, values):
         moment = observation_time(time)
         number = finite_number(value)
@@ -90,18 +85,13 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     result = {
         'count': len(valid), 'net_change_mm': None, 'robust_slope_mm_day': None,
         'max_step_mm': None, 'max_step_time': None, 'level_shift_mm': None,
-        'jump_persistence': '样本不足', 'cum_start_mm': None, 'cum_end_mm': None,
-        'method': 'Theil–Sen；最多300个等索引样本；不插值；重复时间剔除',
+        'cum_start_mm': None, 'cum_end_mm': None,
         'units': {'displacement': 'mm', 'velocity': 'mm/day'},
         'cadence_hours': cadence_hours, 'effective_span_hours': 0,
-        'baseline': '固定初始坐标' if base is not None else '固定参考缺失；仅计算窗口变化',
-        'reference_value_m': base, 'trend_supported': False, 'events': [], 'limitations': [],
-        'residual_noise_mm': None,
+        'reference_value_m': base, 'trend_supported': False, 'events': [], 'event_count': 0,
+        'residual_noise_mm': None, 'duplicate_timestamp_count': duplicate_timestamps, 'gap_crossing_count': 0,
     }
-    if any(count > 1 for count in counts.values()):
-        result['limitations'].append('重复时间已剔除')
     if not valid:
-        result['limitations'].append('没有有效观测')
         return result
     moments, numbers = zip(*valid)
     days = [(moment - moments[0]).total_seconds() / 86400 for moment in moments]
@@ -111,7 +101,6 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     if base is not None:
         result.update(cum_start_mm=(numbers[0] - base) * 1000, cum_end_mm=(numbers[-1] - base) * 1000)
     if len(valid) < 2:
-        result['limitations'].append('有效观测不足两点')
         return result
     sample_count = min(len(mm), 300)
     indices = sorted({round(i * (len(mm) - 1) / (sample_count - 1)) for i in range(sample_count)})
@@ -121,15 +110,12 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     residuals = [value - result['robust_slope_mm_day'] * day for day, value in zip(days, mm)]
     residual_center = median(residuals)
     result['residual_noise_mm'] = 1.4826 * median(abs(value - residual_center) for value in residuals)
-    result['limitations'].append('残差MAD仅描述本窗离散，不代表传感器精度；周期、台阶及基准变化仍需分别核查')
     expected = max(1, round(days[-1] * 24 / cadence_hours) + 1)
     result['trend_supported'] = len(valid) >= 7 and days[-1] * 24 >= cadence_hours * 6 and len(valid) / expected >= .5
-    if not result['trend_supported']:
-        result['limitations'].append('斜率仅为描述统计，样本或有效跨度不足以支持持续趋势')
+    # 相邻间隔超过 1.5 个采样周期视为跨越缺测；跨越差值不计入单步和连续保持区间。
     adjacent = {index for index in range(len(days) - 1)
                 if 0 < (days[index + 1] - days[index]) * 24 <= cadence_hours * 1.5}
-    if len(adjacent) < len(days) - 1:
-        result['limitations'].append('存在缺测跨越；跨越差值不计入单步和连续保持区间')
+    result['gap_crossing_count'] = len(days) - 1 - len(adjacent)
     if not adjacent:
         return result
     index = max(sorted(adjacent), key=lambda i: abs(mm[i + 1] - mm[i]))
@@ -138,15 +124,11 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
         result['max_step_time'] = moments[index + 1].strftime(TIME_FORMAT)
     events = _candidate_events(moments, mm, adjacent)
     result['event_count'] = len(events)
+    # event_count 是全部候选数，events 最多保留前 20 个。
     result['events'] = events[:20]
-    if len(events) > 20:
-        result['limitations'].append('候选超过20个；仅展示前20个，请缩小窗口复核')
     if events:
         primary = max(events, key=lambda event: abs(event['step_mm']))
-        result['jump_persistence'] = primary['status']
         result['level_shift_mm'] = primary['level_shift_mm']
-    else:
-        result['jump_persistence'] = '未见显著突跳候选'
     return result
 
 
@@ -161,7 +143,7 @@ def horizontal_direction(north_mm, east_mm):
 
 
 def compare_windows(first, second):
-    """保留覆盖和证据条件；倍率本身不构成持续加速结论。"""
+    """两段速率差与倍率；两段是否都足以支持趋势由 comparison_supported 给出。"""
     left = first.get('robust_slope_mm_day')
     right = second.get('robust_slope_mm_day')
     return {
@@ -169,7 +151,6 @@ def compare_windows(first, second):
         'velocity_difference_mm_day': None if left is None or right is None else right - left,
         'speed_ratio': None if left in (None, 0) or right is None else abs(right / left),
         'comparison_supported': first.get('trend_supported', False) and second.get('trend_supported', False),
-        'limitation': '窗口采样、覆盖、噪声、跨度和方向需同时核查；两窗速度差不证明持续加速',
     }
 
 

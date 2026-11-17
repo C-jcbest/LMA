@@ -49,8 +49,11 @@ class NumericalTests(unittest.TestCase):
         values = [100 if day < 5 else 100.01 for day in range(26)]
         original = axis_features(times, values, cadence_hours=24)
         extended = axis_features([*times, (NOW + timedelta(days=28)).strftime('%Y-%m-%d %H:%M:%S')], [*values, 100.01], cadence_hours=24)
-        self.assertEqual(original['jump_persistence'], '持续')
-        self.assertEqual(extended['jump_persistence'], '持续')
+        for result in (original, extended):
+            event = result['events'][0]
+            self.assertAlmostEqual(event['level_shift_mm'], 10)
+            self.assertAlmostEqual(event['tail_shift_mm'], 10)
+            self.assertEqual([round(value, 6) for value in event['followup_shifts_mm']], [10] * 5)
         self.assertEqual(extended['events'][0]['held_until'], times[-1])
         self.assertEqual(extended['events'][0]['held_hours'], 20 * 24)
         self.assertEqual(len(extended['events'][0]['later_unknown_intervals']), 1)
@@ -104,13 +107,17 @@ class NumericalTests(unittest.TestCase):
         self.assertTrue(axis_features(times, rising)['trend_supported'])
         self.assertGreater(axis_features(times, rising)['net_change_mm'], 0)
         terminal = [100.0] * 24 + [100.1]
-        self.assertEqual(axis_features(times, terminal)['jump_persistence'], '待观察')
+        event = axis_features(times, terminal)['events'][0]
+        self.assertEqual(event['followup_count'], 1)
+        self.assertIsNone(event['tail_shift_mm'])
 
     def test_isolated_spike_is_not_persistent_step(self):
         times = [(NOW + timedelta(hours=i)).strftime('%Y-%m-%d %H:%M:%S') for i in range(25)]
         values = [100.0] * 25
         values[10] = 100.1
-        self.assertEqual(axis_features(times, values)['events'][0]['status'], '回落')
+        # 尖峰的回落由跳后连续观测直接体现，不被紧随的反向候选截断。
+        spike = axis_features(times, values)['events'][0]
+        self.assertEqual([round(value, 6) for value in spike['followup_shifts_mm']], [100, 0, 0, 0, 0])
         self.assertIsNone(axis_features(times, [100.0] * 25)['max_step_time'])
 
     def test_unknown_is_not_zero(self):
@@ -123,7 +130,9 @@ class NumericalTests(unittest.TestCase):
         result = axis_features(times, [0, 10, 20, 30])
         self.assertEqual(result['count'], 2)
         self.assertIsNone(result['max_step_mm'])
-        self.assertEqual(result['jump_persistence'], '样本不足')
+        self.assertEqual(result['event_count'], 0)
+        self.assertEqual(result['duplicate_timestamp_count'], 1)
+        self.assertEqual(result['gap_crossing_count'], 1)
 
     def test_trend_units_and_velocity_comparison(self):
         times = [(NOW + timedelta(days=i)).strftime('%Y-%m-%d %H:%M:%S') for i in range(10)]
@@ -209,6 +218,16 @@ class DisplacementToolTests(unittest.IsolatedAsyncioTestCase):
         common = result.artifact['data']['comparisons']['common_period']['n']
         self.assertEqual(common[STATION_A.station_uuid]['count'], 5)
         self.assertAlmostEqual(common[STATION_B.station_uuid]['net_change_mm'], 8)
+
+    async def test_model_receives_step_facts_without_server_verdict(self):
+        hourly = [point(NOW - timedelta(hours=i), 100.01 if i < 12 else 100) for i in range(24)]
+        platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
+        result = await displacement(platform, station_name_or_uuid='测试点', **window(hours=23))
+        event = json.loads(result.content)['features']['n']['events'][0]
+        self.assertEqual(event['followup_shifts_mm'], [10.0] * 5)
+        self.assertEqual(event['tail_shift_mm'], 10.0)
+        self.assertEqual(event['later_gap_count'], 0)
+        self.assertNotIn('status', event)
 
     async def test_base_station_is_not_treated_as_missing_displacement(self):
         base = Station(station_uuid='33333333-3333-3333-3333-333333333333', station_name='基准', station_type=1,
