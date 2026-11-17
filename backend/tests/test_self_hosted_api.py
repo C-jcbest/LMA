@@ -70,6 +70,48 @@ class SelfHostedApiTests(unittest.TestCase):
     def state(self):
         return self.client.get(f"/sessions/{self.session_id}/state").json()
 
+    def test_tracing_matches_sse_and_stored_run_status_without_changing_history(self):
+        from app.observability import AgentTracing
+        from test_observability import attributes, trace_receiver
+
+        with trace_receiver() as receiver:
+            settings = self.settings.model_copy(update={
+                "langfuse_enabled": True,
+                "langfuse_base_url": f"http://127.0.0.1:{receiver.server_port}",
+                "langfuse_public_key": f"pk-lf-{uuid4()}",
+                "langfuse_secret_key": "sk-lf-synthetic",
+            })
+            tracing = AgentTracing(settings)
+            self.app.state.tracing = tracing
+            try:
+                success = self.run_message()
+                self.assertIn("event: values", success.text)
+                completed = self.state()
+                self.assertEqual(completed["latest_run"]["status"], "success")
+                self.assertEqual(completed["values"]["messages"][-1]["content"], [{"type": "text", "text": "已完成分析"}])
+
+                self.model.script = [ValueError("synthetic model failure")]
+                failed = self.run_message("继续查询")
+                self.assertIn("event: error", failed.text)
+                errored = self.state()
+                self.assertEqual(errored["latest_run"]["status"], "error")
+                tracing.client.flush()
+                spans = []
+                while not receiver.spans.empty():
+                    spans.append(receiver.spans.get_nowait())
+                roots = [attributes(span) for span in spans if span.name == "lma-investigation"]
+                self.assertEqual(len(roots), 2)
+                by_run = {json.loads(root["langfuse.observation.metadata.lma_run_id"]): root for root in roots}
+                for state in (completed, errored):
+                    stored = state["latest_run"]
+                    root = by_run[stored["id"]]
+                    self.assertEqual(root["session.id"], self.session_id)
+                    self.assertEqual(json.loads(root["langfuse.observation.metadata.lma_run_status"]), stored["status"])
+                self.assertNotIn("callbacks", json.dumps(errored))
+            finally:
+                tracing.client.shutdown()
+                self.app.state.tracing = AgentTracing(self.settings)
+
     def test_search_covers_unloaded_titles_and_station_names(self):
         marker = str(uuid4())
         self.client.patch(f'/sessions/{self.session_id}', json={'name': f'历史分析-{marker}'})

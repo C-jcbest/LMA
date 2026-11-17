@@ -29,6 +29,19 @@ journalctl -u lma-certbot.service --since '2 days ago'
 /opt/lma-certbot/bin/certbot certificates
 ~~~
 
+## Langfuse Cloud 调查追踪
+
+主调查可通过 Langfuse Cloud 查看每轮模型与工具调用、耗时、token 用量和错误。LMA 主机不增加 Langfuse、ClickHouse 等服务；配置说明以 [Settings](../backend/app/config.py) 和 [.env.example](../backend/.env.example) 为准。
+
+1. 在 Langfuse Cloud 创建自己的组织和 LMA 项目，选择数据区域；在项目设置的 API Keys 创建一组项目公钥与私钥。区域地址必须与密钥所属项目一致，不自动切换区域。
+2. 在生产 `/opt/lma/shared/.env` 配置 `LANGFUSE_ENABLED=true`、项目的 `LANGFUSE_BASE_URL`、`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`，并将 `LANGFUSE_TRACING_ENVIRONMENT` 设为 `production`。本地开发使用自己的 `backend/.env`；密钥不提交版本库，也不写进聊天。
+3. 正常部署并重建 API 容器以载入环境；只修改文件不会更新已启动的进程。未启用追踪时无需 Cloud 账号，业务服务不依赖追踪平台的在线状态。
+4. 完成一轮真实调查，在 Cloud 的 Traces 查看 `lma-investigation`，确认会话归组、`lma_run_id`、`lma_run_status`、模型用量与工具子调用；受控工具失败可以与整轮成功同时出现。费用依赖 Cloud 中的模型定价，自定义或新模型需核对价格配置。
+
+追踪会上传调查问题、模型输入输出和工具数据（包括调用中携带的历史）；凭据脱敏范围和未覆盖的独立调用见 [调查可观测性](architecture.md#调查可观测性)。关闭开关并重建 API 容器会停止新追踪，不自动删除已上传的记录；数据保留和删除在 Langfuse 项目中管理。
+
+排查未出现的记录时先核对区域、API Keys、开关、Cloud 配额和容器到区域域名的 HTTPS 连通性，再看 SDK 导出日志；后台批量发送不会立即出现在面板中。不要通过同步等待每轮 flush 来改变 SSE 延迟。官方接入见 [LangChain 集成](https://langfuse.com/integrations/frameworks/langchain)。
+
 ## 生产外部数据服务 DNS
 
 腾讯云主机使用 systemd-resolved。Open-Meteo 域名按路由交给 Cloudflare 的两个递归 DNS（1.1.1.1、1.0.0.1）；eth0 的 `~.` 路由让其他域名继续走原腾讯云 DNS。配置只指定解析器，不保存天气服务 IP，不修改 HTTPS 域名、SNI 或证书校验。Docker 当前通过宿主机 stub 转发外部解析，容器内仍保留 Docker 服务名解析。

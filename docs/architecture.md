@@ -21,6 +21,7 @@
 | 提示词与业务时间 | `system_prompt=SYSTEM_PROMPT` 静态不变；发送时固定服务端时间快照，只在模型调用边界投影到用户消息 |
 | 依据存证 | EvidenceMiddleware 在工具完成边界幂等存证；结论登记与测点结论索引同事务写入 |
 | 会话标题 | 前端 Adapter 的 `generateTitle()` 调 `/title` 并 rename；改名不要求会话空闲，归档要求 |
+| 调查追踪 | 可选 Langfuse 官方 CallbackHandler 记录模型、工具、用量与耗时；每轮独立 trace，以会话 ID 归组，API 记录终态，checkpoint 仍是历史事实来源 |
 | 聊天与列表生命周期 | assistant-ui Runtime / Primitives / Elements |
 | Stop | 官方 abortSignal + 取消 API；服务端用取消作用域和公开 `aupdate_state` 保存取消确认与真实工具结果 |
 
@@ -54,6 +55,13 @@
 - 摘要由 `CONTEXT_TOKEN_THRESHOLD`、`CONTEXT_KEEP_TOKENS` 控制，计数、切点、配对与替换采用官方逻辑。上下文展示只用供应商 usage 与模型 profile，不估算分项。
 - 位移结果自动附带逐点数据的上限由 `AGENT_INLINE_POINTS_LIMIT` 控制；超过时只给特征，模型可显式要求或用 compute。
 - 用户提问时正在查看的测点（`focus_station`）和图上选中的追问时段（`ask_target`）并入该消息的服务端上下文快照，只在模型调用边界投影，正文和客户端投影不变。
+
+## 调查可观测性
+
+- [observability.py](../backend/app/observability.py) 管理可选 Langfuse 追踪：默认关闭，必须显式配置项目地址与密钥；本地 `.env` 和容器环境统一由 Settings 传入 SDK，不依赖 SDK 自行读取文件。生产选用 Langfuse Cloud，不在 LMA 主机部署追踪数据库。
+- 每轮 SSE 执行时创建独立 CallbackHandler，与 `run_id` 确定性关联；`session_id` 归组同一会话的多轮调查。只在实际执行 `astream` 时加入 callbacks，不把追踪句柄写入会话状态。官方集成记录模型 token 用量、工具参数与结果，并识别错误 ToolMessage；整轮 success 不代表所有工具成功。
+- 根观察记录 success/error/cancelled；正常关闭服务时在工作线程等待 SDK 队列发送完成，每轮结束不做同步 flush。网络导出由 SDK 后台批量处理，不在调查关键路径等待 Cloud 接收。
+- 追踪会发送模型输入输出（包含随请求携带的历史）与工具过程。导出 hook 移除已配置的模型、平台、登录及追踪密钥等秘密值，覆盖原始异常与堆栈；不承诺清除用户正文中任意未知敏感内容。当前仅追踪主调查及其内部摘要，独立标题、问题推荐与批量巡检不在此范围。
 
 ## 巡检与推荐
 

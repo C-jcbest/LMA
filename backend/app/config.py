@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AnyHttpUrl, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,16 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=6, ge=2, le=20)
     # 允许跨源访问的前端 Origin，逗号分隔；默认空值仅同源，开发跨端口时显式配置。
     cors_origins: str = ""
+
+    # Langfuse 调用链追踪，默认关闭；开启后向显式配置的项目发送调查内容。
+    langfuse_enabled: bool = False
+    # Langfuse 项目的区域根地址，开启追踪时必填；不自动选择数据区域。
+    langfuse_base_url: str = ""
+    # Langfuse 项目 API 公钥与私钥，仅用于后端追踪；不提交版本库或发往客户端。
+    langfuse_public_key: str = Field(default="", repr=False)
+    langfuse_secret_key: str = Field(default="", repr=False)
+    # 追踪环境标识，默认 development；生产设为 production，与业务数据存储相互独立。
+    langfuse_tracing_environment: str = Field(default="development", pattern=r"^[a-z0-9_-]+$")
 
     # 主模型 Provider 标识（deepseek/openai）；决定官方 integration 与 thinking 参数映射，不靠模型名猜测。
     llm_provider: str = "deepseek"
@@ -79,6 +89,20 @@ class Settings(BaseSettings):
     context_summary_max_tokens: int = Field(default=2000, gt=0)
     # 历史摘要模型独立思考开关（默认 false）；开关语义同 LLM_THINKING，使用当前主模型配置但不继承主模型开关。
     compress_thinking: bool = False
+
+    @model_validator(mode="after")
+    def validate_langfuse(self):
+        if self.langfuse_tracing_environment.startswith("langfuse"):
+            raise ValueError("LANGFUSE_TRACING_ENVIRONMENT 不能以 langfuse 开头。")
+        if self.langfuse_enabled and not (
+            self.langfuse_base_url and self.langfuse_public_key and self.langfuse_secret_key
+        ):
+            raise ValueError("开启 Langfuse 必须配置 LANGFUSE_BASE_URL、LANGFUSE_PUBLIC_KEY 和 LANGFUSE_SECRET_KEY。")
+        if self.langfuse_base_url:
+            url = AnyHttpUrl(self.langfuse_base_url)
+            if url.username or url.password or url.query or url.fragment:
+                raise ValueError("LANGFUSE_BASE_URL 不得含账号、密码、查询参数或片段。")
+        return self
 
 # 配置在进程内缓存；修改环境变量或 .env 后需重启服务才能生效。
 @lru_cache

@@ -29,6 +29,7 @@ from app.agent.suggestions import SuggestionService
 from app.beidou.client import BeidouApiError
 from app.business_time import BUSINESS_TZ
 from app.config import Settings, get_settings
+from app.observability import AgentTracing
 from app.inspection.runner import run_inspection
 from app.monitoring_data import build_platform_client, monitoring_scope
 from app.server.auth import auth_enabled, auth_router, require_login
@@ -208,6 +209,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             app.state.storage = storage
             app.state.checkpointer = checkpointer
             app.state.suggestions = SuggestionService()
+            app.state.tracing = AgentTracing(settings)
             try:
                 yield
             finally:
@@ -223,6 +225,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                         run.cancel_scope.cancel()
                 if runs:
                     await asyncio.gather(*(run.finished.wait() for run in runs))
+                if app.state.tracing.client is not None:
+                    await asyncio.to_thread(app.state.tracing.client.shutdown)
 
     if auth_enabled(settings) and len(settings.auth_secret) < 32:
         raise ValueError("已配置 AUTH_PASSWORD，必须同时配置至少 32 个字符的 AUTH_SECRET。")
@@ -430,7 +434,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             control = ActiveRun(id=str(uuid4()))
             active_runs[key] = control
         config = snapshot.config if snapshot.created_at else config
-        config = {**config, "run_id": control.id}
         try:
             if body.checkpoint_id is not None and not snapshot.created_at:
                 raise HTTPException(404, "checkpoint 不存在。")
@@ -459,43 +462,50 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         async def events():
             # 客户端断开也可能直接关闭生成器；只有图完整结束才记录成功。
             status = "cancelled"
-            try:
-                # 平台访问范围随本轮结束关闭连接；该会话已取得的数据块保留给后续追问。
-                async with monitoring_scope(key, platform_client_factory):
-                    with anyio.CancelScope() as cancel_scope:
-                        control.cancel_scope = cancel_scope
-                        if control.stop_requested:
-                            return
-                        yield {"event": "metadata", "data": json.dumps({"run_id": control.id})}
-                        graph_input = {"messages": messages} if messages else None
-                        async for mode, data in app.state.agent.astream(
-                            graph_input, config, stream_mode=["messages", "values"], durability="sync",
-                        ):
-                            if mode == "messages":
-                                message, metadata = data
-                                payload = [project_message(message), {
-                                    "langgraph_node": metadata.get("langgraph_node"),
-                                }]
-                            else:
-                                payload = project_state(data)
-                            yield {"event": mode, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
-                        status = "success"
-            except asyncio.CancelledError:
-                status = "cancelled"
-                raise
-            except Exception:
-                status = "error"
-                logger.exception("agent run failed: %s", control.id)
-                yield {"event": "error", "data": json.dumps({
-                    "message": "本轮运行失败，已保存完成的步骤，请重新载入会话后重试。",
-                }, ensure_ascii=False)}
-            finally:
-                with anyio.CancelScope(shield=True):
-                    try:
-                        await app.state.storage.finish_run(control.id, status)
-                    finally:
-                        active_runs.pop(key, None)
-                        control.finished.set()
+            final_state = {}
+            with app.state.tracing.run(
+                config, session_id=key, run_id=control.id,
+                input=[message.content for message in messages if isinstance(message, HumanMessage)],
+            ) as trace:
+                try:
+                    # 平台访问范围随本轮结束关闭连接；该会话已取得的数据块保留给后续追问。
+                    async with monitoring_scope(key, platform_client_factory):
+                        with anyio.CancelScope() as cancel_scope:
+                            control.cancel_scope = cancel_scope
+                            if control.stop_requested:
+                                return
+                            yield {"event": "metadata", "data": json.dumps({"run_id": control.id})}
+                            graph_input = {"messages": messages} if messages else None
+                            async for mode, data in app.state.agent.astream(
+                                graph_input, trace.config, stream_mode=["messages", "values"], durability="sync",
+                            ):
+                                if mode == "messages":
+                                    message, metadata = data
+                                    payload = [project_message(message), {
+                                        "langgraph_node": metadata.get("langgraph_node"),
+                                    }]
+                                else:
+                                    final_state = data
+                                    payload = project_state(data)
+                                yield {"event": mode, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
+                            status = "success"
+                except asyncio.CancelledError:
+                    status = "cancelled"
+                    raise
+                except Exception:
+                    status = "error"
+                    logger.exception("agent run failed: %s", control.id)
+                    yield {"event": "error", "data": json.dumps({
+                        "message": "本轮运行失败，已保存完成的步骤，请重新载入会话后重试。",
+                    }, ensure_ascii=False)}
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        try:
+                            await app.state.storage.finish_run(control.id, status)
+                            trace.finish(status, final_state.get("messages", []))
+                        finally:
+                            active_runs.pop(key, None)
+                            control.finished.set()
 
         return EventSourceResponse(events(), ping=15, send_timeout=30)
 
