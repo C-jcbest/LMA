@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS lma_station_records (
     PRIMARY KEY (session_id, anchor_id, station_uuid)
 );
 CREATE INDEX IF NOT EXISTS lma_station_records_recent ON lma_station_records(station_uuid, created_at DESC);
+-- 巡检原型：一次原型巡检是一条 LangGraph 线程，这里只记目录；结果和组件保存在 checkpoint。
+CREATE TABLE IF NOT EXISTS lma_lab_inspections (
+    id uuid PRIMARY KEY,
+    label text NOT NULL DEFAULT '原型巡检',
+    status text NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'running', 'success', 'error', 'cancelled', 'interrupted')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS lma_lab_inspections_recent ON lma_lab_inspections (created_at DESC);
 """
 
 _HISTORY_LIMIT = 5
@@ -264,6 +273,40 @@ class SessionStorage:
             )
             return await cursor.fetchone()
 
+    async def create_lab_inspection(self, inspection_id: str) -> dict:
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "INSERT INTO lma_lab_inspections (id) VALUES (%s) RETURNING *", (inspection_id,),
+            )
+            return await cursor.fetchone()
+
+    async def get_lab_inspection(self, inspection_id: str) -> dict | None:
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute("SELECT * FROM lma_lab_inspections WHERE id = %s", (inspection_id,))
+            return await cursor.fetchone()
+
+    async def list_lab_inspections(self, limit: int) -> Sequence[dict]:
+        async with self.pool.connection() as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM lma_lab_inspections WHERE status <> 'idle' ORDER BY created_at DESC LIMIT %s", (limit,),
+            )
+            return await cursor.fetchall()
+
+    async def start_lab_inspection(self, inspection_id: str, label: str) -> None:
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                "UPDATE lma_lab_inspections SET status = 'running', label = %s, finished_at = NULL WHERE id = %s",
+                (label, inspection_id),
+            )
+
+    async def finish_lab_inspection(self, inspection_id: str, status: str, label: str | None) -> None:
+        async with self.pool.connection() as connection:
+            await connection.execute(
+                """UPDATE lma_lab_inspections SET status = %s, label = COALESCE(%s, label), finished_at = now()
+                   WHERE id = %s""",
+                (status, label, inspection_id),
+            )
+
     async def interrupt_previous_runs(self) -> None:
         async with self.pool.connection() as connection:
             await connection.execute(
@@ -271,6 +314,9 @@ class SessionStorage:
             )
             await connection.execute(
                 "UPDATE lma_inspections SET status = 'interrupted', finished_at = now() WHERE status = 'running'",
+            )
+            await connection.execute(
+                "UPDATE lma_lab_inspections SET status = 'interrupted', finished_at = now() WHERE status = 'running'",
             )
 
 

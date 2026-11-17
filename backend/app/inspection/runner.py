@@ -9,7 +9,7 @@ from typing import Callable
 import httpx
 
 from app.beidou.client import BeidouApiError, BeidouClient
-from app.beidou.schemas import Station
+from app.beidou.schemas import GnssDataPoint, Station
 from app.observations import station_reference
 from app.business_time import TIME_FORMAT, business_now
 from app.inspection.screening import (
@@ -29,7 +29,10 @@ _LONG_WINDOW_SAMPLE_TIMES = ["15:00"]
 _UPSTREAM_CONCURRENCY = 4
 
 
-async def _screen(client: BeidouClient, station: Station, limiter: asyncio.Semaphore) -> ScreeningResult:
+async def screen_with_points(
+    client: BeidouClient, station: Station, limiter: asyncio.Semaphore,
+) -> tuple[ScreeningResult, list[GnssDataPoint]]:
+    """读取一个测点的长期与近期数据并初筛；同时返回长期序列，巡检原型用它画图。失败时序列为空。"""
     now = business_now().replace(tzinfo=None)
     end_time = now.strftime(TIME_FORMAT)
     try:
@@ -48,16 +51,16 @@ async def _screen(client: BeidouClient, station: Station, limiter: asyncio.Semap
     except (BeidouApiError, httpx.HTTPError):
         # 单点失败不影响其余测点；原始错误只进日志。
         logger.warning("inspection data request failed", exc_info=True)
-        return ScreeningResult("暂无法分析", ["监测平台数据暂不可用"])
+        return ScreeningResult("暂无法分析", ["监测平台数据暂不可用"]), []
     except Exception:
         # 平台返回无法解析的数据等意外情况同样只影响这个测点，不让整次巡检作废。
         logger.exception("inspection station failed: %s", station.station_uuid)
-        return ScreeningResult("暂无法分析", ["该测点数据无法解析，初筛未完成"])
+        return ScreeningResult("暂无法分析", ["该测点数据无法解析，初筛未完成"]), []
     try:
-        return screen_station(long_points, recent_points, station_reference(station), now)
+        return screen_station(long_points, recent_points, station_reference(station), now), long_points
     except Exception:
         logger.exception("inspection screening failed: %s", station.station_uuid)
-        return ScreeningResult("暂无法分析", ["该测点初筛计算失败"])
+        return ScreeningResult("暂无法分析", ["该测点初筛计算失败"]), []
 
 
 async def run_inspection(
@@ -77,7 +80,7 @@ async def run_inspection(
             limiter = asyncio.Semaphore(_UPSTREAM_CONCURRENCY)
 
             async def screen_and_count(station: Station) -> ScreeningResult:
-                result = await _screen(client, station, limiter)
+                result, _ = await screen_with_points(client, station, limiter)
                 await storage.increment_inspection_progress(inspection_id)
                 return result
 

@@ -80,6 +80,39 @@ export interface SessionConclusion {
   status: string;
 }
 
+export type LabScope =
+  | { kind: 'all' }
+  | { kind: 'group'; group_uuid: string }
+  | { kind: 'station'; station_uuid: string };
+
+export interface LabScopeGroup {
+  group_uuid: string;
+  group_name: string;
+  stations: Array<{ station_uuid: string; station_name: string }>;
+}
+
+export interface LabInspection {
+  id: string;
+  label: string;
+  status: 'idle' | 'running' | 'success' | 'error' | 'cancelled' | 'interrupted';
+  created_at: string;
+  finished_at: string | null;
+}
+
+/** LangGraph push_ui_message 的组件消息；props 由各组件自行校验。 */
+export interface LabUIMessage {
+  type: 'ui';
+  id: string;
+  name: string;
+  props: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+}
+
+export interface LabState {
+  values: { messages: LangChainMessage[]; ui: LabUIMessage[] };
+  status: LabInspection['status'];
+}
+
 export const getStoredApiUrl = () => {
   if (import.meta.env.PROD) return DEFAULT_API_URL;
   return localStorage.getItem(STORAGE_KEY_CONFIG) || DEFAULT_API_URL;
@@ -220,6 +253,49 @@ export class LmaClient {
 
   async cancelRun(id: string): Promise<void> {
     await this.request(`/sessions/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
+  }
+
+  async listLabScopes(signal?: AbortSignal): Promise<LabScopeGroup[]> {
+    return (await (await this.request('/lab/scopes', { signal })).json()).groups;
+  }
+
+  async listLabInspections(signal?: AbortSignal): Promise<LabInspection[]> {
+    return (await this.request('/lab/inspections', { signal })).json();
+  }
+
+  async createLabInspection(): Promise<LabInspection> {
+    return (await this.request('/lab/inspections', { method: 'POST' })).json();
+  }
+
+  async getLabInspection(id: string): Promise<LabInspection> {
+    return (await this.request(`/lab/inspections/${encodeURIComponent(id)}`)).json();
+  }
+
+  async getLabState(id: string, signal?: AbortSignal): Promise<LabState> {
+    return (await this.request(`/lab/inspections/${encodeURIComponent(id)}/state`, { signal })).json();
+  }
+
+  async *streamLabRun(
+    id: string,
+    messages: LangChainMessage[],
+    scope: LabScope,
+    signal: AbortSignal,
+  ): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
+    const response = await this.request(`/lab/inspections/${encodeURIComponent(id)}/runs`, {
+      method: 'POST', body: JSON.stringify({ messages, scope }), signal,
+    });
+    yield* readRunEvents(response);
+  }
+
+  /** 刷新后接回仍在进行的原型巡检；没有进行中的巡检时直接结束。 */
+  async *joinLabRun(id: string, signal: AbortSignal): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
+    const response = await this.request(`/lab/inspections/${encodeURIComponent(id)}/runs/active`, { signal });
+    if (response.status === 204) return;
+    yield* readRunEvents(response);
+  }
+
+  async cancelLabRun(id: string): Promise<void> {
+    await this.request(`/lab/inspections/${encodeURIComponent(id)}/cancel`, { method: 'POST' });
   }
 
   async *streamRun(

@@ -5,7 +5,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
 
@@ -29,6 +29,7 @@ from app.beidou.client import BeidouApiError
 from app.business_time import BUSINESS_TZ
 from app.config import Settings, get_settings
 from app.observability import AgentTracing
+from app.inspection.lab import SUMMARY_COMPONENT, build_lab_graph, stations_in_scope
 from app.inspection.runner import run_inspection
 from app.monitoring_data import build_platform_client, monitoring_scope
 from app.server.auth import auth_enabled, auth_router, require_login
@@ -97,6 +98,25 @@ class RunInput(ApiInput):
     ask_targets: list[AskTarget] = Field(default_factory=list, max_length=4)
 
 
+class LabScopeInput(ApiInput):
+    kind: Literal["all", "group", "station"]
+    group_uuid: str | None = Field(default=None, min_length=1, max_length=200)
+    station_uuid: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def check_target(self):
+        if self.kind == "group" and not self.group_uuid:
+            raise ValueError("按组巡检需要指定分组。")
+        if self.kind == "station" and not self.station_uuid:
+            raise ValueError("单站巡检需要指定测点。")
+        return self
+
+
+class LabRunInput(ApiInput):
+    messages: list[UserInput] = Field(min_length=1, max_length=1)
+    scope: LabScopeInput
+
+
 class CheckpointInput(ApiInput):
     message_ids: list[str] = Field(max_length=10000)
 
@@ -124,6 +144,8 @@ class ActiveRun:
     subscribers: set[asyncio.Queue] = field(default_factory=set)
     latest_values: dict | None = None
     events_since_values: list[dict] = field(default_factory=list)
+    # 重连时补发的图状态投影；巡检原型还要带上 ui 组件。
+    project: Callable[[dict], dict] = project_state
 
     def publish(self, event: dict) -> None:
         self.events_since_values.append(event)
@@ -140,7 +162,7 @@ class ActiveRun:
         queue.put_nowait(sse_event("metadata", {"run_id": self.id}))
         if catch_up:
             if self.latest_values is not None:
-                queue.put_nowait(sse_event("values", project_state(self.latest_values)))
+                queue.put_nowait(sse_event("values", self.project(self.latest_values)))
             for event in self.events_since_values:
                 queue.put_nowait(event)
         if self.finished.is_set():
@@ -189,6 +211,17 @@ async def commit_completed_tool_results(agent, config):
         snapshot.config, {"messages": [*snapshot.values.get("messages", []), *results]}, as_node="tools",
     )
     return await agent.aget_state(config)
+
+
+def project_lab_state(values: dict) -> dict:
+    return {**project_state(values), "ui": list(values.get("ui", []))}
+
+
+def lab_label(values: dict) -> str | None:
+    for item in values.get("ui", []):
+        if item.get("name") == SUMMARY_COMPONENT:
+            return item.get("props", {}).get("label")
+    return None
 
 
 def graph_config(session_id: str, checkpoint_id: str | None = None) -> dict:
@@ -269,6 +302,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
     # 调查、巡检和测点页共用同一个平台入口；测试替换它即可替换全部平台访问。
     platform_client_factory = platform_client_factory or build_platform_client
     active_runs: dict[str, ActiveRun] = {}
+    active_lab_runs: dict[str, ActiveRun] = {}
     state_locks = WeakValueDictionary()
     active_inspections: set[asyncio.Task] = set()
     inspection_start_lock = asyncio.Lock()
@@ -283,6 +317,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             checkpointer = AsyncPostgresSaver(pool)
             factory = agent_factory or (lambda saver, records: create_lma_agent(_get_llm(), checkpointer=saver, storage=records))
             app.state.agent = factory(checkpointer, storage)
+            app.state.lab = build_lab_graph(platform_client_factory, checkpointer)
             app.state.storage = storage
             app.state.checkpointer = checkpointer
             app.state.suggestions = SuggestionService()
@@ -295,7 +330,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                     inspection.cancel()
                 if active_inspections:
                     await asyncio.gather(*active_inspections, return_exceptions=True)
-                runs = list(active_runs.values())
+                runs = [*active_runs.values(), *active_lab_runs.values()]
                 for run in runs:
                     run.stop_requested = True
                     if run.cancel_scope is not None:
@@ -599,6 +634,125 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             control.task = asyncio.create_task(execute_run(control, key, messages, config, branch))
         except BaseException:
             active_runs.pop(key, None)
+            raise
+        return EventSourceResponse(relay_events(control, queue), ping=15, send_timeout=30)
+
+    # ===== 巡检原型：生成式 UI 流式巡检，独立于正式巡检表 =====
+
+    @app.get("/lab/scopes")
+    async def lab_scopes():
+        try:
+            async with platform_client_factory() as client:
+                stations = stations_in_scope(await client.get_stations(), {"kind": "all"})
+        except (BeidouApiError, httpx.HTTPError):
+            logger.warning("lab scope request failed", exc_info=True)
+            raise HTTPException(502, "测点列表尚未载入。") from None
+        groups: dict[str, dict] = {}
+        for station in stations:
+            group = groups.setdefault(station.group_uuid, {
+                "group_uuid": station.group_uuid, "group_name": station.group_name, "stations": [],
+            })
+            group["stations"].append({"station_uuid": station.station_uuid, "station_name": station.station_name})
+        return {"groups": list(groups.values())}
+
+    @app.get("/lab/inspections")
+    async def list_lab_inspections(limit: int = Query(20, ge=1, le=100)):
+        return await app.state.storage.list_lab_inspections(limit)
+
+    @app.post("/lab/inspections", status_code=201)
+    async def create_lab_inspection():
+        return await app.state.storage.create_lab_inspection(str(uuid4()))
+
+    async def require_lab_inspection(inspection_id: UUID) -> dict:
+        inspection = await app.state.storage.get_lab_inspection(str(inspection_id))
+        if inspection is None:
+            raise HTTPException(404, "原型巡检不存在。")
+        return inspection
+
+    @app.get("/lab/inspections/{inspection_id}")
+    async def get_lab_inspection(inspection_id: UUID):
+        return await require_lab_inspection(inspection_id)
+
+    @app.get("/lab/inspections/{inspection_id}/state")
+    async def get_lab_state(inspection_id: UUID):
+        inspection = await require_lab_inspection(inspection_id)
+        snapshot = await app.state.lab.aget_state(graph_config(str(inspection_id)))
+        return {"values": project_lab_state(snapshot.values), "status": inspection["status"]}
+
+    @app.get("/lab/inspections/{inspection_id}/runs/active")
+    async def join_lab_run(inspection_id: UUID):
+        await require_lab_inspection(inspection_id)
+        control = active_lab_runs.get(str(inspection_id))
+        if control is None or control.finished.is_set():
+            return Response(status_code=204)
+        queue = control.subscribe(catch_up=True)
+        return EventSourceResponse(relay_events(control, queue), ping=15, send_timeout=30)
+
+    @app.post("/lab/inspections/{inspection_id}/cancel", status_code=204)
+    async def cancel_lab_run(inspection_id: UUID):
+        await require_lab_inspection(inspection_id)
+        control = active_lab_runs.get(str(inspection_id))
+        if control is not None:
+            control.stop_requested = True
+            if control.cancel_scope is not None:
+                control.cancel_scope.cancel()
+        return Response(status_code=204)
+
+    async def execute_lab_run(control: ActiveRun, key: str, graph_input: dict) -> None:
+        status = "cancelled"
+        final_state: dict = {}
+        try:
+            with anyio.CancelScope() as cancel_scope:
+                control.cancel_scope = cancel_scope
+                async for mode, data in app.state.lab.astream(
+                    graph_input, graph_config(key), stream_mode=["messages", "values", "custom"], durability="sync",
+                ):
+                    if mode == "messages":
+                        message, metadata = data
+                        control.publish(sse_event("messages", [project_message(message), {
+                            "langgraph_node": metadata.get("langgraph_node"),
+                        }]))
+                    elif mode == "custom":
+                        # push_ui_message 的组件事件，前端按 id 新增或合并。
+                        control.publish(sse_event("custom", data))
+                    else:
+                        final_state = data
+                        control.update_values(data)
+                if not cancel_scope.cancel_called:
+                    status = "success"
+                    control.publish(sse_event("values", project_lab_state(final_state)))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            status = "error"
+            logger.exception("inspection lab run failed: %s", control.id)
+            control.publish(sse_event("error", {"message": "本次原型巡检失败，已推送的结果保留。"}))
+        finally:
+            with anyio.CancelScope(shield=True):
+                await app.state.storage.finish_lab_inspection(key, status, lab_label(final_state))
+            active_lab_runs.pop(key, None)
+            control.finished.set()
+            control.close()
+
+    @app.post("/lab/inspections/{inspection_id}/runs")
+    async def stream_lab_run(inspection_id: UUID, body: LabRunInput):
+        await require_lab_inspection(inspection_id)
+        key = str(inspection_id)
+        # 原型共用平台账号和视觉额度，同一时间只跑一次巡检。
+        if active_lab_runs:
+            raise HTTPException(409, "已有原型巡检在进行，请等待完成。")
+        control = ActiveRun(id=str(uuid4()), project=project_lab_state)
+        active_lab_runs[key] = control
+        try:
+            user = body.messages[0]
+            scope = body.scope.model_dump(exclude_none=True)
+            labels = {"all": "全部测点", "group": "按组巡检", "station": "单站巡检"}
+            await app.state.storage.start_lab_inspection(key, labels[body.scope.kind])
+            graph_input = {"messages": [HumanMessage(id=user.id, content=user.content)], "scope": scope}
+            queue = control.subscribe(catch_up=False)
+            control.task = asyncio.create_task(execute_lab_run(control, key, graph_input))
+        except BaseException:
+            active_lab_runs.pop(key, None)
             raise
         return EventSourceResponse(relay_events(control, queue), ping=15, send_timeout=30)
 

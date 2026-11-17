@@ -69,6 +69,19 @@ class Settings(BaseSettings):
     # 高德 JavaScript API 密钥，运行时下发至已登录浏览器；需配置部署域名白名单。
     amap_token: str = ""
 
+    # 巡检原型的视觉模型 Provider（openai/deepseek，默认 openai）；只用于“巡检原型”页对建议调查测点的形态初判。
+    vision_provider: str = "openai"
+    # 视觉模型调用协议：responses 或 chat_completions（默认 chat_completions）；按供应商实际支持的接口填写。
+    vision_protocol: Literal["responses", "chat_completions"] = "chat_completions"
+    # 视觉模型 OpenAI 兼容接口地址；为空时原型只给初筛结果，不调用视觉模型。
+    vision_base_url: str = ""
+    # 视觉模型接口密钥，不提交版本库或下发给前端。
+    vision_api_key: str = Field(default="", repr=False)
+    # 视觉模型标识，必须支持图片输入；为空时不调用视觉模型。
+    vision_model: str = ""
+    # 视觉模型独立思考开关（默认 false）；开启会显著增加每个测点的等待时间。
+    vision_thinking: bool = False
+
     # 访问保护的登录账号（默认 admin）。单账号，不是用户体系。
     auth_username: str = "admin"
     # 登录密码；为空时不启用访问保护（仅限本地开发与测试），生产必须配置。

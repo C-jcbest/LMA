@@ -49,6 +49,25 @@ class AxisSeries:
     cadence_days: float = 1.0
 
 
+Window = Literal["long", "recent"]
+_WINDOW_PREFIX = {"long": "", "recent": "近期小时序列："}
+
+
+@dataclass
+class Finding:
+    """一条初筛线索。role=trigger 是建议调查的理由，role=quality 是数据质量说明，两者在界面上分开呈现。
+
+    text 是给人和推荐模型读的完整句子；其余字段供界面按类型、方向和窗口组织，不必再解析句子。
+    """
+    kind: Literal["trend", "acceleration", "gap_jump", "tail_step", "held_step", "spike", "gap", "data"]
+    role: Literal["trigger", "quality"]
+    text: str
+    axis: str | None = None
+    window: Window | None = None
+    value_mm: float | None = None
+    days: float | None = None
+
+
 @dataclass
 class ScreeningResult:
     screening: Screening
@@ -56,6 +75,8 @@ class ScreeningResult:
     metrics: dict = field(default_factory=dict)
     trend: list[float | None] = field(default_factory=list)
     trend_directions: dict[str, int] = field(default_factory=dict)
+    # 结构化线索放在最后，已有按位置构造的调用不受影响。
+    findings: list[Finding] = field(default_factory=list)
 
 
 def _to_float(value: str | float | int | None) -> float | None:
@@ -117,17 +138,22 @@ def _direction_consistency(series: AxisSeries, slope: float) -> float:
     return sum(change * slope > 0 for change in changes) / len(changes) if changes else 0.0
 
 
-def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str], int, float, float]:
-    """返回 (需要调查的线索, 仅作说明的线索, 趋势方向, 斜率, 噪声)。"""
+def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[Finding], int, float, float]:
+    """返回 (线索, 趋势方向, 斜率, 噪声)；线索按 role 区分调查理由与数据质量说明。"""
     slope = theil_sen_slope(series.days, series.values)
     residuals = [value - slope * day for day, value in zip(series.days, series.values)]
     noise = _robust_sigma(residuals)
     span = series.days[-1] - series.days[0]
     total_change = slope * span
     name = _AXIS_NAMES[axis]
+    prefix = _WINDOW_PREFIX[window]
 
-    flags: list[str] = []
-    notes: list[str] = []
+    findings: list[Finding] = []
+
+    def add(kind, role, text, value_mm=None, days=None):
+        rounded = None if value_mm is None else round(value_mm, 1)
+        findings.append(Finding(kind, role, f"{prefix}{text}", axis, window, rounded, days))
+
     direction = 0
     is_trending = (
         abs(total_change) > _TREND_NOISE_MULTIPLE * noise
@@ -135,7 +161,7 @@ def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str],
     )
     if is_trending:
         direction = 1 if slope > 0 else -1
-        flags.append(f"{name} {span:.0f} 天持续同向变化，约 {total_change:+.1f} mm")
+        add("trend", "trigger", f"{name} {span:.0f} 天持续同向变化，约 {total_change:+.1f} mm", total_change, round(span))
 
     comparison_days = min(ACCELERATION_WINDOW_DAYS, span / 2)
     split_day = series.days[-1] - comparison_days
@@ -147,16 +173,17 @@ def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str],
         is_faster = abs(recent_slope) >= _ACCELERATION_RATIO * abs(earlier_slope)
         is_significant = abs(recent_slope) * (recent[-1][0] - recent[0][0]) > _TREND_NOISE_MULTIPLE * noise
         if is_faster and is_significant and recent_slope * earlier_slope >= 0:
-            flags.append(f"{name}近 {comparison_days:.1f} 天变化快于此前，仍需分窗复核")
+            add("acceleration", "trigger", f"{name}近 {comparison_days:.1f} 天变化快于此前，仍需分窗复核",
+                days=round(comparison_days, 1))
 
     steps = [series.values[i + 1] - series.values[i] for i in range(len(series.values) - 1)]
     adjacent = [i for i in range(len(steps))
                 if 0 < series.days[i + 1] - series.days[i] <= series.cadence_days * 1.5]
     if len(adjacent) != len(steps):
-        notes.append(f"{name}存在缺测跨越，跨越差值不作为单步跳变或保持证据")
+        add("gap", "quality", f"{name}存在缺测跨越，跨越差值不作为单步跳变或保持证据")
     for index, change in enumerate(steps):
         if index not in adjacent and abs(change) > _STEP_NOISE_MULTIPLE * noise:
-            flags.append(f"{name}缺测两端相差约 {change:+.1f} mm，变化过程待观察")
+            add("gap_jump", "trigger", f"{name}缺测两端相差约 {change:+.1f} mm，变化过程待观察", change)
     if adjacent:
         step_noise = _robust_sigma([steps[i] for i in adjacent])
         largest_index = max(adjacent, key=lambda index: abs(steps[index]))
@@ -167,13 +194,14 @@ def _axis_findings(series: AxisSeries, axis: str) -> tuple[list[str], list[str],
             followup_end = largest_index + len(after)
             continuous = all(i in adjacent for i in range(largest_index, followup_end))
             if len(after) < _STEP_PERSISTENCE_POINTS or not continuous:
-                flags.append(f"{name}出现约 {largest:+.1f} mm 的末端跳变，是否保持待观察")
+                add("tail_step", "trigger", f"{name}出现约 {largest:+.1f} mm 的末端跳变，是否保持待观察", largest)
             elif abs(median(after) - median(before)) > abs(largest) / 2:
-                flags.append(f"{name}出现约 {largest:+.1f} mm 的台阶并保持")
+                add("held_step", "trigger", f"{name}出现约 {largest:+.1f} mm 的台阶并保持", largest)
             else:
-                notes.append(f"{name}有一次约 {largest:+.1f} mm 的孤立跳变，随后恢复")
+                # 跳出去又回到原水平，形变通常不会这样往返；按数据质量处理，不作为位移线索。
+                add("spike", "quality", f"{name}异常跳点约 {largest:+.1f} mm，随后恢复，按数据质量处理", largest)
 
-    return flags, notes, direction, slope, noise
+    return findings, direction, slope, noise
 
 
 def _cumulative_offset(points: Sequence[GnssDataPoint], reference: dict[str, float | None]) -> dict | None:
@@ -241,13 +269,14 @@ def screen_station(
     completeness = round(valid_days / max(long_quality['expected'], 1), 2)
     metrics: dict = {"valid_days": valid_days, "completeness": completeness}
 
-    flags: list[str] = []
-    notes: list[str] = []
+    findings: list[Finding] = []
     history_insufficient = valid_days < _MIN_VALID_DAYS or completeness < _MIN_COMPLETENESS
     if history_insufficient:
-        notes.append(f"近 {LONG_WINDOW_DAYS} 天仅有 {valid_days} 天有效数据，无法判断长期趋势")
+        findings.append(Finding(
+            "data", "quality", f"近 {LONG_WINDOW_DAYS} 天仅有 {valid_days} 天有效数据，无法判断长期趋势", window="long",
+        ))
     if long_duplicates or recent_duplicates:
-        notes.append(f"重复时间已剔除：长期 {long_duplicates} 条，近期 {recent_duplicates} 条")
+        findings.append(Finding("data", "quality", f"重复时间已剔除：长期 {long_duplicates} 条，近期 {recent_duplicates} 条"))
     directions: dict[str, int] = {}
     metrics["net_change_mm"] = {}
     metrics["slope_mm_per_day"] = {}
@@ -256,9 +285,8 @@ def screen_station(
             metrics["net_change_mm"][axis] = None
             metrics["slope_mm_per_day"][axis] = None
             continue
-        axis_flags, axis_notes, direction, slope, _ = _axis_findings(series[axis], axis)
-        flags += axis_flags
-        notes += axis_notes
+        axis_findings, direction, slope, _ = _axis_findings(series[axis], axis, "long")
+        findings += axis_findings
         directions[axis] = direction
         metrics["net_change_mm"][axis] = round(series[axis].values[-1], 1)
         metrics["slope_mm_per_day"][axis] = round(slope, 3)
@@ -268,9 +296,8 @@ def screen_station(
         recent_series = _axis_series(recent_points, axis, 1 / 24)
         if len(recent_series.values) < 2:
             continue
-        axis_flags, axis_notes, _, _, _ = _axis_findings(recent_series, axis)
-        flags.extend(f"近期小时序列：{reason}" for reason in axis_flags)
-        notes.extend(f"近期小时序列：{reason}" for reason in axis_notes)
+        axis_findings, _, _, _ = _axis_findings(recent_series, axis, "recent")
+        findings += axis_findings
 
     valid_hours = min(axis['valid'] for axis in recent_quality['axes'].values())
     recent_completeness = round(valid_hours / max(recent_quality['expected'], 1), 2)
@@ -279,20 +306,29 @@ def screen_station(
     metrics["long_quality"] = long_quality
     latest_time = max((_point_time(point) for point in recent_points if any(_to_float(getattr(point, axis)) is not None for axis in _AXIS_NAMES)), default=None)
     is_stale = latest_time is None or (now - latest_time).total_seconds() > _STALE_AFTER_HOURS * 3600
-    data_problems = []
+    data_problems: list[Finding] = []
     if long_duplicates or recent_duplicates:
-        data_problems.append("存在重复时间，需核查数据来源")
+        data_problems.append(Finding("data", "quality", "存在重复时间，需核查数据来源"))
     if is_stale:
-        data_problems.append(f"最近 {_STALE_AFTER_HOURS} 小时没有数据")
+        data_problems.append(Finding("data", "quality", f"最近 {_STALE_AFTER_HOURS} 小时没有数据", window="recent"))
     elif recent_completeness < _MIN_COMPLETENESS:
-        data_problems.append(f"近 {RECENT_WINDOW_DAYS} 天数据完整度 {recent_completeness:.0%}")
+        data_problems.append(Finding(
+            "data", "quality", f"近 {RECENT_WINDOW_DAYS} 天数据完整度 {recent_completeness:.0%}", window="recent",
+        ))
 
     trend = [] if history_insufficient else _horizontal_trend(series["n"], series["e"])
-    if flags:
-        return ScreeningResult("建议调查", [*flags, *data_problems, *notes], metrics, trend, directions)
-    if data_problems or history_insufficient:
-        return ScreeningResult("数据不足", [*data_problems, *notes], metrics, trend, directions)
-    return ScreeningResult("未见明显变化", notes, metrics, trend, directions)
+    triggers = [finding for finding in findings if finding.role == "trigger"]
+    notes = [finding for finding in findings if finding.role == "quality"]
+    if triggers:
+        screening: Screening = "建议调查"
+        ordered = [*triggers, *data_problems, *notes]
+    elif data_problems or history_insufficient:
+        screening = "数据不足"
+        ordered = [*data_problems, *notes]
+    else:
+        screening = "未见明显变化"
+        ordered = notes
+    return ScreeningResult(screening, [finding.text for finding in ordered], metrics, trend, directions, ordered)
 
 
 def apply_common_mode(results: Sequence[ScreeningResult]) -> None:
@@ -305,4 +341,6 @@ def apply_common_mode(results: Sequence[ScreeningResult]) -> None:
             moving = [result for result in usable if result.trend_directions.get(axis) == direction]
             if len(moving) >= _MIN_COMMON_MODE_STATIONS and len(moving) / len(usable) >= _COMMON_MODE_SHARE:
                 for result in moving:
-                    result.reasons.append(f"同组多数测点{name}同向变化，优先核查基准或共同因素")
+                    finding = Finding("data", "quality", f"同组多数测点{name}同向变化，优先核查基准或共同因素", axis, "long")
+                    result.findings.append(finding)
+                    result.reasons.append(finding.text)

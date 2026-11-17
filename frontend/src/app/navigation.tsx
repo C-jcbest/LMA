@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { flushSync } from 'react-dom';
 import { useAui } from '@assistant-ui/react';
 
-export type Page = 'home' | 'conversation' | 'stations' | 'records' | 'station';
+export type Page = 'home' | 'conversation' | 'stations' | 'records' | 'station' | 'lab';
 
 interface NavigationLocation {
   page: Page;
@@ -19,6 +19,8 @@ interface NavigationValue extends NavigationLocation {
   returnFromStation: () => void;
   goStations: () => void;
   goRecords: () => void;
+  /** 巡检原型页：生成式 UI 流式巡检的试验入口。 */
+  goLab: () => void;
   openStation: (stationUuid: string) => void;
   showStationResult: (resultAnchor?: string) => void;
 }
@@ -32,7 +34,7 @@ const readLocation = (): NavigationLocation => {
     return { page: 'station', stationUuid, resultAnchor: params.get('result') ?? undefined };
   }
   const page = params.get('page');
-  if (page === 'home' || page === 'stations' || page === 'records') {
+  if (page === 'home' || page === 'stations' || page === 'records' || page === 'lab') {
     return { page, stationUuid: null };
   }
   return {
@@ -110,6 +112,7 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     },
     goStations: () => navigate({ page: 'stations', stationUuid: null }),
     goRecords: () => navigate({ page: 'records', stationUuid: null }),
+    goLab: () => navigate({ page: 'lab', stationUuid: null }),
     openStation: (stationUuid) => {
       if (location.page !== 'station') {
         stationOrigin.current = location;

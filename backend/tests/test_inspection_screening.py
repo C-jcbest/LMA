@@ -126,7 +126,8 @@ class ScreeningTests(unittest.TestCase):
 
         spike = screen(daily(lambda i: 40 if i == 50 else 0, noise_mm=0.5))
         self.assertEqual(spike.screening, "未见明显变化", spike.reasons)
-        self.assertTrue(any("孤立跳变" in reason for reason in spike.reasons))
+        self.assertTrue(any("异常跳点" in reason for reason in spike.reasons))
+        self.assertEqual([finding.kind for finding in spike.findings if finding.role == "trigger"], [])
 
     def test_insufficient_history_is_data_problem_not_stability(self):
         result = screen(daily(lambda i: 0, days=10))
@@ -193,12 +194,13 @@ class InspectionIsolationTests(unittest.IsolatedAsyncioTestCase):
     async def test_unexpected_station_failure_only_affects_that_station(self):
         import asyncio
         from app.beidou.schemas import Station
-        from app.inspection.runner import _screen
+        from app.inspection.runner import screen_with_points
 
         class BrokenClient:
             async def get_daily_data(self, *args, **kwargs):
                 raise ValueError("平台返回无法解析的数据")
 
         station = Station(station_uuid="s", station_name="坏数据站", station_type=3, group_uuid="g", group_name="组")
-        result = await _screen(BrokenClient(), station, asyncio.Semaphore(1))
+        result, points = await screen_with_points(BrokenClient(), station, asyncio.Semaphore(1))
+        self.assertEqual(points, [])
         self.assertEqual(result.screening, "暂无法分析")
