@@ -136,7 +136,7 @@ class SelfHostedApiTests(unittest.TestCase):
 
     def test_parameter_feedback_is_sanitized_in_sse_and_restored_history(self):
         from app.agent.tools import get_displacement
-        from test_tool_feedback import STATION, TOO_LONG_HOURLY, evidence_kinds, query
+        from test_tool_feedback import STATION, TOO_LONG_HOURLY, query
 
         self.model.script = [query('invalid-sse-window', TOO_LONG_HOURLY), AIMessage(content='未取得观测，不能判断趋势。')]
         self.app.state.agent = create_lma_agent(
@@ -153,7 +153,6 @@ class SelfHostedApiTests(unittest.TestCase):
         message = next(item for item in state['values']['messages'] if item['type'] == 'tool')
         self.assertEqual(message['status'], 'error')
         self.assertEqual(message['artifact']['kind'], 'tool_feedback')
-        self.assertEqual(self.client.portal.call(evidence_kinds, self.app.state.storage, self.session_id), [])
         self.assertIn('单次查询最多 366 天', self.model.inputs[-1][-1].text)
 
     def test_suggestions_do_not_create_sessions_or_messages(self):
@@ -200,9 +199,7 @@ class SelfHostedApiTests(unittest.TestCase):
                 'reason': '历史变化已有解释', 'begin_time': '2026-10-01 00:00:00',
                 'end_time': '2026-10-07 00:00:00',
             } for identifier in (identifiers[0], *identifiers[8:])]
-            await storage.save_evidence(self.session_id, 'suggestion-fixture', {
-                'kind': 'conclusions', 'status': 'success', 'data': {'stations': conclusions},
-            }, execution_id='suggestion-fixture')
+            await storage.save_conclusions(self.session_id, 'suggestion-fixture', conclusions)
 
         async def cleanup():
             async with storage.pool.connection() as connection:
@@ -247,6 +244,16 @@ class SelfHostedApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/map-config").json(), {"amap_token": None})
         self.settings.amap_token = "browser-key"
         self.assertEqual(self.client.get("/map-config").json(), {"amap_token": "browser-key"})
+
+    def test_title_endpoint_returns_generated_title_and_hides_failures(self):
+        with patch("app.server.api.generate_title", AsyncMock(return_value="北坡测点近期趋势")) as generate:
+            self.assertEqual(self.client.post("/title", json={"input_text": "北坡测点最近怎么样"}).json(),
+                             {"title": "北坡测点近期趋势"})
+        generate.assert_awaited_once_with("北坡测点最近怎么样")
+        with patch("app.server.api.generate_title", AsyncMock(side_effect=ValueError("private"))):
+            failed = self.client.post("/title", json={"input_text": "北坡测点最近怎么样"})
+        self.assertEqual(failed.status_code, 502)
+        self.assertNotIn("private", failed.text)
 
     def test_session_metadata_and_204_delete(self):
         self.assertEqual(self.client.get("/health").json(), {"ok": True, "service": "lma"})

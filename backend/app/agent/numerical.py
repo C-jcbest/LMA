@@ -168,7 +168,7 @@ def common_period_features(stations, axis, cadence_hours=1.0):
         feature = axis_features(common, [values[time] for time in common], cadence_hours=cadence_hours)
         feature['metric_name'] = METRIC_NAMES[axis]
         feature['sample_set'] = {'scope': 'common_period', 'station_uuid': station, 'axis': axis,
-                                 'station_uuids': list(stations), 'timestamps': common}
+                                 'station_uuids': list(stations)}
         result[station] = feature
     return result
 
@@ -193,20 +193,8 @@ def window_features(points, station, begin_time, end_time, cadence_hours=1.0, sc
             base = 0 if all(reference[key] is not None for key in components) else None
         feature = axis_features(times, values, base=base, cadence_hours=cadence_hours)
         feature['metric_name'] = METRIC_NAMES[axis]
+        # 有效时刻可由 points 复原，这里只记范围，不在每个方向重复保存整列时间戳。
         feature['sample_set'] = {'scope': scope, 'station_uuid': station.station_uuid, 'axis': axis,
-                                 'requested_begin': begin_time, 'requested_end': end_time,
-                                 'timestamps': [time for time, value in zip(times, values) if finite_number(value) is not None]}
+                                 'requested_begin': begin_time, 'requested_end': end_time}
         features[axis] = feature
     return features
-
-
-def numerical_model_data(data):
-    """模型看事实范围，完整点集仅保存在快照中；不重复投影每方向的时间戳。"""
-    def compact(value):
-        if isinstance(value, dict):
-            return {key: compact(item) for key, item in value.items()
-                    if key not in {"points", "raw_points", "snapshots", "timestamps"}}
-        if isinstance(value, list):
-            return [compact(item) for item in value]
-        return value
-    return compact(data)

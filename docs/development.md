@@ -101,6 +101,7 @@ Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.
 | 回归范围 | 现有入口与保留理由 |
 | --- | --- |
 | Agent 多轮、并行、取消配对、重试与调用限额 | backend/tests/test_agent_runtime.py；验证 LMA 组装后的实际运行行为 |
+| 后台运行、断开与接回、停止和进程退出后找回已完成工具结果、分叉清理 | backend/tests/test_run_recovery.py；真实 Uvicorn 进程与隔离数据库 |
 | 空数据、业务拒绝、错误脱敏与工具证据 | backend/tests/test_tool_protocol.py；不同工具的业务边界分别保留 |
 | 数据层分片与会话缓存、位移特征 | backend/tests/test_numerical.py |
 | compute 沙箱与结论登记校验 | backend/tests/test_compute_and_conclusions.py |
@@ -109,7 +110,7 @@ Playwright 使用两个 worker，文件内串行：只有 thread-lifecycle.spec.
 | 推荐来源、并发合并、取消、超时与版本失效 | backend/tests/test_suggestions.py；数据库投影与归档/删除见 test_self_hosted_api.py |
 | PostgreSQL checkpoint、消息注入拒绝、编辑与并发 | backend/tests/test_self_hosted_api.py |
 | 领域显示、artifact 校验、服务失败与 SSE | frontend/tests/；单元测试覆盖可精确定位的边界 |
-| 导航、Stop、刷新、编辑、复制与分页 | frontend/e2e/thread-lifecycle.spec.ts；使用真实前端、API 与隔离数据库 |
+| 导航、Stop、调查中刷新接回、编辑、复制与分页 | frontend/e2e/thread-lifecycle.spec.ts；使用真实前端、API 与隔离数据库 |
 | 首页与测点页调查、引用定位依据、今日页与巡检恢复 | frontend/e2e/investigation-report.spec.ts；HTTP mock，页面与会话运行时使用生产实现 |
 | 测点时间轴、框选追问、场地引用与地图失败 | frontend/e2e/station-inspector.spec.ts；HTTP mock，图表与布局使用生产实现 |
 | 窄屏、抽屉、失败原因与草稿保留 | frontend/e2e/layout-feedback.spec.ts；浏览器布局和 HTTP 边界回归 |

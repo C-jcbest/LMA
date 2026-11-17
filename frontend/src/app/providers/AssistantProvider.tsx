@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useLangGraphRuntime } from '@assistant-ui/react-langgraph';
+import { useLangGraphRuntime, useLangGraphSend } from '@assistant-ui/react-langgraph';
 import { AssistantRuntimeProvider, useAui, useAuiState } from '@assistant-ui/react';
 import type { LmaClient } from '@/services/api';
 import { askTargetsOfRunConfig, toAskTargetRecords } from '@/features/monitoring/ask-targets';
@@ -14,6 +14,10 @@ const getStationThreadId = (stationUuid: string) => {
 };
 
 type RecoveryError = 'history' | 'run' | null;
+/** runConfig 标记：本次“运行”只接回服务端仍在进行的调查，不提交新消息。 */
+const JOIN_RUN_KEY = 'lmaJoinActiveRun';
+const isJoinRun = (runConfig: unknown) =>
+  typeof runConfig === 'object' && runConfig !== null && (runConfig as Record<string, unknown>)[JOIN_RUN_KEY] === true;
 const RequestedSessionContext = createContext<string | undefined>(undefined);
 const RecoveryContext = createContext<{ error: RecoveryError; runtime: ReturnType<typeof useLangGraphRuntime> } | null>(null);
 const StationDraftsContext = createContext<Map<string, string> | null>(null);
@@ -36,6 +40,23 @@ function StationDraft({ stationUuid }: { stationUuid: string }) {
       drafts.set(stationUuid, aui.composer().getState().text);
     };
   }, [aui, drafts, stationUuid, isLoading]);
+  return null;
+}
+
+/** 载入会话时服务端调查仍在进行（例如刷新了页面），载入完成后接回它的事件流。 */
+function ActiveRunRejoin({ pendingJoins }: { pendingJoins: Set<string> }) {
+  const send = useLangGraphSend();
+  const remoteId = useAuiState((state) =>
+    state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId);
+  const isLoading = useAuiState((state) => state.thread.isLoading);
+  const isRunning = useAuiState((state) => state.thread.isRunning);
+  useEffect(() => {
+    if (isLoading || isRunning || !remoteId || !pendingJoins.has(remoteId)) {
+      return;
+    }
+    pendingJoins.delete(remoteId);
+    void Promise.resolve(send([], { runConfig: { [JOIN_RUN_KEY]: true } })).catch(() => {});
+  }, [isLoading, isRunning, pendingJoins, remoteId, send]);
   return null;
 }
 
@@ -85,6 +106,7 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
   const inheritedDrafts = useContext(StationDraftsContext);
   const ownDrafts = useRef(new Map<string, string>());
   const [error, setError] = useState<RecoveryError>(null);
+  const pendingJoins = useRef(new Set<string>());
   useEffect(() => {
     const onPopState = () => {
       if (scope && new URL(window.location.href).searchParams.get('station') !== scope.stationUuid) {
@@ -135,12 +157,14 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
       try {
         const { externalId } = await config.initialize();
         if (!externalId) throw new Error('会话尚未创建。');
-        const events = client.streamRun(externalId, messages, {
-          checkpointId: config.checkpointId,
-          focusStation: scope?.stationName ?? focusStationRef.current ?? undefined,
-          askTargets: toAskTargetRecords(askTargetsOfRunConfig(config.runConfig)),
-          signal: config.abortSignal,
-        });
+        const events = isJoinRun(config.runConfig)
+          ? client.joinRun(externalId, config.abortSignal)
+          : client.streamRun(externalId, messages, {
+            checkpointId: config.checkpointId,
+            focusStation: scope?.stationName ?? focusStationRef.current ?? undefined,
+            askTargets: toAskTargetRecords(askTargetsOfRunConfig(config.runConfig)),
+            signal: config.abortSignal,
+          });
         for await (const event of events) {
           if (event.event.startsWith('messages') && Array.isArray(event.data)) {
             hasAssistantOutput ||= event.data.some((message) => message?.type === 'ai' || message?.type === 'AIMessageChunk');
@@ -166,6 +190,11 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
       setError(null);
       try {
         const state = await client.getState(id, config?.signal);
+        if (state.latest_run?.status === 'running') {
+          pendingJoins.current.add(id);
+        } else {
+          pendingJoins.current.delete(id);
+        }
         return { messages: state.values.messages };
       } catch (reason) {
         if (!config?.signal.aborted) {
@@ -189,6 +218,7 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
           <RequestedSessionContext.Provider value={threadId}>
             <StationDraftsContext.Provider value={inheritedDrafts ?? ownDrafts.current}>
               {scope && <StationDraft stationUuid={scope.stationUuid} />}
+              <ActiveRunRejoin pendingJoins={pendingJoins.current} />
               <FocusStationContext.Provider value={setFocusStation}>{children}</FocusStationContext.Provider>
             </StationDraftsContext.Provider>
           </RequestedSessionContext.Provider>

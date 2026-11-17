@@ -150,10 +150,3 @@ def observation_quality(points, begin_time, end_time, *, frequency_minutes=60, s
 
 def station_reference(station):
     return {axis: finite_number(getattr(station, f"station_{axis}0", None)) for axis in AXES}
-
-
-def raw_snapshot(points):
-    return [
-        {"time": point.data_time, **{axis: str(getattr(point, axis)) if getattr(point, axis) is not None else None for axis in AXES}}
-        for point in points
-    ]

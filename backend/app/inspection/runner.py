@@ -49,7 +49,15 @@ async def _screen(client: BeidouClient, station: Station, limiter: asyncio.Semap
         # 单点失败不影响其余测点；原始错误只进日志。
         logger.warning("inspection data request failed", exc_info=True)
         return ScreeningResult("暂无法分析", ["监测平台数据暂不可用"])
-    return screen_station(long_points, recent_points, station_reference(station), now)
+    except Exception:
+        # 平台返回无法解析的数据等意外情况同样只影响这个测点，不让整次巡检作废。
+        logger.exception("inspection station failed: %s", station.station_uuid)
+        return ScreeningResult("暂无法分析", ["该测点数据无法解析，初筛未完成"])
+    try:
+        return screen_station(long_points, recent_points, station_reference(station), now)
+    except Exception:
+        logger.exception("inspection screening failed: %s", station.station_uuid)
+        return ScreeningResult("暂无法分析", ["该测点初筛计算失败"])
 
 
 async def run_inspection(

@@ -40,7 +40,7 @@ async def seed_previous_conclusion(storage):
             "end_time": "2026-11-08 00:00:00", "evidence": [],
         }]},
     })
-    await storage.save_evidence(session_id, "evaluation-previous", artifact, execution_id="evaluation")
+    await storage.save_conclusions(session_id, "evaluation-previous", artifact["data"]["stations"])
     return session_id
 
 
@@ -93,12 +93,13 @@ def check_deterministic_results(messages):
                     failures.append(f'{message.tool_call_id}/{axis} 净变化与原始首末值不一致')
             checked_metrics += 1
         comparisons = data.get('comparisons', {})
-        snapshots = comparisons.get('snapshots', {})
+        # snapshots 只含对比站，主站观测在 points 中。
+        point_sets = [data['points'], *comparisons.get('snapshots', {}).values()]
         for axis, station_features in comparisons.get('common_period', {}).items():
             times_by_station = [
                 {point['time'] for point in points
                  if isinstance(point.get(axis), (int, float)) and math.isfinite(point[axis])}
-                for points in snapshots.values()
+                for points in point_sets
             ]
             common_times = set.intersection(*times_by_station) if times_by_station else set()
             for station, feature in station_features.items():

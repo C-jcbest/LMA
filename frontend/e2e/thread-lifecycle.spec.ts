@@ -105,6 +105,27 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
   }
 });
 
+test('调查进行中刷新页面不中断调查，刷新后接回进度并显示完整回答', async ({ page }) => {
+  const threadId = await createThread(`刷新接回-${Date.now().toString(36)}`);
+  try {
+    await openThread(page, threadId);
+    await send(page, '请慢速回答刷新接回场景');
+    await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
+    await expect.poll(async () => (await client.getState(threadId)).latest_run?.status).toBe('running');
+
+    await page.reload();
+    // 服务端调查与页面连接解耦：刷新后仍在运行，并从当前进度接着显示。
+    await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
+    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
+    await expect(page.getByRole('button', { name: '停止生成' })).toBeHidden();
+    await expect.poll(async () => (await client.getState(threadId)).latest_run?.status).toBe('success');
+    await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toHaveCount(1);
+  } finally {
+    await client.cancelRun(threadId);
+    await client.deleteSession(threadId);
+  }
+});
+
 test('深链接、浏览器前进后退与刷新保持同一 Thread', async ({ page }) => {
   const suffix = Date.now().toString(36);
   const firstName = `导航会话一-${suffix}`;

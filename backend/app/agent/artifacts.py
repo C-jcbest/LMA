@@ -133,7 +133,6 @@ class GnssArtifactData(ArtifactModel):
     reference: dict[str, JsonValue] = Field(default_factory=dict)
     features: dict[str, JsonValue] = Field(default_factory=dict)
     comparisons: dict[str, JsonValue] = Field(default_factory=dict)
-    raw_points: list[GnssPointArtifact] = Field(default_factory=list)
     location: GnssStationLocationArtifact | None = None
 
 
@@ -180,7 +179,7 @@ class DailyMaximumArtifact(ArtifactModel):
 
 class RainSummaryArtifact(ArtifactModel):
     recent_24h_precipitation: float | None = None
-    recent_24h_window: WeatherWindowArtifact
+    recent_24h_window: WeatherWindowArtifact | None = None
     history_total_precipitation: float | None = None
     history_max_daily_precipitation: DailyMaximumArtifact | None = None
     forecast_total_precipitation: float | None = None
@@ -204,6 +203,7 @@ class WeatherDailyArtifact(ArtifactModel):
     precipitation_probability_max: list[float | None] | None = None
     temperature_2m_max: list[float | None] | None = None
     temperature_2m_min: list[float | None] | None = None
+    snowfall_sum: list[float | None] | None = None
     wind_speed_10m_max: list[float | None] | None = None
     wind_gusts_10m_max: list[float | None] | None = None
 
@@ -239,6 +239,8 @@ class WeatherArtifactData(ArtifactModel):
     rain_summary: RainSummaryArtifact | None = None
     wind_summary: WindSummaryArtifact | None = None
     history: WeatherSeriesArtifact | None = None
+    # 当天逐小时降水：已过去的小时来自当前观测，之后为预报。
+    today_hourly: WeatherHourlyArtifact | None = None
     forecast: WeatherSeriesArtifact | None = None
     source: WeatherSourceArtifact | None = None
 

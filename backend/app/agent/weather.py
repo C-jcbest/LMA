@@ -1,8 +1,8 @@
 """Open-Meteo 天气查询工具，供智能体按需调用。
 
 支持通过监测点名称/UUID 自动解析经纬度，或直接传入经纬度坐标。
-字段选择聚焦降雨与风况（滑坡监测关心的气象因子），历史数据走 Archive API，
-当前天气与预报走 Forecast API；逐小时降水只在需要时请求。
+字段选择聚焦降雨、气温、降雪与风况（滑坡监测关心的气象因子）。历史数据走 Archive API，
+当前天气与预报走 Forecast API；两者相互独立，一个失败时保留另一个并说明缺失。逐小时降水只在需要时请求。
 """
 
 import asyncio
@@ -13,19 +13,17 @@ import math
 import httpx
 from langchain_core.tools import tool
 from app.agent.tool_inputs import WeatherInput
-from app.agent.tool_protocol import ToolFailure, tool_result
+from app.agent.tool_protocol import ToolFailure, ToolInputError, tool_result
 
 from app.agent.retry import is_transient_error
-from app.monitoring_data import monitoring
+from app.monitoring_data import monitoring, station_coordinates
 from app.business_time import BUSINESS_TIMEZONE, BUSINESS_TZ, business_now
 
 FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_ENDPOINT = "https://archive-api.open-meteo.com/v1/archive"
 
-HTTP_TIMEOUT_SECONDS = 10
-MIN_HISTORY_DATE = date(1940, 1, 1)
-MAX_FORECAST_DAYS = 16
-MAX_HISTORY_DAYS = 366
+# 一年逐小时降水的历史请求响应约数秒到十余秒，留出余量。
+HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HISTORY_DAYS = 7
 MAX_HOURLY_VALUES_FOR_MODEL = 168
 
@@ -50,6 +48,9 @@ FORECAST_DAILY_FIELDS = (
 HISTORY_DAILY_FIELDS = (
     "precipitation_sum",
     "precipitation_hours",
+    "temperature_2m_max",
+    "temperature_2m_min",
+    "snowfall_sum",
     "wind_speed_10m_max",
     "wind_gusts_10m_max",
 )
@@ -77,27 +78,31 @@ async def _fetch_json(endpoint: str, params: dict) -> dict:
 async def _resolve_coordinates(
     station_name_or_uuid: str | None, latitude: float | None, longitude: float | None
 ) -> tuple[float, float, str | None, str | None]:
-    """把“站点名/UUID”或经纬度解析为坐标，失败时抛出受控业务异常。"""
-    if station_name_or_uuid:
-        async with monitoring() as data:
-            station = await data.resolve_station(station_name_or_uuid)
-        try:
-            lat = float(station.latitude)
-            lon = float(station.longitude)
-        except (TypeError, ValueError):
-            raise ToolFailure(f"监测点 {station.station_name} 未登记经纬度，无法查询天气")
-        # 北斗平台的 Latitude/Longitude 字段存在系统性颠倒（纬度字段存的是经度），
-        # 纬度必在 -90~90：若纬度超范围而经度在范围内，则交接后再使用
-        if abs(lat) > 90 and abs(lon) <= 90:
-            lat, lon = lon, lat
-        if not -90 <= lat <= 90 or not -180 <= lon <= 180:
-            raise ToolFailure("监测点未登记有效经纬度，无法查询天气。")
-        return lat, lon, station.station_name, station.station_uuid
-
-    if latitude is not None and longitude is not None:
+    """把“站点名/UUID”或经纬度解析为坐标；测点坐标的颠倒判定与地图、场地分析共用同一规则。"""
+    if station_name_or_uuid is None:
         return float(latitude), float(longitude), None, None
+    async with monitoring() as data:
+        station = await data.resolve_station(station_name_or_uuid)
+    station_latitude, station_longitude = station_coordinates(station)
+    if station_latitude is None:
+        raise ToolFailure(f"监测点 {station.station_name} 未登记有效经纬度，无法查询天气")
+    return station_latitude, station_longitude, station.station_name, station.station_uuid
 
-    raise ValueError("weather coordinates not supplied after schema validation")
+
+async def _fetch_part(endpoint: str, params: dict, label: str) -> tuple[dict | None, BaseException | None]:
+    """单独请求一类资料；失败只记录日志，由调用方决定是否整体失败。"""
+    try:
+        return await _fetch_json(endpoint, params), None
+    except (httpx.HTTPError, ValueError) as error:
+        logging.getLogger(__name__).warning("weather %s request failed", label, exc_info=True)
+        return None, error
+
+
+def _raise_unavailable(error: BaseException):
+    """两类资料都没有取得时整体失败；瞬时故障交给官方工具重试。"""
+    if is_transient_error(error):
+        raise error
+    raise ToolFailure("Open-Meteo 拒绝了本次天气查询，请检查参数后重试")
 
 
 def _series(payload: dict, group: str, field: str) -> list:
@@ -168,6 +173,17 @@ def _select_hourly_precipitation(payload: dict) -> dict:
     }
 
 
+def _today_hourly_precipitation(payload: dict, today: date) -> dict:
+    """当天逐小时降水：已过去的小时来自当前观测，之后的小时是预报。"""
+    prefix = today.isoformat()
+    pairs = [
+        (stamp, value)
+        for stamp, value in zip(_series(payload, "hourly", "time"), _series(payload, "hourly", "precipitation"))
+        if str(stamp).startswith(prefix)
+    ]
+    return {"time": [stamp for stamp, _ in pairs], "precipitation": [value for _, value in pairs]}
+
+
 @tool(response_format="content_and_artifact", args_schema=WeatherInput)
 async def query_weather(
     station_name_or_uuid: str | None = None,
@@ -178,10 +194,12 @@ async def query_weather(
     hourly: bool = False,
     forecast_days: int = 0,
 ) -> tuple[str, dict]:
-    """查询监测点或坐标位置的天气：当前天气、指定历史日期的逐日降雨与风况，可选逐小时降水和未来预报。
+    """查询监测点或坐标位置的天气：当前天气、指定历史日期的逐日降雨/气温/降雪与风况，可选逐小时降水和未来预报。
 
     适用于用户询问某天或某段时间的天气、降雨，或气象背景有助于解释已发现的监测现象时。
-    历史资料最多到昨天，单次最多 366 天；数据来自公开气象服务，不等同于现场雨量计实测。
+    历史资料最多到昨天，单次最多 366 天，与位移小时级取数上限相同，可一次取得整个位移窗口对应的天气，不必分段；hourly 为 true 时同时给出历史和当天的逐小时降水（当天未来时刻为预报）。
+    当前天气与历史资料分别来自两个接口，其中一个不可用时结果会说明缺了哪一部分。
+    数据来自公开气象服务，不等同于现场雨量计实测。
     需要按时段统计降雨（例如变化前 3 天累计雨量）时，可把本结果的依据编号交给 compute。
     """
     lat, lon, station_name, station_uuid = await _resolve_coordinates(station_name_or_uuid, latitude, longitude)
@@ -195,12 +213,8 @@ async def query_weather(
     else:
         history_start = date.fromisoformat(start_date)
         history_end = date.fromisoformat(end_date)
-        if history_start < MIN_HISTORY_DATE:
-            raise ToolFailure("历史天气最早支持查询至 1940-01-01")
         if history_end >= today:
-            raise ToolFailure("历史天气最多只能查询到昨天；今天的情况看当前天气和预报")
-        if (history_end - history_start).days + 1 > MAX_HISTORY_DAYS:
-            raise ToolFailure(f"历史天气查询跨度不能超过 {MAX_HISTORY_DAYS} 天，请分段查询")
+            raise ToolInputError("历史天气最多只能查询到昨天；今天的情况看当前天气、hourly 逐小时降水和预报")
 
     # 当前天气和最近 24 小时降水都来自预报接口；预报天数至少为 1 才能取得这两项。
     forecast_params = {
@@ -230,31 +244,34 @@ async def query_weather(
     if hourly:
         history_params["hourly"] = "precipitation"
 
-    try:
-        forecast, history = await asyncio.gather(
-            _fetch_json(FORECAST_ENDPOINT, forecast_params),
-            _fetch_json(ARCHIVE_ENDPOINT, history_params),
-        )
-    except httpx.HTTPStatusError as exc:
-        logging.getLogger(__name__).warning("weather service rejected request", exc_info=True)
-        if is_transient_error(exc):
-            raise
-        raise ToolFailure("Open-Meteo 拒绝了本次天气查询，请检查参数后重试")
+    (forecast, forecast_error), (history, history_error) = await asyncio.gather(
+        _fetch_part(FORECAST_ENDPOINT, forecast_params, "forecast"),
+        _fetch_part(ARCHIVE_ENDPOINT, history_params, "archive"),
+    )
+    if forecast is None and history is None:
+        _raise_unavailable(history_error)
+    limitations = []
+    if forecast is None:
+        limitations.append("当前天气、最近 24 小时降水与预报暂不可用")
+        forecast = {}
+    if history is None:
+        limitations.append(f"{history_start.isoformat()} 至 {history_end.isoformat()} 的历史逐日资料暂不可用")
+        history = {}
 
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
-    recent_24h = _recent_precipitation(forecast, now)
     history_series = {"daily": _select_daily(history, HISTORY_DAILY_FIELDS)}
     if hourly:
         history_series["hourly"] = _select_hourly_precipitation(history)
-    forecast_series = {"daily": _select_daily(forecast, FORECAST_DAILY_FIELDS)} if forecast_days > 0 else None
+    forecast_series = {"daily": _select_daily(forecast, FORECAST_DAILY_FIELDS)} if forecast_days > 0 and forecast else None
 
     rain_summary = {
-        "recent_24h_precipitation": recent_24h["precipitation"],
-        "recent_24h_window": recent_24h,
         "history_total_precipitation": _sum(_series(history, "daily", "precipitation_sum")),
         "history_max_daily_precipitation": _max_daily_item(history, "precipitation_sum"),
     }
+    if forecast:
+        recent_24h = _recent_precipitation(forecast, now)
+        rain_summary.update(recent_24h_precipitation=recent_24h["precipitation"], recent_24h_window=recent_24h)
     wind_summary = {
         "current_wind_speed": current.get("wind_speed_10m"),
         "current_wind_gust": current.get("wind_gusts_10m"),
@@ -279,7 +296,7 @@ async def query_weather(
             "station_name": station_name,
             "latitude": round(lat, 4),
             "longitude": round(lon, 4),
-            "timezone": forecast.get("timezone"),
+            "timezone": forecast.get("timezone") or history.get("timezone"),
         },
         "query": {
             "timezone": BUSINESS_TIMEZONE,
@@ -302,15 +319,20 @@ async def query_weather(
         "rain_summary": rain_summary,
         "wind_summary": wind_summary,
         "history": history_series,
+        "today_hourly": _today_hourly_precipitation(forecast, today) if hourly and forecast else None,
         "forecast": forecast_series,
         "source": {"provider": "Open-Meteo"},
     }
-    facts = data
+    facts = {**data, "limitations": limitations} if limitations else data
     hourly_count = len(history_series.get("hourly", {}).get("time", []))
     if hourly_count > MAX_HOURLY_VALUES_FOR_MODEL:
         # 逐小时序列完整保存在依据中，模型只在需要时通过 compute 读取，避免长序列占满上下文。
-        facts = {**data, "history": {
+        facts = {**facts, "history": {
             "daily": history_series["daily"],
             "hourly_note": f"已取得 {hourly_count} 个逐小时降水值，未放入本结果；需要按小时统计时用 compute 读取本依据",
         }}
-    return tool_result(facts, kind="weather", display=data)
+    return tool_result(
+        facts, kind="weather", display=data,
+        status="partial" if limitations else "success",
+        limitations=limitations or None,
+    )

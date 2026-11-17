@@ -1,6 +1,6 @@
 """统一模型构造入口：官方 init_chat_model 按 Provider 选择 integration。
 
-三个业务角色（主 Agent / 标题 / 摘要）只调用本工厂，各自传入独立
+各业务角色（主 Agent / 摘要 / 标题 / 问题推荐）只调用本工厂，各自传入独立
 thinking 开关与调用参数；Provider 层把布尔思考开关显式映射为供应商官方参数，不靠
 模型名猜测 Provider，也不为每个角色维护独立 Provider/Endpoint 配置。
 
@@ -29,14 +29,16 @@ def resolve_vendor(
     base_url: str | None = None,
     explicit_vendor: str | None = None,
 ) -> str:
-    """识别实际底层供应商，区分模型集成 (provider)、实际供应商 (vendor) 与 API 协议 (protocol)。"""
+    """识别实际底层供应商，区分模型集成 (provider)、实际供应商 (vendor) 与 API 协议 (protocol)。
+
+    只按接口地址和 Provider 判断，不按模型名猜测；经代理访问时由调用方显式传入 vendor。
+    """
     if explicit_vendor:
         return explicit_vendor.lower()
     url = (base_url or "").lower()
-    model_name = (model or "").lower()
-    if "aliyuncs.com" in url or "dashscope" in url or "qwen" in model_name:
+    if "aliyuncs.com" in url or "dashscope" in url:
         return "dashscope"
-    if "deepseek" in url or "deepseek" in model_name or provider == "deepseek":
+    if "deepseek" in url or provider == "deepseek":
         return "deepseek"
     if "openai" in url or provider == "openai":
         return "openai"
@@ -206,7 +208,7 @@ def create_chat_model(
     profile: dict[str, Any] | None = None,
     **kwargs: Any,
 ) -> BaseChatModel:
-    """按 Provider 构造官方 integration 模型，五个业务角色共用此唯一入口。
+    """按 Provider 构造官方 integration 模型，主 Agent、摘要、标题与推荐共用此唯一入口。
 
     区分：
     - Provider (Integration): "openai", "deepseek"

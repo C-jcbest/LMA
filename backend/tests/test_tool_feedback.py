@@ -13,7 +13,7 @@ from pydantic import ValidationError
 
 from app.agent.conclusions import record_conclusions
 from app.agent.graph import create_lma_agent
-from app.agent.tool_feedback import is_tool_feedback
+from app.agent.tool_protocol import is_tool_feedback
 from app.agent.tool_inputs import DisplacementInput
 from app.agent.tools import get_displacement
 from app.beidou.client import BeidouApiError
@@ -46,12 +46,12 @@ class DisplacementInputTests(unittest.TestCase):
                 DisplacementInput.model_validate({**VALID_WINDOW, **fields})
 
 
-async def evidence_kinds(storage, session):
-    async with storage.pool.connection() as connection:
-        cursor = await connection.execute(
-            "SELECT snapshot->>'kind' AS kind FROM lma_evidence WHERE session_id=%s ORDER BY acquired_at", (session,),
-        )
-        return [row['kind'] for row in await cursor.fetchall()]
+def evidence_kinds(messages):
+    """工具结果只存于 checkpoint：可引用依据是带 artifact 的非纠错结果。"""
+    return [
+        message.artifact['kind'] for message in messages
+        if isinstance(message, ToolMessage) and isinstance(message.artifact, dict) and not is_tool_feedback(message)
+    ]
 
 
 @unittest.skipUnless(os.environ.get('LMA_TEST_DATABASE_URI'), '需配置隔离lma_test数据库')
@@ -95,7 +95,7 @@ class PersistedToolFeedbackTests(unittest.TestCase):
             self.assertEqual([item.status for item in results], ['error', 'success'])
             self.assertTrue(is_tool_feedback(results[0]) and results[0].artifact is None)
             self.assertIn('366', model.inputs[1][-1].text)
-            self.assertEqual(await evidence_kinds(storage, session), ['gnss_series'])
+            self.assertEqual(evidence_kinds(result['messages']), ['gnss_series'])
             self.assertTrue(all(request[1] >= '2025-12-01' for request in platform.requests))
             restored = await agent.aget_state({'configurable': {'thread_id': session}})
             self.assertEqual(project_state(restored.values), project_state(result))
@@ -113,7 +113,7 @@ class PersistedToolFeedbackTests(unittest.TestCase):
             self.assertTrue(result['messages'][-1].additional_kwargs['lma_budget_exhausted'])
             results = [item for item in result['messages'] if isinstance(item, ToolMessage)]
             self.assertTrue(all(item.status == 'error' and is_tool_feedback(item) for item in results))
-            self.assertEqual(await evidence_kinds(storage, session), [])
+            self.assertEqual(evidence_kinds(result['messages']), [])
             self.assertIn('未取得可用观测', str(project_state(result)))
             self.assertNotIn('Field required', str(project_state(result)))
         self.run_scenario(scenario, FakePlatform(stations=[STATION]))
@@ -137,7 +137,7 @@ class PersistedToolFeedbackTests(unittest.TestCase):
                 message = next(item for item in result['messages'] if isinstance(item, ToolMessage))
                 self.assertFalse(is_tool_feedback(message))
                 self.assertEqual(message.artifact['kind'], 'acquisition_failure')
-                self.assertEqual(await evidence_kinds(storage, session), ['acquisition_failure'])
+                self.assertEqual(evidence_kinds(result['messages']), ['acquisition_failure'])
                 self.assertIn(public_message, str(project_state(result)))
                 self.assertNotIn('private diagnostic', str(project_state(result)))
 

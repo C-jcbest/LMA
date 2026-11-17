@@ -19,13 +19,13 @@ from langchain.agents.middleware import (
     ModelCallLimitMiddleware,
     ToolCallLimitMiddleware,
 )
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 
 from app.beidou.client import BeidouApiError
 from app.agent.tool_protocol import ToolFailure, ToolInputError, raise_tool_validation_error
 from app.agent.tool_feedback import ToolFeedbackMiddleware
 from app.agent.context import build_context_usage
-from app.agent.evidence import EvidenceMiddleware
+from app.agent.station_records import StationRecordsMiddleware
 from app.agent.message_context import model_messages, stamp_user_message
 from app.agent.summarization import create_summarization_middleware, _get_summary_model
 from app.agent.prompting import SYSTEM_PROMPT
@@ -69,7 +69,7 @@ class AgentState(BaseAgentState):
 class QueryCallLimitMiddleware(ToolCallLimitMiddleware):
     """查询额度只约束访问外部数据源的工具。
 
-    本地计算、计划、结论登记和读取以往结论不请求监测平台或外部服务；计入额度会让取数用尽后
+    本地计算、结论登记和读取以往结论不请求监测平台或外部服务；计入额度会让取数用尽后
     无法整理已取得的依据。它们反复调用仍受模型调用上限约束。
     """
 
@@ -166,41 +166,50 @@ class LmaMiddleware(AgentMiddleware):
 
     @hook_config(can_jump_to=["model"])
     async def aafter_model(self, state, runtime):
-        index = next(i for i in range(len(state["messages"]) - 1, -1, -1) if state["messages"][i].type == "ai")
-        message = state["messages"][index]
+        message = next(item for item in reversed(state["messages"]) if item.type == "ai")
+        budget_left = state.get("run_model_call_count", 0) < self.model_run_limit
         updates = {}
         if message.invalid_tool_calls and not message.tool_calls:
-            if state.get('run_model_call_count', 0) >= self.model_run_limit:
-                raise ValueError('模型在本轮预算内未能给出有效工具调用或回答')
+            if not budget_left:
+                raise ValueError("模型在本轮预算内未能给出有效工具调用或回答")
             # 使用官方模型节点纠错并计入本轮调用预算，不解析或执行损坏的参数。
-            updates['jump_to'] = 'model'
+            updates["jump_to"] = "model"
         elif not message.tool_calls and not message.text.strip():
-            raise ValueError('模型未返回可用回答；已取得的证据保留')
-        usage = getattr(message, "usage_metadata", None) or {}
-        input_tokens = usage.get("input_tokens")
-        if not (
-            isinstance(input_tokens, int)
-            and not isinstance(input_tokens, bool)
-            and input_tokens >= 0
-        ):
-            logger.warning("model response did not include input token usage; preserve previous context_usage")
-            return updates or None
+            if not budget_left:
+                raise ValueError("模型未返回可用回答；已取得的证据保留")
+            # 思考模型偶尔只输出推理、正文为空；删掉这条空回复再调用一次，仍计入本轮预算。
+            return {"messages": [RemoveMessage(id=message.id)], "jump_to": "model"}
         if self.max_input_tokens is None:
-            logger.warning(
-                "model profile does not include max_input_tokens; preserve previous context_usage"
-            )
+            logger.warning("model profile does not include max_input_tokens; preserve previous context_usage")
             return updates or None
-        updates['context_usage'] = build_context_usage(
-            usage,
+        usage = build_context_usage(
+            getattr(message, "usage_metadata", None) or {},
             max_input_tokens=self.max_input_tokens,
             model=self.model_name,
         )
+        if usage is None:
+            logger.warning("model response did not include input token usage; preserve previous context_usage")
+            return updates or None
+        updates["context_usage"] = usage
         return updates
 
 
-def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None, storage=None):
-    """生产与回归测试共用同一个官方 Agent 工厂；有存储时启用存证和以往结论查询。"""
+def _validate_context_budget(max_input_tokens: int | None) -> None:
+    """摘要阈值是绝对 token 数；超过模型窗口时永远不会触发摘要，长会话会直接因超长失败。"""
     settings = get_settings()
+    if settings.context_keep_tokens >= settings.context_token_threshold:
+        raise ValueError("CONTEXT_KEEP_TOKENS 必须小于 CONTEXT_TOKEN_THRESHOLD。")
+    if max_input_tokens is not None and settings.context_token_threshold >= max_input_tokens:
+        raise ValueError(
+            f"CONTEXT_TOKEN_THRESHOLD（{settings.context_token_threshold}）必须小于模型最大输入 token 数"
+            f"（{max_input_tokens}），否则摘要不会在超长之前触发。"
+        )
+
+
+def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=None, summary_model=None, storage=None):
+    """生产与回归测试共用同一个官方 Agent 工厂；有存储时写入测点调查记录并启用以往结论查询。"""
+    settings = get_settings()
+    _validate_context_budget(model_max_input_tokens(model))
     bound_tools = list(tools if agent_tools is None else agent_tools)
     if storage is not None:
         bound_tools.append(station_history_tool(storage))
@@ -208,25 +217,27 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         agent_tool.handle_validation_error = partial(
             raise_tool_validation_error, schema_name=agent_tool.get_input_schema().__name__,
         )
+    retry_options = {
+        "max_retries": settings.agent_max_retries, "retry_on": is_transient_error, "on_failure": "error",
+        "initial_delay": settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
+        "max_delay": settings.agent_retry_max_delay, "backoff_factor": 2.0, "jitter": True,
+    }
     return create_agent(
         model, tools=bound_tools,
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
-            *([EvidenceMiddleware(storage)] if storage is not None else []),
-            ToolFeedbackMiddleware(),
+            # 顺序有意义：测点记录在消息加上服务端上下文之后读取；它包在纠错层外面，才能看到取数失败依据。
             LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit),
+            *([StationRecordsMiddleware(storage)] if storage is not None else []),
+            ToolFeedbackMiddleware(),
             create_summarization_middleware(
                 _get_summary_model() if summary_model is None else summary_model,
             ),
             ModelCallLimitMiddleware(run_limit=settings.agent_model_run_limit, exit_behavior="error"),
             QueryCallLimitMiddleware(run_limit=settings.agent_tool_run_limit, exit_behavior="continue"),
-            ModelRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
-                on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
-                max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),
+            ModelRetryMiddleware(**retry_options),
             ToolErrorMiddleware(on_error=_on_tool_error),
-            ToolRetryMiddleware(max_retries=settings.agent_max_retries, retry_on=is_transient_error,
-                on_failure="error", initial_delay=settings.agent_retry_initial_delay if retry_delay is None else retry_delay,
-                max_delay=settings.agent_retry_max_delay, backoff_factor=2.0, jitter=True),
+            ToolRetryMiddleware(**retry_options),
         ],
     )

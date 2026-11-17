@@ -22,9 +22,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstrai
 from sse_starlette import EventSourceResponse
 
 from app.agent.graph import _get_llm, create_lma_agent
-from app.agent.evidence import reconcile_evidence
 from app.agent.message_context import ASK_TARGETS_KEY
-from app.agent.title import generate_title_node
+from app.agent.title import generate_title
 from app.agent.suggestions import SuggestionService
 from app.beidou.client import BeidouApiError
 from app.business_time import BUSINESS_TZ
@@ -106,12 +105,90 @@ class TitleInput(ApiInput):
     input_text: str = Field(min_length=1, max_length=100000)
 
 
+def sse_event(event: str, payload) -> dict:
+    return {"event": event, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
+
+
 @dataclass
 class ActiveRun:
+    """一轮调查在后台任务中执行，和任何一个 HTTP 连接解耦；SSE 连接只是订阅者。
+
+    浏览器刷新、关闭或网络中断不会取消调查，只有取消接口或服务关闭才会停止它。
+    中途重新连接的订阅者先收到最近一次图状态，再收到其后的消息事件，然后继续实时接收。
+    """
     id: str
     cancel_scope: anyio.CancelScope | None = None
     finished: asyncio.Event = field(default_factory=asyncio.Event)
     stop_requested: bool = False
+    task: asyncio.Task | None = None
+    subscribers: set[asyncio.Queue] = field(default_factory=set)
+    latest_values: dict | None = None
+    events_since_values: list[dict] = field(default_factory=list)
+
+    def publish(self, event: dict) -> None:
+        self.events_since_values.append(event)
+        for queue in self.subscribers:
+            queue.put_nowait(event)
+
+    def update_values(self, values: dict) -> None:
+        # 图状态只在内部记录；完整状态含全部依据，每步都发给前端会重复传输大量数据。
+        self.latest_values = values
+        self.events_since_values = []
+
+    def subscribe(self, *, catch_up: bool) -> asyncio.Queue:
+        queue = asyncio.Queue()
+        queue.put_nowait(sse_event("metadata", {"run_id": self.id}))
+        if catch_up:
+            if self.latest_values is not None:
+                queue.put_nowait(sse_event("values", project_state(self.latest_values)))
+            for event in self.events_since_values:
+                queue.put_nowait(event)
+        if self.finished.is_set():
+            queue.put_nowait(None)
+        else:
+            self.subscribers.add(queue)
+        return queue
+
+    def close(self) -> None:
+        for queue in self.subscribers:
+            queue.put_nowait(None)
+        self.subscribers.clear()
+
+
+async def relay_events(control: ActiveRun, queue: asyncio.Queue):
+    """把一轮调查的事件转发给一个 SSE 连接；连接断开只退订，不影响调查。"""
+    try:
+        while True:
+            event = await queue.get()
+            if event is None:
+                return
+            yield event
+    finally:
+        control.subscribers.discard(queue)
+
+
+async def commit_completed_tool_results(agent, config):
+    """停止、出错或进程退出时，并行工具中已完成的结果只在官方 pending writes 里；提交进 checkpoint。
+
+    这样刷新后能看到这些真实结果，下一轮提交也不会把它们当作未完成的调用。不重新执行任何工具。
+    """
+    snapshot = await agent.aget_state(config)
+    completed = {message.tool_call_id for message in snapshot.values.get("messages", []) if isinstance(message, ToolMessage)}
+    results = []
+    for task in snapshot.tasks:
+        if task.name != "tools" or not isinstance(task.result, dict):
+            continue
+        for message in task.result.get("messages", []):
+            if isinstance(message, ToolMessage) and message.tool_call_id not in completed:
+                results.append(message)
+    if not results:
+        return snapshot
+    # 并行工具仍有未完成任务时，官方 update_state 以“tools 节点写入”合并；传入完整可见消息，
+    # 已提交的结果不会在后续更新中被未完成任务的父状态覆盖。
+    config = await agent.aupdate_state(
+        snapshot.config, {"messages": [*snapshot.values.get("messages", []), *results]}, as_node="tools",
+    )
+    return await agent.aget_state(config)
 
 
 def graph_config(session_id: str, checkpoint_id: str | None = None) -> dict:
@@ -308,13 +385,9 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
 
     async def reconciled_state(session_id, config):
         async with state_locks.setdefault(session_id, asyncio.Lock()):
-            snapshot = await app.state.agent.aget_state(config)
-            if session_id not in active_runs:
-                recovered = await reconcile_evidence(app.state.storage, session_id, snapshot.values.get("messages", []))
-                if recovered:
-                    config = await app.state.agent.aupdate_state(snapshot.config, {"messages": recovered}, as_node="tools")
-                    snapshot = await app.state.agent.aget_state(config)
-            return snapshot
+            if session_id in active_runs:
+                return await app.state.agent.aget_state(config)
+            return await commit_completed_tool_results(app.state.agent, config)
 
     @app.get("/sessions/{session_id}/state")
     async def get_state(session_id: UUID):
@@ -400,9 +473,9 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             return {"questions": []}
 
     @app.post("/title")
-    async def generate_title(body: TitleInput):
+    async def create_title(body: TitleInput):
         try:
-            return await asyncio.wait_for(generate_title_node({"input_text": body.input_text}), timeout=15)
+            return {"title": await asyncio.wait_for(generate_title(body.input_text), timeout=15)}
         except Exception:
             logger.warning("session title generation failed", exc_info=True)
             raise HTTPException(502, "会话标题生成失败。") from None
@@ -415,8 +488,74 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             run.stop_requested = True
             if run.cancel_scope is not None:
                 run.cancel_scope.cancel()
-            await asyncio.wait_for(run.finished.wait(), timeout=30)
+            try:
+                await asyncio.wait_for(run.finished.wait(), timeout=30)
+            except TimeoutError:
+                # 已请求停止，收尾仍在进行；客户端随后读取会话状态即可。
+                return Response(status_code=202)
         return Response(status_code=204)
+
+    @app.get("/sessions/{session_id}/runs/active")
+    async def join_active_run(session_id: UUID):
+        """刷新或重新打开页面后接回仍在进行的调查；没有进行中的调查时返回 204。"""
+        await require_session(session_id)
+        control = active_runs.get(str(session_id))
+        if control is None or control.finished.is_set():
+            return Response(status_code=204)
+        queue = control.subscribe(catch_up=True)
+        return EventSourceResponse(relay_events(control, queue), ping=15, send_timeout=30)
+
+    async def execute_run(control: ActiveRun, key: str, messages: list, config: dict, branch: dict | None):
+        """一轮调查的完整生命周期；只有图完整结束才记录成功。"""
+        status = "cancelled"
+        final_state = {}
+        try:
+            with app.state.tracing.run(
+                config, session_id=key, run_id=control.id,
+                input=[message.content for message in messages if isinstance(message, HumanMessage)],
+            ) as trace:
+                try:
+                    # 平台访问范围随本轮结束关闭连接；该会话已取得的数据块保留给后续追问。
+                    async with monitoring_scope(key, platform_client_factory):
+                        with anyio.CancelScope() as cancel_scope:
+                            control.cancel_scope = cancel_scope
+                            if control.stop_requested:
+                                return
+                            graph_input = {"messages": messages} if messages else None
+                            async for mode, data in app.state.agent.astream(
+                                graph_input, trace.config, stream_mode=["messages", "values"], durability="sync",
+                            ):
+                                if mode == "messages":
+                                    message, metadata = data
+                                    control.publish(sse_event("messages", [project_message(message), {
+                                        "langgraph_node": metadata.get("langgraph_node"),
+                                    }]))
+                                    continue
+                                if branch is not None:
+                                    # 首个状态已写入分叉后的 checkpoint，被替换的旧分支此后不可见。
+                                    await app.state.storage.prune_branch(key, **branch)
+                                    branch = None
+                                final_state = data
+                                control.update_values(data)
+                            status = "success"
+                            control.publish(sse_event("values", project_state(final_state)))
+                except asyncio.CancelledError:
+                    status = "cancelled"
+                    raise
+                except Exception:
+                    status = "error"
+                    logger.exception("agent run failed: %s", control.id)
+                    control.publish(sse_event("error", {
+                        "message": "本轮运行失败，已保存完成的步骤，请重新载入会话后重试。",
+                    }))
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        await app.state.storage.finish_run(control.id, status)
+                        trace.finish(status, final_state.get("messages", []))
+        finally:
+            active_runs.pop(key, None)
+            control.finished.set()
+            control.close()
 
     @app.post("/sessions/{session_id}/runs")
     async def stream_run(session_id: UUID, body: RunInput):
@@ -426,11 +565,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         config = graph_config(key, body.checkpoint_id)
         async with state_locks.setdefault(key, asyncio.Lock()):
             require_idle(session_id)
-            snapshot = await app.state.agent.aget_state(config)
-            recovered = await reconcile_evidence(app.state.storage, key, snapshot.values.get("messages", []))
-            if recovered:
-                config = await app.state.agent.aupdate_state(snapshot.config, {"messages": recovered}, as_node="tools")
-                snapshot = await app.state.agent.aget_state(config)
+            snapshot = await commit_completed_tool_results(app.state.agent, config)
             control = ActiveRun(id=str(uuid4()))
             active_runs[key] = control
         config = snapshot.config if snapshot.created_at else config
@@ -445,69 +580,27 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                 if isinstance(message, HumanMessage):
                     if body.focus_station and session.get("station_uuid"):
                         message.additional_kwargs["lma_focus_identity"] = {"station_uuid": session["station_uuid"], "station_name": body.focus_station}
-            if any(isinstance(message, ToolCancellation) for message in body.messages):
-                # 并行 ToolNode 被停止时，已完成工具可能仍在 pending writes 中。
-                # 用官方 update_state 提交这些真实结果及用户的取消确认，避免新输入丢弃 pending writes。
-                tool_results = [message for message in messages if isinstance(message, ToolMessage)]
+            tool_results = [message for message in messages if isinstance(message, ToolMessage)]
+            if tool_results:
+                # 用官方 update_state 提交用户对未完成调用的取消确认（同样传入完整可见消息），新输入随后从这一状态开始。
                 config = await app.state.agent.aupdate_state(
-                    snapshot.config, {"messages": [*snapshot.values.get("messages", []), *tool_results]},
-                    as_node="tools",
+                    snapshot.config, {"messages": [*snapshot.values.get("messages", []), *tool_results]}, as_node="tools",
                 )
                 messages = [message for message in messages if isinstance(message, HumanMessage)]
+            branch = None
+            if body.checkpoint_id is not None:
+                stored = snapshot.values.get("messages", [])
+                branch = {
+                    "tool_call_ids": [message.tool_call_id for message in stored if isinstance(message, ToolMessage)],
+                    "message_ids": [str(message.id) for message in stored if isinstance(message, HumanMessage)],
+                }
             await app.state.storage.start_run(key, control.id)
+            queue = control.subscribe(catch_up=False)
+            control.task = asyncio.create_task(execute_run(control, key, messages, config, branch))
         except BaseException:
             active_runs.pop(key, None)
             raise
-
-        async def events():
-            # 客户端断开也可能直接关闭生成器；只有图完整结束才记录成功。
-            status = "cancelled"
-            final_state = {}
-            with app.state.tracing.run(
-                config, session_id=key, run_id=control.id,
-                input=[message.content for message in messages if isinstance(message, HumanMessage)],
-            ) as trace:
-                try:
-                    # 平台访问范围随本轮结束关闭连接；该会话已取得的数据块保留给后续追问。
-                    async with monitoring_scope(key, platform_client_factory):
-                        with anyio.CancelScope() as cancel_scope:
-                            control.cancel_scope = cancel_scope
-                            if control.stop_requested:
-                                return
-                            yield {"event": "metadata", "data": json.dumps({"run_id": control.id})}
-                            graph_input = {"messages": messages} if messages else None
-                            async for mode, data in app.state.agent.astream(
-                                graph_input, trace.config, stream_mode=["messages", "values"], durability="sync",
-                            ):
-                                if mode == "messages":
-                                    message, metadata = data
-                                    payload = [project_message(message), {
-                                        "langgraph_node": metadata.get("langgraph_node"),
-                                    }]
-                                else:
-                                    final_state = data
-                                    payload = project_state(data)
-                                yield {"event": mode, "data": json.dumps(jsonable_encoder(payload), ensure_ascii=False)}
-                            status = "success"
-                except asyncio.CancelledError:
-                    status = "cancelled"
-                    raise
-                except Exception:
-                    status = "error"
-                    logger.exception("agent run failed: %s", control.id)
-                    yield {"event": "error", "data": json.dumps({
-                        "message": "本轮运行失败，已保存完成的步骤，请重新载入会话后重试。",
-                    }, ensure_ascii=False)}
-                finally:
-                    with anyio.CancelScope(shield=True):
-                        try:
-                            await app.state.storage.finish_run(control.id, status)
-                            trace.finish(status, final_state.get("messages", []))
-                        finally:
-                            active_runs.pop(key, None)
-                            control.finished.set()
-
-        return EventSourceResponse(events(), ping=15, send_timeout=30)
+        return EventSourceResponse(relay_events(control, queue), ping=15, send_timeout=30)
 
     return app
 

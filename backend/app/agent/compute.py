@@ -45,11 +45,22 @@ def _dataset(identifier: str, message: ToolMessage | None) -> tuple[dict, str]:
     kind = artifact["kind"]
     if kind == "gnss_series":
         reference = data.get("reference", {}).get("coordinates_m", {})
+        comparisons = data.get("comparisons") or {}
+        names = comparisons.get("station_names") or {}
+        references = comparisons.get("references") or {}
+        peers = {
+            names.get(identifier, identifier): {
+                "reference": {axis: (references.get(identifier) or {}).get(axis) for axis in ("n", "e", "u")},
+                "points": _point_rows(points),
+            }
+            for identifier, points in (comparisons.get("snapshots") or {}).items()
+        }
         payload = {
             "kind": "gnss",
             "station_name": data["station_name"],
             "reference": {axis: reference.get(axis) for axis in ("n", "e", "u")},
-            "points": [[point["time"], point.get("n"), point.get("e"), point.get("u")] for point in data["points"]],
+            "points": _point_rows(data["points"]),
+            "peers": peers,
         }
         return payload, f"{data['station_name']} 位移 {data['begin_time']} 至 {data['end_time']}"
     if kind == "weather":
@@ -67,7 +78,16 @@ def _dataset(identifier: str, message: ToolMessage | None) -> tuple[dict, str]:
         return {"kind": "weather", "tables": tables}, f"{location} 天气 {query['history_start_date']} 至 {query['history_end_date']}"
     if kind == "computation":
         return {"kind": "value", "value": data["result"]}, f"计算结果：{data['description']}"
-    raise ToolInputError(f"依据 {identifier} 的类型不支持计算；可用位移、天气或已有计算结果")
+    if kind == "site_environment":
+        name = data["center_station"]["station_name"]
+        return {"kind": "value", "value": data}, f"{name} 场地环境"
+    if kind == "station_list":
+        return {"kind": "value", "value": data["stations"]}, f"测点台账（{data['total']} 个测点）"
+    raise ToolInputError(f"依据 {identifier} 的类型不支持计算")
+
+
+def _point_rows(points: list[dict]) -> list[list]:
+    return [[point["time"], point.get("n"), point.get("e"), point.get("u")] for point in points]
 
 
 def _run_sandbox(request: dict) -> dict:
@@ -93,13 +113,15 @@ async def compute(
     inputs: Annotated[list[str], Field(min_length=1, max_length=8, description="本会话依据编号，例如 [\"E1a2b3c\"]")],
     runtime: ToolRuntime,
 ):
-    """在本会话已取得的位移或天气依据上做计算，例如按周汇总位移、任意子窗口净变化、降雨前后速率对比、
-    两站差值、变化前若干天累计雨量。数据已在会话中，不重新请求平台。
+    """在本会话已取得的依据上做计算，例如按周汇总位移、任意子窗口净变化、降雨前后速率对比、
+    两站差值、变化前若干天累计雨量、位移方位与坡向的夹角。数据已在会话中，不重新请求平台。
 
     代码中可用 pd、np、math、statistics；data[依据编号] 是对应数据，只有一个输入时也可直接用 df。
     - 位移：DataFrame，时间索引，列 n/e/u 为原始坐标（m），dn/de/du/dh/dd 为相对平台固定参考的位移（mm，参考缺失时为 NaN）。
-    - 天气：字典，可能含 "daily"（逐日，precipitation_sum 等）、"hourly"（逐小时 precipitation）、"forecast"，均为时间索引 DataFrame。
-    - 已有计算结果：原样的 JSON 值。
+      该依据带对比站时，peers[依据编号] 是 {测点名: 同样结构的 DataFrame}。
+    - 天气：字典，可能含 "daily"（逐日降雨、气温、降雪等）、"hourly"（逐小时 precipitation）、"today_hourly"（当天逐小时降水，
+      含预报）、"forecast"，均为时间索引 DataFrame。
+    - 场地环境、测点台账、已有计算结果：原样的 JSON 值（字典或列表）。
     把最终结果赋值给 result（数值、字典、Series 或 DataFrame，表格最多返回 200 行）；print 的内容也会返回。
     result 会原样以表格展示给用户：字典的键、列名和索引用简短的中文业务名称并注明单位（如“累计降雨(mm)”）；
     几组同类指标（如前后两段的天数、雨量、最大日雨量）用 DataFrame 每组一行，不要嵌套字典。

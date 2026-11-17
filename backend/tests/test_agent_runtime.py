@@ -59,10 +59,23 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('tool_calls', model.inputs[-1][-1].additional_kwargs)
         self.assertIn('该部分调用未执行', model.inputs[-1][-1].text)
 
-    async def test_empty_model_output_is_an_explicit_failure(self):
-        agent = graph.create_lma_agent(ScriptedModel(script=[AIMessage(content='')]), agent_tools=[], retry_delay=0)
+    async def test_empty_model_output_is_retried_then_fails_explicitly_at_budget(self):
+        model = ScriptedModel(script=[AIMessage(id='empty', content=''), AIMessage(content='数据缺测，不能判断')])
+        agent = graph.create_lma_agent(model, agent_tools=[], retry_delay=0)
+        result = await agent.ainvoke({'messages': [HumanMessage(content='解释当前情况')]})
+        self.assertEqual(result['messages'][-1].text, '数据缺测，不能判断')
+        self.assertNotIn('empty', [message.id for message in result['messages']])
+
+        self.settings.agent_model_run_limit = 2
+        model = ScriptedModel(script=[AIMessage(content=''), AIMessage(content='')])
+        agent = graph.create_lma_agent(model, agent_tools=[], retry_delay=0)
         with self.assertRaisesRegex(ValueError, '未返回可用回答'):
             await agent.ainvoke({'messages': [HumanMessage(content='解释当前情况')]})
+        self.assertEqual(len(model.inputs), 2)
+
+    def test_summary_threshold_must_fit_inside_the_model_window(self):
+        with self.assertRaisesRegex(ValueError, "CONTEXT_TOKEN_THRESHOLD"):
+            graph.create_lma_agent(ScriptedModel(script=[], profile={"max_input_tokens": 128_000}), agent_tools=[])
 
     async def test_malformed_calls_cannot_bypass_model_budget(self):
         self.settings.agent_model_run_limit = 2

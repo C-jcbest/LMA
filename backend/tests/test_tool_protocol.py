@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.messages.utils import convert_to_openai_messages
 from langchain_core.tools import tool
 from app.agent import graph, summarization, tools, weather, site
-from app.agent.tool_protocol import ToolFailure, tool_error_result, tool_result
+from app.agent.tool_protocol import ToolFailure, ToolInputError, tool_error_result, tool_result
 from app.beidou.schemas import GnssDataPoint, Station
 from app.monitoring_data import MonitoringData, _SeriesCache
 
@@ -60,7 +60,7 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_upstream_data_validation_is_not_classified_as_model_input_feedback(self):
         from pydantic import BaseModel
-        from app.agent.tool_feedback import is_tool_feedback
+        from app.agent.tool_protocol import is_tool_feedback
         from app.server.messages import project_message
 
         class PlatformData(BaseModel):
@@ -150,6 +150,30 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await data.resolve_station("MS1")).station_uuid, "uuid-1")
         with self.assertRaises(ToolFailure):
             await data.resolve_station("MS")
+
+    async def test_station_names_ignore_case_separators_and_leading_zeros(self):
+        platform = FakePlatform(stations=[station("SCWM-04", "uuid-4"), station("SCWM-40", "uuid-40")])
+        data = MonitoringData(_SeriesCache(), lambda: platform)
+        self.assertEqual((await data.resolve_station("scwm4")).station_uuid, "uuid-4")
+        self.assertEqual((await data.resolve_station("SCWM 040")).station_uuid, "uuid-40")
+        # 有歧义或找不到时交给模型修正或请用户确认，不是取数失败。
+        with self.assertRaises(ToolInputError):
+            await data.resolve_station("scwm")
+        with self.assertRaises(ToolInputError):
+            await data.resolve_station("不存在")
+
+    async def test_future_part_of_window_is_not_counted_as_missing(self):
+        from datetime import datetime
+        from app.business_time import BUSINESS_TZ
+        points = [GnssDataPoint(data_time=f"2026-09-01 {hour:02d}:00:00", n="1", e="2", u="3") for hour in range(11)]
+        self.use_platform(FakePlatform(stations=[station()], series={"11111111-1111-1111-1111-111111111111": points}))
+        with patch("app.monitoring_data.business_now", return_value=datetime(2026, 9, 1, 10, 30, tzinfo=BUSINESS_TZ)):
+            message, _ = await self.run_tool(tools.get_displacement, {
+                "station_name_or_uuid": "测试站", "begin_time": "2026-09-01 00:00:00", "end_time": "2026-09-01 23:59:59"})
+        quality = message.artifact["data"]["quality"]
+        self.assertEqual((quality["expected"], quality["missing"]), (11, 0))
+        self.assertEqual(quality["requested_end"], "2026-09-01 23:59:59")
+        self.assertEqual(quality["evaluated_until"], "2026-09-01 10:30:00")
 
     async def test_empty_data_returns_success_status_and_zero_points(self):
         neighbor = station("邻近站", "22222222-2222-2222-2222-222222222222", latitude="30.2", longitude="103.3")
@@ -266,11 +290,48 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         ])
         with patch.object(site, "_fetch_json", mock_fetch):
             message, _ = await self.run_tool(site.inspect_site_environment, {"station_name_or_uuid": "测试站"})
-        self.assertEqual(message.status, "error")
-        # 即使地形网络发生 503 异常，地质有效证据绝不被抹掉
+        # 地形 503 时已取得的地质资料仍是可引用的依据，用 partial 标明缺失的地形。
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["status"], "partial")
         self.assertEqual(message.artifact["data"]["geology"]["name"], "泥盆系灰岩")
         self.assertIsNone(message.artifact["data"].get("terrain"))
-        self.assertIn("缺少地形证据", message.artifact["error"]["message"])
+        self.assertTrue(any("缺少地形证据" in item for item in message.artifact["limitations"]))
+
+    async def test_site_evidence_without_terrain_or_geology_is_a_failure(self):
+        self.use_platform(FakePlatform(stations=[station(latitude="30", longitude="120")]))
+        with patch.object(site, "_fetch_json", AsyncMock(side_effect=httpx.ConnectTimeout("timeout"))):
+            message, _ = await self.run_tool(site.inspect_site_environment, {"station_name_or_uuid": "测试站"})
+        self.assertEqual(message.status, "error")
+        self.assertEqual(message.artifact["data"]["center_station"]["latitude"], 30)
+
+    async def test_weather_keeps_history_when_current_weather_fails(self):
+        request = httpx.Request("GET", "https://example.invalid")
+
+        async def fetch(endpoint, params):
+            if endpoint == weather.FORECAST_ENDPOINT:
+                raise httpx.ConnectTimeout("timeout", request=request)
+            return {"daily": {"time": ["2026-11-10"], "precipitation_sum": [3.5]}}
+
+        with patch.object(weather, "_fetch_json", AsyncMock(side_effect=fetch)):
+            message, _ = await self.run_tool(weather.query_weather, {"latitude": 30, "longitude": 120})
+        self.assertEqual(message.status, "success")
+        self.assertEqual(message.artifact["status"], "partial")
+        self.assertEqual(message.artifact["data"]["rain_summary"]["history_total_precipitation"], 3.5)
+        self.assertIsNone(message.artifact["data"].get("current"))
+        self.assertIn("当前天气", json.loads(message.content)["limitations"][0])
+
+    async def test_weather_fails_when_both_sources_fail(self):
+        with patch.object(weather, "_fetch_json", AsyncMock(side_effect=httpx.ConnectTimeout("timeout"))):
+            with self.assertRaises(httpx.ConnectTimeout):
+                await weather.query_weather.ainvoke({"latitude": 30, "longitude": 120})
+
+    def test_swapped_coordinates_are_corrected_only_when_detectable(self):
+        from app.monitoring_data import station_coordinates
+        self.assertEqual(station_coordinates(station(latitude="120.5", longitude="30.2")), (30.2, 120.5))
+        self.assertEqual(station_coordinates(station(latitude="30.2", longitude="120.5")), (30.2, 120.5))
+        # 两个值都在纬度范围内时无法判断是否颠倒，原样使用。
+        self.assertEqual(station_coordinates(station(latitude="60", longitude="30")), (60.0, 30.0))
+        self.assertEqual(station_coordinates(station(latitude="120", longitude="100")), (None, None))
 
     async def test_success_artifact_not_serialized_to_model(self):
         @tool(response_format="content_and_artifact")

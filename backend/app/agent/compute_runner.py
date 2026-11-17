@@ -27,6 +27,7 @@ _BANNED_ATTRIBUTES = {
     "eval", "query", "load", "loads", "save", "savez", "savez_compressed", "savetxt", "loadtxt",
     "genfromtxt", "fromfile", "tofile", "fromregex", "memmap", "DataSource", "ctypeslib", "ctypes",
     "f2py", "distutils", "testing", "os", "sys", "subprocess", "system", "popen", "lib", "io",
+    "dump", "ExcelWriter", "HDFStore",
 }
 # 这些模块本来就已提供；模型习惯先写 import，放行可省去一次纠错往返。只接受模块本身，不接受子模块。
 _PROVIDED_MODULES = {"pandas", "numpy", "math", "statistics"}
@@ -59,6 +60,10 @@ def validate_code(code: str) -> ast.Module:
         if isinstance(node, ast.Attribute):
             if node.attr.startswith("_") or node.attr in _BANNED_ATTRIBUTES or _IO_ATTRIBUTE.match(node.attr):
                 raise ValueError(f"不能使用 .{node.attr}")
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "to_string"
+                and (node.args or any(keyword.arg == "buf" for keyword in node.keywords))):
+            # to_string 传入 buf 时会写文件；只允许返回字符串。
+            raise ValueError("to_string 只能返回字符串，不能写入文件")
     return tree
 
 
@@ -97,20 +102,30 @@ def _limit_resources():
     resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
 
 
+def _gnss_frame(pd, station_name: str, reference: dict, points: list):
+    frame = pd.DataFrame(points, columns=["time", "n", "e", "u"])
+    frame["time"] = pd.to_datetime(frame["time"])
+    frame = frame.set_index("time").astype(float)
+    for axis in ("n", "e", "u"):
+        base = reference.get(axis)
+        frame[f"d{axis}"] = (frame[axis] - base) * 1000 if base is not None else float("nan")
+    frame["dh"] = (frame["dn"] ** 2 + frame["de"] ** 2) ** 0.5
+    frame["dd"] = (frame["dn"] ** 2 + frame["de"] ** 2 + frame["du"] ** 2) ** 0.5
+    frame.attrs["station_name"] = station_name
+    return frame
+
+
+def _peers(pd, payload: dict) -> dict:
+    return {
+        name: _gnss_frame(pd, name, peer["reference"], peer["points"])
+        for name, peer in payload.get("peers", {}).items()
+    }
+
+
 def _dataset(pd, payload: dict):
     kind = payload["kind"]
     if kind == "gnss":
-        frame = pd.DataFrame(payload["points"], columns=["time", "n", "e", "u"])
-        frame["time"] = pd.to_datetime(frame["time"])
-        frame = frame.set_index("time").astype(float)
-        reference = payload["reference"]
-        for axis in ("n", "e", "u"):
-            base = reference.get(axis)
-            frame[f"d{axis}"] = (frame[axis] - base) * 1000 if base is not None else float("nan")
-        frame["dh"] = (frame["dn"] ** 2 + frame["de"] ** 2) ** 0.5
-        frame["dd"] = (frame["dn"] ** 2 + frame["de"] ** 2 + frame["du"] ** 2) ** 0.5
-        frame.attrs["station_name"] = payload["station_name"]
-        return frame
+        return _gnss_frame(pd, payload["station_name"], payload["reference"], payload["points"])
     if kind == "weather":
         tables = {}
         for name, columns in payload["tables"].items():
@@ -212,8 +227,15 @@ def main():
         printed.append(sep.join(str(value) for value in values) + end)
 
     data = {identifier: _dataset(pd, payload) for identifier, payload in request["datasets"].items()}
+    peers = {
+        identifier: _peers(pd, payload)
+        for identifier, payload in request["datasets"].items() if payload.get("peers")
+    }
     builtins = {**_safe_builtins(), "print": collect_print}
-    namespace = {"__builtins__": builtins, "pd": pd, "np": np, "math": math, "statistics": statistics, "data": data}
+    namespace = {
+        "__builtins__": builtins, "pd": pd, "np": np, "math": math, "statistics": statistics,
+        "data": data, "peers": peers,
+    }
     if len(data) == 1:
         namespace["df"] = next(iter(data.values()))
     try:

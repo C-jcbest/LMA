@@ -26,7 +26,6 @@ from app.observations import (
     finite_number,
     normalize_observations,
     observation_quality,
-    raw_snapshot,
     station_reference,
 )
 
@@ -60,8 +59,46 @@ def build_platform_client() -> BeidouClient:
     )
 
 
+def station_coordinates(station: Station) -> tuple[float | None, float | None]:
+    """平台登记的 WGS84 纬度、经度；无效时为 None。
+
+    纬度超出 ±90° 而经度字段落在纬度范围内时，判定为两个字段登记颠倒并交换；
+    其余情况原样使用，不猜测两个值都在合法范围内的颠倒。
+    """
+    latitude = finite_number(station.latitude)
+    longitude = finite_number(station.longitude)
+    if latitude is None or longitude is None:
+        return None, None
+    if abs(latitude) > 90 and abs(longitude) <= 90:
+        latitude, longitude = longitude, latitude
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        return None, None
+    return latitude, longitude
+
+
+def name_key(name: str) -> str:
+    """名称匹配用的规范形式：忽略大小写、空白与常见分隔符，数字去掉前导零（SCWM-04 与 scwm4 相同）。"""
+    compact = re.sub(r"[\s\-_·.,，、()（）\[\]【】#]+", "", name.casefold())
+    return re.sub(r"\d+", lambda match: str(int(match.group())), compact)
+
+
+def match_names(items, query: str, name_of):
+    """原文完全一致优先，其次规范形式完全一致，最后规范形式包含查询词。"""
+    exact = [item for item in items if name_of(item) == query]
+    if exact:
+        return exact
+    key = name_key(query)
+    if not key:
+        return []
+    normalized = [item for item in items if name_key(name_of(item)) == key]
+    if normalized:
+        return normalized
+    return [item for item in items if key in name_key(name_of(item))]
+
+
 def station_summary(station: Station) -> dict:
     """平台枚举转为中文，坐标转为数值；只保留业务需要的字段。"""
+    latitude, longitude = station_coordinates(station)
     return {
         "station_uuid": station.station_uuid,
         "station_name": station.station_name,
@@ -70,8 +107,8 @@ def station_summary(station: Station) -> dict:
         "station_status": STATION_STATUS_TEXT.get(station.station_status, f"未知状态({station.station_status})"),
         "location": station.location,
         "description": station.description,
-        "latitude": finite_number(station.latitude),
-        "longitude": finite_number(station.longitude),
+        "latitude": latitude,
+        "longitude": longitude,
         "altitude": finite_number(station.altitude),
         "coordinate_system": "WGS84",
     }
@@ -119,7 +156,6 @@ class DisplacementSeries:
     sampling: Sampling
     sample_times: list[str] | None
     observations: list[Observation]
-    raw_points: list[dict]
     quality: dict
     acquired_at: str
     reference: dict = field(init=False)
@@ -164,23 +200,19 @@ class MonitoringData:
         return await self.client().get_station_groups()
 
     async def resolve_station(self, name_or_uuid: str) -> Station:
-        """站名或 UUID 解析为唯一测点；有歧义时列出候选让用户确认。"""
+        """站名或 UUID 解析为唯一测点；找不到或有歧义时交给模型修正或请用户确认，不算取数失败。"""
         stations = await self.stations()
         if _UUID_PATTERN.match(name_or_uuid):
             for station in stations:
-                if station.station_uuid == name_or_uuid:
+                if station.station_uuid.lower() == name_or_uuid.lower():
                     return station
-            raise ToolFailure("未找到指定 UUID 对应的监测点，请确认站点。")
-        matched = [station for station in stations if name_or_uuid in station.station_name]
+            raise ToolInputError("未找到指定 UUID 对应的监测点，请确认站点。")
+        matched = match_names(stations, name_or_uuid, lambda station: station.station_name)
         if not matched:
-            raise ToolFailure(f"未找到名称包含“{name_or_uuid}”的监测点")
-        # 名称按“包含”匹配：MS1 会同时命中 MS10，名称完全一致的站点优先。
-        exact = [station for station in matched if station.station_name == name_or_uuid]
-        if len(exact) == 1:
-            return exact[0]
+            raise ToolInputError(f"未找到名称与“{name_or_uuid}”相符的监测点；可不带条件列出全部测点后确认名称")
         if len(matched) > 1:
             names = [f"{item.station_name}（{item.group_name}，{item.station_uuid}）" for item in matched[:20]]
-            raise ToolFailure(f"匹配到 {len(matched)} 个监测点，请确认具体站点：" + "、".join(names))
+            raise ToolInputError(f"匹配到 {len(matched)} 个监测点，请确认具体站点：" + "、".join(names))
         return matched[0]
 
     async def displacement(
@@ -195,6 +227,11 @@ class MonitoringData:
             raise ToolInputError("查询窗口必须正向")
         if end - start > timedelta(days=MAX_WINDOW_DAYS[sampling]):
             raise ToolInputError(f"{sampling} 单次查询最多 {MAX_WINDOW_DAYS[sampling]} 天，请缩短窗口、分段查询或改用每日采样")
+        now_text = business_now().strftime(TIME_FORMAT)
+        if begin_time > now_text:
+            raise ToolInputError("查询窗口在当前时间之后，还没有观测数据")
+        # 结束时间晚于现在时，尚未到来的时刻不是缺测，缺测只统计到当前时间。
+        quality_end = min(end_time, now_text)
         times = None
         if sampling == "daily":
             times = list(sample_times or DAILY_SAMPLE_TIMES)
@@ -205,14 +242,14 @@ class MonitoringData:
         ))
         points = [point for block in blocks for point in block.points]
         normalized, cleaning = normalize_observations(points, begin_time, end_time)
-        quality = observation_quality(normalized, begin_time, end_time, sample_times=times, cleaning=cleaning)
+        quality = observation_quality(normalized, begin_time, quality_end, sample_times=times, cleaning=cleaning)
+        quality["requested_end"] = end_time
+        quality["evaluated_until"] = quality_end
         oldest_fetch = min(block.fetched_at for block in blocks)
         acquired_at = business_now() - timedelta(seconds=time.monotonic() - oldest_fetch)
         return DisplacementSeries(
             station=station, begin_time=begin_time, end_time=end_time, sampling=sampling,
-            sample_times=times, observations=normalized,
-            raw_points=raw_snapshot([point for point in points if begin_time <= point.data_time <= end_time]),
-            quality=quality, acquired_at=acquired_at.isoformat(timespec="seconds"),
+            sample_times=times, observations=normalized, quality=quality, acquired_at=acquired_at.isoformat(timespec="seconds"),
         )
 
     async def _block(self, station_uuid: str, sampling: Sampling, sample_times: list[str] | None, index: int) -> _Block:
@@ -292,6 +329,7 @@ def series_artifact_data(
 ) -> dict:
     """GNSS 序列的客户端展示结构；工具产物与测点页共用，前端用同一张时间轴绘制。"""
     station = series.station
+    latitude, longitude = station_coordinates(station)
     points = [observation.as_dict() for observation in series.observations]
     return {
         "station_uuid": station.station_uuid,
@@ -323,21 +361,20 @@ def series_artifact_data(
         "comparisons": comparisons or {},
         "location": {
             "group_name": station.group_name,
-            "latitude": finite_number(station.latitude),
-            "longitude": finite_number(station.longitude),
+            "latitude": latitude,
+            "longitude": longitude,
             "coordinate_system": "WGS84",
             "group_stations": [
                 {
                     "station_uuid": other.station_uuid,
                     "station_name": other.station_name,
                     "station_type": STATION_TYPE_TEXT.get(other.station_type),
-                    "latitude": finite_number(other.latitude),
-                    "longitude": finite_number(other.longitude),
+                    "latitude": coordinates[0],
+                    "longitude": coordinates[1],
                 }
-                for other in group_stations or []
+                for other, coordinates in ((other, station_coordinates(other)) for other in group_stations or [])
             ],
         },
-        "raw_points": series.raw_points,
         "points": points,
     }
 

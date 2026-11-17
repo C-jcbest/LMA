@@ -1,8 +1,7 @@
-"""会话目录、运行记录、依据存证与测点结论；消息只存于官方 LangGraph checkpointer。"""
+"""会话目录、运行记录、巡检与测点结论索引；消息与工具结果只存于官方 LangGraph checkpointer。"""
 
 import asyncio
 import sys
-from uuid import NAMESPACE_URL, uuid5
 from collections.abc import Sequence
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -12,7 +11,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import get_settings
 
-# 只创建当前使用的表；旧版本留下的调查目标等表不再读写，也不在迁移中删除已有数据。
+# 只创建当前使用的表；旧版本留下的调查目标、依据存证等表不再读写，也不在迁移中删除已有数据。
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lma_sessions (
     id uuid PRIMARY KEY,
@@ -24,16 +23,6 @@ CREATE TABLE IF NOT EXISTS lma_sessions (
 ALTER TABLE lma_sessions ADD COLUMN IF NOT EXISTS station_uuid text;
 CREATE INDEX IF NOT EXISTS lma_sessions_station ON lma_sessions (station_uuid, updated_at DESC) WHERE station_uuid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS lma_sessions_recent ON lma_sessions (updated_at DESC, id DESC);
-CREATE TABLE IF NOT EXISTS lma_evidence (
-    id uuid PRIMARY KEY,
-    session_id uuid NOT NULL REFERENCES lma_sessions(id) ON DELETE CASCADE,
-    tool_call_id text NOT NULL,
-    snapshot jsonb NOT NULL,
-    acquired_at timestamptz NOT NULL DEFAULT now(),
-    execution_id text NOT NULL,
-    message jsonb
-);
-CREATE UNIQUE INDEX IF NOT EXISTS lma_evidence_execution ON lma_evidence(session_id, execution_id, tool_call_id);
 CREATE TABLE IF NOT EXISTS lma_runs (
     id uuid PRIMARY KEY,
     session_id uuid NOT NULL REFERENCES lma_sessions(id) ON DELETE CASCADE,
@@ -104,48 +93,33 @@ class SessionStorage:
     def __init__(self, pool: AsyncConnectionPool):
         self.pool = pool
 
-    async def save_evidence(self, session_id: str, tool_call_id: str, snapshot: dict, *, execution_id: str, message=None) -> dict:
-        identifier = str(uuid5(NAMESPACE_URL, f"lma:{session_id}:{execution_id}:{tool_call_id}"))
+    async def save_conclusions(self, session_id: str, tool_call_id: str, stations: Sequence[dict]) -> None:
+        """登记成功后立即写入测点结论索引；不等 Agent 收尾，中断后测点记录仍完整。"""
         async with self.pool.connection() as connection:
             async with connection.transaction():
-                await connection.execute("SET LOCAL statement_timeout = '5s'")
+                for station in stations:
+                    await connection.execute(
+                        """INSERT INTO lma_station_results(session_id,tool_call_id,station_uuid,station_name,status,reason,detail)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                        (session_id, tool_call_id, station["station_uuid"], station["station_name"],
+                         station["status"], station["reason"], Jsonb(station)),
+                    )
+
+    async def prune_branch(self, session_id: str, *, tool_call_ids: Sequence[str], message_ids: Sequence[str]) -> None:
+        """从历史 checkpoint 分叉（编辑或重新生成）时，删除被替换分支留下的结论和测点记录。
+
+        这两张表是 checkpoint 的派生索引；旧分支不再可见，它的结论不能继续出现在测点记录里。
+        """
+        async with self.pool.connection() as connection:
+            async with connection.transaction():
                 await connection.execute(
-                    """INSERT INTO lma_evidence (id,session_id,execution_id,tool_call_id,snapshot,message)
-                       VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (session_id,execution_id,tool_call_id)
-                       DO UPDATE SET message=COALESCE(lma_evidence.message, EXCLUDED.message)""",
-                    (identifier, session_id, execution_id, tool_call_id, Jsonb(snapshot), Jsonb(message)),
+                    "DELETE FROM lma_station_results WHERE session_id = %s AND NOT (tool_call_id = ANY(%s))",
+                    (session_id, list(tool_call_ids)),
                 )
-                if snapshot.get("kind") == "conclusions" and snapshot.get("status") == "success":
-                    # 结论与测点结论索引同事务提交，不等 Agent 收尾或 SSE 发送。
-                    for station in snapshot["data"]["stations"]:
-                        await connection.execute(
-                            """INSERT INTO lma_station_results(session_id,tool_call_id,station_uuid,station_name,status,reason,detail)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                            (session_id, tool_call_id, station["station_uuid"], station["station_name"],
-                             station["status"], station["reason"], Jsonb(station)),
-                        )
-                cursor = await connection.execute(
-                    "SELECT * FROM lma_evidence WHERE session_id=%s AND execution_id=%s AND tool_call_id=%s",
-                    (session_id, execution_id, tool_call_id),
+                await connection.execute(
+                    "DELETE FROM lma_station_records WHERE session_id = %s AND NOT (anchor_id = ANY(%s))",
+                    (session_id, list(message_ids)),
                 )
-                return await cursor.fetchone()
-
-    async def existing_evidence_ids(self, session_id, identifiers):
-        if not identifiers:
-            return set()
-        async with self.pool.connection() as connection:
-            cursor = await connection.execute(
-                "SELECT id FROM lma_evidence WHERE session_id=%s AND id=ANY(%s::uuid[])", (session_id, identifiers),
-            )
-            return {str(row["id"]) for row in await cursor.fetchall()}
-
-    async def executed_evidence(self, session_id, execution_id, tool_call_id):
-        async with self.pool.connection() as connection:
-            cursor = await connection.execute(
-                "SELECT * FROM lma_evidence WHERE session_id=%s AND execution_id=%s AND tool_call_id=%s",
-                (session_id, execution_id, tool_call_id),
-            )
-            return await cursor.fetchone()
 
     async def record_station_mentions(self, session_id: str, anchor_id: str, question: str, stations: dict[str, str]) -> None:
         async with self.pool.connection() as connection:

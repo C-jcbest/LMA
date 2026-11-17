@@ -6,7 +6,7 @@ from datetime import datetime
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from app.business_time import BUSINESS_TIMEZONE, business_now
-from app.agent.tool_feedback import is_tool_feedback
+from app.agent.tool_protocol import is_tool_feedback
 
 
 # 接口层写入、发送时并入快照的临时字段：用户提问时正在查看的测点。

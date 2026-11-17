@@ -237,14 +237,29 @@ export class LmaClient {
         }),
         signal: options.signal,
       });
-      if (!response.body) throw new Error('服务未返回消息流。');
-      const events = response.body.pipeThrough(BytesLineDecoder()).pipeThrough(SSEDecoder());
-      for await (const event of IterableReadableStream.fromReadableStream(events)) {
-        yield { event: event.event, data: event.data };
-      }
+      yield* readRunEvents(response);
     } finally {
       if (options.signal.aborted) await this.cancelRun(id);
     }
+  }
+
+  /** 刷新或重新打开会话后接回服务端仍在进行的调查；没有进行中的调查时直接结束。 */
+  async *joinRun(id: string, signal: AbortSignal): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
+    try {
+      const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs/active`, { signal });
+      if (response.status === 204) return;
+      yield* readRunEvents(response);
+    } finally {
+      if (signal.aborted) await this.cancelRun(id);
+    }
+  }
+}
+
+async function* readRunEvents(response: Response): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
+  if (!response.body) throw new Error('服务未返回消息流。');
+  const events = response.body.pipeThrough(BytesLineDecoder()).pipeThrough(SSEDecoder());
+  for await (const event of IterableReadableStream.fromReadableStream(events)) {
+    yield { event: event.event, data: event.data };
   }
 }
 

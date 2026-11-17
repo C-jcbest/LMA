@@ -46,11 +46,21 @@ def _business_time(value: datetime) -> datetime:
 
 
 def _covered(begin: datetime, end: datetime, windows: list[tuple[str, str]]) -> bool:
-    if not windows:
-        return False
-    first = min(datetime.strptime(window[0], TIME_FORMAT) for window in windows)
-    last = max(datetime.strptime(window[1], TIME_FORMAT) for window in windows)
-    return begin >= first - _WINDOW_TOLERANCE and end <= last + _WINDOW_TOLERANCE
+    """结论窗口需落在已取得位移窗口的连续并集内；两段之间没有取数的空档不算覆盖。"""
+    intervals = sorted(
+        (datetime.strptime(window_begin, TIME_FORMAT), datetime.strptime(window_end, TIME_FORMAT))
+        for window_begin, window_end in windows
+    )
+    merged: list[list[datetime]] = []
+    for window_begin, window_end in intervals:
+        if merged and window_begin <= merged[-1][1] + _WINDOW_TOLERANCE:
+            merged[-1][1] = max(merged[-1][1], window_end)
+        else:
+            merged.append([window_begin, window_end])
+    return any(
+        begin >= window_begin - _WINDOW_TOLERANCE and end <= window_end + _WINDOW_TOLERANCE
+        for window_begin, window_end in merged
+    )
 
 
 @tool(CONCLUSIONS_TOOL_NAME, response_format="content_and_artifact")

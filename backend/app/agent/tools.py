@@ -6,7 +6,7 @@ from langchain_core.tools import tool
 
 from app.agent.numerical import common_period_features, compare_windows, horizontal_direction, window_features
 from app.agent.tool_inputs import DisplacementInput, FindStationsInput
-from app.agent.tool_protocol import ToolFailure, tool_result
+from app.agent.tool_protocol import ToolInputError, tool_result
 from app.config import get_settings
 from app.monitoring_data import (
     BASE_STATION_NOTE,
@@ -15,10 +15,13 @@ from app.monitoring_data import (
     STATION_STATUS_TEXT,
     DisplacementSeries,
     displacement_mm,
+    match_names,
     monitoring,
+    name_key,
     series_artifact_data,
     station_summary,
 )
+from app.observations import station_reference
 
 _MAX_REQUESTED_POINTS = 1000
 _MAX_EVENTS_FOR_MODEL = 5
@@ -39,24 +42,24 @@ _EVENT_FIELDS_FOR_MODEL = (
 async def find_stations(group_name: str | None = None, station_name: str | None = None, station_status: str | None = None):
     """查询有权访问的监测点分组与测点：名称、分组、类型（基准站/移动站）、状态、WGS84 坐标。
 
-    条件都不传时返回全部分组和测点。分组请求得到整个分组的测点集合；基准站与中继站没有形变序列。
+    条件都不传时返回全部分组和测点。名称匹配忽略大小写、空格、连字符等分隔符和编号前导零。
+    分组请求得到整个分组的测点集合；基准站与中继站没有形变序列。
     """
     async with monitoring() as data:
         groups = await data.groups()
         stations = await data.stations()
     if group_name:
-        matched = [group for group in groups if group_name in group.group_name]
-        exact = [group for group in matched if group.group_name == group_name]
-        if len(exact) == 1:
-            matched = exact
+        matched = match_names(groups, group_name, lambda group: group.group_name)
         if not matched:
-            raise ToolFailure(f"未找到名称包含“{group_name}”的分组")
+            raise ToolInputError(f"未找到名称与“{group_name}”相符的分组；可不带条件列出全部分组后确认名称")
         if len(matched) > 1:
-            raise ToolFailure(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(group.group_name for group in matched[:20]))
+            raise ToolInputError(f"匹配到 {len(matched)} 个分组，请确认具体分组：" + "、".join(group.group_name for group in matched[:20]))
         groups = matched
         stations = [station for station in stations if station.group_uuid == matched[0].group_uuid]
     if station_name:
-        stations = [station for station in stations if station_name in station.station_name]
+        # 列表筛选保留所有名称相符的测点（忽略大小写、分隔符和数字前导零），由模型或用户再确认。
+        key = name_key(station_name)
+        stations = [station for station in stations if key in name_key(station.station_name)]
     if station_status:
         stations = [station for station in stations if STATION_STATUS_TEXT.get(station.station_status) == station_status]
     return tool_result(
@@ -86,11 +89,13 @@ async def get_displacement(
     """查询移动站任意时间窗的 GNSS 位移，并直接给出数值特征。
 
     这些特征由本系统根据平台观测计算，不是监测平台给出的判定。位移单位 mm，速率 mm/day，缺失值为 null 或省略，不是 0。
-    可选前后分段比较速率（split_time）、与同组测点按共同有效时刻对比（compare_stations）。
+    可选前后分段比较速率（split_time）、与其他移动站按共同有效时刻对比（compare_stations，通常是同组测点，
+    也可以是其他分组的参照点）。
 
     结果字段：
     - reference_m：获取时平台登记的固定参考坐标（m），平台不提供变更历史；为 null 的方向累计偏移未知。
-    - quality：按请求采样日历统计，expected_samples 应有样本数，missing_samples 缺测数，gaps 为连续缺测段。
+    - quality：按请求采样日历统计到当前时间（evaluated_until 为实际统计终点，未来时刻不算缺测），
+      expected_samples 应有样本数，missing_samples 缺测数，gaps 为连续缺测段。
     - features 按方向（n 北向、e 东向、u 垂向、h 水平合成、d 三维合成）给出：
       count 有效点数；effective_span_hours 首末有效点跨度；
       cum_start_mm / cum_end_mm 窗口首末点相对固定参考的累计偏移；net_change_mm 窗口末点减首点；
@@ -107,11 +112,11 @@ async def get_displacement(
       是维持、回落还是继续变化，据这些数值判断。
     - split：分段比较时各方向的 first / second 两段特征（字段同上），velocity_difference_mm_day 后段减前段速率，
       comparison_supported 两段都满足 trend_supported。
-    - common_period：同组对比时按各测点都有有效观测的同一时刻计算的特征，failures 为未取得数据的测点。
+    - common_period：对比时按各测点都有有效观测的同一时刻计算的特征，failures 为未取得数据的测点。
     - horizontal_direction：方位角 azimuth_deg 从正北顺时针，magnitude_mm 为长度；
       cumulative 为相对固定参考的累计水平位移，window_change 为本窗口首末水平变化。
-    - points：点数较少时附逐点相对固定参考的位移（dn/de/du）。需要逐条查看、
-      自定义统计时把本结果的依据编号交给 compute 计算，不必重新取数。
+    - points：点数较少时附逐点相对固定参考的位移（dn/de/du）。需要逐条查看、自定义统计或对比站之间的差值时，
+      把本结果的依据编号交给 compute 计算，不必重新取数。
     """
     async with monitoring() as data:
         station = await data.resolve_station(station_name_or_uuid)
@@ -127,8 +132,8 @@ async def get_displacement(
             other = await data.resolve_station(identifier)
             if other.station_uuid == station.station_uuid:
                 continue
-            if other.group_uuid != station.group_uuid or other.station_type not in DISPLACEMENT_STATION_TYPES:
-                raise ToolFailure(f"{other.station_name} 不是同组移动站，不能做共同时段对比")
+            if other.station_type not in DISPLACEMENT_STATION_TYPES:
+                raise ToolInputError(f"{other.station_name} 不是移动站，没有形变序列，不能做共同时段对比")
             others.append(other)
         outcomes = await asyncio.gather(
             *(data.displacement(other, begin_time, end_time, sampling, series.sample_times) for other in others),
@@ -175,9 +180,12 @@ def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
         },
         "station_names": names,
         "failures": failures,
+        # 对比站的清洗后观测与固定参考，供 compute 计算站间差值；主站观测已在 points 中，不重复保存。
         "snapshots": {
-            identifier: [point.as_dict() for point in points] for identifier, points in observations.items()
+            other.station_uuid: [point.as_dict() for point in observations[other.station_uuid]]
+            for other in others if other.station_uuid not in failures
         },
+        "references": {other.station_uuid: station_reference(other) for other in others},
     }
 
 
@@ -211,6 +219,7 @@ def _model_quality(quality: dict) -> dict:
     return {
         "expected_samples": quality["expected"],
         "missing_samples": quality["missing"],
+        "evaluated_until": quality.get("evaluated_until"),
         "axes": {axis: {"valid": item["valid"], "missing": item["missing"]} for axis, item in quality["axes"].items()},
         "gap_count": quality["gap_count"],
         "gaps": [
@@ -264,7 +273,7 @@ def _model_facts(series: DisplacementSeries, features: dict, comparisons: dict, 
     count = len(series.observations)
     inline_limit = get_settings().agent_inline_points_limit
     if include_points is True and count > _MAX_REQUESTED_POINTS:
-        raise ToolFailure(f"本窗口共 {count} 点，逐点返回最多 {_MAX_REQUESTED_POINTS} 点；请缩小窗口，或用 compute 计算所需统计")
+        raise ToolInputError(f"本窗口共 {count} 点，逐点返回最多 {_MAX_REQUESTED_POINTS} 点；请缩小窗口，或用 compute 计算所需统计")
     if include_points is True or (include_points is None and count <= inline_limit):
         facts["points"] = [
             {"time": point.data_time, **displacement_mm(point, series.reference)} for point in series.observations

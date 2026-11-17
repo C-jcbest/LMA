@@ -15,7 +15,19 @@ class ToolFailure(ToolException):
 
 
 class ToolInputError(ToolFailure):
-    """助手可修正的工具参数或报告结构反馈，不是数据源取数失败。"""
+    """助手可修正的工具参数、对象歧义或报告结构反馈，不是数据源取数失败。"""
+
+
+# 参数纠错 ToolMessage 的标记：只回给模型修正，不是取数依据，也不在界面显示为业务故障。
+FEEDBACK_CATEGORY = "input_validation"
+
+
+def is_tool_feedback(message) -> bool:
+    return (
+        isinstance(message, ToolMessage)
+        and message.status == "error"
+        and message.additional_kwargs.get("lma_tool_feedback") == FEEDBACK_CATEGORY
+    )
 
 
 def raise_tool_validation_error(error, *, schema_name: str):

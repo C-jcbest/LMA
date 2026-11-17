@@ -11,7 +11,7 @@ from app.agent import graph, summarization
 from app.agent.compute import compute
 from app.agent.conclusions import record_conclusions
 from app.agent.message_context import evidence_id
-from app.agent.tool_feedback import is_tool_feedback
+from app.agent.tool_protocol import is_tool_feedback
 from app.agent.tool_protocol import tool_result
 from runtime_fixtures import ScriptedModel
 
@@ -89,6 +89,35 @@ class ComputeTests(AgentToolTestCase):
         self.assertEqual(message.artifact["kind"], "computation")
         self.assertEqual(message.artifact["data"]["inputs"][0]["evidence_id"], source)
         self.assertIn("测试点 位移", message.artifact["data"]["inputs"][0]["description"])
+
+    async def test_compute_reads_compared_stations_and_station_list(self):
+        @tool(response_format="content_and_artifact")
+        def compared() -> tuple[str, dict]:
+            """返回带对比站的位移序列。"""
+            return tool_result({"ok": True}, kind="gnss_series", display=series(comparisons={
+                "station_names": {STATION: "测试点", OTHER: "对比点"}, "failures": {},
+                "snapshots": {OTHER: [{"time": "2026-10-01 00:00:00", "n": 100.002, "e": 200.0, "u": 300.0}]},
+                "references": {OTHER: {"n": 100.0, "e": 200.0, "u": 300.0}},
+            }))
+
+        @tool(response_format="content_and_artifact")
+        def ledger() -> tuple[str, dict]:
+            """返回测点台账。"""
+            return tool_result({"total": 1}, kind="station_list", display={"total": 1, "groups": [], "stations": [
+                {"station_uuid": STATION, "station_name": "测试点", "coordinate_system": "WGS84"},
+            ]})
+
+        results = await self.run_calls(
+            call("d1", "compared"), call("l1", "ledger"),
+            call("c1", "compute", {
+                "description": "对比站北向累计与台账测点数", "inputs": [evidence_id("d1"), evidence_id("l1")],
+                "code": f"result = {{'对比点北向(mm)': float(peers['{evidence_id('d1')}']['对比点']['dn'].iloc[0]), "
+                        f"'测点数': len(data['{evidence_id('l1')}'])}}",
+            }),
+            tools=(compared, ledger, compute),
+        )
+        self.assertEqual(results["c1"].status, "success", results["c1"].content)
+        self.assertEqual(json.loads(results["c1"].content)["result"], {"对比点北向(mm)": 2.0, "测点数": 1})
 
     async def test_missing_reference_axis_is_unknown_not_zero(self):
         results = await self.run_calls(
@@ -192,3 +221,15 @@ class ConclusionTests(AgentToolTestCase):
         )
         from app.agent.message_context import is_evidence
         self.assertFalse(is_evidence(results["r1"]))
+
+
+class ConclusionWindowTests(unittest.TestCase):
+    def test_gap_between_fetched_windows_is_not_coverage(self):
+        from datetime import datetime
+        from app.agent.conclusions import _covered
+        january = ("2026-01-01 00:00:00", "2026-01-31 00:00:00")
+        march = ("2026-03-01 00:00:00", "2026-03-31 00:00:00")
+        self.assertFalse(_covered(datetime(2026, 1, 10), datetime(2026, 3, 10), [january, march]))
+        self.assertTrue(_covered(datetime(2026, 3, 2), datetime(2026, 3, 30), [january, march]))
+        february = ("2026-01-31 00:30:00", "2026-03-01 00:00:00")
+        self.assertTrue(_covered(datetime(2026, 1, 10), datetime(2026, 3, 10), [january, march, february]))

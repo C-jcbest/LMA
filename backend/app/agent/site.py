@@ -94,6 +94,8 @@ async def _fetch_terrain(latitude: float, longitude: float) -> tuple[dict[str, A
             },
         )
         metrics = _terrain_metrics(payload.get("elevation", []), index)
+        if metrics is None:
+            return None, "地形服务未返回有效高程，缺少地形证据"
         return metrics, None
     except (httpx.HTTPError, ValueError, TypeError) as exc:
         logging.getLogger(__name__).warning("site evidence request failed", exc_info=True)
@@ -187,7 +189,8 @@ async def inspect_site_environment(
         "limitations": limitations,
         "sources": sources,
     }
-    if limitations:
+    if terrain is None and geology is None and limitations:
+        # 地形和地质都没有取得时只剩测点位置，按失败返回，地图仍可展示。
         return tool_error_result(
             "场地环境资料不完整：" + "；".join(limitations),
             tool_call_id=tool_call_id,
@@ -199,9 +202,11 @@ async def inspect_site_environment(
             limitations=limitations,
             observed_at=observed_at,
         )
+    # 只缺其中一类资料时，已取得的部分仍是可引用的依据，用 partial 标明缺失。
     return tool_result(
         content,
         kind="site_environment",
+        status="partial" if limitations else "success",
         display=environment,
         sources=sources,
         limitations=limitations,

@@ -7,9 +7,12 @@ from langchain_core.tools import InjectedToolCallId
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.business_time import TIME_FORMAT
+from app.monitoring_data import MAX_WINDOW_DAYS
 
 _MAX_SAMPLE_TIMES = 6
-_MAX_WEATHER_DAYS = 366
+# 天气单次跨度与位移小时级取数上限一致（一年），一次即可取得与位移窗口对应的天气，不必分段反复调用。
+# Open-Meteo 历史接口实测一次返回 366 天逐日资料和逐小时降水。
+_MAX_WEATHER_DAYS = MAX_WINDOW_DAYS["hourly"]
 _TIME_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 
 
@@ -85,7 +88,7 @@ class DisplacementInput(TimeWindowInput):
     split_time: str | None = Field(default=None, description="可选：把窗口分成前后两段比较速率；前段不含分界，后段含分界")
     compare_stations: list[str] = Field(
         default_factory=list, max_length=8,
-        description="可选：同组移动站名称或 UUID；只用所有站共同有效的观测时刻计算对比",
+        description="可选：要对比的其他移动站名称或 UUID（通常是同组测点，也可以是其他分组的参照点）；只用所有站共同有效的观测时刻计算对比",
     )
     include_points: bool | None = Field(
         default=None,

@@ -2,7 +2,7 @@
 
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from app.agent.message_context import evidence_id, is_evidence
-from app.agent.tool_feedback import is_tool_feedback, FEEDBACK_CATEGORY
+from app.agent.tool_protocol import FEEDBACK_CATEGORY, is_tool_feedback
 
 
 # 客户端只接收明确公开的字段。用白名单而不是拦截已知推理字段，

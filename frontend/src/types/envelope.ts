@@ -130,6 +130,7 @@ export interface WeatherDailyArtifact {
   precipitation_probability_max?: Array<number | null> | null;
   temperature_2m_max?: Array<number | null> | null;
   temperature_2m_min?: Array<number | null> | null;
+  snowfall_sum?: Array<number | null> | null;
   wind_speed_10m_max?: Array<number | null> | null;
   wind_gusts_10m_max?: Array<number | null> | null;
 }
@@ -167,7 +168,7 @@ export interface WeatherArtifactData {
   } | null;
   rain_summary?: {
     recent_24h_precipitation?: number | null;
-    recent_24h_window: {
+    recent_24h_window?: {
       start_time: string;
       end_time: string;
       available_hours: number;
@@ -190,6 +191,8 @@ export interface WeatherArtifactData {
     forecast_max_wind_gust?: number | null;
   } | null;
   history?: { daily: WeatherDailyArtifact; hourly?: { time: string[]; precipitation: Array<number | null> } | null } | null;
+  /** 当天逐小时降水：已过去的小时来自当前观测，之后为预报。 */
+  today_hourly?: { time: string[]; precipitation: Array<number | null> } | null;
   forecast?: { daily: WeatherDailyArtifact } | null;
   source?: { provider: string } | null;
 }

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
 
     # 主模型 Provider 标识（deepseek/openai）；决定官方 integration 与 thinking 参数映射，不靠模型名猜测。
     llm_provider: str = "deepseek"
-    # 主模型 OpenAI 兼容接口地址；标题、摘要复用此端点。
+    # 主模型 OpenAI 兼容接口地址；标题、摘要、问题推荐复用此端点。
     llm_base_url: str = "https://api.deepseek.com"
     # 主模型接口密钥；标题、摘要复用。默认空值，实际调用前需配置，不提交版本库。
     llm_api_key: str = ""
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     agent_retry_max_delay: float = Field(default=4.0, ge=0, le=30)
     # 每个 Run 的主模型逻辑调用上限（1–100，默认 30）；重试另算，最后一次调用撤掉工具让模型直接作答，下一轮重新计数。
     agent_model_run_limit: int = Field(default=30, ge=1, le=100)
-    # 每个 Run 的取数类工具调用上限（1–200，默认 40）；compute、计划和结论登记不计入。重试另算，超额调用返回 error。
+    # 每个 Run 的取数类工具调用上限（1–200，默认 40）；compute、结论登记和读取以往结论不计入。重试另算，超额调用返回 error。
     agent_tool_run_limit: int = Field(default=40, ge=1, le=200)
     # 位移结果自动附带逐点数据的点数上限（0–1000，默认 72，约 3 天小时数据）；超过时只给特征，模型可显式要求或用 compute。
     # 逐点数据会随每次模型调用重复发送，设得过大时多测点调查的输入 token 成倍增长。
@@ -77,13 +77,13 @@ class Settings(BaseSettings):
     auth_secret: str = ""
 
 
-    # 官方摘要的消息 token 触发阈值（正整数，默认 800000）；使用官方计数，不采用展示估算或窗口比例。
+    # 官方摘要的消息 token 触发阈值（正整数，默认 800000）；使用官方计数，须小于模型最大输入 token 数，创建 Agent 时校验。
     context_token_threshold: int = Field(default=800_000, gt=0)
-    # 自定义端点主模型的最大输入 token 数（必填正整数，无默认）；写入 LangChain Model Profile 供用量展示，换模型时同步修改，不决定压缩触发线。
+    # 主模型的最大输入 token 数（必填正整数，无默认）；仅在官方 Model Profile 缺少该值时补入，用于用量展示和摘要阈值校验，换模型时同步修改。
     context_model_context: int = Field(
         gt=0
     )
-    # 官方摘要后保留近期消息的 token budget（正整数，默认 400000）；工具配对切点沿用官方规则，不是固定消息数/回合数。
+    # 官方摘要后保留近期消息的 token budget（正整数，默认 400000，须小于触发阈值）；工具配对切点沿用官方规则，不是固定消息数/回合数。
     context_keep_tokens: int = Field(default=400_000, gt=0)
     # 摘要模型单次输出的 max_tokens（正整数，默认 2000）；不代表保留历史的 token budget。
     context_summary_max_tokens: int = Field(default=2000, gt=0)

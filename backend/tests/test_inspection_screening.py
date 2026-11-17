@@ -187,3 +187,18 @@ class ScreeningTests(unittest.TestCase):
         others = [ScreeningResult("未见明显变化", [], trend_directions={"n": 0, "e": 0, "u": 0}) for _ in range(4)]
         apply_common_mode([*local, *others])
         self.assertEqual(local[0].reasons, ["x"])
+
+
+class InspectionIsolationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unexpected_station_failure_only_affects_that_station(self):
+        import asyncio
+        from app.beidou.schemas import Station
+        from app.inspection.runner import _screen
+
+        class BrokenClient:
+            async def get_daily_data(self, *args, **kwargs):
+                raise ValueError("平台返回无法解析的数据")
+
+        station = Station(station_uuid="s", station_name="坏数据站", station_type=3, group_uuid="g", group_name="组")
+        result = await _screen(BrokenClient(), station, asyncio.Semaphore(1))
+        self.assertEqual(result.screening, "暂无法分析")

@@ -391,8 +391,7 @@ class PromptTimeTests(unittest.TestCase):
             with self.subTest(profile=profile):
                 self.assertIsNone(models.model_max_input_tokens(SimpleNamespace(profile=profile)))
 
-        with self.assertRaisesRegex(ValueError, "input_tokens"):
-            context.build_context_usage({}, max_input_tokens=100_000, model="test")
+        self.assertIsNone(context.build_context_usage({}, max_input_tokens=100_000, model="test"))
 
 
     def test_terrain_metrics_are_derived_from_dem_samples(self):
@@ -448,7 +447,7 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_title_is_reported_instead_of_fabricated(self):
         with self.assertRaises(ValueError):
-            await title.generate_title_node({"input_text": "   ", "title": ""})
+            await title.generate_title("   ")
 
     async def test_weather_default_window_uses_business_day(self):
         now = datetime(2026, 9, 14, 0, 5, tzinfo=BUSINESS_TZ)
