@@ -89,6 +89,8 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
     await page.getByRole('list', { name: '测点列表' }).getByRole('button', { name: /E2E空数据站/ }).click();
     await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
     await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
+    // 最后一段文字可先于流结束到达；确认生成结束后再验证完成结果的刷新恢复。
+    await expect(page.getByRole('button', { name: '停止生成' })).toBeHidden();
     const unchanged = JSON.stringify((await client.getState(unrelated)).values.messages);
     expect(unchanged).not.toContain('请慢速回答切换会话场景');
     await page.reload();
