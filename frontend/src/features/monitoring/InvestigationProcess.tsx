@@ -248,12 +248,17 @@ export const InvestigationProcess: FC = () => {
             {failures.length} 项查询未完成
             <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]/failures:rotate-90" aria-hidden />
           </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-2 text-sm leading-relaxed text-muted-foreground">
-            {failures.map((step) => (
-              <p key={step.toolCallId} className="wrap-anywhere">
-                {step.detail && <span>{step.detail}： </span>}{step.envelope!.error!.message}
-              </p>
-            ))}
+          <CollapsibleContent className="space-y-1 text-sm text-muted-foreground">
+            {/* 每项一行：先写缺了哪类数据，原因放在同一行，过长时截断，完整内容在悬停提示里。 */}
+            {failures.map((step) => {
+              const message = step.envelope!.error!.message;
+              const subject = step.detail ? `${step.label} · ${step.detail}` : step.label;
+              return (
+                <p key={step.toolCallId} title={`${subject}：${message}`} className="truncate">
+                  <span className="text-foreground">{subject}</span>：{message}
+                </p>
+              );
+            })}
             {!isRunning && (
               <ActionBarPrimitive.Reload asChild>
                 <Button type="button" variant="outline" size="sm">
