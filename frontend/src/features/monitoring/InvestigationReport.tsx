@@ -1,6 +1,6 @@
-import { useMemo, type FC } from 'react';
+import { useCallback, useMemo, useState, type FC } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { CheckIcon, CopyIcon, DownloadIcon } from 'lucide-react';
+import { CheckIcon, CopyIcon, DownloadIcon, PrinterIcon } from 'lucide-react';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { cn } from 'cn';
@@ -12,6 +12,7 @@ import {
   investigationStatusLabel,
   STATUS_PRIORITY,
 } from './investigation';
+import { PrintReport } from './PrintReport';
 import { useStationInspector } from './StationInspectorContext';
 import { StatusDot } from './status';
 
@@ -92,6 +93,8 @@ export const AnswerActions: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const markdown = answerToMarkdown(parts);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const finishPrinting = useCallback(() => setIsPrinting(false), []);
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
@@ -110,6 +113,10 @@ export const AnswerActions: FC = () => {
       <TooltipIconButton tooltip="导出为 Markdown" onClick={download}>
         <DownloadIcon />
       </TooltipIconButton>
+      <TooltipIconButton tooltip="打印调查材料" disabled={isPrinting} onClick={() => setIsPrinting(true)}>
+        <PrinterIcon />
+      </TooltipIconButton>
+      {isPrinting && <PrintReport onDone={finishPrinting} />}
     </>
   );
 };

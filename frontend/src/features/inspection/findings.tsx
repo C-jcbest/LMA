@@ -66,28 +66,29 @@ export const FindingChips: FC<{ findings: readonly ScreeningFinding[]; limit?: n
     return null;
   }
   return (
-    <ul aria-label="初筛线索" className={cn('flex flex-wrap items-center gap-1.5', className)}>
+    // 标签会放进今日页的整行按钮里，只能用行内元素；列表语义由 role 提供。
+    <span role="list" aria-label="初筛线索" className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {visible.map((finding, index) => {
         const amount = findingAmount(finding);
         return (
-          <li key={index} title={finding.text}
+          <span role="listitem" key={index} title={finding.text}
             className="inline-flex min-h-6 items-center gap-1.5 rounded-full bg-status-attention/12 px-2.5 text-xs font-medium text-foreground">
             {findingLabel(finding)}
             {amount && <span className="font-normal tabular-nums text-muted-foreground">{amount}</span>}
-          </li>
+          </span>
         );
       })}
       {hidden.length > 0 && (
-        <li title={hidden.map((finding) => finding.text).join('\n')} className="px-1 text-xs text-muted-foreground">
+        <span role="listitem" title={hidden.map((finding) => finding.text).join('\n')} className="px-1 text-xs text-muted-foreground">
           另 {hidden.length} 条
-        </li>
+        </span>
       )}
       {quality.map((item) => (
-        <li key={item.label} title={item.detail}
+        <span role="listitem" key={item.label} title={item.detail}
           className="inline-flex min-h-6 items-center rounded-full border px-2.5 text-xs text-muted-foreground">
           {item.label}
-        </li>
+        </span>
       ))}
-    </ul>
+    </span>
   );
 };

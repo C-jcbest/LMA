@@ -744,3 +744,37 @@
 .new-investigation-intro, .new-investigation-question {
   animation: investigation-enter var(--duration-slow) var(--ease-out) both;
 }
+
+/* 可打印的调查材料：屏幕上移出视口供图表完成绘制，打印时只显示它，纸面固定浅色。 */
+.print-report {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 720px;
+  color: hsl(240 10% 8%);
+  background: #fff;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.print-report-body { display: flex; flex-direction: column; gap: 18px; }
+.print-report h1 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+.print-report h2 { font-size: 15px; font-weight: 600; margin: 0 0 8px; }
+.print-report-header dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; margin: 0; color: hsl(240 4% 42%); }
+.print-report-header dd { margin: 0; color: hsl(240 10% 8%); font-variant-numeric: tabular-nums; }
+.print-report-status { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid hsl(240 6% 88%); display: flex; flex-direction: column; gap: 2px; }
+.print-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-inline-end: 6px; }
+.print-muted { color: hsl(240 4% 42%); }
+.print-citation { font-size: 0.75em; color: hsl(240 4% 42%); }
+.print-report-text .aui-md { color: inherit; }
+.print-report figure { margin: 0 0 14px; break-inside: avoid; }
+.print-report figcaption { font-size: 11.5px; color: hsl(240 4% 42%); margin-top: 4px; }
+.print-report-evidence ol { margin: 0; padding-inline-start: 2.2em; display: flex; flex-direction: column; gap: 6px; }
+.print-report-evidence p { margin: 0; }
+
+@media print {
+  @page { size: A4; margin: 15mm; }
+  body > *:not(.print-report) { display: none !important; }
+  html, body { background: #fff !important; }
+  .print-report { position: static; width: auto; }
+  .print-report h2 { break-after: avoid; }
+}

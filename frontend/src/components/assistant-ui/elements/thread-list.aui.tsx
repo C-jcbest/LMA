@@ -8,6 +8,7 @@ import { investigationStatusLabel } from "@/features/monitoring/investigation";
 import { StatusDot } from "@/features/monitoring/status";
 import { RecordSearchResults } from "@/features/records/RecordSearchResults";
 import { cn } from 'cn';
+import { useIsSessionUnread, useRunCompletionNotice } from "@/features/notifications/run-completion";
 import {
   AuiIf,
   ThreadListItemMorePrimitive,
@@ -379,7 +380,12 @@ export const ThreadListItem: FC = () => {
   const onNavigate = useContext(ThreadListNavigationContext);
   const variant = useContext(ThreadListVariantContext);
   const isRunning = useAuiState((s) => s.threadListItem.isRunning);
-  const verdict = useSessionVerdict(useAuiState((s) => s.threadListItem.remoteId));
+  const remoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const isOpen = useAuiState((s) => s.threads.mainThreadId === s.threadListItem.id);
+  const verdict = useSessionVerdict(remoteId);
+  // 后台完成、还没打开看过的调查，标题加粗。
+  useRunCompletionNotice(remoteId, isRunning, isOpen);
+  const isUnread = useIsSessionUnread(remoteId);
   const [isRenaming, setIsRenaming] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(false);
@@ -433,11 +439,12 @@ export const ThreadListItem: FC = () => {
           )}
           <span
             data-slot="aui_thread-list-item-title"
-            className="min-w-0 flex-1 truncate"
+            className={cn("min-w-0 flex-1 truncate", isUnread && "text-foreground font-semibold")}
           >
             <ThreadListItemPrimitive.Title fallback="新会话" />
           </span>
           {isRunning && <span className="sr-only">运行中</span>}
+          {isUnread && <span className="sr-only">调查已完成，未查看</span>}
           {variant === "all" && verdict && (
             <span
               data-slot="aui_thread-list-item-verdict"

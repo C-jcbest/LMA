@@ -392,7 +392,7 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
 
   await expect(page.getByRole('heading', { name: /3 个测点.*1 个.*建议调查/ })).toBeVisible();
   expect(await page.getByRole('region', { name: '今日页面', exact: true }).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  await expect(page.getByRole('list', { name: '建议调查的测点' }).getByRole('listitem')).toHaveCount(1);
+  await expect(page.getByRole('list', { name: '建议调查的测点' }).getByRole('button', { name: /^查看 / })).toHaveCount(1);
   // 每行只显示首条理由的短标签与幅度；上次不是建议调查的标“新出现”，巡检前的结论只算“上次调查”。
   const attention = page.getByRole('list', { name: '建议调查的测点' });
   await expect(attention.getByText('北向持续变化')).toBeVisible();
