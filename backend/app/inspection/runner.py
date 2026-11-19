@@ -16,7 +16,7 @@ from app.inspection.screening import (
     LONG_WINDOW_DAYS,
     RECENT_WINDOW_DAYS,
     ScreeningResult,
-    apply_common_mode,
+    apply_group_checks,
     screen_station,
 )
 from app.server.storage import SessionStorage
@@ -90,7 +90,7 @@ async def run_inspection(
         for station, result in zip(stations, results):
             by_group[station.group_uuid].append(result)
         for group_results in by_group.values():
-            apply_common_mode(group_results)
+            apply_group_checks(group_results)
 
         await storage.save_inspection_stations(inspection_id, list(zip(stations, results)))
         status = "success"

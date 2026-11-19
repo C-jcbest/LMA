@@ -8,7 +8,7 @@ from app.beidou.schemas import GnssDataPoint
 from app.inspection.screening import (
     LONG_WINDOW_DAYS,
     ScreeningResult,
-    apply_common_mode,
+    apply_group_checks,
     screen_station,
     theil_sen_slope,
 )
@@ -209,14 +209,34 @@ class ScreeningTests(unittest.TestCase):
     def test_common_mode_points_to_shared_cause(self):
         moving = [ScreeningResult("建议调查", ["x"], trend_directions={"n": -1, "e": 0, "u": 0}) for _ in range(3)]
         still = ScreeningResult("未见明显变化", [], trend_directions={"n": 0, "e": 0, "u": 0})
-        apply_common_mode([*moving, still])
+        apply_group_checks([*moving, still])
         self.assertTrue(all(any("共同因素" in reason for reason in result.reasons) for result in moving))
         self.assertEqual(still.reasons, [])
 
         local = [ScreeningResult("建议调查", ["x"], trend_directions={"n": -1, "e": 0, "u": 0})]
         others = [ScreeningResult("未见明显变化", [], trend_directions={"n": 0, "e": 0, "u": 0}) for _ in range(4)]
-        apply_common_mode([*local, *others])
+        apply_group_checks([*local, *others])
         self.assertEqual(local[0].reasons, ["x"])
+
+
+    def test_spikes_in_the_same_hour_across_group_point_to_platform(self):
+        def spiking(at_hour):
+            recent = hourly()
+            recent[at_hour] = point(NOW - timedelta(hours=168 - at_hour), 100.04)
+            return screen(daily(lambda i: 0), recent)
+
+        shared = [spiking(100), spiking(100)]
+        alone = spiking(40)
+        apply_group_checks([*shared, alone])
+
+        for result in shared:
+            common = [finding for finding in result.findings if finding.kind == "common_spike"]
+            self.assertEqual(len(common), 1)
+            self.assertEqual(common[0].role, "quality")
+            self.assertIn("平台解算或基准站", common[0].text)
+        self.assertFalse(any(finding.kind == "common_spike" for finding in alone.findings))
+        # 共同跳点只是数据质量提示，不改变调查优先级。
+        self.assertTrue(all(result.screening == "未见明显变化" for result in shared))
 
 
 class InspectionIsolationTests(unittest.IsolatedAsyncioTestCase):

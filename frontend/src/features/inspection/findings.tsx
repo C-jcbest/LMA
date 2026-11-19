@@ -22,6 +22,8 @@ export function findingLabel(finding: ScreeningFinding): string {
       return `${recent}${axis}缺测前后位移`;
     case 'spike':
       return '异常跳点';
+    case 'common_spike':
+      return '同组同时跳点';
     case 'gap':
       return '缺测';
     default:

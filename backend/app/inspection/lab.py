@@ -23,7 +23,7 @@ from langgraph.graph.ui import AnyUIMessage, push_ui_message, ui_message_reducer
 from app.beidou.client import BeidouClient
 from app.beidou.schemas import Station
 from app.inspection.runner import screen_with_points
-from app.inspection.screening import ScreeningResult, apply_common_mode
+from app.inspection.screening import ScreeningResult, apply_group_checks
 from app.inspection.vision import judge_chart, render_displacement_chart, vision_configured
 
 logger = logging.getLogger(__name__)
@@ -170,7 +170,7 @@ def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpo
                 by_group[station.group_uuid].append((station, results[station.station_uuid]))
             for members in by_group.values():
                 before = {station.station_uuid: len(result.findings) for station, result in members}
-                apply_common_mode([result for _, result in members])
+                apply_group_checks([result for _, result in members])
                 for station, result in members:
                     if len(result.findings) != before[station.station_uuid]:
                         push_row(station, **_row_findings(result))

@@ -41,6 +41,9 @@ _MILLIMETERS_PER_METER = 1000.0
 _ROBUST_SIGMA_FACTOR = 1.4826
 _MIN_COMMON_MODE_STATIONS = 3
 _COMMON_MODE_SHARE = 0.6
+# 同组至少这么多测点在同一小时出现跳点，才提示共同原因；分组只有两三个测点也能发现。
+_MIN_COMMON_SPIKE_STATIONS = 2
+_MAX_COMMON_SPIKE_HOURS_LISTED = 3
 
 _AXIS_NAMES = {"n": "北向", "e": "东向", "u": "垂直"}
 
@@ -50,6 +53,8 @@ class AxisSeries:
     days: list[float]
     values: list[float]
     cadence_days: float = 1.0
+    # days 的零点；用于把跳变位置换回观测时刻。
+    start: datetime | None = None
 
 
 Window = Literal["long", "recent"]
@@ -62,13 +67,15 @@ class Finding:
 
     text 是给人和推荐模型读的完整句子；其余字段供界面按类型、方向和窗口组织，不必再解析句子。
     """
-    kind: Literal["trend", "acceleration", "gap_jump", "tail_step", "held_step", "spike", "gap", "data"]
+    kind: Literal["trend", "acceleration", "gap_jump", "tail_step", "held_step", "spike", "common_spike", "gap", "data"]
     role: Literal["trigger", "quality"]
     text: str
     axis: str | None = None
     window: Window | None = None
     value_mm: float | None = None
     days: float | None = None
+    # 跳变类线索落在新位置的第一个观测时刻（业务时区），用于比对同组测点是否同一时刻跳变。
+    time: str | None = None
 
 
 @dataclass
@@ -105,7 +112,7 @@ def _axis_series(points: Sequence[GnssDataPoint], axis: str, cadence_days: float
         first = value if first is None else first
         days.append((_point_time(point) - start).total_seconds() / 86400)
         values.append((value - first) * _MILLIMETERS_PER_METER)
-    return AxisSeries(days, values, cadence_days)
+    return AxisSeries(days, values, cadence_days, start)
 
 
 def theil_sen_slope(days: Sequence[float], values: Sequence[float]) -> float:
@@ -189,9 +196,14 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
 
     findings: list[Finding] = []
 
-    def add(kind, role, text, value_mm=None, days=None):
+    def add(kind, role, text, value_mm=None, days=None, time=None):
         rounded = None if value_mm is None else round(value_mm, 1)
-        findings.append(Finding(kind, role, f"{prefix}{text}", axis, window, rounded, days))
+        findings.append(Finding(kind, role, f"{prefix}{text}", axis, window, rounded, days, time))
+
+    def time_at(index: int) -> str | None:
+        if series.start is None:
+            return None
+        return (series.start + timedelta(days=series.days[index])).strftime(TIME_FORMAT)
 
     direction = 0
     is_trending = (
@@ -246,7 +258,8 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
                     largest, held_days)
             elif hold.returned:
                 # 跳出去又很快回到原水平，形变通常不会这样往返；按数据质量处理，不作为位移线索。
-                add("spike", "quality", f"{name}异常跳点约 {largest:+.1f} mm，随后恢复，按数据质量处理", largest)
+                add("spike", "quality", f"{name}异常跳点约 {largest:+.1f} mm，随后恢复，按数据质量处理", largest,
+                    time=time_at(largest_index + 1))
             else:
                 add("tail_step", "quality",
                     f"{name}出现约 {largest:+.1f} mm 跳变，之后仅 {hold.points} 个观测（约 {_duration_text(hold.days)}），"
@@ -384,7 +397,13 @@ def screen_station(
     return ScreeningResult(screening, [finding.text for finding in ordered], metrics, trend, directions, ordered)
 
 
-def apply_common_mode(results: Sequence[ScreeningResult]) -> None:
+def apply_group_checks(results: Sequence[ScreeningResult]) -> None:
+    """需要整组结果才能判断的线索：多数测点同向变化、多个测点同一时刻跳点。"""
+    _apply_common_direction(results)
+    _apply_common_spikes(results)
+
+
+def _apply_common_direction(results: Sequence[ScreeningResult]) -> None:
     """同组多数测点同向变化时提示共同因素，局部变化与系统性漂移的处理方向不同。"""
     usable = [result for result in results if result.trend_directions]
     if len(usable) < _MIN_COMMON_MODE_STATIONS:
@@ -397,3 +416,25 @@ def apply_common_mode(results: Sequence[ScreeningResult]) -> None:
                     finding = Finding("data", "quality", f"同组多数测点{name}同向变化，优先核查基准或共同因素", axis, "long")
                     result.findings.append(finding)
                     result.reasons.append(finding.text)
+
+
+def _apply_common_spikes(results: Sequence[ScreeningResult]) -> None:
+    """同组多个测点在同一小时出现异常跳点时，提示优先核查平台解算或基准站，不必逐站调查同一个问题。"""
+    stations_by_hour: dict[str, set[int]] = {}
+    for position, result in enumerate(results):
+        for finding in result.findings:
+            if finding.kind == "spike" and finding.window == "recent" and finding.time:
+                stations_by_hour.setdefault(finding.time[:13], set()).add(position)
+    shared_hours: dict[int, list[str]] = {}
+    for hour, positions in sorted(stations_by_hour.items()):
+        if len(positions) >= max(_MIN_COMMON_SPIKE_STATIONS, len(results) / 2):
+            for position in positions:
+                shared_hours.setdefault(position, []).append(hour)
+    for position, hours in shared_hours.items():
+        listed = "、".join(f"{hour[5:]}:00" for hour in hours[:_MAX_COMMON_SPIKE_HOURS_LISTED])
+        more = f" 等 {len(hours)} 个时段" if len(hours) > _MAX_COMMON_SPIKE_HOURS_LISTED else ""
+        finding = Finding(
+            "common_spike", "quality", f"同组多个测点在 {listed}{more}同时出现跳点，优先核查平台解算或基准站", window="recent",
+        )
+        results[position].findings.append(finding)
+        results[position].reasons.append(finding.text)

@@ -23,13 +23,15 @@ export type Screening = '建议调查' | '未见明显变化' | '数据不足' |
 
 /** 结构化初筛线索，与后端 inspection/screening.py 的 Finding 一致。 */
 export interface ScreeningFinding {
-  kind: 'trend' | 'acceleration' | 'gap_jump' | 'tail_step' | 'held_step' | 'spike' | 'gap' | 'data';
+  kind: 'trend' | 'acceleration' | 'gap_jump' | 'tail_step' | 'held_step' | 'spike' | 'common_spike' | 'gap' | 'data';
   role: 'trigger' | 'quality';
   text: string;
   axis: 'n' | 'e' | 'u' | null;
   window: 'long' | 'recent' | null;
   value_mm: number | null;
   days: number | null;
+  /** 跳变类线索的观测时刻。 */
+  time?: string | null;
 }
 
 export interface InspectionStation {
