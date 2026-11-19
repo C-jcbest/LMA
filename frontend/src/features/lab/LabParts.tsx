@@ -129,8 +129,9 @@ const VisionVerdict: FC<{ vision: VisionProps }> = ({ vision }) => {
   if (vision.status === 'running') {
     return <p className="text-shimmer mt-2 text-sm">视觉模型判读曲线中…</p>;
   }
+  // 未配置视觉模型时汇总卡片已说明一次，不在每一行重复。
   if (vision.status === 'unavailable') {
-    return <p className="mt-2 text-xs text-muted-foreground">未做视觉初判。</p>;
+    return null;
   }
   if (vision.status === 'error') {
     return <p className="mt-2 text-xs text-muted-foreground">视觉初判未完成，以初筛结果为准。</p>;

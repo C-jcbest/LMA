@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PauseIcon, PlayIcon } from 'lucide-react';
+import { cn } from 'cn';
 import { Button } from '@/components/ui/button';
 import { MapLayerControl } from './MapLayerControl';
 import {
@@ -339,7 +340,8 @@ export default function StationMap({ stations, references = [], onSelect, select
   return (
     <div className="space-y-2">
       <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
-      <div ref={containerRef} role="region" aria-label="测点位置与水平位移方向" className="h-[min(65dvh,28rem)] min-h-96 w-full touch-none overflow-hidden rounded-lg bg-muted/40" />
+      <div ref={containerRef} role="region" aria-label="测点位置与水平位移方向" aria-busy={amap.status === 'loading'}
+        className={cn('h-[min(65dvh,28rem)] min-h-96 w-full touch-none overflow-hidden rounded-lg bg-muted/40', amap.status === 'loading' && 'animate-pulse')} />
       {timeline.length > 1 && (
         <div className="flex items-center gap-3">
           <Button type="button" variant="outline" size="icon" className="size-9 shrink-0"
@@ -382,7 +384,6 @@ export default function StationMap({ stations, references = [], onSelect, select
           </li>
         )}
       </ul>
-      {amap.status === 'loading' && <p className="text-xs text-muted-foreground">正在加载高德地图…</p>}
       {amap.status === 'error' && <p role="status" className="text-xs text-muted-foreground">{amap.message}</p>}
       {mapError && <p role="status" className="text-xs text-muted-foreground">{mapError}</p>}
     </div>

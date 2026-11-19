@@ -1,3 +1,4 @@
+import { cn } from 'cn';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapLayerControl } from '../MapLayerControl';
 import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
@@ -135,12 +136,12 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
     <div className="space-y-4">
       <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
       <div className="relative isolate overflow-hidden rounded-lg border">
-        <div ref={containerRef} role="region" aria-label="场地环境地图" className="h-[min(60dvh,32rem)] w-full touch-none" />
+        <div ref={containerRef} role="region" aria-label="场地环境地图" aria-busy={amap.status === 'loading'}
+          className={cn('h-[min(60dvh,32rem)] w-full touch-none', amap.status === 'loading' && 'animate-pulse bg-muted/40')} />
       </div>
       {downslopeAzimuth !== null && (
         <p className="text-xs text-muted-foreground">白色虚线扇形为当前测点的下坡方向（约 90 m 地形的平均坡面，不代替现场勘查的主滑方向）</p>
       )}
-      {amap.status === 'loading' && <p className="text-sm text-muted-foreground">正在加载高德地图…</p>}
       {amap.status === 'error' && <p role="status" className="text-sm text-muted-foreground">{amap.message}</p>}
       {invalidNames.length > 0 && <p className="text-sm text-muted-foreground">以下测点坐标缺失或超出经纬度范围，未绘制：{invalidNames.join('、')}。请核对平台登记坐标。</p>}
       {mapError && <p role="status" className="text-sm text-muted-foreground">{mapError}</p>}
