@@ -97,7 +97,10 @@ const inspection = {
 };
 
 async function mockApi(page: Page) {
-  await page.route('**/api/stations', (route) => route.fulfill({ json: inspection.stations.map(({ station_uuid, station_name, group_name }) => ({ station_uuid, station_name, group_name })) }));
+  await page.route('**/api/stations', (route) => route.fulfill({ json: inspection.stations.map(({ station_uuid, station_name, group_name }, index) => ({
+    station_uuid, station_name, group_name, station_type: '移动站RTK模式',
+    latitude: 30.1 + index * 0.001, longitude: 103.5 + index * 0.001, platform_status: null,
+  })) }));
   await page.route('**/api/inspections/latest', (route) => route.fulfill({
     json: { running: null, latest_attempt: null, inspection: null, stations: [] },
   }));
@@ -264,6 +267,20 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
   await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /已调查 1 个测点 · 2 项查询/ })).toBeVisible();
 
+  await page.evaluate(() => {
+    window.print = () => {
+      (window as unknown as { printed: number }).printed = ((window as unknown as { printed?: number }).printed ?? 0) + 1;
+    };
+  });
+  await page.locator('[data-role="assistant"]').last().getByRole('button', { name: '打印调查材料' }).click();
+  const printable = page.locator('.print-report');
+  await expect(printable).toContainText('数据截止');
+  await expect(printable).toContainText('依据说明');
+  await expect(printable.locator('figure').first()).toBeAttached();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { printed?: number }).printed)).toBe(1);
+  // 打印内容只有结论、正文、附图和依据说明，不带调查过程和交互控件。
+  await expect(printable.getByRole('button')).toHaveCount(0);
+
   const copy = page.locator('[data-role="assistant"]').last().getByRole('button', { name: '复制', exact: true });
   await copy.click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain('测点状态：测试点 A：需人工复核；测试点 B：未见明显变化');
@@ -395,9 +412,12 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
     return route.abort();
   });
   const timelineQueries: string[] = [];
+  const timelineStations: string[] = [];
   await page.route('**/api/stations/*/rainfall*', (route) => route.fulfill({ json: stationRainfall }));
   await page.route('**/api/stations/*/timeline*', (route) => {
-    timelineQueries.push(new URL(route.request().url()).search);
+    const url = new URL(route.request().url());
+    timelineQueries.push(url.search);
+    timelineStations.push(decodeURIComponent(url.pathname.split('/').at(-2)!));
     return route.fulfill({ json: stationTimeline });
   });
   await page.setViewportSize({ width: 320, height: 900 });
@@ -427,6 +447,19 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
 
   await page.getByRole('radio', { name: '30 天' }).click();
   await expect.poll(() => timelineQueries.at(-1)).toBe('?days=30');
+
+  // 自定义起止日期：两个日期都给出后才查询，含当天。
+  await page.getByRole('radio', { name: '自定义' }).click();
+  await page.getByLabel('开始日期').fill('2026-10-01');
+  await page.getByLabel('结束日期').fill('2026-10-20');
+  await page.getByRole('button', { name: '查看' }).click();
+  await expect.poll(() => timelineQueries.at(-1)).toBe('?begin=2026-10-01&end=2026-10-20');
+  await expect(page.getByText('2026-10-01 至 2026-10-20')).toBeVisible();
+
+  // 同组对比只在打开时读取同组其他移动站。
+  expect(timelineStations).not.toContain('测试点 B');
+  await page.getByRole('button', { name: '同组对比' }).click();
+  await expect.poll(() => timelineStations).toContain('测试点 B');
 
   // 历次调查在测点页自己的对话面板里打开，窄屏切到对话显示那次的结论。
   await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
@@ -469,4 +502,25 @@ test('巡检中断后可重新启动，显示进度并恢复结果', async ({ pa
   await expect(input).toHaveValue('保留我的调查问题');
   await expect(page.getByRole('textbox', { name: '输入监测问题' })).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+});
+
+test('测点列表按分组查看时显示分组地图，平台异常状态只在异常时标出', async ({ page }) => {
+  await mockApi(page);
+  await page.route('**/api/map-config', (route) => route.fulfill({ json: { amap_token: null } }));
+  await page.route('**/api/stations', (route) => route.fulfill({ json: [
+    { station_uuid: '测试点 A', station_name: '测试点 A', group_name: 'K3 分组', station_type: '移动站RTK模式', latitude: 30.1, longitude: 103.5, platform_status: null },
+    { station_uuid: '测试点 B', station_name: '测试点 B', group_name: 'K3 分组', station_type: '移动站RTK模式', latitude: 30.101, longitude: 103.501, platform_status: '离线' },
+    { station_uuid: '测试点 D', station_name: '测试点 D', group_name: 'K5 分组', station_type: '移动站RTK模式', latitude: 31, longitude: 104, platform_status: null },
+  ] }));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto('/?page=stations');
+
+  const list = page.getByRole('list', { name: '测点列表' });
+  await expect(list.getByText('离线')).toHaveCount(1);
+  await expect(page.getByRole('region', { name: '测点位置与水平位移方向' })).toHaveCount(0);
+
+  await page.getByRole('combobox', { name: '选择分组' }).click();
+  await page.getByRole('option', { name: 'K3 分组' }).click();
+  await expect(page.getByRole('region', { name: '测点位置与水平位移方向' })).toBeVisible();
+  await expect(list.getByRole('button')).toHaveCount(2);
 });
