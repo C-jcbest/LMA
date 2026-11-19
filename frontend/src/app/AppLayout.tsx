@@ -17,6 +17,7 @@ import { InspectionLabPage } from '@/features/lab/InspectionLabPage';
 import { RecordsPage } from '@/features/records/RecordsPage';
 import { SessionConclusionsProvider } from '@/features/records/SessionConclusions';
 import { ThemeSelector } from '@/features/settings/ThemeSelector';
+import { SystemNoticeToggle } from '@/features/notifications/SystemNoticeToggle';
 import { StationPage } from '@/features/stations/StationPage';
 import { StationsPage } from '@/features/stations/StationsPage';
 import { TodayPage } from '@/features/today/TodayPage';
@@ -165,6 +166,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
           <span className="text-sm text-muted-foreground">外观</span>
           <ThemeSelector />
         </div>
+        <SystemNoticeToggle />
         {onOpenSettings && (
           <NavigationItem icon={Settings} label="服务配置" isCurrent={false} onClick={onOpenSettings} />
         )}

@@ -384,7 +384,8 @@ export const ThreadListItem: FC = () => {
   const isOpen = useAuiState((s) => s.threads.mainThreadId === s.threadListItem.id);
   const verdict = useSessionVerdict(remoteId);
   // 后台完成、还没打开看过的调查，标题加粗。
-  useRunCompletionNotice(remoteId, isRunning, isOpen);
+  const title = useAuiState((s) => s.threadListItem.title);
+  useRunCompletionNotice(remoteId, isRunning, isOpen, title);
   const isUnread = useIsSessionUnread(remoteId);
   const [isRenaming, setIsRenaming] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
