@@ -36,6 +36,7 @@ export interface SettingsMenuActions {
 /**
  * 外观、完成通知与退出登录都是低频设置，收进导航底部的一个“设置”菜单，
  * 不在侧栏里平铺三行控件。侧栏展开时菜单向上弹出，收起成窄导航条时向右弹出。
+ * 完成通知开启时由浏览器请求授权，拒绝则保持关闭。
  */
 export const SettingsMenu: FC<SettingsMenuActions & { side: 'top' | 'right'; children: ReactNode }> = ({
   side,
@@ -72,7 +73,6 @@ export const SettingsMenu: FC<SettingsMenuActions & { side: 'top' | 'right'; chi
           <DropdownMenuCheckboxItem
             checked={noticeEnabled}
             onCheckedChange={(checked) => void setSystemNoticeEnabled(checked)}
-            title="调查在后台或别的会话里完成时弹出系统通知，开启时需要浏览器授权"
           >
             <BellIcon />
             完成通知
