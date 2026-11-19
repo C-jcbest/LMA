@@ -79,12 +79,13 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-2.5">
             <StatusDot status={station.screening} />
-            <span className="min-w-0 wrap-anywhere text-base font-semibold">{station.station_name}</span>
-            <span className="text-muted-foreground shrink-0 text-xs">{station.group_name}</span>
+            {/* 测点名是区分各行的依据，空间不够时先截断分组名。 */}
+            <span className="max-w-full shrink-0 truncate text-base font-semibold">{station.station_name}</span>
+            <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
             {isNew && <span className="text-status-attention shrink-0 text-xs font-medium">新出现</span>}
           </span>
           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 ps-4.5">
-            <FindingChips findings={station.findings} limit={1} />
+            <FindingChips findings={station.findings} limit={1} showAmount={false} />
             {progress && (
               <span className={cn('text-xs', progress.isAfterInspection ? 'text-foreground' : 'text-muted-foreground')}>
                 {progress.isAfterInspection ? `已调查 · ${progress.status}` : `上次调查 · ${progress.status}`}

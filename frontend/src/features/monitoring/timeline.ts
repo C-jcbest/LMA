@@ -118,6 +118,23 @@ export function horizontalTrack(data: GnssArtifactData, maxSamples = 240): Horiz
   return Array.from({ length: maxSamples }, (_, index) => samples[Math.round(index * step)]!);
 }
 
+/** 同一次取数里一并对比的其他测点名称；单站取数为空。 */
+export function comparedStationNames(data: GnssArtifactData): string[] {
+  const names = data.comparisons?.station_names;
+  if (typeof names !== 'object' || names === null) {
+    return [];
+  }
+  return Object.entries(names as Record<string, unknown>)
+    .filter(([uuid, name]) => uuid !== data.station_uuid && typeof name === 'string')
+    .map(([, name]) => name as string);
+}
+
+/** 依据卡片标题：单站写“位移”，带同组对比的写清对比对象，避免同一窗口出现两张同名卡片。 */
+export function seriesTitle(data: GnssArtifactData): string {
+  const compared = comparedStationNames(data);
+  return compared.length > 0 ? `${data.station_name} 与 ${compared.join('、')} 对比` : `${data.station_name} 位移`;
+}
+
 export const seriesDuration = (data: GnssArtifactData) =>
   toMillis(data.end_time) - toMillis(data.begin_time);
 

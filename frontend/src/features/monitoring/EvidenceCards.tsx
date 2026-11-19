@@ -29,6 +29,7 @@ import {
   latestHorizontal,
   seriesDuration,
   seriesLabel,
+  seriesTitle,
 } from './timeline';
 import { ComputationResultView } from './tools/ComputationResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
@@ -252,7 +253,7 @@ const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefin
   switch (envelope.kind) {
     case 'gnss_series': {
       return (
-        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)}${displacementBasis(envelope.data) === 'fixed' ? '' : ' · 窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded}>
+        <CardShell title={seriesTitle(envelope.data)} meta={`${seriesLabel(envelope.data)}${displacementBasis(envelope.data) === 'fixed' ? '' : ' · 窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded}>
           {station ? <SeriesChart station={station} envelope={envelope} viewKey={step.toolCallId} /> : null}
         </CardShell>
       );

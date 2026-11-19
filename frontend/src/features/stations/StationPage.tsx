@@ -12,7 +12,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
-import { FindingChips } from '@/features/inspection/findings';
+import { FindingChips, findingLabel, triggersOf } from '@/features/inspection/findings';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { useChartColors } from '@/features/monitoring/chartColors';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
@@ -249,6 +249,11 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
   const aui = useAui();
   const isLoading = useConversationLoading();
   const needsLook = inspection?.screening === '建议调查';
+  // 问题里写明本次巡检的线索，模型和以后翻看记录的人都知道从哪里查起。
+  const leads = inspection ? triggersOf(inspection.findings).map(findingLabel) : [];
+  const question = leads.length > 0
+    ? `调查 ${stationName} 的近期变化，巡检线索：${leads.join('、')}`
+    : `调查 ${stationName} 的近期变化`;
 
   return (
     <div className="aui-thread-welcome-root flex flex-col gap-3 py-5">
@@ -257,7 +262,7 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
           type="button"
           disabled={isLoading}
           className="self-start rounded-full"
-          onClick={() => aui.thread().append({ role: 'user', content: [{ type: 'text', text: `调查 ${stationName} 的近期变化` }] })}
+          onClick={() => aui.thread().append({ role: 'user', content: [{ type: 'text', text: question }] })}
         >
           调查 {stationName}
         </Button>

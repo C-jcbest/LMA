@@ -57,7 +57,13 @@ export function qualityLabelsOf(findings: readonly ScreeningFinding[]) {
  * 测点的初筛线索：调查理由在前、数据质量在后，标签之外不再重复整句；
  * limit 控制显示几条调查理由，其余合并为“另 N 条”。
  */
-export const FindingChips: FC<{ findings: readonly ScreeningFinding[]; limit?: number; className?: string }> = ({ findings, limit = Infinity, className }) => {
+export const FindingChips: FC<{
+  findings: readonly ScreeningFinding[];
+  limit?: number;
+  /** 行内另有幅度列时不在标签里重复幅度。 */
+  showAmount?: boolean;
+  className?: string;
+}> = ({ findings, limit = Infinity, showAmount = true, className }) => {
   const triggers = triggersOf(findings);
   const visible = triggers.slice(0, limit);
   const hidden = triggers.slice(limit);
@@ -69,7 +75,7 @@ export const FindingChips: FC<{ findings: readonly ScreeningFinding[]; limit?: n
     // 标签会放进今日页的整行按钮里，只能用行内元素；列表语义由 role 提供。
     <span role="list" aria-label="初筛线索" className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {visible.map((finding, index) => {
-        const amount = findingAmount(finding);
+        const amount = showAmount ? findingAmount(finding) : null;
         return (
           <span role="listitem" key={index} title={finding.text}
             className="inline-flex min-h-6 items-center gap-1.5 rounded-full bg-status-attention/12 px-2.5 text-xs font-medium text-foreground">

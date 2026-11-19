@@ -174,7 +174,8 @@ const PrintStationMap: FC<{ stations: readonly StationEvidence[]; conclusions: R
             <>
               <line x1={x} y1={y} x2={x + Math.sin(radians) * length} y2={y - Math.cos(radians) * length}
                 stroke={PRINT_COLORS.text} strokeWidth="1.6" markerEnd="url(#print-arrow)" />
-              <text x={x + 8} y={y + 18} fontSize="10" fill={PRINT_COLORS.mutedText}>
+              {/* 数值写在箭头的另一侧，避免与箭头重叠。 */}
+              <text x={x + 8} y={Math.cos(radians) < 0 ? y - 10 : y + 18} fontSize="10" fill={PRINT_COLORS.mutedText}>
                 {`${magnitude.toFixed(1)} mm · ${directionName(azimuth)}`}
               </text>
             </>
