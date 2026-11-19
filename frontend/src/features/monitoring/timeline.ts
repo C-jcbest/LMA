@@ -427,9 +427,10 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
   return {
     animation: false,
     textStyle: { fontFamily: 'inherit' },
+    // 降雨图的坐标名“mm”在其上方约 15px，两图间留足距离，避免与位移图底部的刻度叠在一起。
     grid: hasRainfall
       ? [
-          { left: 48, right: 12, top: 44, bottom: 156 },
+          { left: 48, right: 12, top: 44, bottom: 176 },
           { left: 48, right: 12, height: 64, bottom: 64 },
         ]
       : [{ left: 48, right: 12, top: 44, bottom: 64 }],

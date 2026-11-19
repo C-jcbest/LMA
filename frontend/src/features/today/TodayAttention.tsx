@@ -153,7 +153,13 @@ export const TodayAttention: FC = () => {
 
   let headline = <>今天要查哪个测点？</>;
   if (hasResults && needsLook.length > 0) {
-    headline = <>{stations.length} 个测点，<em className="text-status-attention not-italic">{needsLook.length} 个</em>建议调查</>;
+    // 中文标题按短语换行（不在“测点”中间断开）。
+    headline = (
+      <>
+        <span className="whitespace-nowrap">{stations.length} 个测点，</span>
+        <span className="whitespace-nowrap"><em className="text-status-attention not-italic">{needsLook.length} 个</em>建议调查</span>
+      </>
+    );
   } else if (hasResults && quietCount === stations.length) {
     headline = <>{stations.length} 个测点未见明显变化</>;
   } else if (hasResults) {
@@ -162,7 +168,7 @@ export const TodayAttention: FC = () => {
 
   return (
     <section aria-label="今日" className="aui-thread-welcome-root today mb-8">
-      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{historical && <>上次巡检 · </>}{headline}</h1>
+      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{historical && <span className="whitespace-nowrap">上次巡检 · </span>}{headline}</h1>
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{formatFinishedAt(latest.inspection.finished_at)} 巡检</time>}
         {needsLook.length > 0 && investigatedCount > 0 && (

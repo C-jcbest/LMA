@@ -374,7 +374,8 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               <StatusDot status={inspection.screening} />{investigationStatusLabel(inspection.screening)}
             </span>
           )}
-          <div className="ms-auto flex flex-wrap items-center gap-2">
+          {/* 并排时与标题同行靠右；窄屏标题在顶栏，这一行只有分组和状态，控件换到下一行时靠左对齐。 */}
+          <div className={cn('flex flex-wrap items-center gap-2', isSideBySide && 'ms-auto')}>
             {groupPeers.length > 0 && (
               <Toggle size="sm" variant="outline" pressed={showPeers} onPressedChange={setShowPeers}>同组对比</Toggle>
             )}
