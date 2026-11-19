@@ -5,6 +5,7 @@ import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { FindingChips, triggersOf } from '@/features/inspection/findings';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
@@ -45,18 +46,24 @@ function useInspectionFinishedWhileOpen(latest: LatestInspection | null) {
   return baselineInspectionId !== undefined && latest?.inspection != null && latest.inspection.id !== baselineInspectionId;
 }
 
-const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }> = ({ station, highlightChange }) => {
+/** 本次巡检之后登记的结论表示这条线索已经调查过；更早的结论只说明以前查过。 */
+function investigationProgress(station: InspectionStation, inspectionFinishedAt: string | undefined) {
+  const conclusion = station.last_conclusion;
+  if (!conclusion) {
+    return null;
+  }
+  const isAfterInspection = inspectionFinishedAt !== undefined
+    && new Date(conclusion.created_at).getTime() >= new Date(inspectionFinishedAt).getTime();
+  return { isAfterInspection, status: investigationStatusLabel(conclusion.status) };
+}
+
+const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: string | undefined; highlightChange: boolean }> = ({ station, inspectionFinishedAt, highlightChange }) => {
   const { openStation } = useNavigation();
+  const leadTrigger = triggersOf(station.findings)[0];
   const change = largestChange(station);
-  // 和上次相比有变化、或已经调查过，都影响用户要不要再看一眼。
-  const history: string[] = [];
   const isScreeningChanged = station.previous_screening !== station.screening;
-  if (station.previous_screening !== null && isScreeningChanged) {
-    history.push(`上次巡检${investigationStatusLabel(station.previous_screening)}`);
-  }
-  if (station.last_conclusion) {
-    history.push(`上次调查：${investigationStatusLabel(station.last_conclusion.status)}`);
-  }
+  const isNew = station.previous_screening !== null && isScreeningChanged;
+  const progress = investigationProgress(station, inspectionFinishedAt);
 
   return (
     <li className="animate-in fade-in duration-200">
@@ -74,18 +81,25 @@ const AttentionRow: FC<{ station: InspectionStation; highlightChange: boolean }>
             <StatusDot status={station.screening} />
             <span className="min-w-0 wrap-anywhere text-base font-semibold">{station.station_name}</span>
             <span className="text-muted-foreground shrink-0 text-xs">{station.group_name}</span>
+            {isNew && <span className="text-status-attention shrink-0 text-xs font-medium">新出现</span>}
           </span>
-          {station.reasons.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-4.5 text-sm leading-relaxed wrap-anywhere">
-              {station.reasons.join('；')}
-            </span>
-          )}
-          {history.length > 0 && (
-            <span className="text-muted-foreground mt-1 block ps-4.5 text-xs">{history.join(' · ')}</span>
-          )}
+          <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 ps-4.5">
+            <FindingChips findings={station.findings} limit={1} />
+            {progress && (
+              <span className={cn('text-xs', progress.isAfterInspection ? 'text-foreground' : 'text-muted-foreground')}>
+                {progress.isAfterInspection ? `已调查 · ${progress.status}` : `上次调查 · ${progress.status}`}
+              </span>
+            )}
+          </span>
         </span>
         <span className="today-row-trend"><TrendLine values={station.trend} emphasized /></span>
-        {change && (
+        {leadTrigger?.value_mm != null && (
+          <span className="today-row-change text-base font-medium tabular-nums">
+            {formatMillimeters(leadTrigger.value_mm)}
+            <span className="text-muted-foreground ms-1 text-xs font-normal">mm{leadTrigger.days ? ` / ${Math.round(leadTrigger.days)} 天` : ''}</span>
+          </span>
+        )}
+        {leadTrigger?.value_mm == null && change && (
           <span className="today-row-change text-base font-medium tabular-nums">
             {formatMillimeters(change.millimeters)}
             <span className="text-muted-foreground ms-1 text-xs font-normal">mm {change.axis}</span>
@@ -127,6 +141,9 @@ export const TodayAttention: FC = () => {
   const needsLook = stations.filter((station) => station.screening === '建议调查');
   const quietCount = stations.filter((station) => station.screening === '未见明显变化').length;
   const unavailableCount = stations.length - needsLook.length - quietCount;
+  const investigatedCount = needsLook
+    .filter((station) => investigationProgress(station, latest?.inspection?.finished_at)?.isAfterInspection)
+    .length;
 
   let startLabel = hasResults ? '重新巡检' : '开始巡检';
   if (latest?.running) {
@@ -147,6 +164,9 @@ export const TodayAttention: FC = () => {
       <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{historical && <>上次巡检 · </>}{headline}</h1>
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{formatFinishedAt(latest.inspection.finished_at)} 巡检</time>}
+        {needsLook.length > 0 && investigatedCount > 0 && (
+          <span className="tabular-nums">已调查 {investigatedCount}/{needsLook.length}</span>
+        )}
         <Button
           type="button"
           variant={hasResults && !historical ? 'ghost' : 'outline'}
@@ -188,7 +208,7 @@ export const TodayAttention: FC = () => {
       {needsLook.length > 0 && (
         <ul aria-label="建议调查的测点" className="mt-7 -mx-3 space-y-1">
           {needsLook.map((station) => (
-            <AttentionRow key={station.station_uuid} station={station} highlightChange={isInspectionFinishedWhileOpen} />
+            <AttentionRow key={station.station_uuid} station={station} inspectionFinishedAt={latest?.inspection?.finished_at} highlightChange={isInspectionFinishedWhileOpen} />
           ))}
         </ul>
       )}

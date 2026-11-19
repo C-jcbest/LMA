@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
-import { useAuiState } from '@assistant-ui/react';
+import { useAui, useAuiState } from '@assistant-ui/react';
 import { ChevronDownIcon, Maximize2Icon } from 'lucide-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import type { ToolArtifactEnvelopeFor } from '@/types/envelope';
+import { addAskTarget } from './ask-targets';
 import { useChartColors } from './chartColors';
+import type { ChartRange } from './TimelineChart';
 import { evidenceNumbers, STATION_MAP_CARD } from './evidence-cards';
 import {
   buildSteps,
@@ -32,7 +34,7 @@ import { ComputationResultView } from './tools/ComputationResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
 import { WeatherResultView } from './tools/WeatherResultView';
 
-const EvidenceChart = lazy(() => import('./EvidenceChart'));
+const TimelineChart = lazy(() => import('./TimelineChart'));
 const StationMap = lazy(() => import('./StationMap'));
 
 const CARD_KINDS = new Set(['gnss_series', 'computation', 'weather', 'site_environment']);
@@ -188,7 +190,10 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultE
   );
 };
 
-const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelopeFor<'gnss_series'> }> = ({ station, envelope }) => {
+const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelopeFor<'gnss_series'>; viewKey: string }> = ({ station, envelope, viewKey }) => {
+  const aui = useAui();
+  const { composerInputRef } = useStationInspector();
+  const isThreadRunning = useAuiState((state) => state.thread.isRunning);
   const colors = useChartColors();
   const data = envelope.data;
   // 流式输出时每个字都会重建依据数组；按依据编号判断内容是否变化，避免逐字重绘图表。
@@ -202,29 +207,41 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
   const narrow = useMediaQuery('(max-width: 599px)');
   const option = useMemo(() => {
     const full = buildTimelineOption({ data, rainfall, peers: [], mode: 'components' }, colors) as Record<string, unknown>;
-    // 正文里不缩放，去掉滑块并收回为它预留的底部空间。
-    const { dataZoom, brush, toolbox, ...preview } = full;
+    // 正文里不缩放：去掉底部滑块并收回它的空间，悬停读数、图例开关和框选追问保留。
+    const { dataZoom, ...inline } = full;
     return {
-      ...preview,
-      // 正文预览不拦截触屏滚动，也不显示与展开视图不同的交互控件。
-      silent: true,
-      tooltip: { show: false },
-      legend: { ...(full.legend as object), selectedMode: false },
+      ...inline,
       grid: hasRainfall
-        ? [{ left: 48, right: 12, top: 40, bottom: 112 }, { left: 48, right: 12, height: 56, bottom: 28 }]
-        : [{ left: 48, right: 12, top: 40, bottom: 28 }],
+        ? [{ left: 48, right: 12, top: 44, bottom: 124 }, { left: 48, right: 12, height: 60, bottom: 28 }]
+        : [{ left: 48, right: 12, top: 44, bottom: 28 }],
     };
   }, [data, rainfall, hasRainfall, colors]);
-  let height = 240;
+
+  const askAbout = (range: ChartRange) => {
+    addAskTarget(aui, { stationUuid: data.station_uuid, stationName: station.name, ...range });
+    composerInputRef.current?.focus();
+  };
+
+  let height = 260;
   if (hasRainfall) {
-    height = 260;
+    height = 300;
   } else if (narrow) {
-    height = 200;
+    height = 220;
   }
   return (
     <WhenVisible minHeight={height}>
       <Suspense fallback={<Skeleton className="w-full" style={{ height }} />}>
-        <EvidenceChart option={option} label={`${data.station_name} ${seriesLabel(data)} 位移曲线`} height={height} />
+        <TimelineChart
+          viewKey={viewKey}
+          option={option}
+          label={`${data.station_name} ${seriesLabel(data)} 位移曲线`}
+          resetSignal={0}
+          onRangeChange={() => undefined}
+          onAsk={askAbout}
+          askDisabled={isThreadRunning}
+          height={height}
+          allowZoom={false}
+        />
       </Suspense>
     </WhenVisible>
   );
@@ -235,8 +252,8 @@ const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefin
   switch (envelope.kind) {
     case 'gnss_series': {
       return (
-        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)} · ${displacementBasis(envelope.data) === 'fixed' ? '累计位移' : '窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded}>
-          {station ? <SeriesChart station={station} envelope={envelope} /> : null}
+        <CardShell title={`${envelope.data.station_name} 位移`} meta={`${seriesLabel(envelope.data)}${displacementBasis(envelope.data) === 'fixed' ? '' : ' · 窗口内变化'}`} onOpen={onOpen} defaultExpanded={defaultExpanded}>
+          {station ? <SeriesChart station={station} envelope={envelope} viewKey={step.toolCallId} /> : null}
         </CardShell>
       );
     }
@@ -284,7 +301,7 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
   return (
     <CardShell
       title="测点位置"
-      meta={mapStations.every((station) => station.cumulative) ? '箭头为最新累计水平位移方向' : '箭头为水平位移方向；无固定参考的测点为本窗口变化'}
+      meta={mapStations.every((station) => station.cumulative) ? undefined : '无固定参考的测点为本窗口变化'}
     >
       <WhenVisible minHeight={288}>
         <ErrorBoundary fallbackTitle="地图渲染异常">

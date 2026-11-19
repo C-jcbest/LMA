@@ -80,7 +80,7 @@ function slopeField(station: MapStation, displacementAzimuth: number | null) {
   const value = displacementAzimuth === null
     ? directionText(station.downslopeAzimuth)
     : `${directionText(station.downslopeAzimuth)} · 与位移夹角 ${Math.round(azimuthDifference(displacementAzimuth, station.downslopeAzimuth))}°`;
-  return { label: '下坡方向 · 约 90 m 地形', value, wide: true };
+  return { label: '下坡方向 · 约 90 m 地形平均坡面，不代替勘查主滑方向', value, wide: true };
 }
 
 function createPopupNode(station: MapStation, onSelect: (id: string) => void, onClose: () => void, container: HTMLElement) {
@@ -361,12 +361,25 @@ export default function StationMap({ stations, references = [], onSelect }: {
           </span>
         </div>
       )}
-      <p className="text-xs text-muted-foreground">
-        北向上 · 箭头表示移动站水平位移方向，长度为相对示意
-        {hasSlope && ' · 白色虚线扇形为下坡方向（约 90 m 地形的平均坡面）'}
-        {references.length > 0 && ' · 灰点为同组测点位置'}
-        {layerSelection.terrain3d && ' · 3D 下箭头为屏幕示意'}
-      </p>
+      {/* 图例只列地图上实际出现的符号；坡向精度等限定写在测点弹窗里。 */}
+      <ul aria-label="地图图例" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <li className="inline-flex items-center gap-1.5">
+          <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden><path d="M8 14V3M8 3l-4 4M8 3l4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          水平位移方向
+        </li>
+        {hasSlope && (
+          <li className="inline-flex items-center gap-1.5">
+            <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden><path d="M8 14L3 3A12 12 0 0 1 13 3Z" fill="currentColor" fillOpacity="0.2" stroke="currentColor" strokeDasharray="2 1.5" /></svg>
+            下坡方向
+          </li>
+        )}
+        {references.length > 0 && (
+          <li className="inline-flex items-center gap-1.5">
+            <span className="size-2.5 rounded-full bg-status-unknown" aria-hidden />
+            同组测点
+          </li>
+        )}
+      </ul>
       {amap.status === 'loading' && <p className="text-xs text-muted-foreground">正在加载高德地图…</p>}
       {amap.status === 'error' && <p role="status" className="text-xs text-muted-foreground">{amap.message}</p>}
       {mapError && <p role="status" className="text-xs text-muted-foreground">{mapError}</p>}

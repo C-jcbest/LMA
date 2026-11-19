@@ -21,12 +21,24 @@ export interface SessionState {
 
 export type Screening = '建议调查' | '未见明显变化' | '数据不足' | '暂无法分析';
 
+/** 结构化初筛线索，与后端 inspection/screening.py 的 Finding 一致。 */
+export interface ScreeningFinding {
+  kind: 'trend' | 'acceleration' | 'gap_jump' | 'tail_step' | 'held_step' | 'spike' | 'gap' | 'data';
+  role: 'trigger' | 'quality';
+  text: string;
+  axis: 'n' | 'e' | 'u' | null;
+  window: 'long' | 'recent' | null;
+  value_mm: number | null;
+  days: number | null;
+}
+
 export interface InspectionStation {
   station_uuid: string;
   station_name: string;
   group_name: string;
   screening: Screening;
   reasons: string[];
+  findings: ScreeningFinding[];
   metrics: { net_change_mm?: Partial<Record<'n' | 'e' | 'u', number>> };
   trend: Array<number | null>;
   previous_screening: Screening | null;

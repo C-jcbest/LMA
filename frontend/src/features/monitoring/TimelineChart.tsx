@@ -54,6 +54,10 @@ interface TimelineChartProps {
   askDisabled?: boolean;
   initialState?: ChartViewState;
   onStateChange?: (state: ChartViewState) => void;
+  /** 绘图区高度（px）。 */
+  height?: number;
+  /** 正文里的图表不缩放，框选后只提供追问；缩放留给依据面板和测点页。 */
+  allowZoom?: boolean;
 }
 
 interface SliderState {
@@ -102,7 +106,10 @@ const formatDay = (time: number) => {
   return `${date.getMonth() + 1}月${date.getDate()}日`;
 };
 
-export default function TimelineChart({ viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false, initialState, onStateChange }: TimelineChartProps) {
+export default function TimelineChart({
+  viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false, initialState, onStateChange,
+  height = 384, allowZoom = true,
+}: TimelineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const previousViewRef = useRef<string | null>(null);
@@ -287,12 +294,14 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
       askBar = (
         <div role="toolbar" aria-label="所选时间段" className="absolute flex -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-0.5 shadow-sm" style={{ left, top: ASK_BAR_TOP }}>
           <Button type="button" size="xs" disabled={askDisabled} onClick={() => ask(selection)} className="rounded-full px-2.5">问这段</Button>
-          <Button type="button" variant="ghost" size="icon-xs" aria-label="放大所选时间段" title="放大" className="rounded-full text-muted-foreground"
-            onClick={() => {
-              chartRef.current?.dispatchAction({ type: 'dataZoom', startValue: selection.start, endValue: selection.end });
-            }}>
-            <ZoomInIcon aria-hidden />
-          </Button>
+          {allowZoom && (
+            <Button type="button" variant="ghost" size="icon-xs" aria-label="放大所选时间段" title="放大" className="rounded-full text-muted-foreground"
+              onClick={() => {
+                chartRef.current?.dispatchAction({ type: 'dataZoom', startValue: selection.start, endValue: selection.end });
+              }}>
+              <ZoomInIcon aria-hidden />
+            </Button>
+          )}
           <Button type="button" variant="ghost" size="icon-xs" aria-label="取消选择" title="取消选择" onClick={clearSelection} className="rounded-full text-muted-foreground">
             <XIcon aria-hidden />
           </Button>
@@ -316,7 +325,7 @@ export default function TimelineChart({ viewKey, option, label, resetSignal, onR
 
   return (
     <div className="relative" onMouseLeave={() => setHoverTime(null)}>
-      <div ref={containerRef} role="img" aria-label={label} className="h-96 w-full" />
+      <div ref={containerRef} role="img" aria-label={label} className="w-full" style={{ height }} />
       {askBar}
     </div>
   );

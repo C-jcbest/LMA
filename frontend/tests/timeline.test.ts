@@ -118,13 +118,17 @@ describe('测点时间轴数据', () => {
     expect(option.dataZoom[0].xAxisIndex).toEqual([0, 1]);
     expect(option.axisPointer.link).toEqual([{ xAxisIndex: 'all' }]);
     const names = option.series.map((item: { name: string }) => item.name);
-    expect(names).toEqual(['证据区间', '北向 N', '东向 E', '垂直 U', '日降雨']);
-    const bands = option.series[0].markArea.data.map((band: Array<{ name?: string }>) => band[0]!.name);
-    expect(bands).toEqual(['缺测']);
+    expect(names).toEqual(['缺测', '北向 N', '东向 E', '垂直 U', '台阶', '日降雨']);
+    // 缺测区段的含义由图例说明，图例可以整体开关缺测底色。
+    expect(option.series[0].markArea.data).toHaveLength(1);
+    expect(option.legend.data.map((item: string | { name: string }) => (typeof item === 'string' ? item : item.name)))
+      .toEqual(['北向 N', '东向 E', '垂直 U', '日降雨', '缺测']);
     expect(option.series[1].connectNulls).toBe(false);
+    // 降雨坐标保留刻度与单位，便于比对各天雨量。
+    expect(option.yAxis[1].name).toBe('mm');
 
     // 当天 0–24 时整段，提示框对齐点取正午：15:00 的采样点落在同一天的降雨块内。
-    const [middle, value, start, end] = option.series[4].data[0].value;
+    const [middle, value, start, end] = option.series[5].data[0].value;
     const day = (time: string) => new Date(time).getTime();
     expect([middle, value, start, end]).toEqual([day('2026-11-02T12:00:00'), 7, day('2026-11-02T00:00:00'), day('2026-11-03T00:00:00')]);
   });
@@ -138,9 +142,13 @@ describe('测点时间轴数据', () => {
       peers: [],
       mode: 'components',
     }, colors) as Record<string, any>;
-    const north = option.series[1];
-    expect(north.markPoint.data).toEqual([{ name: '北向台阶 +4.0 mm · 11-03 00:00', coord: ['2026-11-03 00:00:00', 4] }]);
-    expect(option.series[2].markPoint).toBeUndefined();
+    // 台阶集中在图例“台阶”序列上，可整体开关；标记颜色跟随所在方向。
+    const steps = option.series.find((item: { name: string }) => item.name === '台阶');
+    expect(steps.markPoint.data).toEqual([{
+      name: '北向台阶 +4.0 mm · 11-03 00:00', coord: ['2026-11-03 00:00:00', 4],
+      itemStyle: { color: 'north', borderColor: '#fff', borderWidth: 1 },
+    }]);
+    expect(option.legend.data).toContainEqual(expect.objectContaining({ name: '台阶' }));
   });
 
   it('同组对比显示本测点水平位移和同组灰线，没有降雨时只有一个绘图区', () => {
@@ -153,7 +161,7 @@ describe('测点时间轴数据', () => {
     }, colors) as Record<string, any>;
 
     expect(option.grid).toHaveLength(1);
-    expect(option.series.map((item: { name: string }) => item.name)).toEqual(['证据区间', '测试点 B', '测试点 A 水平']);
+    expect(option.series.map((item: { name: string }) => item.name)).toEqual(['缺测', '测试点 B', '测试点 A 水平', '台阶']);
     expect(option.series[1].lineStyle.color).toBe('peer');
   });
 });

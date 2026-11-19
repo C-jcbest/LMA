@@ -76,7 +76,7 @@
 - 批量巡检在单 worker 内以 asyncio 任务运行，规则集中在 [screening.py](../backend/app/inspection/screening.py)，不调用模型；初筛只给调查优先级，不是结论或预警。
 - 问题推荐（`POST /suggestions`）只读最近成功巡检与未归档登记结论的有界摘要，最多一次非思考模型调用，不重新取数；按摘要内容与北京时间日期缓存，失败不缓存。推荐和标题的提示词分别在 prompts 目录的 suggestions.md、title.md。
 - 巡检中单个测点的意外异常（如平台返回无法解析的数据）只让该测点记为“暂无法分析”，不使整次巡检作废。
-- 初筛结果除 reasons 句子外带结构化 findings（类型、调查理由或数据质量、方向、窗口、幅度）；reasons 仍供今日页与推荐使用。
+- 初筛结果除 reasons 句子外带结构化 findings（类型、调查理由或数据质量、方向、窗口、幅度），与巡检结果一起存入 `lma_inspection_stations.findings`；今日页、测点列表和测点页按 findings 显示短标签，reasons 只供问题推荐和没有结构化线索的“暂无法分析”说明。
 - 巡检原型是生成式 UI：[lab.py](../backend/app/inspection/lab.py) 的 LangGraph 图先写入一条助手消息，再用官方 `push_ui_message` 把汇总卡片和测点行挂到这条消息上，逐站合并更新；SSE 转发 `custom` 事件，前端以独立的 assistant-ui LangGraph Runtime 把组件变成 data part 渲染。组件存于图状态 `ui`，刷新或重连时从 checkpoint 与 Run 缓存恢复。原型只在 `lma_lab_inspections` 记目录，不写正式巡检表；同一时间只跑一次。视觉初判（[vision.py](../backend/app/inspection/vision.py)）在服务端用 matplotlib 出图，调用 VISION_* 配置的模型，断开流式回调，只推送解析后的结果；未配置时只显示初筛。
 
 ## 前端展示

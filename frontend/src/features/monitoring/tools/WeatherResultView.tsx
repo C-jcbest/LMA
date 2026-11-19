@@ -1,42 +1,13 @@
 import React from 'react';
 import { CloudRain } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from 'cn';
 import type { WeatherArtifactData } from '@/types/envelope';
 import { EmptyResultView } from './EmptyResultView';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
-interface DailyRain {
-  date: string;
-  value: number | null;
-  isForecast: boolean;
-}
-
-const BAR_AREA_HEIGHT = 64;
-
-/** 逐日降雨一眼看出集中在哪几天；精确数值在悬停提示和下方明细里。 */
-const DailyRainBars: React.FC<{ days: readonly DailyRain[] }> = ({ days }) => {
-  const largest = Math.max(0, ...days.map((day) => day.value ?? 0));
-  const hasForecast = days.some((day) => day.isForecast);
-  return (
-    <figure className="space-y-1">
-      <div role="img" aria-label="逐日降雨柱状图" className="flex items-end gap-px border-b" style={{ height: BAR_AREA_HEIGHT }}>
-        {days.map((day) => {
-          const height = largest > 0 && day.value ? Math.max(2, (day.value / largest) * BAR_AREA_HEIGHT) : 0;
-          return (
-            <div key={day.date} className="flex h-full min-w-0 flex-1 items-end" title={`${day.date} ${day.value ?? '缺测'} mm${day.isForecast ? '（预报）' : ''}`}>
-              <div className="w-full rounded-t-xs bg-chart-rain" style={{ height, opacity: day.isForecast ? 0.45 : 1 }} />
-            </div>
-          );
-        })}
-      </div>
-      <figcaption className="flex justify-between text-xs text-muted-foreground tabular-nums">
-        <span>{days[0]!.date.slice(5)}</span>
-        <span>日降雨，最大 {largest} mm{hasForecast ? ' · 浅色为预报' : ''}</span>
-        <span>{days[days.length - 1]!.date.slice(5)}</span>
-      </figcaption>
-    </figure>
-  );
-};
+const RainfallChart = React.lazy(() => import('./RainfallChart'));
+const RAIN_CHART_HEIGHT = 140;
 
 const DetailTable: React.FC<{ summary: string; children: React.ReactNode }> = ({ summary, children }) => (
   <details className="group rounded-lg border">
@@ -87,37 +58,40 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
   );
   const dates = [...new Set([...histRain.keys(), ...fcByDate.keys()])].sort();
 
-  // 只查历史时没有预报；预报类条目整组省略，避免一排“-”。
-  const cells: { label: string; value: string; forecast?: boolean }[] = [
+  // 只查历史时没有预报；预报类条目整组省略，避免一排“-”。时间范围已在卡片标题里，标签不再重复。
+  const rainCells: { label: string; value: string; detail?: string; forecast?: boolean }[] = [
     {
-      label: '最近 24 个完整小时降雨',
+      label: '期间合计',
+      value: rain?.history_total_precipitation != null ? `${rain.history_total_precipitation} mm` : '-',
+    },
+    {
+      label: '最大日降雨',
+      value: rain?.history_max_daily_precipitation
+        ? `${rain.history_max_daily_precipitation.value} mm · ${rain.history_max_daily_precipitation.date.slice(5)}`
+        : '-',
+    },
+    {
+      label: '最近 24 小时',
       value:
         rain?.recent_24h_precipitation != null
           ? `${rain.recent_24h_precipitation} mm`
           : rain?.recent_24h_window
-          ? `现有记录覆盖 ${rain.recent_24h_window.available_hours}/24 小时`
+          ? `仅覆盖 ${rain.recent_24h_window.available_hours}/24 小时`
           : '-',
-    },
-    {
-      label: `历史合计降雨 (${data.query?.history_start_date || ''} ~ ${data.query?.history_end_date || ''})`,
-      value: rain?.history_total_precipitation != null ? `${rain.history_total_precipitation} mm` : '-',
-    },
-    {
-      label: '历史最大日降雨',
-      value: rain?.history_max_daily_precipitation
-        ? `${rain.history_max_daily_precipitation.date}: ${rain.history_max_daily_precipitation.value} mm`
-        : '-',
+      detail: rain?.recent_24h_window
+        ? `${rain.recent_24h_window.start_time} 至 ${rain.recent_24h_window.end_time}`
+        : undefined,
     },
     {
       forecast: true,
-      label: '预报合计降雨',
+      label: '预报合计',
       value: rain?.forecast_total_precipitation != null ? `${rain.forecast_total_precipitation} mm` : '-',
     },
     {
       forecast: true,
-      label: '预报最大日降雨',
+      label: '预报最大日',
       value: rain?.forecast_max_daily_precipitation
-        ? `${rain.forecast_max_daily_precipitation.date}: ${rain.forecast_max_daily_precipitation.value} mm`
+        ? `${rain.forecast_max_daily_precipitation.value} mm · ${rain.forecast_max_daily_precipitation.date.slice(5)}`
         : '-',
     },
     {
@@ -128,6 +102,8 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
           ? `${rain.forecast_max_precipitation_probability}%`
           : '-',
     },
+  ];
+  const windCells: { label: string; value: string; forecast?: boolean }[] = [
     {
       label: '当前风速 / 阵风',
       value:
@@ -136,7 +112,7 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
           : '-',
     },
     {
-      label: '历史最大风速 / 阵风',
+      label: '期间最大风速 / 阵风',
       value:
         wind.history_max_wind_speed != null
           ? `${wind.history_max_wind_speed} / ${wind.history_max_wind_gust ?? '-'} km/h`
@@ -152,7 +128,9 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
     },
   ];
 
-  const visibleCells = cells.filter((cell) => cell.value !== '-' && (hasForecast || !cell.forecast));
+  const isShown = (cell: { value: string; forecast?: boolean }) => cell.value !== '-' && (hasForecast || !cell.forecast);
+  const visibleRainCells = rainCells.filter(isShown);
+  const visibleWindCells = windCells.filter(isShown);
   const dailyRain = dates.map((date) => {
     const history = histRain.get(date);
     if (typeof history === 'number') {
@@ -164,35 +142,34 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1 text-xs text-muted-foreground wrap-break-word">
-        <p>
-          {loc.station_name ? `${loc.station_name} · ` : ''}({loc.latitude}, {loc.longitude})
-          {(data.query?.timezone || loc.timezone) && ` · ${data.query?.timezone || loc.timezone}`}
-        </p>
-        {rain?.recent_24h_window && (
-          <p>最近 24 小时统计：{rain.recent_24h_window.start_time} 至 {rain.recent_24h_window.end_time}</p>
-        )}
-      </div>
-      {data.current && (
-        <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-          <CloudRain className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span>{cur.condition ?? '-'}</span>
-          <span className="text-xs font-normal text-muted-foreground">
-            {cur.temperature_2m ?? '-'}℃（体感 {cur.apparent_temperature ?? '-'}℃，湿度 {cur.relative_humidity_2m ?? '-'}%）
-          </span>
-        </div>
+      {/* 卡片标题已写测点名；只有按坐标查询、没有测点名时才标出位置。 */}
+      {!loc.station_name && (
+        <p className="text-xs text-muted-foreground tabular-nums">{loc.latitude}, {loc.longitude}</p>
       )}
-      {visibleCells.length > 0 && (
-        <dl className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-x-6 gap-y-3">
-          {visibleCells.map((cell) => (
-            <div key={cell.label} className="min-w-0">
-              <dt className="text-xs text-muted-foreground wrap-break-word">{cell.label}</dt>
-              <dd className="text-sm font-medium tabular-nums wrap-break-word">{cell.value}</dd>
+      {dailyRain.length > 1 && (
+        <React.Suspense fallback={<Skeleton className="w-full" style={{ height: RAIN_CHART_HEIGHT }} />}>
+          <RainfallChart days={dailyRain} height={RAIN_CHART_HEIGHT} />
+        </React.Suspense>
+      )}
+      {visibleRainCells.length > 0 && (
+        <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-x-6 gap-y-3">
+          {visibleRainCells.map((cell) => (
+            <div key={cell.label} className="min-w-0" title={cell.detail}>
+              <dt className="text-xs text-muted-foreground">{cell.label}</dt>
+              <dd className="text-base font-medium tabular-nums wrap-break-word">{cell.value}</dd>
             </div>
           ))}
         </dl>
       )}
-      {dailyRain.length > 1 && <DailyRainBars days={dailyRain} />}
+      {data.current && (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <CloudRain className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="font-medium">{cur.condition ?? '-'}</span>
+          <span className="text-muted-foreground tabular-nums">
+            {cur.temperature_2m ?? '-'}℃ · 体感 {cur.apparent_temperature ?? '-'}℃ · 湿度 {cur.relative_humidity_2m ?? '-'}%
+          </span>
+        </div>
+      )}
       {dates.length > 0 && (
         <DetailTable summary={`逐日明细（${dates.length} 天）`}>
           <Table containerClassName="overflow-visible" className={cn('text-xs', hasForecast && 'min-w-136')}>
@@ -237,6 +214,18 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
               ))}
             </TableBody>
           </Table>
+        </DetailTable>
+      )}
+      {visibleWindCells.length > 0 && (
+        <DetailTable summary="风况">
+          <dl className="grid gap-x-6 gap-y-2 p-3 text-sm sm:grid-cols-2">
+            {visibleWindCells.map((cell) => (
+              <div key={cell.label} className="min-w-0">
+                <dt className="text-xs text-muted-foreground">{cell.label}</dt>
+                <dd className="font-medium tabular-nums">{cell.value}</dd>
+              </div>
+            ))}
+          </dl>
         </DetailTable>
       )}
     </div>

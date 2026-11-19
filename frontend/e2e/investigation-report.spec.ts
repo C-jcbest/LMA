@@ -61,7 +61,7 @@ const stationTimeline = {
 };
 
 const inspectionRow = (name: string, screening: string, fields: Record<string, unknown> = {}) => ({
-  station_uuid: name, station_name: name, group_name: 'K3 分组', screening, reasons: [], metrics: {},
+  station_uuid: name, station_name: name, group_name: 'K3 分组', screening, reasons: [], findings: [], metrics: {},
   trend: [0, 1, 2, 3], previous_screening: null, last_conclusion: null, ...fields,
 });
 
@@ -75,6 +75,9 @@ const inspection = {
   stations: [
     inspectionRow('测试点 A', '建议调查', {
       reasons: ['北向 90 天持续同向变化，约 -11.9 mm'], previous_screening: '未见明显变化',
+      findings: [{
+        kind: 'trend', role: 'trigger', text: '北向 90 天持续同向变化，约 -11.9 mm', axis: 'n', window: 'long', value_mm: -11.9, days: 90,
+      }],
       last_conclusion: { status: '持续关注', reason: '缓慢累积', session_id: 'report-session', created_at: '2026-11-08T00:00:00Z' },
     }),
     inspectionRow('测试点 B', '未见明显变化'),
@@ -390,8 +393,11 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await expect(page.getByRole('heading', { name: /3 个测点.*1 个.*建议调查/ })).toBeVisible();
   expect(await page.getByRole('region', { name: '今日页面', exact: true }).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect(page.getByRole('list', { name: '建议调查的测点' }).getByRole('listitem')).toHaveCount(1);
-  await expect(page.getByText('上次巡检未见明显变化')).toBeVisible();
-  await expect(page.getByText('上次调查：持续关注')).toBeVisible();
+  // 每行只显示首条理由的短标签与幅度；上次不是建议调查的标“新出现”，巡检前的结论只算“上次调查”。
+  const attention = page.getByRole('list', { name: '建议调查的测点' });
+  await expect(attention.getByText('北向持续变化')).toBeVisible();
+  await expect(attention.getByText('新出现')).toBeVisible();
+  await expect(attention.getByText('上次调查 · 持续关注')).toBeVisible();
   await expect(page.getByRole('button', { name: /1 个未见明显变化.*1 个数据待核查.*全部测点/ })).toBeVisible();
 
   await page.getByRole('button', { name: '查看 测试点 A' }).click();

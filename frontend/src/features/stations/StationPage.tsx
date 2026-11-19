@@ -12,13 +12,14 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
+import { FindingChips } from '@/features/inspection/findings';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { useChartColors } from '@/features/monitoring/chartColors';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { StatusDot } from '@/features/monitoring/status';
-import { buildTimelineOption, displacementBasisLabel, formatChartTime } from '@/features/monitoring/timeline';
+import { buildTimelineOption, displacementBasis, displacementBasisLabel, formatChartTime } from '@/features/monitoring/timeline';
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { addAskTarget } from '@/features/monitoring/ask-targets';
@@ -122,7 +123,8 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
     <div>
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-muted-foreground min-w-0 truncate text-sm tabular-nums">
-          {range ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}` : `${displacementBasisLabel(data)}（mm）`}
+          {range && `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`}
+          {!range && displacementBasis(data) !== 'fixed' && displacementBasisLabel(data)}
         </p>
         {range && (
           <div className="flex shrink-0 items-center gap-1">
@@ -207,7 +209,6 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
 
   return (
     <div className="aui-thread-welcome-root flex flex-col gap-3 py-5">
-      <h2 className="text-lg font-semibold">{stationName}</h2>
       {needsLook && (
         <Button
           type="button"
@@ -284,8 +285,10 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           </div>
           {isSideBySide && chatMode === 'closed' && <Button variant="outline" size="sm" onClick={showChat}>AI 调查</Button>}
         </div>
-        {inspection && inspection.reasons.length > 0 && (
-          <p className="text-muted-foreground mt-2 text-sm leading-relaxed wrap-anywhere">{inspection.reasons.join('；')}</p>
+        {inspection && inspection.findings.length > 0 && <FindingChips findings={inspection.findings} className="mt-3" />}
+        {/* “暂无法分析”没有结构化线索，只有一句说明。 */}
+        {inspection && inspection.findings.length === 0 && inspection.reasons.length > 0 && (
+          <p className="text-muted-foreground mt-2 text-sm wrap-anywhere">{inspection.reasons[0]}</p>
         )}
 
         <div className="mt-7 space-y-5">

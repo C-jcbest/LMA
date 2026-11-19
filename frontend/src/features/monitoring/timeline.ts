@@ -11,7 +11,8 @@ import { toFiniteGnssNumber } from './tools/gnssUtils';
 const MILLIMETERS_PER_METER = 1000;
 const MIN_PEER_OVERLAP_RATIO = 0.5;
 const RAINFALL_SERIES_NAME = '日降雨';
-const BAND_SERIES_NAME = '证据区间';
+const GAP_SERIES_NAME = '缺测';
+const STEP_SERIES_NAME = '台阶';
 const DAY_MILLIS = 24 * 60 * 60 * 1000;
 const AXES = ['n', 'e', 'u'] as const;
 
@@ -251,19 +252,24 @@ export interface TimelineInput {
   mode: TimelineMode;
 }
 
-/** 台阶标在曲线上的发生时刻，悬停看幅度和后续状态；不再用区间色块覆盖曲线。 */
-const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPoint[], color: string) => {
-  if (events.length === 0) return undefined;
+/**
+ * 台阶标在曲线上的发生时刻，悬停看幅度；颜色跟随所在方向。
+ * 放在独立的空序列上，图例里的“台阶”即可整体开关，不影响曲线本身。
+ */
+const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPoint[], colorOf: (axis: Axis | 'h') => string) => {
   const valueAt = new Map(points.map((point) => [point.time, point]));
   return {
     symbol: 'triangle',
     symbolSize: 9,
-    itemStyle: { color, borderColor: '#fff', borderWidth: 1 },
     label: { show: false },
     tooltip: { trigger: 'item', formatter: (params: { name: string }) => params.name },
     data: events.flatMap((event) => {
       const value = valueAt.get(event.time)?.[event.axis];
-      return typeof value === 'number' ? [{ name: stepEventText(event), coord: [event.time, value] }] : [];
+      if (typeof value !== 'number') {
+        return [];
+      }
+      const color = colorOf(event.axis);
+      return [{ name: stepEventText(event), coord: [event.time, value], itemStyle: { color, borderColor: '#fff', borderWidth: 1 } }];
     }),
   };
 };
@@ -286,11 +292,12 @@ const displacementLine = (
   emphasis: { disabled: true },
 });
 
+/** 缺测区段只画浅色底，含义由图例“缺测”说明，不在每段上重复写字。 */
 const gapBands = (gaps: readonly GapArtifact[], colors: ChartColors) => ({
   silent: true,
-  label: { color: colors.mutedText, fontSize: 12, position: 'insideTop' },
+  label: { show: false },
   data: gaps.map((gap) => [
-    { name: '缺测', xAxis: gap.from, itemStyle: { color: colors.gap } },
+    { xAxis: gap.from, itemStyle: { color: colors.gap } },
     { xAxis: gap.to },
   ]),
 });
@@ -331,7 +338,8 @@ interface TooltipItem {
 }
 
 const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
-  const items = (Array.isArray(params) ? params : [params]).filter((item) => item.seriesName !== BAND_SERIES_NAME);
+  const items = (Array.isArray(params) ? params : [params])
+    .filter((item) => item.seriesName !== GAP_SERIES_NAME && item.seriesName !== STEP_SERIES_NAME);
   const lines = items.map((item) => {
     const value = Array.isArray(item.value) ? item.value[1] : item.value;
     const text = typeof value === 'number' ? `${value.toFixed(2)} mm` : '缺测';
@@ -355,16 +363,12 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
 
   const lineValues = (key: 'n' | 'e' | 'u' | 'h') =>
     displacement.map((point) => [point.time, point[key]] as const);
-  const withSteps = (line: ReturnType<typeof displacementLine>, axis: Axis | 'h', color: string) => {
-    const markPoint = stepMarks(stepEventsOf(data, [axis]), displacement, color);
-    return markPoint ? { ...line, markPoint } : line;
-  };
 
   const lines = mode === 'components'
     ? [
-        withSteps(displacementLine('北向 N', lineValues('n'), colors.north, 1.75), 'n', colors.north),
-        withSteps(displacementLine('东向 E', lineValues('e'), colors.east, 1.75), 'e', colors.east),
-        withSteps(displacementLine('垂直 U', lineValues('u'), colors.up, 1.75), 'u', colors.up),
+        displacementLine('北向 N', lineValues('n'), colors.north, 1.75),
+        displacementLine('东向 E', lineValues('e'), colors.east, 1.75),
+        displacementLine('垂直 U', lineValues('u'), colors.up, 1.75),
       ]
     : [
         ...peers.map((peer) => displacementLine(
@@ -373,13 +377,22 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
           colors.peer,
           1,
         )),
-        withSteps(displacementLine(`${data.station_name} 水平`, lineValues('h'), colors.primary, 2.25), 'h', colors.primary),
+        displacementLine(`${data.station_name} 水平`, lineValues('h'), colors.primary, 2.25),
       ];
 
-  // 缺测带放在独立的空序列上，用图例隐藏某个方向时缺测区间仍然可见。
-  const bandSeries = {
-    ...displacementLine(BAND_SERIES_NAME, [], colors.mutedText, 0),
+  const axisColors: Record<Axis | 'h', string> = { n: colors.north, e: colors.east, u: colors.up, h: colors.primary };
+  const steps = stepEventsOf(data, mode === 'components' ? AXES : ['h']);
+  const hasSteps = steps.length > 0;
+  const hasGaps = data.summary.gaps.length > 0;
+
+  // 缺测与台阶各放在一个空序列上，图例可以单独开关，隐藏某个方向时它们仍然可见。
+  const gapSeries = {
+    ...displacementLine(GAP_SERIES_NAME, [], colors.gap, 0),
     markArea: gapBands(data.summary.gaps, colors),
+  };
+  const stepSeries = {
+    ...displacementLine(STEP_SERIES_NAME, [], colors.mutedText, 0),
+    markPoint: stepMarks(steps, displacement, (axis) => axisColors[axis]),
   };
 
   const axisLine = { lineStyle: { color: colors.border } };
@@ -413,6 +426,8 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       data: [
         ...(mode === 'components' ? lines : lines.slice(-1)).map((line) => line.name),
         ...(hasRainfall ? [RAINFALL_SERIES_NAME] : []),
+        ...(hasSteps ? [{ name: STEP_SERIES_NAME, icon: 'triangle', itemStyle: { color: colors.mutedText } }] : []),
+        ...(hasGaps ? [{ name: GAP_SERIES_NAME, icon: 'rect', itemStyle: { color: colors.gap } }] : []),
       ],
     },
     xAxis: hasRainfall
@@ -424,7 +439,7 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     yAxis: [
       { type: 'value', gridIndex: 0, scale: true, name: 'mm', nameTextStyle: { color: colors.mutedText }, axisLabel, splitLine },
       ...(hasRainfall
-        ? [{ type: 'value', gridIndex: 1, min: 0, splitNumber: 2, axisLabel, splitLine }]
+        ? [{ type: 'value', gridIndex: 1, min: 0, splitNumber: 2, name: 'mm', nameTextStyle: { color: colors.mutedText }, axisLabel, splitLine }]
         : []),
     ],
     axisPointer: { link: [{ xAxisIndex: 'all' }], lineStyle: { color: colors.mutedText } },
@@ -462,8 +477,9 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       },
     ],
     series: [
-      bandSeries,
+      gapSeries,
       ...lines,
+      stepSeries,
       ...(hasRainfall ? [rainfallSeries(rainfall, colors)] : []),
     ],
   };

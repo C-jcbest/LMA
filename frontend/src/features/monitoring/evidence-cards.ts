@@ -7,6 +7,10 @@ export const CARD_HREF_PREFIX = '#evidence-card-';
 export const STATION_MAP_CARD = 'station-map';
 
 const CITATION_PATTERN = /\]\(#evidence-([A-Za-z0-9]+)\)/g;
+/** 工具结果末尾的依据编号标记只写给模型；模型偶尔把它原样抄进正文，显示和导出前去掉。 */
+const ECHOED_EVIDENCE_MARKER = /<lma_evidence\b[^>]*\/?>/g;
+
+export const withoutEchoedEvidenceMarkers = (markdown: string) => markdown.replace(ECHOED_EVIDENCE_MARKER, '');
 const FENCE_PATTERN = /^\s*(```|~~~)/;
 
 /** 卡片紧邻模型自己写的表格时带上这个标记，计算结果卡片据此默认收起，避免同一张表出现两遍。 */
@@ -99,7 +103,7 @@ export function insertEvidenceCards(markdown: string, options: InsertOptions): s
   let mapPending = options.includeStationMap;
   let pendingCards: string[] = [];
   const output: string[] = [];
-  const blocks = splitBlocks(markdown);
+  const blocks = splitBlocks(withoutEchoedEvidenceMarkers(markdown));
 
   blocks.forEach((block, index) => {
     output.push(block.lines.join('\n'));

@@ -18,6 +18,7 @@ import { useStationInspector, type InspectorViewState } from './StationInspector
 import {
   buildTimelineOption,
   dailyRainfallWithin,
+  displacementBasis,
   displacementBasisLabel,
   displacementOf,
   referenceOf,
@@ -79,12 +80,14 @@ export const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
           </div>
         );
       })}
-      <div className="min-w-0">
-        <dt className="text-sm text-muted-foreground">缺测</dt>
-        <dd className="mt-0.5 text-xl font-medium tabular-nums">
-          {data.summary.gaps.length}<span className="ms-1 text-sm font-normal text-muted-foreground">段</span>
-        </dd>
-      </div>
+      {data.summary.gaps.length > 0 && (
+        <div className="min-w-0">
+          <dt className="text-sm text-muted-foreground">缺测</dt>
+          <dd className="mt-0.5 text-xl font-medium tabular-nums text-status-attention">
+            {data.summary.gaps.length}<span className="ms-1 text-sm font-normal text-muted-foreground">段</span>
+          </dd>
+        </div>
+      )}
     </dl>
   );
 };
@@ -164,9 +167,8 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
       <div>
         <div className="flex min-h-8 items-center justify-between gap-3">
           <p className="min-w-0 truncate text-sm text-muted-foreground tabular-nums">
-            {range
-              ? `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`
-              : `${displacementBasisLabel(data)}（mm）· ▲ 为台阶`}
+            {range && `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`}
+            {!range && displacementBasis(data) !== 'fixed' && displacementBasisLabel(data)}
           </p>
           {range && (
             <div className="flex shrink-0 items-center gap-1">

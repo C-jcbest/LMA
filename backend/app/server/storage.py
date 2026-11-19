@@ -3,6 +3,7 @@
 import asyncio
 import sys
 from collections.abc import Sequence
+from dataclasses import asdict
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.rows import dict_row
@@ -51,6 +52,8 @@ CREATE TABLE IF NOT EXISTS lma_inspection_stations (
     trend jsonb NOT NULL,
     PRIMARY KEY (inspection_id, station_uuid)
 );
+-- 结构化初筛线索（类型、方向、窗口、幅度），供今日页与测点页按条呈现；reasons 保留给问题推荐。
+ALTER TABLE lma_inspection_stations ADD COLUMN IF NOT EXISTS findings jsonb NOT NULL DEFAULT '[]'::jsonb;
 CREATE TABLE IF NOT EXISTS lma_station_results (
     session_id uuid NOT NULL REFERENCES lma_sessions(id) ON DELETE CASCADE,
     tool_call_id text NOT NULL, station_uuid text NOT NULL, station_name text NOT NULL,
@@ -345,10 +348,11 @@ class SessionStorage:
                 for station, result in screened:
                     await connection.execute(
                         """INSERT INTO lma_inspection_stations
-                           (inspection_id, station_uuid, station_name, group_name, screening, reasons, metrics, trend)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                           (inspection_id, station_uuid, station_name, group_name, screening, reasons, findings, metrics, trend)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                         (inspection_id, station.station_uuid, station.station_name, station.group_name,
-                         result.screening, Jsonb(result.reasons), Jsonb(result.metrics), Jsonb(result.trend)),
+                         result.screening, Jsonb(result.reasons), Jsonb([asdict(finding) for finding in result.findings]),
+                         Jsonb(result.metrics), Jsonb(result.trend)),
                     )
 
     async def finish_inspection(self, inspection_id: str, status: str) -> None:

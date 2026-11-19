@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
-import { investigationStatusLabel } from '@/features/monitoring/investigation';
+import { findingLabel, triggersOf } from '@/features/inspection/findings';
 import { formatMillimeters, largestChange, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import type { InspectionStation, Screening, StationDirectoryEntry } from '@/services/api';
@@ -44,6 +44,21 @@ const matchesFilter = (station: StationListItem, filter: Filter) => {
 
 const EMPTY_DIRECTORY: StationDirectoryEntry[] = [];
 
+/** 列表行的一句话：首条调查理由的短标签，其次是数据说明；状态已由圆点表达，不再重复。 */
+function stationNote(station: StationListItem) {
+  if (station.screening === null) {
+    return '未巡检';
+  }
+  const lead = triggersOf(station.findings)[0];
+  if (lead) {
+    return findingLabel(lead);
+  }
+  if (station.screening === '未见明显变化') {
+    return '';
+  }
+  return station.reasons[0] ?? '';
+}
+
 const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
   const { openStation } = useNavigation();
   const change = largestChange(station);
@@ -64,7 +79,7 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
         </span>
         <span className="station-row-trend"><TrendLine values={station.trend} emphasized={isAttention} className="h-7" /></span>
         <span className="station-row-note text-muted-foreground min-w-0 truncate text-sm">
-          {station.reasons[0] ?? (station.screening ? investigationStatusLabel(station.screening) : '未巡检')}
+          {stationNote(station)}
         </span>
         <span className="text-end text-sm tabular-nums">
           {change ? `${formatMillimeters(change.millimeters)} mm` : <span className="text-muted-foreground">—</span>}
@@ -94,7 +109,7 @@ export const StationsPage: FC = () => {
   const stations = useMemo<StationListItem[]>(() => {
     const inspections = new Map(latest?.stations.map((station) => [station.station_uuid, station]));
     return directory.map((station) => ({
-      reasons: [], metrics: {}, trend: [], previous_screening: null, last_conclusion: null, screening: null,
+      reasons: [], findings: [], metrics: {}, trend: [], previous_screening: null, last_conclusion: null, screening: null,
       ...inspections.get(station.station_uuid), ...station,
     }));
   }, [directory, latest]);

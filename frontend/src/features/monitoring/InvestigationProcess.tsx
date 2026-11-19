@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FC } from 'react';
-import { useAuiState, type AssistantState } from '@assistant-ui/react';
-import { AlertCircleIcon, CheckIcon, ChevronRightIcon, MinusIcon } from 'lucide-react';
+import { ActionBarPrimitive, useAuiState, type AssistantState } from '@assistant-ui/react';
+import { AlertCircleIcon, CheckIcon, ChevronRightIcon, MinusIcon, RefreshCwIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import {
   Collapsible,
   CollapsibleContent,
@@ -253,7 +254,13 @@ export const InvestigationProcess: FC = () => {
                 {step.detail && <span>{step.detail}： </span>}{step.envelope!.error!.message}
               </p>
             ))}
-            <p>可重新生成本轮回答，或继续提问补查；已取得的依据仍保留。</p>
+            {!isRunning && (
+              <ActionBarPrimitive.Reload asChild>
+                <Button type="button" variant="outline" size="sm">
+                  <RefreshCwIcon aria-hidden />重新生成
+                </Button>
+              </ActionBarPrimitive.Reload>
+            )}
           </CollapsibleContent>
         </Collapsible>
       )}

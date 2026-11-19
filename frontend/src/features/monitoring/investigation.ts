@@ -9,7 +9,7 @@ import type {
 } from '@/types/envelope';
 import { decodeToolArtifact, isToolFeedback } from './artifacts';
 import { validCoordinates } from './coordinates';
-import { evidenceNumbers } from './evidence-cards';
+import { evidenceNumbers, withoutEchoedEvidenceMarkers } from './evidence-cards';
 
 interface ToolPresentation {
   kind?: ToolArtifactKind;
@@ -463,7 +463,7 @@ export function conclusionsToMarkdown(conclusions: ConclusionsArtifactData): str
 export function answerToMarkdown(parts: readonly PartState[]): string {
   const steps = buildSteps(parts, collectStations(parts));
   const conclusions = findConclusions(parts);
-  const text = parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n').trim();
+  const text = withoutEchoedEvidenceMarkers(parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n')).trim();
   if (!text) {
     return conclusions ? conclusionsToMarkdown(conclusions) : '';
   }
