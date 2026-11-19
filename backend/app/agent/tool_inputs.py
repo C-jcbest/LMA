@@ -136,6 +136,11 @@ class WeatherInput(ToolInput):
     end_date: str | None = Field(default=None, description="历史结束日期 YYYY-MM-DD，最多到昨天")
     hourly: bool = Field(default=False, description="需要逐小时降水（例如某天几点下雨）时传 true；跨度较长时只看逐日即可")
     forecast_days: int = Field(default=0, ge=0, le=16, strict=True, description="未来预报天数，0 表示不查预报；当前天气总会返回")
+    rain_response: bool = Field(
+        default=False,
+        description="需要比对强降雨前后位移变化时传 true（仅按测点查询时有效）：列出历史期间日降雨达到大雨的连续过程，"
+                    "并给出该测点主方向在过程前 7 天与结束后 7 天的鲁棒速率；只陈述前后数值，不代表因果",
+    )
 
     @field_validator("start_date", "end_date")
     @classmethod

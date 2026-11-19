@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 
 import httpx
 
-from app.agent.weather import ARCHIVE_ENDPOINT, HTTP_TIMEOUT_SECONDS
+from app.open_meteo import ARCHIVE_ENDPOINT, HTTP_TIMEOUT_SECONDS
 from app.business_time import BUSINESS_TIMEZONE, TIME_FORMAT
 from app.inspection.screening import theil_sen_slope
 

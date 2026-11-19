@@ -243,6 +243,21 @@ class WeatherArtifactData(ArtifactModel):
     today_hourly: WeatherHourlyArtifact | None = None
     forecast: WeatherSeriesArtifact | None = None
     source: WeatherSourceArtifact | None = None
+    # 强降雨过程及前后位移速率；只在 rain_response 请求时给出。
+    rain_events: list["RainEventArtifact"] | None = None
+    rain_threshold_mm: float | None = None
+
+
+class RainEventArtifact(ArtifactModel):
+    start: str
+    end: str
+    total_mm: float
+    peak_mm: float
+    antecedent_7d_mm: float | None = None
+    axis: Literal["n", "e", "u"] | None = None
+    axis_name: str | None = None
+    rate_before_mm_day: float | None = None
+    rate_after_mm_day: float | None = None
 
 
 class TerrainArtifact(ArtifactModel):

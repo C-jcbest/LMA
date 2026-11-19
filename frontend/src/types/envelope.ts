@@ -135,6 +135,19 @@ export interface WeatherDailyArtifact {
   wind_gusts_10m_max?: Array<number | null> | null;
 }
 
+/** 强降雨过程与主方向前后速率（服务端 app/rainfall.py），测点页与天气依据共用。 */
+export interface RainEvent {
+  start: string;
+  end: string;
+  total_mm: number;
+  peak_mm: number;
+  antecedent_7d_mm: number | null;
+  axis: 'n' | 'e' | 'u' | null;
+  axis_name: string | null;
+  rate_before_mm_day: number | null;
+  rate_after_mm_day: number | null;
+}
+
 export interface WeatherArtifactData {
   ok: boolean;
   location: {
@@ -195,6 +208,9 @@ export interface WeatherArtifactData {
   today_hourly?: { time: string[]; precipitation: Array<number | null> } | null;
   forecast?: { daily: WeatherDailyArtifact } | null;
   source?: { provider: string } | null;
+  /** 强降雨过程与前后位移速率；只在 rain_response 请求时给出。 */
+  rain_events?: RainEvent[] | null;
+  rain_threshold_mm?: number | null;
 }
 
 export interface SiteEnvironmentArtifactData {

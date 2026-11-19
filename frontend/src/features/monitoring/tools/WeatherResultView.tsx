@@ -3,6 +3,7 @@ import { CloudRain } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from 'cn';
 import type { WeatherArtifactData } from '@/types/envelope';
+import { RainEvents } from '../RainEvents';
 import { EmptyResultView } from './EmptyResultView';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
@@ -150,6 +151,13 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
         <React.Suspense fallback={<Skeleton className="w-full" style={{ height: RAIN_CHART_HEIGHT }} />}>
           <RainfallChart days={dailyRain} height={RAIN_CHART_HEIGHT} />
         </React.Suspense>
+      )}
+      {data.rain_events && (
+        <RainEvents
+          events={data.rain_events}
+          daily={(hist?.time ?? []).map((date, index) => ({ date, value: hist?.precipitation_sum?.[index] ?? null }))}
+          thresholdMm={data.rain_threshold_mm ?? 25}
+        />
       )}
       {visibleRainCells.length > 0 && (
         <dl className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-x-6 gap-y-3">

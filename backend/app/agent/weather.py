@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+from dataclasses import asdict
 from datetime import date, datetime, timedelta
 import math
 
@@ -16,14 +17,12 @@ from app.agent.tool_inputs import WeatherInput
 from app.agent.tool_protocol import ToolFailure, ToolInputError, tool_result
 
 from app.agent.retry import is_transient_error
-from app.monitoring_data import monitoring, station_coordinates
-from app.business_time import BUSINESS_TIMEZONE, BUSINESS_TZ, business_now
+from app.monitoring_data import MAX_WINDOW_DAYS, monitoring, series_artifact_data, station_coordinates
+from app.open_meteo import ARCHIVE_ENDPOINT, FORECAST_ENDPOINT, HTTP_TIMEOUT_SECONDS
+from app.rainfall import HEAVY_RAIN_MM, RESPONSE_WINDOW_DAYS, heavy_rain_events, with_displacement_rates
+from app.business_time import BUSINESS_TIMEZONE, BUSINESS_TZ, TIME_FORMAT, business_now
 
-FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
-ARCHIVE_ENDPOINT = "https://archive-api.open-meteo.com/v1/archive"
 
-# 一年逐小时降水的历史请求响应约数秒到十余秒，留出余量。
-HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HISTORY_DAYS = 7
 MAX_HOURLY_VALUES_FOR_MODEL = 168
 
@@ -184,6 +183,29 @@ def _today_hourly_precipitation(payload: dict, today: date) -> dict:
     return {"time": [stamp for stamp, _ in pairs], "precipitation": [value for _, value in pairs]}
 
 
+async def _rain_events_with_rates(
+    station_uuid: str, daily: dict, history_start: date, history_end: date,
+) -> tuple[list[dict], str | None]:
+    """强降雨过程与测点主方向前后速率；与测点页同一算法（app/rainfall.py），取每日固定时刻位移。"""
+    days = [
+        {"date": day, "value": value if isinstance(value, (int, float)) else None}
+        for day, value in zip(daily.get("time", []), daily.get("precipitation_sum") or [])
+    ]
+    events = heavy_rain_events(days)
+    if not events:
+        return [], None
+    now = business_now().replace(tzinfo=None)
+    begin = datetime.combine(history_start - timedelta(days=RESPONSE_WINDOW_DAYS), datetime.min.time())
+    end = min(datetime.combine(history_end + timedelta(days=RESPONSE_WINDOW_DAYS + 1), datetime.min.time()), now)
+    if (end - begin).days > MAX_WINDOW_DAYS["daily"]:
+        return [asdict(event) for event in events], "历史期间过长，未计算降雨前后的位移速率；缩短到一年以内可得到"
+    async with monitoring() as data:
+        station = await data.resolve_station(station_uuid)
+        series = await data.displacement(station, begin.strftime(TIME_FORMAT), end.strftime(TIME_FORMAT), "daily")
+    points = series_artifact_data(series)["points"]
+    return [asdict(event) for event in with_displacement_rates(events, points)], None
+
+
 @tool(response_format="content_and_artifact", args_schema=WeatherInput)
 async def query_weather(
     station_name_or_uuid: str | None = None,
@@ -193,6 +215,7 @@ async def query_weather(
     end_date: str | None = None,
     hourly: bool = False,
     forecast_days: int = 0,
+    rain_response: bool = False,
 ) -> tuple[str, dict]:
     """查询监测点或坐标位置的天气：当前天气、指定历史日期的逐日降雨/气温/降雪与风况，可选逐小时降水和未来预报。
 
@@ -323,6 +346,12 @@ async def query_weather(
         "forecast": forecast_series,
         "source": {"provider": "Open-Meteo"},
     }
+    if rain_response and station_uuid and history:
+        events, note = await _rain_events_with_rates(station_uuid, history_series["daily"], history_start, history_end)
+        data["rain_events"] = events
+        data["rain_threshold_mm"] = HEAVY_RAIN_MM
+        if note:
+            limitations.append(note)
     facts = {**data, "limitations": limitations} if limitations else data
     hourly_count = len(history_series.get("hourly", {}).get("time", []))
     if hourly_count > MAX_HOURLY_VALUES_FOR_MODEL:
