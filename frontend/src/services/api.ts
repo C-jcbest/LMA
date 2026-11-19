@@ -61,6 +61,12 @@ export interface LatestInspection {
 }
 
 export type TimelineDays = 7 | 30 | 90;
+/** 测点页时间窗口：截至现在的预设天数，或自定义起止日期（YYYY-MM-DD，含当天）。 */
+export type StationWindow = { days: TimelineDays } | { begin: string; end: string };
+
+const windowQuery = (window: StationWindow) => (
+  'days' in window ? `days=${window.days}` : `begin=${window.begin}&end=${window.end}`
+);
 
 export interface StationDirectoryEntry {
   station_uuid: string;
@@ -279,13 +285,13 @@ export class LmaClient {
     await this.request('/inspections', { method: 'POST' });
   }
 
-  async getStationTimeline(stationUuid: string, days: TimelineDays, signal?: AbortSignal): Promise<StationTimeline> {
-    const path = `/stations/${encodeURIComponent(stationUuid)}/timeline?days=${days}`;
+  async getStationTimeline(stationUuid: string, window: StationWindow, signal?: AbortSignal): Promise<StationTimeline> {
+    const path = `/stations/${encodeURIComponent(stationUuid)}/timeline?${windowQuery(window)}`;
     return (await this.request(path, { signal })).json();
   }
 
-  async getStationRainfall(stationUuid: string, days: TimelineDays, signal?: AbortSignal): Promise<StationRainfall> {
-    const path = `/stations/${encodeURIComponent(stationUuid)}/rainfall?days=${days}`;
+  async getStationRainfall(stationUuid: string, window: StationWindow, signal?: AbortSignal): Promise<StationRainfall> {
+    const path = `/stations/${encodeURIComponent(stationUuid)}/rainfall?${windowQuery(window)}`;
     return (await this.request(path, { signal })).json();
   }
 

@@ -5,7 +5,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Annotated, Callable, Literal
 from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
@@ -42,7 +42,7 @@ from app.monitoring_data import (
 from app.rainfall import daily_rainfall, heavy_rain_events, rainfall_payload, with_displacement_rates
 from app.server.auth import auth_enabled, auth_router, require_login
 from app.server.messages import project_message, project_state
-from app.server.stations import TIMELINE_WINDOW_DAYS, find_station, load_station_series
+from app.server.stations import TimelineWindow, find_station, load_station_series, timeline_window
 from app.server.storage import SessionStorage, connection_pool
 
 logger = logging.getLogger(__name__)
@@ -491,16 +491,21 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             logger.warning("station directory request failed", exc_info=True)
             raise HTTPException(502, "测点列表尚未载入。") from None
 
+    def requested_window(days: int | None, begin: date | None, end: date | None) -> TimelineWindow:
+        try:
+            return timeline_window(days, begin, end)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+
     @app.get("/stations/{station_uuid}/timeline")
-    async def station_timeline(station_uuid: str, days: int = 90):
-        if days not in TIMELINE_WINDOW_DAYS:
-            raise HTTPException(422, "请求参数不符合接口要求。")
+    async def station_timeline(station_uuid: str, days: int | None = None, begin: date | None = None, end: date | None = None):
+        window = requested_window(days, begin, end)
         try:
             async with monitoring_scope(_STATION_PAGE_CACHE, platform_client_factory) as data:
                 station = await find_station(data, station_uuid)
                 if station is None:
                     raise HTTPException(404, "测点不存在。")
-                series = await load_station_series(data, station, days)
+                series = await load_station_series(data, station, window)
         except (BeidouApiError, httpx.HTTPError):
             # 原始错误可能带上游地址和账号信息，只进日志。
             logger.warning("station timeline request failed", exc_info=True)
@@ -514,16 +519,15 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         }
 
     @app.get("/stations/{station_uuid}/rainfall")
-    async def station_rainfall(station_uuid: str, days: int = 90):
+    async def station_rainfall(station_uuid: str, days: int | None = None, begin: date | None = None, end: date | None = None):
         """测点页时间轴下方的逐日降雨与强降雨前后速率；位移序列复用测点页缓存，不重复取数。"""
-        if days not in TIMELINE_WINDOW_DAYS:
-            raise HTTPException(422, "请求参数不符合接口要求。")
+        window = requested_window(days, begin, end)
         try:
             async with monitoring_scope(_STATION_PAGE_CACHE, platform_client_factory) as data:
                 station = await find_station(data, station_uuid)
                 if station is None:
                     raise HTTPException(404, "测点不存在。")
-                series = await load_station_series(data, station, days)
+                series = await load_station_series(data, station, window)
         except (BeidouApiError, httpx.HTTPError):
             logger.warning("station rainfall displacement request failed", exc_info=True)
             raise HTTPException(502, "监测平台数据暂不可用，请稍后重试。") from None
@@ -531,10 +535,12 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         if latitude is None:
             raise HTTPException(404, "测点没有有效坐标，无法查询降雨。")
         # 历史降雨最多到昨天；窗口与位移曲线对齐。
-        end = business_now().date() - timedelta(days=1)
-        start = end - timedelta(days=days - 1)
+        rain_end = min(window.end.date(), business_now().date() - timedelta(days=1))
+        rain_start = window.start.date()
+        if rain_start > rain_end:
+            return rainfall_payload([], [])
         try:
-            daily = await daily_rainfall(latitude, longitude, start, end)
+            daily = await daily_rainfall(latitude, longitude, rain_start, rain_end)
         except (httpx.HTTPError, ValueError):
             logger.warning("station rainfall request failed", exc_info=True)
             raise HTTPException(502, "降雨资料暂不可用，请稍后重试。") from None

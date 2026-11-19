@@ -1,12 +1,14 @@
 """测点页序列与“正在查看的测点”上下文：都不经过模型，也不改用户原文。"""
 
 import unittest
+from datetime import timedelta
 
 from langchain_core.messages import HumanMessage
 
+from app.business_time import business_now
 from app.agent.message_context import FOCUS_STATION_KEY, model_messages, stamp_user_message
 from app.monitoring_data import MonitoringData, _SeriesCache
-from app.server.stations import find_station, load_station_series
+from app.server.stations import find_station, load_station_series, timeline_window
 from test_inspection_api import FakeBeidou, station
 
 
@@ -17,7 +19,7 @@ def platform_data(client=None):
 
 class StationSeriesTests(unittest.IsolatedAsyncioTestCase):
     async def test_long_window_samples_daily_and_reports_net_change(self):
-        series = await load_station_series(platform_data(), station("测试点 A"), 90)
+        series = await load_station_series(platform_data(), station("测试点 A"), timeline_window(90, None, None))
 
         self.assertEqual(series["station_name"], "测试点 A")
         self.assertEqual(series["sampling"]["sample_times"], ["15:00"])
@@ -26,7 +28,7 @@ class StationSeriesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(series["summary"]["gaps"], [])
 
     async def test_week_window_keeps_hourly_points(self):
-        series = await load_station_series(platform_data(), station("测试点 A"), 7)
+        series = await load_station_series(platform_data(), station("测试点 A"), timeline_window(7, None, None))
 
         self.assertEqual(series["sampling"]["mode"], "hourly")
         self.assertEqual(len(series["points"]), 168)
@@ -35,8 +37,27 @@ class StationSeriesTests(unittest.IsolatedAsyncioTestCase):
         data = platform_data()
         base = await find_station(data, "uuid-基准站 R")
 
-        self.assertIsNone(await load_station_series(data, base, 90))
+        self.assertIsNone(await load_station_series(data, base, timeline_window(90, None, None)))
         self.assertIsNone(await find_station(data, "uuid-不存在"))
+
+
+class TimelineWindowTests(unittest.TestCase):
+    def test_custom_range_covers_whole_days_and_rejects_invalid_ranges(self):
+        today = business_now().date()
+        window = timeline_window(None, today - timedelta(days=20), today - timedelta(days=10))
+        self.assertEqual(window.start.date(), today - timedelta(days=20))
+        self.assertEqual((window.end.date(), window.end.hour), (today - timedelta(days=10), 23))
+
+        for days, begin, end in [
+            (45, None, None),
+            (None, today, today - timedelta(days=1)),
+            (None, today - timedelta(days=400), today),
+            (None, today, today + timedelta(days=1)),
+            (None, today, None),
+            (7, today - timedelta(days=3), today),
+        ]:
+            with self.subTest(days=days, begin=begin, end=end), self.assertRaises(ValueError):
+                timeline_window(days, begin, end)
 
 
 class FocusStationContextTests(unittest.TestCase):
