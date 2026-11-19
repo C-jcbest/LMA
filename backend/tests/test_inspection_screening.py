@@ -44,22 +44,51 @@ def screen(long_points, recent_points=None):
     return screen_station(long_points, hourly() if recent_points is None else recent_points, REFERENCE, NOW)
 
 
+def kinds(result: ScreeningResult, role: str) -> list[str]:
+    return [finding.kind for finding in result.findings if finding.role == role]
+
+
 class ScreeningTests(unittest.TestCase):
-    def test_hourly_terminal_jump_survives_quiet_or_short_history(self):
+    def test_terminal_jump_with_few_observations_is_data_quality_pending_confirmation(self):
         recent = hourly()
-        recent[-1] = point(NOW, 100.1)
+        recent[-1] = point(NOW - timedelta(hours=1), 100.1)
         for days in (90, 30):
             with self.subTest(days=days):
                 result = screen(daily(lambda i: 0, days=days), recent)
-                self.assertEqual(result.screening, "建议调查")
-                self.assertTrue(any("待观察" in reason for reason in result.reasons))
-                self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+                # 只有少量数据：不作为调查理由，但也不能算未见变化，列为待核查等下次巡检确认。
+                self.assertEqual(result.screening, "数据不足")
+                self.assertEqual(kinds(result, "trigger"), [])
+                self.assertIn("tail_step", kinds(result, "quality"))
+
+    def test_jump_across_gap_with_few_later_observations_is_data_quality(self):
+        recent = hourly()
+        recent[-1] = point(NOW, 100.1)
+        result = screen(daily(lambda i: 0), recent)
+        self.assertEqual(result.screening, "数据不足")
+        self.assertIn("gap_jump", kinds(result, "quality"))
 
     def test_daily_terminal_jump_is_not_persistence(self):
         result = screen(daily(lambda i: 0 if i < 89 else 30, noise_mm=0))
-        self.assertEqual(result.screening, "建议调查")
-        self.assertTrue(any("待观察" in reason for reason in result.reasons))
-        self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+        self.assertEqual(result.screening, "数据不足")
+        self.assertNotIn("held_step", kinds(result, "trigger"))
+
+    def test_step_held_only_hours_is_data_quality_but_held_days_needs_investigation(self):
+        short = hourly()
+        for i in range(162, 168):
+            short[i] = point(NOW - timedelta(hours=168 - i), 100.05)
+        short_result = screen(daily(lambda i: 0), short)
+        self.assertEqual(kinds(short_result, "trigger"), [])
+        self.assertIn("tail_step", kinds(short_result, "quality"))
+
+        held = hourly()
+        for i in range(96, 168):
+            held[i] = point(NOW - timedelta(hours=168 - i), 100.05)
+        held_result = screen(daily(lambda i: 0), held)
+        self.assertEqual(held_result.screening, "建议调查")
+        step = next(finding for finding in held_result.findings if finding.kind == "held_step")
+        # 只陈述保持了多久，成因留给人调查，不按量级下结论。
+        self.assertGreaterEqual(step.days, 2.9)
+        self.assertIn("成因需人工调查", step.text)
 
     def test_hourly_trend_survives_short_history(self):
         recent = [point(NOW - timedelta(hours=168-i), 100 + i * 0.0001) for i in range(168)]
@@ -83,7 +112,7 @@ class ScreeningTests(unittest.TestCase):
         recent = hourly()
         recent = recent[:60] + [point(NOW - timedelta(hours=168-i), 100.03) for i in range(100, 168)]
         result = screen(daily(lambda i: 0), recent)
-        self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+        self.assertNotIn("held_step", kinds(result, "trigger"))
         self.assertTrue(any("缺测" in reason for reason in result.reasons))
 
     def test_gap_after_candidate_does_not_confirm_persistence(self):
@@ -92,7 +121,7 @@ class ScreeningTests(unittest.TestCase):
             recent[i] = point(NOW - timedelta(hours=168-i), 100.03)
         del recent[62:100]
         result = screen(daily(lambda i: 0), recent)
-        self.assertFalse(any("台阶并保持" in reason for reason in result.reasons))
+        self.assertNotIn("held_step", kinds(result, "trigger"))
 
     def test_theil_sen_ignores_outliers(self):
         days = [float(i) for i in range(20)]

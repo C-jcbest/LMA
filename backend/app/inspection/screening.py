@@ -31,6 +31,9 @@ _ACCELERATION_RATIO = 2.0
 _MIN_DIRECTION_CONSISTENCY = 0.7
 _DIRECTION_LAG_POINTS = 7
 _STEP_PERSISTENCE_POINTS = 5
+# 跳变后在新位置至少连续观测到这么久，才算“保持”并作为调查理由；更短的只是少量数据，按数据质量记录，
+# 留给后续巡检确认。这里只看是否保持，不按量级判定成因：长时间保持可能是坡体变形、基准或设备变化等，需要人调查。
+_MIN_HOLD_DAYS = 1.0
 # 工程保护值：序列异常平滑时避免把极小的波动当作显著变化，不代表形变判据。
 _NOISE_FLOOR_MM = 0.5
 
@@ -138,6 +141,42 @@ def _direction_consistency(series: AxisSeries, slope: float) -> float:
     return sum(change * slope > 0 for change in changes) / len(changes) if changes else 0.0
 
 
+@dataclass
+class StepHold:
+    points: int
+    days: float
+    returned: bool
+
+
+def _step_hold(series: AxisSeries, index: int, step: float, adjacent: Sequence[int]) -> StepHold:
+    """跳变后连续停在新位置的观测数与时长；遇到缺测即停止计数，returned 表示之后回到了跳变前的水平。"""
+    before = series.values[max(0, index - _STEP_PERSISTENCE_POINTS + 1):index + 1]
+    level = median(before)
+    adjacent_steps = set(adjacent)
+    last = index
+    returned = False
+    for position in range(index + 1, len(series.values)):
+        # 跳变本身可能跨越缺测；之后的观测必须连续，遇到新的缺测就停止计数。
+        if position > index + 1 and position - 1 not in adjacent_steps:
+            break
+        if abs(series.values[position] - level) <= abs(step) / 2:
+            returned = True
+            break
+        last = position
+    points = last - index
+    # 从第一个落在新位置的观测算起，缺测期间不算保持。
+    days = series.days[last] - series.days[index + 1] if points > 0 else 0.0
+    return StepHold(points, days, returned)
+
+
+def _is_held(hold: StepHold) -> bool:
+    return hold.days >= _MIN_HOLD_DAYS and hold.points >= _STEP_PERSISTENCE_POINTS
+
+
+def _duration_text(days: float) -> str:
+    return f"{days:.1f} 天" if days >= 1 else f"{days * 24:.0f} 小时"
+
+
 def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[Finding], int, float, float]:
     """返回 (线索, 趋势方向, 斜率, 噪声)；线索按 role 区分调查理由与数据质量说明。"""
     slope = theil_sen_slope(series.days, series.values)
@@ -183,23 +222,35 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
         add("gap", "quality", f"{name}存在缺测跨越，跨越差值不作为单步跳变或保持证据")
     for index, change in enumerate(steps):
         if index not in adjacent and abs(change) > _STEP_NOISE_MULTIPLE * noise:
-            add("gap_jump", "trigger", f"{name}缺测两端相差约 {change:+.1f} mm，变化过程待观察", change)
+            # 变化发生在缺测期间，同样看缺测之后在新位置停留了多久。
+            hold = _step_hold(series, index, change, adjacent)
+            if _is_held(hold):
+                add("gap_jump", "trigger",
+                    f"{name}缺测两端相差约 {change:+.1f} mm，之后保持约 {_duration_text(hold.days)}，成因需人工调查",
+                    change, round(hold.days, 1))
+            elif not hold.returned:
+                add("gap_jump", "quality",
+                    f"{name}缺测两端相差约 {change:+.1f} mm，之后仅 {hold.points} 个观测，暂按数据质量记录，后续巡检看是否保持",
+                    change, round(hold.days, 1))
     if adjacent:
         step_noise = _robust_sigma([steps[i] for i in adjacent])
         largest_index = max(adjacent, key=lambda index: abs(steps[index]))
         largest = steps[largest_index]
         if abs(largest) > _STEP_NOISE_MULTIPLE * step_noise:
-            before = series.values[max(0, largest_index - _STEP_PERSISTENCE_POINTS + 1):largest_index + 1]
-            after = series.values[largest_index + 1:largest_index + 1 + _STEP_PERSISTENCE_POINTS]
-            followup_end = largest_index + len(after)
-            continuous = all(i in adjacent for i in range(largest_index, followup_end))
-            if len(after) < _STEP_PERSISTENCE_POINTS or not continuous:
-                add("tail_step", "trigger", f"{name}出现约 {largest:+.1f} mm 的末端跳变，是否保持待观察", largest)
-            elif abs(median(after) - median(before)) > abs(largest) / 2:
-                add("held_step", "trigger", f"{name}出现约 {largest:+.1f} mm 的台阶并保持", largest)
-            else:
-                # 跳出去又回到原水平，形变通常不会这样往返；按数据质量处理，不作为位移线索。
+            hold = _step_hold(series, largest_index, largest, adjacent)
+            held_days = round(hold.days, 1)
+            if _is_held(hold):
+                ending = "后回落" if hold.returned else ""
+                add("held_step", "trigger",
+                    f"{name}出现约 {largest:+.1f} mm 的台阶，已保持约 {_duration_text(hold.days)}{ending}，成因需人工调查",
+                    largest, held_days)
+            elif hold.returned:
+                # 跳出去又很快回到原水平，形变通常不会这样往返；按数据质量处理，不作为位移线索。
                 add("spike", "quality", f"{name}异常跳点约 {largest:+.1f} mm，随后恢复，按数据质量处理", largest)
+            else:
+                add("tail_step", "quality",
+                    f"{name}出现约 {largest:+.1f} mm 跳变，之后仅 {hold.points} 个观测（约 {_duration_text(hold.days)}），"
+                    "数据太少，暂按数据质量记录，后续巡检看是否保持", largest, held_days)
 
     return findings, direction, slope, noise
 
@@ -319,10 +370,12 @@ def screen_station(
     trend = [] if history_insufficient else _horizontal_trend(series["n"], series["e"])
     triggers = [finding for finding in findings if finding.role == "trigger"]
     notes = [finding for finding in findings if finding.role == "quality"]
+    # 刚出现、尚未确认是否保持的跳变不能算“未见明显变化”，列为待核查，下次巡检再看。
+    unconfirmed_steps = [finding for finding in notes if finding.kind in ("tail_step", "gap_jump")]
     if triggers:
         screening: Screening = "建议调查"
         ordered = [*triggers, *data_problems, *notes]
-    elif data_problems or history_insufficient:
+    elif data_problems or history_insufficient or unconfirmed_steps:
         screening = "数据不足"
         ordered = [*data_problems, *notes]
     else:
