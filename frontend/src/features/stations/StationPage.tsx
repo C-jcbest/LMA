@@ -19,12 +19,13 @@ import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { StatusDot } from '@/features/monitoring/status';
-import { buildTimelineOption, displacementBasis, displacementBasisLabel, formatChartTime } from '@/features/monitoring/timeline';
+import { buildTimelineOption, displacementBasis, displacementBasisLabel, formatChartTime, type DailyRainfall } from '@/features/monitoring/timeline';
+import { formatSigned, RATE_DIGITS } from '@/features/monitoring/format';
 import type { ChartRange } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { addAskTarget } from '@/features/monitoring/ask-targets';
 import { cn } from 'cn';
-import type { InspectionStation, StationRecord, TimelineDays } from '@/services/api';
+import type { InspectionStation, RainEvent, StationRainfall, StationRecord, TimelineDays } from '@/services/api';
 import type { GnssArtifactData } from '@/types/envelope';
 
 const TimelineChart = lazy(() => import('@/features/monitoring/TimelineChart'));
@@ -101,7 +102,7 @@ const formatRecordDate = (value: string) => {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' }).format(new Date(value));
 };
 
-const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk: () => void; disabled: boolean }> = ({ stationName, data, onAsk, disabled }) => {
+const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; rainfall: readonly DailyRainfall[]; onAsk: () => void; disabled: boolean }> = ({ stationName, data, rainfall, onAsk, disabled }) => {
   const aui = useAui();
   const { composerInputRef } = useStationInspector();
   const isLoading = useConversationLoading();
@@ -109,8 +110,8 @@ const DisplacementChart: FC<{ stationName: string; data: GnssArtifactData; onAsk
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
   const option = useMemo(
-    () => buildTimelineOption({ data, rainfall: [], peers: [], mode: 'components' }, chartColors),
-    [data, chartColors],
+    () => buildTimelineOption({ data, rainfall, peers: [], mode: 'components' }, chartColors),
+    [data, rainfall, chartColors],
   );
 
   const askAbout = (target: ChartRange) => {
@@ -201,6 +202,48 @@ const RecordList: FC<{ records: readonly StationRecord[]; selected: { sessionId?
   );
 };
 
+const formatEventDays = (event: RainEvent) => (
+  event.start === event.end ? event.start.slice(5) : `${event.start.slice(5)} 至 ${event.end.slice(5)}`
+);
+
+const formatRate = (rate: number | null) => (rate === null ? '—' : formatSigned(rate, RATE_DIGITS));
+
+const MAX_RAIN_EVENTS = 3;
+
+/** 曲线下方的强降雨过程：只陈述过程雨量与主方向前后速率，不判断因果；没有过程时给一行最大日降雨。 */
+const RainEvents: FC<{ rainfall: StationRainfall }> = ({ rainfall }) => {
+  const events = [...rainfall.events].sort((a, b) => b.total_mm - a.total_mm).slice(0, MAX_RAIN_EVENTS)
+    .sort((a, b) => a.start.localeCompare(b.start));
+  if (events.length === 0) {
+    const wettest = rainfall.daily.reduce<{ date: string; value: number } | null>((best, day) => (
+      day.value !== null && (best === null || day.value > best.value) ? { date: day.date, value: day.value } : best
+    ), null);
+    return (
+      <p className="text-muted-foreground text-sm tabular-nums">
+        {wettest && wettest.value > 0 ? `无日降雨 ≥ ${rainfall.threshold_mm} mm 的过程，最大 ${wettest.value} mm（${wettest.date.slice(5)}）` : '期间无降雨'}
+      </p>
+    );
+  }
+  return (
+    <ul aria-label="强降雨过程" className="space-y-1 text-sm">
+      {events.map((event) => (
+        <li key={event.start} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 tabular-nums">
+          <span className="font-medium">{formatEventDays(event)}</span>
+          <span>
+            {event.total_mm} mm
+            {event.antecedent_7d_mm !== null && <span className="text-muted-foreground">（前 7 天 {event.antecedent_7d_mm} mm）</span>}
+          </span>
+          {event.axis_name && (
+            <span className="text-muted-foreground">
+              {event.axis_name}速率 <span className="text-foreground">{formatRate(event.rate_before_mm_day)} → {formatRate(event.rate_after_mm_day)}</span> mm/天
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+};
+
 /** 对话为空时的右侧面板：有初筛线索就提供一键调查，否则只留输入框。 */
 const StationAsk: FC<{ stationName: string; inspection: InspectionStation | undefined }> = ({ stationName, inspection }) => {
   const aui = useAui();
@@ -239,6 +282,18 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     placeholderData: keepPreviousData,
   });
   const timeline = timelineQuery.data ?? null;
+  // 降雨来自外部天气服务，单独读取：曲线先出来，降雨到了再叠加，失败不影响位移。
+  const rainfallQuery = useQuery({
+    queryKey: ['station-rainfall', stationUuid, days],
+    queryFn: ({ signal }) => client.getStationRainfall(stationUuid, days, signal),
+    staleTime: 30 * 60 * 1000,
+    retry: 1,
+  });
+  const rainfall = rainfallQuery.data;
+  const dailyRainfall = useMemo<DailyRainfall[]>(
+    () => (rainfall?.daily ?? []).flatMap((day) => (day.value === null ? [] : [{ date: day.date, value: day.value, isForecast: false }])),
+    [rainfall],
+  );
   const isSwitchingWindow = timelineQuery.isPlaceholderData;
   const hasError = timelineQuery.isError;
   const [panel, setPanel] = useState<Panel>(() => new URL(window.location.href).searchParams.has('stationThread') ? 'chat' : 'data');
@@ -312,7 +367,14 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               className={cn('space-y-5 transition-opacity duration-200', isSwitchingWindow && 'opacity-50 delay-150')}
             >
               <WindowMetrics data={timeline.series} />
-              <DisplacementChart stationName={timeline.station_name} data={timeline.series} onAsk={showChat} disabled={!conversationReady} />
+              <DisplacementChart stationName={timeline.station_name} data={timeline.series} rainfall={dailyRainfall} onAsk={showChat} disabled={!conversationReady} />
+              {rainfall && <RainEvents rainfall={rainfall} />}
+              {rainfallQuery.isError && (
+                <p className="text-muted-foreground text-sm">
+                  降雨资料暂不可用。
+                  <Button type="button" variant="link" className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline" onClick={() => void rainfallQuery.refetch()}>重试</Button>
+                </p>
+              )}
             </div>
           )}
         </div>

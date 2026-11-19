@@ -5,6 +5,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Annotated, Callable, Literal
 from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
@@ -26,12 +27,13 @@ from app.agent.message_context import ASK_TARGETS_KEY
 from app.agent.title import generate_title
 from app.agent.suggestions import SuggestionService
 from app.beidou.client import BeidouApiError
-from app.business_time import BUSINESS_TZ
+from app.business_time import BUSINESS_TZ, business_now
 from app.config import Settings, get_settings
 from app.observability import AgentTracing
 from app.inspection.lab import SUMMARY_COMPONENT, build_lab_graph, stations_in_scope
 from app.inspection.runner import run_inspection
-from app.monitoring_data import build_platform_client, monitoring_scope
+from app.monitoring_data import build_platform_client, monitoring_scope, station_coordinates
+from app.rainfall import daily_rainfall, heavy_rain_events, rainfall_payload, with_displacement_rates
 from app.server.auth import auth_enabled, auth_router, require_login
 from app.server.messages import project_message, project_state
 from app.server.stations import TIMELINE_WINDOW_DAYS, find_station, load_station_series
@@ -497,6 +499,36 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             "series": series,
             "records": await app.state.storage.station_records(station.station_uuid),
         }
+
+    @app.get("/stations/{station_uuid}/rainfall")
+    async def station_rainfall(station_uuid: str, days: int = 90):
+        """测点页时间轴下方的逐日降雨与强降雨前后速率；位移序列复用测点页缓存，不重复取数。"""
+        if days not in TIMELINE_WINDOW_DAYS:
+            raise HTTPException(422, "请求参数不符合接口要求。")
+        try:
+            async with monitoring_scope(_STATION_PAGE_CACHE, platform_client_factory) as data:
+                station = await find_station(data, station_uuid)
+                if station is None:
+                    raise HTTPException(404, "测点不存在。")
+                series = await load_station_series(data, station, days)
+        except (BeidouApiError, httpx.HTTPError):
+            logger.warning("station rainfall displacement request failed", exc_info=True)
+            raise HTTPException(502, "监测平台数据暂不可用，请稍后重试。") from None
+        latitude, longitude = station_coordinates(station)
+        if latitude is None:
+            raise HTTPException(404, "测点没有有效坐标，无法查询降雨。")
+        # 历史降雨最多到昨天；窗口与位移曲线对齐。
+        end = business_now().date() - timedelta(days=1)
+        start = end - timedelta(days=days - 1)
+        try:
+            daily = await daily_rainfall(latitude, longitude, start, end)
+        except (httpx.HTTPError, ValueError):
+            logger.warning("station rainfall request failed", exc_info=True)
+            raise HTTPException(502, "降雨资料暂不可用，请稍后重试。") from None
+        events = heavy_rain_events(daily)
+        if series:
+            events = with_displacement_rates(events, series["points"])
+        return rainfall_payload(daily, events)
 
     @app.post("/suggestions")
     async def generate_suggestions():

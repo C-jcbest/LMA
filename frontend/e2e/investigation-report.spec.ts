@@ -60,6 +60,17 @@ const stationTimeline = {
   }],
 };
 
+const stationRainfall = {
+  daily: [{ date: '2026-11-02', value: 4 }, { date: '2026-11-03', value: 38 }, { date: '2026-11-04', value: 0 }],
+  events: [{
+    start: '2026-11-03', end: '2026-11-03', total_mm: 38, peak_mm: 38, antecedent_7d_mm: 6,
+    axis: 'n', axis_name: '北向', rate_before_mm_day: 0.08, rate_after_mm_day: 0.21,
+  }],
+  threshold_mm: 25,
+  source: { name: 'Open-Meteo 历史天气', url: 'https://open-meteo.com/' },
+  limitations: [],
+};
+
 const inspectionRow = (name: string, screening: string, fields: Record<string, unknown> = {}) => ({
   station_uuid: name, station_name: name, group_name: 'K3 分组', screening, reasons: [], findings: [], metrics: {},
   trend: [0, 1, 2, 3], previous_screening: null, last_conclusion: null, ...fields,
@@ -163,6 +174,7 @@ test('调查记录在测点对话栏打开并定位追问', async ({ page }) => 
     { type: 'ai', id: 'latest-answer', content: Array.from({ length: 50 }, (_, index) => `${index + 1}. 后续分析内容`).join('\n') },
   ];
   await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
+  await page.route('**/api/stations/*/rainfall*', (route) => route.fulfill({ json: stationRainfall }));
   await page.route('**/api/stations/*/timeline*', (route) => route.fulfill({ json: {
     ...stationTimeline, records: [{ ...stationTimeline.records[0], anchor_id: 'followup' }],
   } }));
@@ -190,6 +202,7 @@ test('调查记录在测点对话栏打开并定位追问', async ({ page }) => 
 
 test('窄屏切换调查保留数据滚动、图表选区与追问草稿', async ({ page }) => {
   await mockApi(page);
+  await page.route('**/api/stations/*/rainfall*', (route) => route.fulfill({ json: stationRainfall }));
   await page.route('**/api/stations/*/timeline*', (route) => route.fulfill({ json: stationTimeline }));
   await page.setViewportSize({ width: 390, height: 700 });
   await page.goto('/?station=测试点 A');
@@ -382,6 +395,7 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
     return route.abort();
   });
   const timelineQueries: string[] = [];
+  await page.route('**/api/stations/*/rainfall*', (route) => route.fulfill({ json: stationRainfall }));
   await page.route('**/api/stations/*/timeline*', (route) => {
     timelineQueries.push(new URL(route.request().url()).search);
     return route.fulfill({ json: stationTimeline });
@@ -405,6 +419,9 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await expect(page.getByRole('heading', { name: '测试点 A' })).toBeVisible();
   await expect(page.getByText('北向本窗口变化')).toBeVisible();
   await expect(page.getByRole('img', { name: '测试点 A 位移时间轴' })).toBeVisible();
+  // 强降雨过程只列雨量与主方向前后速率，不经过模型。
+  await expect(page.getByRole('list', { name: '强降雨过程' })).toContainText('11-03');
+  await expect(page.getByRole('list', { name: '强降雨过程' })).toContainText('+0.08 → +0.21');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   expect(runRequests).toBe(0);
 

@@ -86,6 +86,27 @@ export interface StationTimeline {
   records: StationRecord[];
 }
 
+/** 测点页的逐日降雨与强降雨前后位移速率（服务端 app/rainfall.py）。 */
+export interface RainEvent {
+  start: string;
+  end: string;
+  total_mm: number;
+  peak_mm: number;
+  antecedent_7d_mm: number | null;
+  axis: 'n' | 'e' | 'u' | null;
+  axis_name: string | null;
+  rate_before_mm_day: number | null;
+  rate_after_mm_day: number | null;
+}
+
+export interface StationRainfall {
+  daily: Array<{ date: string; value: number | null }>;
+  events: RainEvent[];
+  threshold_mm: number;
+  source: { name: string; url: string };
+  limitations: string[];
+}
+
 export interface SessionConclusion {
   session_id: string;
   station_name: string;
@@ -252,6 +273,11 @@ export class LmaClient {
 
   async getStationTimeline(stationUuid: string, days: TimelineDays, signal?: AbortSignal): Promise<StationTimeline> {
     const path = `/stations/${encodeURIComponent(stationUuid)}/timeline?days=${days}`;
+    return (await this.request(path, { signal })).json();
+  }
+
+  async getStationRainfall(stationUuid: string, days: TimelineDays, signal?: AbortSignal): Promise<StationRainfall> {
+    const path = `/stations/${encodeURIComponent(stationUuid)}/rainfall?days=${days}`;
     return (await this.request(path, { signal })).json();
   }
 
