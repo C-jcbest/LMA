@@ -118,10 +118,10 @@ test('框选时间段后就地追问或放大，还原后恢复完整窗口', as
   const selectionBar = inspector(page).getByRole('toolbar', { name: '所选时间段' });
   await expect(selectionBar.getByRole('button', { name: '问这段' })).toBeVisible();
   const originalCanvas = await canvas.elementHandle();
-  // 依据并排时侧栏收为导航条，外观设置在展开的导航里。
-  await page.getByRole('button', { name: '打开导航' }).click();
-  await page.getByRole('radio', { name: '深色主题', exact: true }).click();
-  await page.keyboard.press('Escape');
+  // 依据并排时侧栏收为导航条，导航条底部的设置菜单里仍可切换外观。
+  await page.getByRole('navigation', { name: '快捷导航' }).getByRole('button', { name: '设置' }).click();
+  await page.getByRole('menuitem', { name: /外观/ }).click();
+  await page.getByRole('menuitemradio', { name: '深色' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(selectionBar.getByRole('button', { name: '问这段' })).toBeVisible();
   expect(await canvas.evaluate((element, original) => element === original, originalCanvas)).toBe(true);

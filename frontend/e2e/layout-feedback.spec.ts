@@ -114,3 +114,26 @@ test('记录搜索查询全量接口，失败可重试并打开未加载记录',
   await page.getByRole('button', { name: /很早的测点调查/ }).click();
   await expect(page).toHaveURL(/threadId=layout-remote/);
 });
+
+test('外观、完成通知与退出登录收在导航底部的设置菜单里', async ({ page }) => {
+  await mockSessions(page);
+  await page.route('**/api/auth/session', (route) => route.fulfill({ json: { enabled: true, authenticated: true } }));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/');
+
+  const navigation = page.getByRole('complementary', { name: '导航' });
+  // 侧栏底部只有一个入口，不平铺三行设置。
+  await expect(navigation.getByRole('button', { name: '退出登录' })).toHaveCount(0);
+  await navigation.getByRole('button', { name: '设置' }).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByRole('menuitemcheckbox', { name: '完成通知' })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: '退出登录' })).toBeVisible();
+  // 菜单从入口向上展开，不超出窗口底部。
+  const menuBox = (await menu.boundingBox())!;
+  expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(800);
+
+  await menu.getByRole('menuitem', { name: /外观/ }).click();
+  await page.getByRole('menuitemradio', { name: '深色' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(menu).toHaveCount(0);
+});

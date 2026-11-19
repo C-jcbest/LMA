@@ -50,7 +50,8 @@ describe('访问保护', () => {
     await userEvent.type(screen.getByLabelText('密码'), 'right');
     await userEvent.click(screen.getByRole('button', { name: '登录' }));
 
-    expect(await screen.findByRole('button', { name: '退出登录' })).toBeInTheDocument();
+    // 退出登录在导航底部的设置菜单里，菜单内容由浏览器测试覆盖（jsdom 里弹出层定位极慢）。
+    expect(await screen.findByRole('button', { name: '设置' })).toBeInTheDocument();
     await waitFor(() => expect(mockClient.getLatestInspection).toHaveBeenCalled());
 
     act(() => {
@@ -59,11 +60,10 @@ describe('访问保护', () => {
     expect(await screen.findByText('登录已过期，请重新登录')).toBeInTheDocument();
   });
 
-  it('未启用访问保护时直接进入应用，不显示退出登录', async () => {
+  it('未启用访问保护时直接进入应用', async () => {
     mockClient.getAuthSession.mockResolvedValue({ enabled: false, authenticated: true });
     render(<App />);
 
     expect(await screen.findByRole('textbox', { name: '输入监测问题' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument();
   });
 });

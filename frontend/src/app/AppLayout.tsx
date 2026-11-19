@@ -1,7 +1,7 @@
 import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { useAuiEvent, useAuiState } from '@assistant-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ActivityIcon, FlaskConicalIcon, ListIcon, LogOutIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
+import { ActivityIcon, FlaskConicalIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
@@ -16,8 +16,7 @@ import {
 import { InspectionLabPage } from '@/features/lab/InspectionLabPage';
 import { RecordsPage } from '@/features/records/RecordsPage';
 import { SessionConclusionsProvider } from '@/features/records/SessionConclusions';
-import { ThemeSelector } from '@/features/settings/ThemeSelector';
-import { SystemNoticeToggle } from '@/features/notifications/SystemNoticeToggle';
+import { SettingsMenu, type SettingsMenuActions } from '@/features/settings/SettingsMenu';
 import { StationPage } from '@/features/stations/StationPage';
 import { StationsPage } from '@/features/stations/StationsPage';
 import { TodayPage } from '@/features/today/TodayPage';
@@ -90,7 +89,7 @@ function usePageEntries(): PageEntry[] {
  * 侧栏收起后（用户收起，或依据、测点页需要宽度时自动收起）留下的窄导航条：
  * 页面入口仍在原位置，用户不会以为导航消失了；第一个按钮展开完整侧栏。
  */
-const NavigationRail = forwardRef<HTMLButtonElement, { expandLabel: string; onExpand: () => void }>(({ expandLabel, onExpand }, expandButtonRef) => {
+const NavigationRail = forwardRef<HTMLButtonElement, SettingsMenuActions & { expandLabel: string; onExpand: () => void }>(({ expandLabel, onExpand, onOpenSettings, onLogout }, expandButtonRef) => {
   const entries = usePageEntries();
   return (
     <nav aria-label="快捷导航" data-navigation-rail="" className="flex h-full w-12 shrink-0 flex-col items-center gap-0.5 border-r bg-sidebar pt-[max(0.5rem,env(safe-area-inset-top))]">
@@ -110,6 +109,14 @@ const NavigationRail = forwardRef<HTMLButtonElement, { expandLabel: string; onEx
           )}
         </button>
       ))}
+      <div className="mt-auto pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <SettingsMenu side="right" onOpenSettings={onOpenSettings} onLogout={onLogout}>
+          <button type="button" aria-label="设置" title="设置"
+            className="flex size-9 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[state=open]:bg-muted data-[state=open]:text-foreground">
+            <Settings className="size-4" aria-hidden />
+          </button>
+        </SettingsMenu>
+      </div>
     </nav>
   );
 });
@@ -160,19 +167,16 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
           />
         </div>
       </div>
-      {/* 外观与账号是低频设置，放在导航底部，不占用每个页面的标题栏；行高和缩进与上方页面入口一致。 */}
-      <div className="shrink-0 space-y-0.5 border-t px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <div className="flex h-9 items-center justify-between gap-2 ps-2.5">
-          <span className="text-sm text-muted-foreground">外观</span>
-          <ThemeSelector />
-        </div>
-        <SystemNoticeToggle />
-        {onOpenSettings && (
-          <NavigationItem icon={Settings} label="服务配置" isCurrent={false} onClick={onOpenSettings} />
-        )}
-        {onLogout && (
-          <NavigationItem icon={LogOutIcon} label="退出登录" isCurrent={false} onClick={onLogout} />
-        )}
+      <div className="shrink-0 px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        <SettingsMenu side="top" onOpenSettings={onOpenSettings} onLogout={onLogout}>
+          <button
+            type="button"
+            className="flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none data-[state=open]:bg-muted data-[state=open]:text-foreground"
+          >
+            <Settings className="size-4 shrink-0" aria-hidden />
+            设置
+          </button>
+        </SettingsMenu>
       </div>
     </aside>
   );
@@ -328,6 +332,8 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
         <NavigationRail
           ref={navigationButtonRef}
           expandLabel={navigationLabel}
+          onOpenSettings={openSettings}
+          onLogout={onLogout}
           onExpand={() => {
             if (canDockSidebar) {
               setSidebarCollapsed(false);
