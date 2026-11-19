@@ -1,4 +1,4 @@
-import { useMemo, useState, type FC } from 'react';
+import { lazy, Suspense, useMemo, useState, type FC } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { useNavigation } from '@/app/navigation';
@@ -11,8 +11,15 @@ import { formatMillimeters, largestChange, StatusDot } from '@/features/monitori
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import type { InspectionStation, Screening, StationDirectoryEntry } from '@/services/api';
 import { Button } from '@/components/ui/button';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { investigationStatusLabel } from '@/features/monitoring/investigation';
+import type { MapStation } from '@/features/monitoring/StationMap';
 
-interface StationListItem extends Omit<InspectionStation, 'screening'> {
+const StationMap = lazy(() => import('@/features/monitoring/StationMap'));
+
+/** 台账一行加上最近巡检结果；还没巡检过的测点 screening 为 null。 */
+interface StationListItem extends Omit<InspectionStation, 'screening'>, StationDirectoryEntry {
   screening: Screening | null;
 }
 
@@ -75,6 +82,7 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
           <StatusDot status={station.screening} />
           {/* 测点名是区分各行的唯一依据，空间不够时先截断分组名。 */}
           <span className="max-w-full shrink-0 truncate font-medium">{station.station_name}</span>
+          {station.platform_status && <span className="text-status-attention shrink-0 text-xs font-medium">{station.platform_status}</span>}
           <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
         </span>
         <span className="station-row-trend"><TrendLine values={station.trend} emphasized={isAttention} className="h-7" /></span>
@@ -86,6 +94,59 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
         </span>
       </button>
     </li>
+  );
+};
+
+const ALL_GROUPS = '__all__';
+
+const STATUS_COLOR_TOKENS: Record<string, string> = {
+  需人工复核: '--status-critical',
+  建议调查: '--status-attention',
+  持续关注: '--status-attention',
+  未见明显变化: '--status-normal',
+};
+
+/** 分组地图上的测点：最近调查结论优先于初筛着色，箭头为巡检 90 天水平净变化方向。 */
+function overviewMapStation(station: StationListItem): MapStation | null {
+  if (station.latitude === null || station.longitude === null) {
+    return null;
+  }
+  const status = station.last_conclusion?.status ?? station.screening;
+  const north = station.metrics?.net_change_mm?.n;
+  const east = station.metrics?.net_change_mm?.e;
+  const hasHorizontal = typeof north === 'number' && typeof east === 'number';
+  return {
+    id: station.station_uuid,
+    name: station.station_name,
+    stationType: station.station_type,
+    latitude: station.latitude,
+    longitude: station.longitude,
+    northMillimeters: hasHorizontal ? north : null,
+    eastMillimeters: hasHorizontal ? east : null,
+    cumulative: false,
+    downslopeAzimuth: null,
+    track: [],
+    status: status ? investigationStatusLabel(status) : null,
+    reason: station.last_conclusion?.reason ?? null,
+    colorToken: (status && STATUS_COLOR_TOKENS[status]) || '--status-unknown',
+  };
+}
+
+const GroupOverviewMap: FC<{ stations: readonly StationListItem[] }> = ({ stations }) => {
+  const { openStation } = useNavigation();
+  const mapStations = useMemo(
+    () => stations.flatMap((station) => overviewMapStation(station) ?? []),
+    [stations],
+  );
+  if (mapStations.length === 0) {
+    return null;
+  }
+  return (
+    <ErrorBoundary fallbackTitle="地图渲染异常">
+      <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+        <StationMap stations={mapStations} onSelect={openStation} selectLabel="打开测点 →" />
+      </Suspense>
+    </ErrorBoundary>
   );
 };
 
@@ -105,6 +166,7 @@ export const StationsPage: FC = () => {
   };
   const [filter, setFilter] = useState<Filter>('all');
   const [search, setSearch] = useState('');
+  const [group, setGroup] = useState(ALL_GROUPS);
 
   const stations = useMemo<StationListItem[]>(() => {
     const inspections = new Map(latest?.stations.map((station) => [station.station_uuid, station]));
@@ -116,6 +178,7 @@ export const StationsPage: FC = () => {
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (stations ?? [])
+      .filter((station) => group === ALL_GROUPS || station.group_name === group)
       .filter((station) => matchesFilter(station, filter))
       .filter((station) => (
         !query
@@ -126,9 +189,12 @@ export const StationsPage: FC = () => {
         (a.screening ? SCREENING_ORDER[a.screening] : 3) - (b.screening ? SCREENING_ORDER[b.screening] : 3)
         || a.station_name.localeCompare(b.station_name, 'zh-CN')
       ));
-  }, [stations, filter, search]);
+  }, [stations, filter, search, group]);
 
   const hasStations = (stations?.length ?? 0) > 0;
+  const groups = useMemo(() => [...new Set(stations.map((station) => station.group_name))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [stations]);
+  // 地图展示整组位置关系，不随状态筛选和搜索变化。
+  const groupStations = useMemo(() => stations.filter((station) => station.group_name === group), [stations, group]);
 
   return (
     <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
@@ -168,9 +234,23 @@ export const StationsPage: FC = () => {
 
         {hasStations && (
           <>
-            <div className="mt-5">
+            <div className="mt-5 flex flex-wrap items-center gap-3">
+              {groups.length > 1 && (
+                <Select value={group} onValueChange={setGroup}>
+                  <SelectTrigger size="sm" aria-label="选择分组" className="min-w-40"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={ALL_GROUPS}>全部分组</SelectItem>
+                    {groups.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              )}
               <Segmented label="筛选" value={filter} options={FILTERS} onValueChange={(value) => setFilter(value as Filter)} />
             </div>
+            {group !== ALL_GROUPS && (
+              <div className="mt-4">
+                <GroupOverviewMap stations={groupStations} />
+              </div>
+            )}
             <ul aria-label="测点列表" className="station-list mt-3 -mx-3 divide-y divide-transparent">
               {visible.map((station) => <StationRow key={station.station_uuid} station={station} />)}
             </ul>

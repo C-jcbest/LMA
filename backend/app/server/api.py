@@ -32,7 +32,13 @@ from app.config import Settings, get_settings
 from app.observability import AgentTracing
 from app.inspection.lab import SUMMARY_COMPONENT, build_lab_graph, stations_in_scope
 from app.inspection.runner import run_inspection
-from app.monitoring_data import build_platform_client, monitoring_scope, station_coordinates
+from app.monitoring_data import (
+    STATION_STATUS_TEXT,
+    STATION_TYPE_TEXT,
+    build_platform_client,
+    monitoring_scope,
+    station_coordinates,
+)
 from app.rainfall import daily_rainfall, heavy_rain_events, rainfall_payload, with_displacement_rates
 from app.server.auth import auth_enabled, auth_router, require_login
 from app.server.messages import project_message, project_state
@@ -461,19 +467,26 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             task.add_done_callback(active_inspections.discard)
         return {"id": inspection_id}
 
+    def station_directory_entry(station) -> dict:
+        """测点列表与分组地图的一行：坐标采用统一的颠倒纠正；平台状态只在不是“正常”时给出。"""
+        latitude, longitude = station_coordinates(station)
+        status = STATION_STATUS_TEXT.get(station.station_status)
+        return {
+            "station_uuid": station.station_uuid,
+            "station_name": station.station_name,
+            "group_name": station.group_name,
+            "station_type": STATION_TYPE_TEXT.get(station.station_type),
+            "latitude": latitude,
+            "longitude": longitude,
+            "platform_status": None if status == "正常" else status,
+        }
+
     @app.get("/stations")
     async def station_directory():
         try:
             async with platform_client_factory() as client:
                 stations = await client.get_stations()
-                return [
-                    {
-                        "station_uuid": station.station_uuid,
-                        "station_name": station.station_name,
-                        "group_name": station.group_name,
-                    }
-                    for station in stations
-                ]
+                return [station_directory_entry(station) for station in stations]
         except (BeidouApiError, httpx.HTTPError):
             logger.warning("station directory request failed", exc_info=True)
             raise HTTPException(502, "测点列表尚未载入。") from None

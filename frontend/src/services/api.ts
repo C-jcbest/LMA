@@ -64,6 +64,12 @@ export interface StationDirectoryEntry {
   station_uuid: string;
   station_name: string;
   group_name: string;
+  station_type: string | null;
+  /** WGS84；可判定的经纬度颠倒已由服务端纠正，无效时为 null。 */
+  latitude: number | null;
+  longitude: number | null;
+  /** 平台状态不是“正常”时给出（离线、告警、故障）。 */
+  platform_status: string | null;
 }
 
 export interface StationRecord {

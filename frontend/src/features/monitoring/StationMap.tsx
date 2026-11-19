@@ -83,7 +83,7 @@ function slopeField(station: MapStation, displacementAzimuth: number | null) {
   return { label: '下坡方向 · 约 90 m 地形平均坡面，不代替勘查主滑方向', value, wide: true };
 }
 
-function createPopupNode(station: MapStation, onSelect: (id: string) => void, onClose: () => void, container: HTMLElement) {
+function createPopupNode(station: MapStation, selectLabel: string, onSelect: (id: string) => void, onClose: () => void, container: HTMLElement) {
   const hasDisplacement = !isBaseStation(station) && station.northMillimeters !== null && station.eastMillimeters !== null;
   const magnitude = hasDisplacement ? Math.hypot(station.northMillimeters!, station.eastMillimeters!) : null;
   const displacementAzimuth = magnitude ? azimuthOf(station.northMillimeters!, station.eastMillimeters!) : null;
@@ -116,7 +116,7 @@ function createPopupNode(station: MapStation, onSelect: (id: string) => void, on
     fields,
     note,
     action: {
-      label: '查看测点依据 →',
+      label: selectLabel,
       run: () => {
         onClose();
         onSelect(station.id);
@@ -142,10 +142,12 @@ const sampleAt = (track: readonly HorizontalSample[], time: string) => {
   return latest;
 };
 
-export default function StationMap({ stations, references = [], onSelect }: {
+export default function StationMap({ stations, references = [], onSelect, selectLabel = '查看测点依据 →' }: {
   stations: readonly MapStation[];
   references?: readonly ReferenceStation[];
   onSelect: (id: string) => void;
+  /** 测点弹窗里的跳转按钮文字：回答里打开依据，分组概览里进入测点页。 */
+  selectLabel?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const onSelectRef = useRef(onSelect);
@@ -232,7 +234,7 @@ export default function StationMap({ stations, references = [], onSelect }: {
       const position = amapPosition(station);
       const marker = new sdk.Marker({ position, content: element, anchor: 'center' });
       element.addEventListener('click', () => {
-        popup.setContent(createPopupNode(station, (id) => onSelectRef.current(id), () => popup.close(), container));
+        popup.setContent(createPopupNode(station, selectLabel, (id) => onSelectRef.current(id), () => popup.close(), container));
         popup.open(map, position);
       });
       marker.setMap(map);
@@ -280,7 +282,7 @@ export default function StationMap({ stations, references = [], onSelect }: {
       markerNodesRef.current.clear();
     };
     // 3D 开关需要重建地图；底图和道路切换在下面的 effect 里就地完成。
-  }, [stations, references, sdk, layerSelection.terrain3d]);
+  }, [stations, references, sdk, layerSelection.terrain3d, selectLabel]);
 
   useEffect(() => {
     layersRef.current?.select(layerSelection);
