@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { askTargetsOfMessage, formatAskRange, toAskTargetRecords } from '@/features/monitoring/ask-targets';
 
-const at = (text: string) => new Date(text).getTime();
+const at = (text: string) => Date.parse(text + '+08:00');
 
 describe('追问对象', () => {
   it('整日范围只写日期，结束日按包含计', () => {

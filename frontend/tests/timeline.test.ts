@@ -129,7 +129,7 @@ describe('测点时间轴数据', () => {
 
     // 当天 0–24 时整段，提示框对齐点取正午：15:00 的采样点落在同一天的降雨块内。
     const [middle, value, start, end] = option.series[5].data[0].value;
-    const day = (time: string) => new Date(time).getTime();
+    const day = (time: string) => Date.parse(time + '+08:00');
     expect([middle, value, start, end]).toEqual([day('2026-11-02T12:00:00'), 7, day('2026-11-02T00:00:00'), day('2026-11-03T00:00:00')]);
   });
 
