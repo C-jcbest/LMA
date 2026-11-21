@@ -31,13 +31,12 @@ export function findingLabel(finding: ScreeningFinding): string {
   }
 }
 
-/** 线索自身的幅度与窗口，例如“+8.2 mm / 90 天”；没有幅度时为 null。 */
+/** 线索短标签只附幅度。真实观测跨度仍在该线索的详情。 */
 export function findingAmount(finding: ScreeningFinding): string | null {
   if (finding.value_mm === null) {
     return null;
   }
-  const amount = `${formatSigned(finding.value_mm, MILLIMETER_DIGITS)} mm`;
-  return finding.days ? `${amount} / ${Math.round(finding.days)} 天` : amount;
+  return `${formatSigned(finding.value_mm, MILLIMETER_DIGITS)} mm`;
 }
 
 export const triggersOf = (findings: readonly ScreeningFinding[]) => findings.filter((finding) => finding.role === 'trigger');

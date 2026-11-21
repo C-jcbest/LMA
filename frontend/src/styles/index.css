@@ -770,11 +770,3 @@
 .print-report figcaption { font-size: 11.5px; color: hsl(240 4% 42%); margin-top: 4px; }
 .print-report-evidence ol { margin: 0; padding-inline-start: 2.2em; display: flex; flex-direction: column; gap: 6px; }
 .print-report-evidence p { margin: 0; }
-
-@media print {
-  @page { size: A4; margin: 15mm; }
-  body > *:not(.print-report) { display: none !important; }
-  html, body { background: #fff !important; }
-  .print-report { position: static; width: auto; }
-  .print-report h2 { break-after: avoid; }
-}

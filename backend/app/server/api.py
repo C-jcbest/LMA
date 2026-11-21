@@ -83,13 +83,17 @@ class ToolCancellation(ApiInput):
 
 class AskTarget(ApiInput):
     """用户在图表上选中、要追问的测点时间段；作为结构化上下文随消息保存，不写进正文。"""
-    station_uuid: UUID
+    station_uuid: UUID | None = None
+    kind: Literal["displacement", "rainfall"] | None = None
+    evidence_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,100}$")
     station_name: str = Field(min_length=1, max_length=100)
     start: AwareDatetime
     end: AwareDatetime
 
     @model_validator(mode="after")
     def check_range(self):
+        if self.station_uuid is None and self.kind != "rainfall":
+            raise ValueError("位移追问需要指定测点。")
         if self.start >= self.end:
             raise ValueError("追问时间段的开始必须早于结束。")
         return self
@@ -293,12 +297,18 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
 
 
 def ask_target_record(target: AskTarget) -> dict:
-    return {
-        "station_uuid": str(target.station_uuid),
+    record = {
         "station_name": target.station_name,
         "start": target.start.astimezone(BUSINESS_TZ).isoformat(timespec="minutes"),
         "end": target.end.astimezone(BUSINESS_TZ).isoformat(timespec="minutes"),
     }
+    if target.station_uuid is not None:
+        record["station_uuid"] = str(target.station_uuid)
+    if target.kind is not None:
+        record["kind"] = target.kind
+    if target.evidence_id is not None:
+        record["evidence_id"] = target.evidence_id
+    return record
 
 
 # 测点页切换 7/30/90 天窗口时复用已取得的数据块。

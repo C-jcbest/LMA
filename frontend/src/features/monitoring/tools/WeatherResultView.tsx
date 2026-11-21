@@ -19,7 +19,7 @@ const DetailTable: React.FC<{ summary: string; children: React.ReactNode }> = ({
   </details>
 );
 
-export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ data }) => {
+export const WeatherResultView: React.FC<{ data: WeatherArtifactData; onAsk?: (date: string) => void; askDisabled?: boolean }> = ({ data, onAsk, askDisabled }) => {
   const loc = data.location || {};
   const cur = data.current || {};
   const rain = data.rain_summary;
@@ -134,8 +134,8 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
   const visibleWindCells = windCells.filter(isShown);
   const dailyRain = dates.map((date) => {
     const history = histRain.get(date);
-    if (typeof history === 'number') {
-      return { date, value: history, isForecast: false };
+    if (histRain.has(date)) {
+      return { date, value: history ?? null, isForecast: false };
     }
     const forecast = fcByDate.get(date)?.rain;
     return { date, value: typeof forecast === 'number' ? forecast : null, isForecast: true };
@@ -147,9 +147,9 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData }> = ({ dat
       {!loc.station_name && (
         <p className="text-xs text-muted-foreground tabular-nums">{loc.latitude}, {loc.longitude}</p>
       )}
-      {dailyRain.length > 1 && (
+      {dailyRain.length > 0 && (
         <React.Suspense fallback={<Skeleton className="w-full" style={{ height: RAIN_CHART_HEIGHT }} />}>
-          <RainfallChart days={dailyRain} height={RAIN_CHART_HEIGHT} />
+          <RainfallChart days={dailyRain} height={RAIN_CHART_HEIGHT} askDisabled={askDisabled} onAsk={onAsk && (({ date }) => onAsk(date))} />
         </React.Suspense>
       )}
       {data.rain_events && (

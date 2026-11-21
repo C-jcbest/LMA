@@ -145,7 +145,7 @@ describe('测点时间轴数据', () => {
     // 台阶集中在图例“台阶”序列上，可整体开关；标记颜色跟随所在方向。
     const steps = option.series.find((item: { name: string }) => item.name === '台阶');
     expect(steps.markPoint.data).toEqual([{
-      name: '北向台阶 +4.0 mm · 11-03 00:00', coord: ['2026-11-03 00:00:00', 4],
+      name: '北向台阶 +4.0 mm · 11-03 00:00', coord: [Date.parse('2026-11-03T00:00:00+08:00'), 4],
       itemStyle: { color: 'north', borderColor: '#fff', borderWidth: 1 },
     }]);
     expect(option.legend.data).toContainEqual(expect.objectContaining({ name: '台阶' }));

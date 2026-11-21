@@ -36,10 +36,9 @@ def timeline_window(days: int | None, begin: date | None, end: date | None) -> T
         raise ValueError("自定义范围需要同时给出起止日期，且不与预设天数混用")
     if begin > end or end > now.date():
         raise ValueError("起止日期颠倒或结束日期晚于今天")
-    window = TimelineWindow(datetime.combine(begin, time.min), min(datetime.combine(end, time.max), now))
-    if window.days > MAX_CUSTOM_WINDOW_DAYS:
-        raise ValueError(f"自定义范围最长 {MAX_CUSTOM_WINDOW_DAYS} 天")
-    return window
+    if (end - begin).days + 1 > MAX_CUSTOM_WINDOW_DAYS:
+        raise ValueError(f"自定义范围最长 {MAX_CUSTOM_WINDOW_DAYS} 天（含起止日）")
+    return TimelineWindow(datetime.combine(begin, time.min), min(datetime.combine(end, time.max), now))
 
 
 async def find_station(data: MonitoringData, station_uuid: str) -> Station | None:

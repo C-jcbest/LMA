@@ -94,7 +94,11 @@ export const AnswerActions: FC = () => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const markdown = answerToMarkdown(parts);
   const [isPrinting, setIsPrinting] = useState(false);
-  const finishPrinting = useCallback(() => setIsPrinting(false), []);
+  const [exportFailed, setExportFailed] = useState(false);
+  const finishPrinting = useCallback((error = false) => {
+    setIsPrinting(false);
+    setExportFailed(error);
+  }, []);
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
@@ -113,9 +117,13 @@ export const AnswerActions: FC = () => {
       <TooltipIconButton tooltip="导出为 Markdown" onClick={download}>
         <DownloadIcon />
       </TooltipIconButton>
-      <TooltipIconButton tooltip="打印调查材料" disabled={isPrinting} onClick={() => setIsPrinting(true)}>
+      <TooltipIconButton tooltip="导出调查 PDF" disabled={isPrinting} onClick={() => {
+        setExportFailed(false);
+        setIsPrinting(true);
+      }}>
         <PrinterIcon />
       </TooltipIconButton>
+      {exportFailed && <span role="alert" className="text-xs">PDF 未能导出，请重试</span>}
       {isPrinting && <PrintReport onDone={finishPrinting} />}
     </>
   );

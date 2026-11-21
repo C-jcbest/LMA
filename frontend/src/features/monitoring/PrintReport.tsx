@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { MessagePrimitive, useAuiState } from '@assistant-ui/react';
 import * as echarts from 'echarts/core';
 import { CustomChart, LineChart } from 'echarts/charts';
-import { GridComponent, LegendComponent, MarkAreaComponent, MarkPointComponent } from 'echarts/components';
+import { GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, MarkPointComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 import { MarkdownText } from '@/components/markdown-text';
 import type { GnssArtifactData, ToolArtifactEnvelope } from '@/types/envelope';
@@ -19,6 +19,7 @@ import {
   type StationEvidence,
 } from './investigation';
 import { azimuthOf, directionName } from './map-markers';
+import { downloadReport } from './download-report';
 import {
   buildTimelineOption,
   dailyRainfallWithin,
@@ -28,7 +29,7 @@ import {
   type ChartColors,
 } from './timeline';
 
-echarts.use([CustomChart, LineChart, GridComponent, LegendComponent, MarkAreaComponent, MarkPointComponent, SVGRenderer]);
+echarts.use([CustomChart, LineChart, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, MarkPointComponent, SVGRenderer]);
 
 /** 打印固定用浅色：纸面不跟随界面深色主题。数值与设计规范的浅色 Token 一致。 */
 const PRINT_COLORS: ChartColors = {
@@ -203,7 +204,8 @@ interface Figure {
  * 可打印的调查材料：结论、正文、附图与依据说明。只读本条回答已有的依据，不重新取数；
  * 不印调查过程、逐点数据、计算代码和交互控件。渲染完成后调用浏览器打印，可另存为 PDF。
  */
-const PrintReportContent: FC<{ onDone: () => void }> = ({ onDone }) => {
+const PrintReportContent: FC<{ onDone: (error?: boolean) => void }> = ({ onDone }) => {
+  const reportRef = useRef<HTMLElement>(null);
   const parts = useAuiState((state) => state.message.parts);
   const createdAt = useAuiState((state) => state.message.createdAt);
   const title = useAuiState((state) => state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.title);
@@ -223,23 +225,21 @@ const PrintReportContent: FC<{ onDone: () => void }> = ({ onDone }) => {
   const figures: Figure[] = cited.flatMap(({ number, step }) => (
     step.envelope?.kind === 'gnss_series' && step.state === 'complete' ? [{ number, step, data: step.envelope.data }] : []
   ));
-  const cutoffs = cited.flatMap(({ step }) => {
-    const cutoff = dataCutoffOf(step.envelope!);
+  const cutoffs = (['gnss_series', 'weather'] as const).map((kind) => cited.flatMap(({ step }) => {
+    const cutoff = step.envelope?.kind === kind ? dataCutoffOf(step.envelope) : null;
     return cutoff ? [cutoff] : [];
-  }).sort();
-  const dataCutoff = cutoffs.at(-1);
+  }).sort().at(-1));
 
   useEffect(() => {
-    // 等正文与图表完成一次绘制再打开打印对话框。
-    const timer = window.setTimeout(() => {
-      const finish = () => {
-        window.removeEventListener('afterprint', finish);
-        onDone();
-      };
-      window.addEventListener('afterprint', finish);
-      window.print();
-    }, 400);
-    return () => window.clearTimeout(timer);
+    const report = reportRef.current;
+    if (!report) return;
+    const controller = new AbortController();
+    void downloadReport(report, controller.signal).then(() => {
+      if (!controller.signal.aborted) onDone();
+    }).catch(() => {
+      if (!controller.signal.aborted) onDone(true);
+    });
+    return () => controller.abort();
   }, [onDone]);
 
   const citationComponents = useMemo(() => ({
@@ -247,13 +247,14 @@ const PrintReportContent: FC<{ onDone: () => void }> = ({ onDone }) => {
   }), [numbers]);
 
   return (
-    <article className="print-report-body">
+    <article ref={reportRef} className="print-report-body">
       <header className="print-report-header">
         <h1>{title || '调查材料'}</h1>
         <dl>
-          {dataCutoff && <><dt>数据截止</dt><dd>{dataCutoff}</dd></>}
+          {cutoffs[0] && <><dt>位移数据截止</dt><dd>{cutoffs[0]}</dd></>}
+          {cutoffs[1] && <><dt>天气历史截止</dt><dd>{cutoffs[1]}</dd></>}
           {createdAt && <><dt>回答生成</dt><dd>{formatTime(new Date(createdAt))}</dd></>}
-          <dt>打印</dt><dd>{formatTime(new Date())}</dd>
+          <dt>导出</dt><dd>{formatTime(new Date())}</dd>
         </dl>
         {conclusions && conclusions.stations.length > 0 && (
           <ul className="print-report-status">
@@ -320,8 +321,8 @@ const PrintReportContent: FC<{ onDone: () => void }> = ({ onDone }) => {
   );
 };
 
-/** 打印内容挂在 body 下；屏幕上移出视口，打印时只显示它。 */
-export const PrintReport: FC<{ onDone: () => void }> = ({ onDone }) => createPortal(
+/** 报告在视口外以固定纸面宽度渲染。 */
+export const PrintReport: FC<{ onDone: (error?: boolean) => void }> = ({ onDone }) => createPortal(
   <div className="print-report" aria-hidden>
     <PrintReportContent onDone={onDone} />
   </div>,

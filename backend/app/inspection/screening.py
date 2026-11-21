@@ -368,7 +368,13 @@ def screen_station(
     metrics["recent_completeness"] = recent_completeness
     metrics["recent_quality"] = recent_quality
     metrics["long_quality"] = long_quality
-    latest_time = max((_point_time(point) for point in recent_points if any(_to_float(getattr(point, axis)) is not None for axis in _AXIS_NAMES)), default=None)
+    def last_valid_time(points):
+        return max((_point_time(point) for point in points
+                    if any(_to_float(getattr(point, axis)) is not None for axis in _AXIS_NAMES)), default=None)
+
+    latest_time = last_valid_time(recent_points)
+    last_observed = latest_time or last_valid_time(long_points)
+    metrics["last_observed_at"] = last_observed.strftime(TIME_FORMAT) if last_observed is not None else None
     is_stale = latest_time is None or (now - latest_time).total_seconds() > _STALE_AFTER_HOURS * 3600
     data_problems: list[Finding] = []
     if long_duplicates or recent_duplicates:

@@ -76,7 +76,12 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
 def _ask_target_line(target: dict) -> str:
     start = datetime.fromisoformat(target["start"]).strftime("%Y-%m-%d %H:%M")
     end = datetime.fromisoformat(target["end"]).strftime("%Y-%m-%d %H:%M")
-    return f"ask_target: {target['station_name']}（station_uuid: {target['station_uuid']}）{start} 至 {end}"
+    location = target["station_name"]
+    if target.get("station_uuid"):
+        location += f"（station_uuid: {target['station_uuid']}）"
+    subject = {"rainfall": "；资料：降雨（结束时刻不含）", "displacement": "；资料：位移"}.get(target.get("kind"), "")
+    reference = f"；原依据：{target['evidence_id']}" if target.get("evidence_id") else ""
+    return f"ask_target: {location}：{start} 至 {end}{subject}{reference}"
 
 
 def model_messages(messages: list[BaseMessage]) -> list[BaseMessage]:

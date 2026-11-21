@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as echarts from 'echarts/core';
 import { BarChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
+import { Button } from '@/components/ui/button';
 import { useChartColors } from '../chartColors';
 
 echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer]);
@@ -18,10 +19,13 @@ interface TooltipItem {
 }
 
 /** 逐日降雨柱状图：带 mm 坐标便于比对各天雨量，悬停或点按看当天数值，预报日用浅色。 */
-export default function RainfallChart({ days, height = 140 }: { days: readonly DailyRain[]; height?: number }) {
+export default function RainfallChart({ days, height = 140, onAsk, askDisabled }: { days: readonly DailyRain[]; height?: number; onAsk?: (day: DailyRain) => void; askDisabled?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const colors = useChartColors();
+  const [isReady, setIsReady] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const selected = days.find((day) => day.date === selectedDate);
 
   const option = useMemo(() => ({
     animation: false,
@@ -66,20 +70,46 @@ export default function RainfallChart({ days, height = 140 }: { days: readonly D
   }), [days, colors]);
 
   useEffect(() => {
-    const chart = echarts.init(containerRef.current!);
-    chartRef.current = chart;
-    const observer = new ResizeObserver(() => chart.resize());
-    observer.observe(containerRef.current!);
+    const container = containerRef.current!;
+    const resize = () => {
+      if (!container.clientWidth || !container.clientHeight) return;
+      if (chartRef.current) {
+        chartRef.current.resize();
+      } else {
+        chartRef.current = echarts.init(container);
+        setIsReady(true);
+      }
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    resize();
     return () => {
       observer.disconnect();
-      chart.dispose();
+      chartRef.current?.dispose();
       chartRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    chartRef.current?.setOption(option, { notMerge: true });
-  }, [option]);
+    const chart = chartRef.current;
+    if (!chart) return;
+    chart.setOption(option, { notMerge: true });
+    const selectDay = ({ offsetX, offsetY }: { offsetX: number; offsetY: number }) => {
+      if (!chart.containPixel({ gridIndex: 0 }, [offsetX, offsetY])) return;
+      const index = chart.convertFromPixel({ xAxisIndex: 0 }, offsetX);
+      setSelectedDate(days[Number(index)]?.date ?? null);
+    };
+    chart.getZr().on('click', selectDay);
+    return () => { chart.getZr()?.off('click', selectDay); };
+  }, [isReady, option, days]);
 
-  return <div ref={containerRef} role="img" aria-label="逐日降雨柱状图" className="w-full" style={{ height }} />;
+  return (
+    <div className="relative">
+      <div ref={containerRef} role="img" aria-label="逐日降雨柱状图" className="w-full" style={{ height }} />
+      {selected && onAsk && <Button type="button" size="xs" className="absolute end-2 top-0 rounded-full" disabled={askDisabled} onClick={() => {
+        onAsk(selected);
+        setSelectedDate(null);
+      }}>问 {selected.date.slice(5)} 降雨</Button>}
+    </div>
+  );
 }

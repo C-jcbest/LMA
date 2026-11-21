@@ -41,7 +41,7 @@ export interface InspectionStation {
   screening: Screening;
   reasons: string[];
   findings: ScreeningFinding[];
-  metrics: { net_change_mm?: Partial<Record<'n' | 'e' | 'u', number>> };
+  metrics: { last_observed_at?: string | null; net_change_mm?: Partial<Record<'n' | 'e' | 'u', number>> };
   trend: Array<number | null>;
   previous_screening: Screening | null;
   last_conclusion: { status: string; reason: string; session_id: string; created_at: string } | null;

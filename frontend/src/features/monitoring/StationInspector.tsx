@@ -9,7 +9,6 @@ import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import type { EvidenceSource, GnssArtifactData, ToolArtifactEnvelope } from '@/types/envelope';
-import { addAskTarget } from './ask-targets';
 import { useChartColors } from './chartColors';
 import { formatSigned, MILLIMETER_DIGITS } from './format';
 import { collectStations, findInlineEvidence, formatDateRange, type StationEvidence } from './investigation';
@@ -28,12 +27,13 @@ import {
   seriesLabel,
   type TimelineMode,
 } from './timeline';
-import type { ChartRange } from './TimelineChart';
+import type { ChartRange, ChartSelection } from './TimelineChart';
 import { GnssResultView } from './tools/GnssResultView';
 import { NumericalResultView } from './tools/NumericalResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
 import { StationStatus } from './tools/StationResultView';
-import { WeatherResultView } from './tools/WeatherResultView';
+import { timelineAskTarget } from './ask-targets';
+import { WeatherEvidence } from './WeatherEvidence';
 
 const TimelineChart = lazy(() => import('./TimelineChart'));
 
@@ -103,8 +103,7 @@ interface TimelineViewProps {
 }
 
 const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedIndex, onSelectIndex, peers, viewState, toolCallId }) => {
-  const aui = useAui();
-  const { isSplit, composerInputRef, closeInspector } = useStationInspector();
+  const { attachAskTarget, isSplit, composerInputRef, closeInspector } = useStationInspector();
   const chartColors = useChartColors();
   const [mode, setMode] = useState<TimelineMode>(viewState.mode ?? 'components');
   const [range, setRange] = useState<ChartRange | null>(null);
@@ -115,17 +114,15 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
     () => peerSeriesFor(data, peers.map((peer) => ({ name: peer.name, series: peer.series.map((item) => item.data) }))),
     [data, peers],
   );
-  const option = useMemo(() => {
-    const rainfall = dailyRainfallWithin(station.weather.map((item) => item.data), data.begin_time, data.end_time);
-    return buildTimelineOption(
+  const rainfall = useMemo(() => dailyRainfallWithin(station.weather.map((item) => item.data), data.begin_time, data.end_time), [station.weather, data]);
+  const option = useMemo(() => buildTimelineOption(
       { data, rainfall, peers: peerSeries, mode: peerSeries.length > 0 ? mode : 'components' },
       chartColors,
-    );
-  }, [station.weather, data, peerSeries, mode, chartColors]);
+  ), [rainfall, data, peerSeries, mode, chartColors]);
 
-  const askAbout = (target: ChartRange) => {
-    // 时间轴来自位移序列，序列总带测点编号。
-    addAskTarget(aui, { stationUuid: data.station_uuid, stationName: station.name, ...target });
+  const askAbout = (target: ChartRange | ChartSelection) => {
+    const source = station.series.find((item) => item.toolCallId === toolCallId)!;
+    attachAskTarget(timelineAskTarget(target, source, station.weather));
     if (isSplit) {
       composerInputRef.current?.focus();
     } else {
@@ -176,7 +173,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
                 还原
               </Button>
               <Button type="button" variant="outline" size="sm" onClick={() => askAbout(range)}>
-                问当前范围
+                {range.kind === 'rainfall' ? '问当前降雨' : '问当前范围'}
               </Button>
             </div>
           )}
@@ -190,6 +187,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
               resetSignal={resetSignal}
               onRangeChange={setRange}
               onAsk={askAbout}
+              hasRainfall={rainfall.length > 0}
               initialState={viewState.charts.get(`${toolCallId}:${mode}`)}
               onStateChange={(state) => viewState.charts.set(`${toolCallId}:${mode}`, state)}
             />
@@ -401,7 +399,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
               {station.weather.map((item) => (
                 <div key={item.toolCallId} data-evidence-tool={item.toolCallId}>
                   <DetailSection title={formatDateRange(item.data.query.history_start_date, item.data.query.history_end_date)}>
-                    <WeatherResultView data={item.data} />
+                    <WeatherEvidence evidence={item} inInspector />
                   </DetailSection>
                 </div>
               ))}

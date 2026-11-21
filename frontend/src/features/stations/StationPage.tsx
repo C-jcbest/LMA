@@ -19,18 +19,24 @@ import { useInspection } from '@/features/inspection/InspectionContext';
 import { useChartColors } from '@/features/monitoring/chartColors';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
+import { chartClock, chartMillis } from '@/features/monitoring/chart-time';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { StatusDot } from '@/features/monitoring/status';
 import { buildTimelineOption, displacementBasis, displacementBasisLabel, formatChartTime, peerSeriesFor, type DailyRainfall, type PeerSeries } from '@/features/monitoring/timeline';
 import { RainEvents } from '@/features/monitoring/RainEvents';
-import type { ChartRange } from '@/features/monitoring/TimelineChart';
+import type { ChartRange, ChartSelection } from '@/features/monitoring/TimelineChart';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import { addAskTarget } from '@/features/monitoring/ask-targets';
 import { cn } from 'cn';
-import type { InspectionStation, StationRecord, StationWindow, TimelineDays } from '@/services/api';
+import type { InspectionStation, ScreeningFinding, StationRecord, StationWindow, TimelineDays } from '@/services/api';
 import type { GnssArtifactData } from '@/types/envelope';
 
 const TimelineChart = lazy(() => import('@/features/monitoring/TimelineChart'));
+
+const seriesDateRange = (data: GnssArtifactData) => {
+  const start = chartClock(chartMillis(data.begin_time)).slice(0, 10);
+  const end = chartClock(chartMillis(data.end_time)).slice(0, 10);
+  return start === end ? start : start + ' 至 ' + end;
+};
 
 const WINDOW_OPTIONS: readonly { value: string; label: string }[] = [
   { value: '7', label: '7 天' },
@@ -43,6 +49,26 @@ const DAY_MILLIS = 86400e3;
 const MAX_RANGE_DAYS = 366;
 const toDateInput = (value: Date) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(value);
 
+function customRangeDays(begin: string, end: string) {
+  return (Date.parse(end) - Date.parse(begin)) / DAY_MILLIS + 1;
+}
+
+function storedWindow(stationUuid: string): StationWindow {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('lma-station-window:' + stationUuid) ?? 'null');
+    if (saved && [7, 30, 90].includes(saved.days)) return { days: saved.days };
+    if (typeof saved?.begin === 'string' && typeof saved.end === 'string') {
+      const span = customRangeDays(saved.begin, saved.end);
+      if (span >= 1 && span <= MAX_RANGE_DAYS && saved.end <= toDateInput(new Date())) {
+        return { begin: saved.begin, end: saved.end };
+      }
+    }
+  } catch {
+    // 会话存储不可用时直接使用默认时间范围。
+  }
+  return { days: 90 };
+}
+
 /** 自定义起止日期（含当天，最长一年）；7 天以内看逐小时，更长看每日固定时刻。 */
 const CustomRangeForm: FC<{
   initial?: { begin: string; end: string };
@@ -52,8 +78,8 @@ const CustomRangeForm: FC<{
   const today = toDateInput(new Date());
   const [begin, setBegin] = useState(initial?.begin ?? toDateInput(new Date(Date.now() - 30 * DAY_MILLIS)));
   const [end, setEnd] = useState(initial?.end ?? today);
-  const span = (new Date(end).getTime() - new Date(begin).getTime()) / DAY_MILLIS;
-  const isValid = Boolean(begin && end) && span >= 0 && span <= MAX_RANGE_DAYS && end <= today;
+  const span = customRangeDays(begin, end);
+  const isValid = Boolean(begin && end) && span >= 1 && span <= MAX_RANGE_DAYS && end <= today;
   return (
     <form
       className="mt-3 flex flex-wrap items-center gap-2 text-sm"
@@ -69,7 +95,7 @@ const CustomRangeForm: FC<{
       <Input type="date" aria-label="结束日期" value={end} min={begin} max={today} onChange={(event) => setEnd(event.target.value)} className="h-8 w-40" />
       <Button type="submit" size="sm" disabled={!isValid}>查看</Button>
       <Button type="button" size="sm" variant="ghost" onClick={onCancel}>取消</Button>
-      {span > MAX_RANGE_DAYS && <span role="alert" className="text-muted-foreground">最长一年</span>}
+      {span > MAX_RANGE_DAYS && <span role="alert" className="text-muted-foreground">最多 366 天（含起止日）</span>}
     </form>
   );
 };
@@ -146,23 +172,23 @@ const DisplacementChart: FC<{
   rainfall: readonly DailyRainfall[];
   /** 同组对比时的其他测点序列；为空时画本测点三个方向。 */
   peers: readonly PeerSeries[];
+  findings: readonly ScreeningFinding[];
   onAsk: () => void;
   disabled: boolean;
-}> = ({ stationName, data, rainfall, peers, onAsk, disabled }) => {
-  const aui = useAui();
-  const { composerInputRef } = useStationInspector();
+}> = ({ stationName, data, rainfall, peers, findings, onAsk, disabled }) => {
+  const { attachAskTarget, composerInputRef } = useStationInspector();
   const isLoading = useConversationLoading();
   const chartColors = useChartColors();
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
   const mode = peers.length > 0 ? 'peers' : 'components';
   const option = useMemo(
-    () => buildTimelineOption({ data, rainfall, peers, mode }, chartColors),
-    [data, rainfall, peers, mode, chartColors],
+    () => buildTimelineOption({ data, rainfall, peers, mode, findings }, chartColors),
+    [data, rainfall, peers, mode, findings, chartColors],
   );
 
-  const askAbout = (target: ChartRange) => {
-    addAskTarget(aui, { stationUuid: data.station_uuid, stationName, ...target });
+  const askAbout = (target: ChartRange | ChartSelection) => {
+    attachAskTarget({ kind: 'displacement', stationUuid: data.station_uuid, stationName, ...target });
     onAsk();
     requestAnimationFrame(() => composerInputRef.current?.focus());
   };
@@ -177,7 +203,7 @@ const DisplacementChart: FC<{
         {range && (
           <div className="flex shrink-0 items-center gap-1">
             <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
-            <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={() => askAbout(range)}>问当前范围</Button>
+            <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={() => askAbout(range)}>{range.kind === 'rainfall' ? '问当前降雨' : '问当前范围'}</Button>
           </div>
         )}
       </div>
@@ -190,6 +216,7 @@ const DisplacementChart: FC<{
             resetSignal={resetSignal}
             onRangeChange={setRange}
             onAsk={askAbout}
+            hasRainfall={rainfall.length > 0}
             askDisabled={isLoading || disabled}
           />
         </Suspense>
@@ -284,7 +311,15 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const { latest } = useInspection();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
   const queryClient = useQueryClient();
-  const [timeWindow, setTimeWindow] = useState<StationWindow>({ days: 90 });
+  const [timeWindow, updateTimeWindow] = useState<StationWindow>(() => storedWindow(stationUuid));
+  const setTimeWindow = (next: StationWindow) => {
+    updateTimeWindow(next);
+    try {
+      sessionStorage.setItem('lma-station-window:' + stationUuid, JSON.stringify(next));
+    } catch {
+      // 当前页面仍可以切换窗口。
+    }
+  };
   const [isEditingRange, setIsEditingRange] = useState(false);
   const [showPeers, setShowPeers] = useState(false);
   // 切换窗口时旧图留在原处等新数据，页面不清空、不跳动。
@@ -301,7 +336,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     staleTime: 30 * 60 * 1000,
     retry: 1,
   });
-  const rainfall = rainfallQuery.data;
+  const rainfall = timelineQuery.isPlaceholderData ? undefined : rainfallQuery.data;
   const dailyRainfall = useMemo<DailyRainfall[]>(
     () => (rainfall?.daily ?? []).flatMap((day) => (day.value === null ? [] : [{ date: day.date, value: day.value, isForecast: false }])),
     [rainfall],
@@ -352,6 +387,24 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   }, [showPeers, timelineQuery.data, peerDataKey]);
 
   const inspection = latest?.stations.find((station) => station.station_uuid === stationUuid);
+  const dateOf = (time: string) => chartClock(chartMillis(time)).slice(0, 10);
+  const series = timeline?.series;
+  const lastObservation = series?.points.filter((point) => point.n !== null || point.e !== null || point.u !== null).at(-1)?.time;
+  const inspectedObservation = inspection?.metrics.last_observed_at;
+  const inspectedDate = inspectedObservation ? dateOf(inspectedObservation) : null;
+  const viewedCurrentWindow = 'days' in timeWindow;
+  const findings = useMemo(() => {
+    if (!inspection || !series || isSwitchingWindow) return [];
+    const start = chartMillis(series.begin_time);
+    const end = chartMillis(series.end_time);
+    return triggersOf(inspection.findings).filter((finding) => {
+      if (finding.time) {
+        const time = chartMillis(finding.time);
+        return time >= start && time <= end;
+      }
+      return 'days' in timeWindow && timeWindow.days === 90 && finding.window === 'long';
+    });
+  }, [inspection, series, isSwitchingWindow, timeWindow]);
   const stationName = timeline?.station_name ?? inspection?.station_name;
   const groupName = timeline?.group_name ?? inspection?.group_name;
 
@@ -369,7 +422,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           </Button>}
           {(isSideBySide || !stationName) && <h1 className="min-w-0 text-2xl font-semibold tracking-tight wrap-anywhere">{stationName ?? '测点'}</h1>}
           {groupName && <span className="text-muted-foreground text-sm">{groupName}</span>}
-          {inspection && (
+          {viewedCurrentWindow && inspection && (
             <span className="bg-muted inline-flex min-h-7 items-center gap-2 rounded-full px-3 text-xs">
               <StatusDot status={inspection.screening} />{investigationStatusLabel(inspection.screening)}
             </span>
@@ -405,16 +458,19 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             onCancel={() => setIsEditingRange(false)}
           />
         )}
-        {'begin' in timeWindow && !isEditingRange && (
-          <p className="text-muted-foreground mt-2 text-sm tabular-nums">{timeWindow.begin} 至 {timeWindow.end}</p>
-        )}
-        {inspection && inspection.findings.length > 0 && <FindingChips findings={inspection.findings} className="mt-3" />}
+        {viewedCurrentWindow && findings.some((finding) => !finding.time) && <FindingChips findings={findings.filter((finding) => !finding.time)} className="mt-3" />}
         {/* “暂无法分析”没有结构化线索，只有一句说明。 */}
-        {inspection && inspection.findings.length === 0 && inspection.reasons.length > 0 && (
+        {viewedCurrentWindow && inspection && inspection.findings.length === 0 && inspection.reasons.length > 0 && (
           <p className="text-muted-foreground mt-2 text-sm wrap-anywhere">{inspection.reasons[0]}</p>
         )}
 
         <div className="mt-7 space-y-5">
+          {'begin' in timeWindow && (
+            <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-sm text-muted-foreground tabular-nums">
+              <span>{timeWindow.begin === timeWindow.end ? timeWindow.begin : timeWindow.begin + ' 至 ' + timeWindow.end}</span>
+              {!isSwitchingWindow && lastObservation && <span>最后观测 {formatChartTime(chartMillis(lastObservation))}</span>}
+            </div>
+          )}
           {hasError && (
             <p role="alert" className="text-muted-foreground text-sm">
               监测数据尚未载入。
@@ -425,17 +481,30 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           {timeline && !timeline.series && (
             <p className="text-muted-foreground text-sm">这个测点是基准站或中继站，没有位移序列。</p>
           )}
-          {timeline?.series && timeline.series.points.length === 0 && (
-            <p className="text-muted-foreground text-sm">这段时间没有监测数据。</p>
+          {timeline?.series && !lastObservation && (
+            <div className="text-muted-foreground text-sm">
+              这段时间没有监测数据。
+              {!isSwitchingWindow && inspectedDate && (viewedCurrentWindow || inspectedDate < timeWindow.begin || inspectedDate > timeWindow.end) && (
+                <Button type="button" variant="link" className="h-auto px-1" onClick={() => setTimeWindow({ begin: inspectedDate, end: inspectedDate })}>
+                  查看 {inspectedDate} 巡检观测
+                </Button>
+              )}
+            </div>
           )}
-          {timeline?.series && timeline.series.points.length > 0 && (
+          {timeline?.series && lastObservation && (
             // 等新窗口时调暗旧图；延迟变暗，数据很快到达时不闪一下。
             <div
               aria-busy={isSwitchingWindow}
               className={cn('space-y-5 transition-opacity duration-200', isSwitchingWindow && 'opacity-50 delay-150')}
             >
+              {'days' in timeWindow && (
+                <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-sm text-muted-foreground tabular-nums">
+                  <span>{seriesDateRange(timeline.series)}</span>
+                  {lastObservation && <span>最后观测 {formatChartTime(chartMillis(lastObservation))}</span>}
+                </div>
+              )}
               <WindowMetrics data={timeline.series} />
-              <DisplacementChart stationName={timeline.station_name} data={timeline.series} rainfall={dailyRainfall} peers={peerSeries} onAsk={showChat} disabled={!conversationReady} />
+              <DisplacementChart stationName={timeline.station_name} data={timeline.series} rainfall={dailyRainfall} peers={isSwitchingWindow ? [] : peerSeries} findings={findings} onAsk={showChat} disabled={!conversationReady || isSwitchingWindow} />
               {rainfall && <RainEvents events={rainfall.events} daily={rainfall.daily} thresholdMm={rainfall.threshold_mm} />}
               {rainfallQuery.isError && (
                 <p className="text-muted-foreground text-sm">

@@ -341,6 +341,7 @@ class SelfHostedApiTests(unittest.TestCase):
 
     def test_ask_targets_are_validated_and_saved_in_business_time(self):
         target = {"station_uuid": "44444444-4444-4444-4444-444444444444", "station_name": "测试点",
+                  "kind": "displacement", "evidence_id": "Egnss",
                   "start": "2026-09-02T16:00:00Z", "end": "2026-09-04T16:00:00Z"}
         reversed_target = {**target, "start": target["end"], "end": target["start"]}
         self.assertEqual(self.run_message(ask_targets=[reversed_target]).status_code, 422)
@@ -352,10 +353,15 @@ class SelfHostedApiTests(unittest.TestCase):
         self.assertEqual(human["content"], "这段时间发生了什么？")
         self.assertEqual(human["additional_kwargs"]["metadata"]["ask_targets"], [{
             "station_uuid": target["station_uuid"], "station_name": "测试点",
+            "kind": "displacement", "evidence_id": "Egnss",
             "start": "2026-09-03T00:00+08:00", "end": "2026-09-05T00:00+08:00",
         }])
-        self.assertIn("ask_target: 测试点（station_uuid: 44444444-4444-4444-4444-444444444444）"
-                      "2026-09-03 00:00 至 2026-09-05 00:00", self.model.inputs[-1][-1].text)
+        self.assertIn("ask_target: 测试点（station_uuid: 44444444-4444-4444-4444-444444444444）："
+                      "2026-09-03 00:00 至 2026-09-05 00:00；资料：位移；原依据：Egnss", self.model.inputs[-1][-1].text)
+
+        coordinate_rainfall = {**target, "kind": "rainfall", "station_uuid": None, "station_name": "30.1, 103.5", "evidence_id": "Erain"}
+        self.assertEqual(self.run_message("说说这里的降雨。", ask_targets=[coordinate_rainfall]).status_code, 200)
+        self.assertIn("ask_target: 30.1, 103.5：2026-09-03 00:00 至 2026-09-05 00:00；资料：降雨", self.model.inputs[-1][-1].text)
 
     def test_unknown_checkpoint_does_not_start_run(self):
         response = self.run_message(checkpoint_id="missing")

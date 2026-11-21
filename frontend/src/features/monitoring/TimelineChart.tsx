@@ -8,6 +8,7 @@ import {
   GridComponent,
   LegendComponent,
   MarkAreaComponent,
+  MarkLineComponent,
   MarkPointComponent,
   ToolboxComponent,
   TooltipComponent,
@@ -15,6 +16,8 @@ import {
 import { CanvasRenderer } from 'echarts/renderers';
 import { XIcon, ZoomInIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { AskKind } from './ask-targets';
+import { chartClock, chartDay, rainfallDays } from './chart-time';
 
 echarts.use([
   CustomChart,
@@ -25,6 +28,7 @@ echarts.use([
   GridComponent,
   LegendComponent,
   MarkAreaComponent,
+  MarkLineComponent,
   MarkPointComponent,
   // 拖选依赖 brush，而 brush 内部需要 toolbox 组件，界面上不显示工具栏。
   ToolboxComponent,
@@ -35,12 +39,17 @@ echarts.use([
 export interface ChartRange {
   start: number;
   end: number;
+  kind?: AskKind;
+}
+
+export interface ChartSelection extends ChartRange {
+  kind: AskKind;
 }
 
 export interface ChartViewState {
-  zoom?: { start: number; end: number };
+  zoom?: { start: number; end: number; kind?: AskKind };
   legend?: Record<string, boolean>;
-  selection?: ChartRange | null;
+  selection?: ChartSelection | null;
 }
 
 interface TimelineChartProps {
@@ -50,7 +59,8 @@ interface TimelineChartProps {
   resetSignal: number;
   onRangeChange: (range: ChartRange | null) => void;
   /** 把一段时间带入追问；不传时不显示就地追问按钮。 */
-  onAsk?: (range: ChartRange) => void;
+  onAsk?: (range: ChartSelection) => void;
+  hasRainfall?: boolean;
   askDisabled?: boolean;
   initialState?: ChartViewState;
   onStateChange?: (state: ChartViewState) => void;
@@ -72,12 +82,7 @@ interface BrushEndEvent {
   areas: { coordRange?: [number, number] }[];
 }
 
-interface AxisPointerEvent {
-  axesInfo?: { axisDim: string; value: number }[];
-}
-
 const FULL_RANGE_TOLERANCE = 0.01;
-const DAY_MILLIS = 86400e3;
 /** 追问按钮放在图例与绘图区之间的空白带，不压在曲线上。 */
 const ASK_BAR_TOP = 18;
 const ASK_BAR_HALF_WIDTH = 64;
@@ -94,29 +99,26 @@ const enableDragSelection = (chart: echarts.ECharts) => {
   });
 };
 
-/** 悬停所在的那一天（本地时区，与图表解析时间的方式一致）。 */
-const dayAround = (time: number): ChartRange => {
-  const start = new Date(time);
-  start.setHours(0, 0, 0, 0);
-  return { start: start.getTime(), end: start.getTime() + DAY_MILLIS };
-};
-
 const formatDay = (time: number) => {
-  const date = new Date(time);
-  return `${date.getMonth() + 1}月${date.getDate()}日`;
+  const [, month, day] = chartClock(time).slice(0, 10).split('-');
+  return Number(month) + '月' + Number(day) + '日';
 };
 
 export default function TimelineChart({
   viewKey, option, label, resetSignal, onRangeChange, onAsk, askDisabled = false, initialState, onStateChange,
-  height = 384, allowZoom = true,
+  height = 384, allowZoom = true, hasRainfall = false,
 }: TimelineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const previousViewRef = useRef<string | null>(null);
   const [isReady, setIsReady] = useState(false);
   // 悬停时刻与拖选范围只存时间值，按钮位置在渲染时由图表换算，缩放或改尺寸后不会错位。
-  const [hoverTime, setHoverTime] = useState<number | null>(null);
-  const [selection, setSelection] = useState<ChartRange | null>(null);
+  const [hover, setHover] = useState<{ time: number; kind: AskKind } | null>(null);
+  const [selection, setSelection] = useState<ChartSelection | null>(null);
+  const dragKind = useRef<AskKind>('displacement');
+  const zoomKind = useRef<AskKind>('displacement');
+  const hasRainfallRef = useRef(hasRainfall);
+  hasRainfallRef.current = hasRainfall;
   const isSelectingRef = useRef(false);
   const onRangeChangeRef = useRef(onRangeChange);
   onRangeChangeRef.current = onRangeChange;
@@ -131,10 +133,10 @@ export default function TimelineChart({
       return;
     }
     const current = chart.getOption();
-    const slider = (current.dataZoom as SliderState[]).find((item) => item.type === 'slider');
+    const slider = (current.dataZoom as SliderState[] | undefined)?.find((item) => item.type === 'slider');
     const legend = (current.legend as { selected?: Record<string, boolean> }[])?.[0]?.selected;
     onStateChangeRef.current({
-      zoom: slider ? { start: slider.start, end: slider.end } : undefined,
+      zoom: slider ? { start: slider.start, end: slider.end, kind: zoomKind.current } : undefined,
       legend, selection: selected,
     });
   };
@@ -165,17 +167,37 @@ export default function TimelineChart({
           return;
         }
         const isFullRange = slider.start <= FULL_RANGE_TOLERANCE && slider.end >= 100 - FULL_RANGE_TOLERANCE;
-        onRangeChangeRef.current(isFullRange ? null : { start: slider.startValue, end: slider.endValue });
+        const kind = zoomKind.current;
+        const bounds = kind === 'rainfall' ? rainfallDays(slider.startValue, slider.endValue) : { start: slider.startValue, end: slider.endValue };
+        const range = { ...bounds, kind };
+        onRangeChangeRef.current(isFullRange ? null : range);
+        if (isFullRange) zoomKind.current = 'displacement';
         saveViewState(null);
       });
       chart.on('legendselectchanged', () => saveViewState());
 
-      chart.on('updateAxisPointer', (event) => {
-        const axis = (event as AxisPointerEvent).axesInfo?.find((info) => info.axisDim === 'x');
-        // 指针离开绘图区时保留最后位置，用户才能把鼠标移到按钮上。
-        if (axis) {
-          setHoverTime(axis.value);
+      const gridAt = (point: [number, number]) => {
+        if (hasRainfallRef.current && chart.containPixel({ gridIndex: 1 }, point)) {
+          const legend = chart.getOption().legend as { selected?: Record<string, boolean> }[] | undefined;
+          return legend?.[0]?.selected?.['日降雨'] === false ? null : 1;
         }
+        return chart.containPixel({ gridIndex: 0 }, point) ? 0 : null;
+      };
+      const updateHover = ({ offsetX, offsetY }: { offsetX: number; offsetY: number }) => {
+        const grid = gridAt([offsetX, offsetY]);
+        if (grid === null) {
+          setHover(null);
+          return;
+        }
+        const time = chart.convertFromPixel({ xAxisIndex: grid }, offsetX);
+        if (typeof time === 'number' && Number.isFinite(time)) {
+          setHover({ time, kind: grid === 1 ? 'rainfall' : 'displacement' });
+        }
+      };
+      chart.getZr().on('mousemove', updateHover);
+      chart.getZr().on('click', updateHover);
+      chart.getZr().on('mousedown', ({ offsetX, offsetY }) => {
+        dragKind.current = gridAt([offsetX, offsetY]) === 1 ? 'rainfall' : 'displacement';
       });
 
       chart.on('brush', () => {
@@ -185,7 +207,7 @@ export default function TimelineChart({
         isSelectingRef.current = false;
         const range = (event as BrushEndEvent).areas[0]?.coordRange;
         // 选区保留在图上，由用户决定追问还是放大，而不是松开鼠标就缩放。
-        const selected = range && range[1] > range[0] ? { start: range[0], end: range[1] } : null;
+        const selected = range && range[1] > range[0] ? { start: range[0], end: range[1], kind: dragKind.current } : null;
         setSelection(selected);
         saveViewState(selected);
       });
@@ -231,9 +253,10 @@ export default function TimelineChart({
     enableDragSelection(chart);
     // 仅换测点、窗口或曲线内容时复位；换主题保留图例与已框选的范围。
     if (isNewView) {
+      zoomKind.current = initialState?.zoom?.kind ?? 'displacement';
       onRangeChangeRef.current(null);
       setSelection(null);
-      setHoverTime(null);
+      setHover(null);
       if (initialState?.legend) {
         chart.setOption({ legend: { selected: initialState.legend } });
       }
@@ -241,8 +264,8 @@ export default function TimelineChart({
         chart.dispatchAction({ type: 'dataZoom', ...initialState.zoom });
       }
       if (initialState?.selection) {
-        const { start, end } = initialState.selection;
-        chart.dispatchAction({ type: 'brush', areas: [{ brushType: 'lineX', xAxisIndex: 0, coordRange: [start, end] }] });
+        const { start, end, kind } = initialState.selection;
+        chart.dispatchAction({ type: 'brush', areas: [{ brushType: 'lineX', xAxisIndex: kind === 'rainfall' && hasRainfall ? 1 : 0, coordRange: [start, end] }] });
         setSelection(initialState.selection);
         saveViewState(initialState.selection);
       }
@@ -281,10 +304,10 @@ export default function TimelineChart({
     return Math.min(Math.max(pixel, minimum), Math.max(minimum, maximum));
   };
 
-  const ask = (range: ChartRange) => {
-    onAsk?.(range);
+  const ask = (range: ChartSelection) => {
+    onAsk?.(range.kind === 'rainfall' ? { ...rainfallDays(range.start, range.end), kind: range.kind } : range);
     clearSelection();
-    setHoverTime(null);
+    setHover(null);
   };
 
   let askBar: ReactNode = null;
@@ -293,10 +316,11 @@ export default function TimelineChart({
     if (left !== null) {
       askBar = (
         <div role="toolbar" aria-label="所选时间段" className="absolute flex -translate-x-1/2 items-center gap-1 rounded-full border bg-popover p-0.5 shadow-sm" style={{ left, top: ASK_BAR_TOP }}>
-          <Button type="button" size="xs" disabled={askDisabled} onClick={() => ask(selection)} className="rounded-full px-2.5">问这段</Button>
+          <Button type="button" size="xs" disabled={askDisabled} onClick={() => ask(selection)} className="rounded-full px-2.5">{selection.kind === 'rainfall' ? '问这段降雨' : '问这段'}</Button>
           {allowZoom && (
             <Button type="button" variant="ghost" size="icon-xs" aria-label="放大所选时间段" title="放大" className="rounded-full text-muted-foreground"
               onClick={() => {
+                zoomKind.current = selection.kind;
                 chartRef.current?.dispatchAction({ type: 'dataZoom', startValue: selection.start, endValue: selection.end });
               }}>
               <ZoomInIcon aria-hidden />
@@ -308,23 +332,23 @@ export default function TimelineChart({
         </div>
       );
     }
-  } else if (onAsk && hoverTime !== null && !isSelectingRef.current) {
-    const left = askBarLeft(hoverTime);
-    const day = dayAround(hoverTime);
+  } else if (onAsk && hover !== null && !isSelectingRef.current) {
+    const left = askBarLeft(hover.time);
+    const day = chartDay(hover.time);
     if (left !== null) {
       askBar = (
-        <Button type="button" variant="outline" size="xs" disabled={askDisabled} onClick={() => ask(day)}
-          aria-label={`追问 ${formatDay(hoverTime)}`}
+        <Button type="button" variant="outline" size="xs" disabled={askDisabled} onClick={() => ask({ ...day, kind: hover.kind })}
+          aria-label={`追问 ${formatDay(hover.time)}`}
           className="absolute -translate-x-1/2 rounded-full bg-popover px-2.5 shadow-sm"
           style={{ left, top: ASK_BAR_TOP }}>
-          问{formatDay(hoverTime)}
+          问{formatDay(hover.time)}{hover.kind === 'rainfall' ? '降雨' : ''}
         </Button>
       );
     }
   }
 
   return (
-    <div className="relative" onMouseLeave={() => setHoverTime(null)}>
+    <div className="relative" onMouseLeave={() => setHover(null)}>
       <div ref={containerRef} role="img" aria-label={label} className="w-full" style={{ height }} />
       {askBar}
     </div>

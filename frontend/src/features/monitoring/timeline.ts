@@ -1,3 +1,5 @@
+import { chartClock, chartMillis as toMillis } from './chart-time';
+import type { ScreeningFinding } from '@/services/api';
 import type { EChartsCoreOption } from 'echarts/core';
 import type {
   GapArtifact,
@@ -17,8 +19,6 @@ const DAY_MILLIS = 24 * 60 * 60 * 1000;
 const AXES = ['n', 'e', 'u'] as const;
 
 type Axis = (typeof AXES)[number];
-
-const toMillis = (value: string) => new Date(value.replace(' ', 'T')).getTime();
 
 const roundToHundredth = (value: number) => Math.round(value * 100) / 100;
 
@@ -267,6 +267,7 @@ export interface TimelineInput {
   rainfall: readonly DailyRainfall[];
   peers: readonly PeerSeries[];
   mode: TimelineMode;
+  findings?: readonly ScreeningFinding[];
 }
 
 /**
@@ -286,14 +287,14 @@ const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPo
         return [];
       }
       const color = colorOf(event.axis);
-      return [{ name: stepEventText(event), coord: [event.time, value], itemStyle: { color, borderColor: '#fff', borderWidth: 1 } }];
+      return [{ name: stepEventText(event), coord: [toMillis(event.time), value], itemStyle: { color, borderColor: '#fff', borderWidth: 1 } }];
     }),
   };
 };
 
 const displacementLine = (
   name: string,
-  values: readonly (readonly [string, number | null])[],
+  values: readonly (readonly [number, number | null])[],
   color: string,
   width: number,
 ) => ({
@@ -314,8 +315,8 @@ const gapBands = (gaps: readonly GapArtifact[], colors: ChartColors) => ({
   silent: true,
   label: { show: false },
   data: gaps.map((gap) => [
-    { xAxis: gap.from, itemStyle: { color: colors.gap } },
-    { xAxis: gap.to },
+    { xAxis: toMillis(gap.from), itemStyle: { color: colors.gap } },
+    { xAxis: toMillis(gap.to) },
   ]),
 });
 
@@ -373,13 +374,13 @@ const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
 
 /** 位移、降雨、缺测和台阶共用同一时间轴，时间对齐由图本身完成。 */
 export function buildTimelineOption(input: TimelineInput, colors: ChartColors): EChartsCoreOption {
-  const { data, rainfall, peers, mode } = input;
+  const { data, rainfall, peers, mode, findings } = input;
   const displacement = displacementOf(data);
   const hasRainfall = rainfall.length > 0;
   const axisIndexes = hasRainfall ? [0, 1] : [0];
 
   const lineValues = (key: 'n' | 'e' | 'u' | 'h') =>
-    displacement.map((point) => [point.time, point[key]] as const);
+    displacement.map((point) => [toMillis(point.time), point[key]] as const);
 
   const lines = mode === 'components'
     ? [
@@ -390,7 +391,7 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     : [
         ...peers.map((peer) => displacementLine(
           peer.name,
-          peer.points.map((point) => [point.time, point.h] as const),
+          peer.points.map((point) => [toMillis(point.time), point.h] as const),
           colors.peer,
           1,
         )),
@@ -407,9 +408,18 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     ...displacementLine(GAP_SERIES_NAME, [], colors.gap, 0),
     markArea: gapBands(data.summary.gaps, colors),
   };
+  const inspectionMarkers = (findings ?? []).flatMap((finding) => finding.time ? [{ name: finding.text, xAxis: toMillis(finding.time) }] : []);
   const stepSeries = {
     ...displacementLine(STEP_SERIES_NAME, [], colors.mutedText, 0),
     markPoint: stepMarks(steps, displacement, (axis) => axisColors[axis]),
+    ...(inspectionMarkers.length > 0 ? {
+      markLine: {
+        symbol: 'none',
+        label: { show: false },
+        lineStyle: { color: colors.mutedText, type: 'dashed' },
+        data: inspectionMarkers,
+      },
+    } : {}),
   };
 
   const axisLine = { lineStyle: { color: colors.border } };
@@ -417,8 +427,14 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
   const splitLine = { lineStyle: { color: colors.grid } };
   const timeAxis = {
     type: 'time',
-    min: data.begin_time,
-    max: data.end_time,
+    min: toMillis(data.begin_time),
+    max: toMillis(data.end_time),
+    axisLabel: { ...axisLabel, formatter: (millis: number) => {
+      const time = chartClock(millis);
+      const day = time.slice(5, 10);
+      if (time.endsWith('00:00') || time.endsWith('08:00')) return day;
+      return time.slice(5);
+    } },
     axisLine,
     axisTick: { show: false },
     splitLine: { show: false },
@@ -426,6 +442,7 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
 
   return {
     animation: false,
+    useUTC: true,
     textStyle: { fontFamily: 'inherit' },
     // 降雨图的坐标名“mm”在其上方约 15px，两图间留足距离，避免与位移图底部的刻度叠在一起。
     grid: hasRainfall
@@ -451,9 +468,9 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     xAxis: hasRainfall
       ? [
           { ...timeAxis, gridIndex: 0, axisLabel: { show: false } },
-          { ...timeAxis, gridIndex: 1, axisLabel },
+          { ...timeAxis, gridIndex: 1 },
         ]
-      : [{ ...timeAxis, gridIndex: 0, axisLabel }],
+      : [{ ...timeAxis, gridIndex: 0 }],
     yAxis: [
       { type: 'value', gridIndex: 0, scale: true, name: 'mm', nameTextStyle: { color: colors.mutedText }, axisLabel, splitLine },
       ...(hasRainfall
@@ -503,9 +520,4 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
   };
 }
 
-const pad = (value: number) => String(value).padStart(2, '0');
-
-export const formatChartTime = (millis: number) => {
-  const date = new Date(millis);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-};
+export const formatChartTime = chartClock;

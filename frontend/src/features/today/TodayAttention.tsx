@@ -97,7 +97,7 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
         {leadTrigger?.value_mm != null && (
           <span className="today-row-change text-base font-medium tabular-nums">
             {formatMillimeters(leadTrigger.value_mm)}
-            <span className="text-muted-foreground ms-1 text-xs font-normal">mm{leadTrigger.days ? ` / ${Math.round(leadTrigger.days)} 天` : ''}</span>
+            <span className="text-muted-foreground ms-1 text-xs font-normal">mm</span>
           </span>
         )}
         {leadTrigger?.value_mm == null && change && (
@@ -171,6 +171,7 @@ export const TodayAttention: FC = () => {
       <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{historical && <span className="whitespace-nowrap">上次巡检 · </span>}{headline}</h1>
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{formatFinishedAt(latest.inspection.finished_at)} 巡检</time>}
+        {needsLook.some((station) => triggersOf(station.findings).some((finding) => finding.window === 'long')) && <span>近 90 天</span>}
         {needsLook.length > 0 && investigatedCount > 0 && (
           <span className="tabular-nums">已调查 {investigatedCount}/{needsLook.length}</span>
         )}

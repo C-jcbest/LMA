@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 
 // 只替换 API 返回，页面、会话运行时和布局均使用生产实现；数据为自动化测试数据。
@@ -115,10 +116,11 @@ async function mockApi(page: Page) {
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 
 /** 章节式正文引用长、短两个窗口；结论登记只作为留档数据随同提交。 */
+const withEvidence = (result: ReturnType<typeof gnssResult>, evidenceId: string) => ({
+  ...result, artifact: { ...result.artifact, evidence_id: evidenceId },
+});
+
 const proseHistory = () => {
-  const withEvidence = (result: ReturnType<typeof gnssResult>, evidenceId: string) => ({
-    ...result, artifact: { ...result.artifact, evidence_id: evidenceId },
-  });
   return [
     messages[0],
     messages[1],
@@ -267,19 +269,16 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
   await expect(page.getByText('模型专用内容不得展示')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /已调查 1 个测点 · 2 项查询/ })).toBeVisible();
 
-  await page.evaluate(() => {
-    window.print = () => {
-      (window as unknown as { printed: number }).printed = ((window as unknown as { printed?: number }).printed ?? 0) + 1;
-    };
-  });
-  await page.locator('[data-role="assistant"]').last().getByRole('button', { name: '打印调查材料' }).click();
-  const printable = page.locator('.print-report');
-  await expect(printable).toContainText('数据截止');
-  await expect(printable).toContainText('依据说明');
-  await expect(printable.locator('figure').first()).toBeAttached();
-  await expect.poll(() => page.evaluate(() => (window as unknown as { printed?: number }).printed)).toBe(1);
-  // 打印内容只有结论、正文、附图和依据说明，不带调查过程和交互控件。
-  await expect(printable.getByRole('button')).toHaveCount(0);
+  const downloaded = page.waitForEvent('download');
+  await page.locator('[data-role="assistant"]').last().getByRole('button', { name: '导出调查 PDF' }).click();
+  const download = await downloaded;
+  expect(download.suggestedFilename()).toBe('调查材料.pdf');
+  const pdf = await readFile((await download.path())!);
+  expect(pdf.subarray(0, 4).toString()).toBe('%PDF');
+  expect(pdf.length).toBeGreaterThan(10000);
+  expect(pdf.toString('latin1').match(/\/Type \/Page\b/g)?.length).toBeGreaterThan(1);
+  await download.saveAs(test.info().outputPath('调查材料.pdf'));
+  await expect(page.locator('.print-report')).toHaveCount(0);
 
   const copy = page.locator('[data-role="assistant"]').last().getByRole('button', { name: '复制', exact: true });
   await copy.click();
@@ -303,14 +302,6 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
 
 test('天气和计算引用直接打开对应依据，用户消息显示追问对象', async ({ page }) => {
   await mockApi(page);
-  const weather = {
-    type: 'tool', id: 'weather-result', tool_call_id: 'weather', name: 'query_weather', content: '模型专用内容不得展示', status: 'success',
-    artifact: { version: 1, kind: 'weather', status: 'success', evidence_id: 'Ewea', data: {
-      ok: true, location: { station_uuid: support.station_uuid, station_name: '测试点 A', latitude: 30.1, longitude: 103.5 },
-      query: { timezone: 'Asia/Shanghai', history_start_date: '2026-10-26', history_end_date: '2026-10-28', forecast_days: 0 },
-      history: { daily: { time: ['2026-10-26', '2026-10-27', '2026-10-28'], precipitation_sum: [3, 18.2, 6] } },
-    } },
-  };
   const computation = {
     type: 'tool', id: 'compute-result', tool_call_id: 'compute', name: 'compute', content: '模型专用内容不得展示', status: 'success',
     artifact: { version: 1, kind: 'computation', status: 'success', evidence_id: 'Ecmp', data: {
@@ -455,6 +446,9 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.getByRole('button', { name: '查看' }).click();
   await expect.poll(() => timelineQueries.at(-1)).toBe('?begin=2026-10-01&end=2026-10-20');
   await expect(page.getByText('2026-10-01 至 2026-10-20')).toBeVisible();
+  await page.reload();
+  await expect.poll(() => timelineQueries.at(-1)).toBe('?begin=2026-10-01&end=2026-10-20');
+  await expect(page.getByText('2026-10-01 至 2026-10-20')).toBeVisible();
 
   // 同组对比只在打开时读取同组其他移动站。
   expect(timelineStations).not.toContain('测试点 B');
@@ -523,4 +517,119 @@ test('测点列表按分组查看时显示分组地图，平台异常状态只�
   await page.getByRole('option', { name: 'K3 分组' }).click();
   await expect(page.getByRole('region', { name: '测点位置与水平位移方向' })).toBeVisible();
   await expect(list.getByRole('button')).toHaveCount(2);
+});
+
+const weather = {
+  type: 'tool', id: 'weather-result', tool_call_id: 'weather', name: 'query_weather', content: '模型专用内容不得展示', status: 'success',
+  artifact: { version: 1, kind: 'weather', status: 'success', evidence_id: 'Ewea', data: {
+    ok: true, location: { station_uuid: support.station_uuid, station_name: '测试点 A', latitude: 30.1, longitude: 103.5 },
+    query: { timezone: 'Asia/Shanghai', history_start_date: '2026-10-26', history_end_date: '2026-10-28', forecast_days: 0 },
+    history: { daily: { time: ['2026-10-26', '2026-10-27', '2026-10-28'], precipitation_sum: [3, 18.2, 6] } },
+  } },
+};
+
+for (const timezoneId of ['Asia/Shanghai', 'UTC']) {
+  test.describe('正文图追问 · ' + timezoneId, () => {
+    test.use({ timezoneId });
+    test('分别附上位移、降雨和原依据，失败后选区不回到输入框', async ({ page }) => {
+      await mockApi(page);
+      const history = [
+        messages[0],
+        { type: 'ai', id: 'query-1', content: [], tool_calls: [
+          { id: 'gnss', name: 'get_displacement', args: {} }, { id: 'weather', name: 'query_weather', args: {} },
+        ] },
+        withEvidence(gnssResult('gnss', '2026-10-26 00:00:00'), 'Egnss'), weather,
+        { type: 'ai', id: 'answer-1', content: '看位移。[1](#evidence-Egnss)\n\n同期降雨。[2](#evidence-Ewea)' },
+      ];
+      await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
+      await page.route('**/api/sessions/report-session/runs', (route) => route.fulfill({ status: 503, json: { detail: '测试故障' } }));
+      await page.setViewportSize({ width: 1100, height: 900 });
+      await page.goto('/?threadId=report-session');
+      const chart = page.getByRole('img', { name: /测试点 A .*位移曲线/ }).first();
+      await expect(chart.locator('canvas').first()).toBeVisible();
+      const composer = page.getByRole('textbox', { name: '输入监测问题' });
+      const chips = page.getByRole('list', { name: '追问对象' });
+      const drag = async (y: number) => {
+        await chart.scrollIntoViewIfNeeded();
+        const box = (await chart.boundingBox())!;
+        const x = (fraction: number) => box.x + 48 + (box.width - 60) * fraction;
+        await page.mouse.move(x(0.2), box.y + y);
+        await page.mouse.down();
+        await page.mouse.move(x(0.3), box.y + y, { steps: 8 });
+        await page.mouse.up();
+      };
+      await drag(100);
+      await page.getByRole('toolbar', { name: '所选时间段' }).getByRole('button', { name: '问这段', exact: true }).click();
+      await expect(composer).toHaveValue('');
+      await expect(chips).toContainText('位移');
+      await composer.fill('这一段变化和雨量有时间上的关系吗？');
+      await drag(240);
+      await page.getByRole('toolbar', { name: '所选时间段' }).getByRole('button', { name: '问这段降雨' }).click();
+      await expect(composer).toHaveValue('这一段变化和雨量有时间上的关系吗？');
+      await expect(chips).toContainText('10月27日–10月28日降雨');
+      const request = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/runs'));
+      await page.getByRole('button', { name: '发送消息', exact: true }).click();
+      const body = (await request).postDataJSON();
+      expect(body.ask_targets).toMatchObject([
+        { kind: 'displacement', evidence_id: 'Egnss' },
+        { kind: 'rainfall', evidence_id: 'Ewea', start: '2026-10-26T16:00:00.000Z', end: '2026-10-28T16:00:00.000Z' },
+      ]);
+      await expect(page.getByRole('alert').filter({ hasText: '本次回答未完成。' })).toBeVisible();
+      await expect(chips).toHaveCount(0);
+    });
+  });
+}
+
+test.describe('触屏正文图', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } });
+  test('点天气柱可把单日雨量附到输入框', async ({ page }) => {
+    await mockApi(page);
+    const history = [
+      messages[0],
+      { type: 'ai', id: 'query-1', content: [], tool_calls: [{ id: 'weather', name: 'query_weather', args: {} }] },
+      weather,
+      { type: 'ai', id: 'answer-1', content: '看同期降雨。[1](#evidence-Ewea)' },
+    ];
+    await page.route('**/api/sessions/report-session/state', (route) => route.fulfill({ json: { values: { messages: history }, latest_run: null } }));
+    await page.goto('/?threadId=report-session');
+    const chart = page.getByRole('img', { name: '逐日降雨柱状图' });
+    await expect(chart.locator('canvas')).toBeVisible();
+    await chart.tap({ position: { x: 170, y: 65 } });
+    await page.getByRole('button', { name: '问 10-27 降雨' }).tap();
+    const input = page.getByRole('textbox', { name: '输入监测问题' });
+    await expect(input).toHaveValue('');
+    await expect(page.getByRole('list', { name: '追问对象' })).toHaveText('10月27日降雨 · 测试点 A');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  });
+});
+
+test('历史空窗可回到最近一次巡检实际有数据的日期', async ({ page }) => {
+  await mockApi(page);
+  const lastObserved = '2026-11-02 15:00:00';
+  await page.route('**/api/inspections/latest', (route) => route.fulfill({ json: {
+    ...inspection,
+    stations: [inspectionRow('测试点 A', '建议调查', {
+      metrics: { last_observed_at: lastObserved },
+      findings: inspection.stations[0]!.findings,
+    })],
+  } }));
+  await page.route('**/api/stations/*/rainfall*', (route) => route.fulfill({ json: stationRainfall }));
+  await page.route('**/api/stations/*/timeline*', (route) => {
+    const begin = new URL(route.request().url()).searchParams.get('begin');
+    return route.fulfill({ json: { ...stationTimeline, series: {
+      ...stationTimeline.series,
+      points: begin === '2026-11-02' ? [{ time: lastObserved, n: 100, e: 200, u: 300 }] : [],
+    } } });
+  });
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto('/?station=测试点 A');
+  await page.getByRole('radio', { name: '自定义' }).click();
+  await page.getByRole('textbox', { name: '开始日期' }).fill('2026-10-01');
+  await page.getByRole('textbox', { name: '结束日期' }).fill('2026-10-03');
+  await page.getByRole('button', { name: '查看', exact: true }).click();
+  await expect(page.getByText('2026-10-01 至 2026-10-03')).toBeVisible();
+  await expect(page.getByRole('region', { name: '测点数据' }).getByText('北向持续变化', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '查看 2026-11-02 巡检观测' }).click();
+  await expect(page.getByText('最后观测 2026-11-02 15:00')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
 });

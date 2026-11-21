@@ -48,7 +48,11 @@ class TimelineWindowTests(unittest.TestCase):
         self.assertEqual(window.start.date(), today - timedelta(days=20))
         self.assertEqual((window.end.date(), window.end.hour), (today - timedelta(days=10), 23))
 
+        longest = timeline_window(None, today - timedelta(days=365), today)
+        self.assertEqual((longest.end.date() - longest.start.date()).days + 1, 366)
+
         for days, begin, end in [
+            (None, today - timedelta(days=366), today),
             (45, None, None),
             (None, today, today - timedelta(days=1)),
             (None, today - timedelta(days=400), today),

@@ -1,14 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
-import { useAui, useAuiState } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 import { ChevronDownIcon, Maximize2Icon } from 'lucide-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import type { ToolArtifactEnvelopeFor } from '@/types/envelope';
-import { addAskTarget } from './ask-targets';
 import { useChartColors } from './chartColors';
-import type { ChartRange } from './TimelineChart';
+import { timelineAskTarget } from './ask-targets';
+import type { ChartSelection } from './TimelineChart';
 import { evidenceNumbers, STATION_MAP_CARD } from './evidence-cards';
 import {
   buildSteps,
@@ -33,7 +33,7 @@ import {
 } from './timeline';
 import { ComputationResultView } from './tools/ComputationResultView';
 import { SiteEnvironmentResultView } from './tools/SiteEnvironmentResultView';
-import { WeatherResultView } from './tools/WeatherResultView';
+import { WeatherEvidence } from './WeatherEvidence';
 
 const TimelineChart = lazy(() => import('./TimelineChart'));
 const StationMap = lazy(() => import('./StationMap'));
@@ -192,8 +192,7 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultE
 };
 
 const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelopeFor<'gnss_series'>; viewKey: string }> = ({ station, envelope, viewKey }) => {
-  const aui = useAui();
-  const { composerInputRef } = useStationInspector();
+  const { attachAskTarget, composerInputRef } = useStationInspector();
   const isThreadRunning = useAuiState((state) => state.thread.isRunning);
   const colors = useChartColors();
   const data = envelope.data;
@@ -218,8 +217,8 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
     };
   }, [data, rainfall, hasRainfall, colors]);
 
-  const askAbout = (range: ChartRange) => {
-    addAskTarget(aui, { stationUuid: data.station_uuid, stationName: station.name, ...range });
+  const askAbout = (range: ChartSelection) => {
+    attachAskTarget(timelineAskTarget(range, envelope, station.weather));
     composerInputRef.current?.focus();
   };
 
@@ -242,6 +241,7 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
           askDisabled={isThreadRunning}
           height={height}
           allowZoom={false}
+          hasRainfall={hasRainfall}
         />
       </Suspense>
     </WhenVisible>
@@ -271,7 +271,7 @@ const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefin
           meta={formatDateRange(envelope.data.query.history_start_date, envelope.data.query.history_end_date)}
           onOpen={onOpen}
         >
-          <WeatherResultView data={envelope.data} />
+          <WeatherEvidence evidence={envelope} />
         </CardShell>
       );
     case 'site_environment':

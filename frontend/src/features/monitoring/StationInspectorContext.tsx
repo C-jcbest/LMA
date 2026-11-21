@@ -1,3 +1,5 @@
+import { useAui } from '@assistant-ui/react';
+import { addAskTarget, type AskTarget } from './ask-targets';
 import {
   createContext,
   useCallback,
@@ -50,6 +52,7 @@ interface StationInspectorContextValue {
   toggleFullscreen: () => void;
   viewStates: RefObject<Map<string, InspectorViewState>>;
   composerInputRef: RefObject<HTMLTextAreaElement | null>;
+  attachAskTarget: (target: AskTarget) => void;
   openStation: (selection: StationSelection) => void;
   /** 打开引用指向的那条依据：属于测点时在该测点里定位到对应页签和窗口，否则单独显示。 */
   openEvidence: (selection: EvidenceSelection) => void;
@@ -60,6 +63,8 @@ const StationInspectorContext = createContext<StationInspectorContextValue | nul
 
 /** 保存查看位置和图表交互状态；证据始终从当前消息的官方 tool part 派生。 */
 export function StationInspectorProvider({ children, canSplit = true }: { children: ReactNode; canSplit?: boolean }) {
+  const aui = useAui();
+  const attachAskTarget = useCallback((target: AskTarget) => addAskTarget(aui, target), [aui]);
   const [selection, setSelection] = useState<InspectorSelection | null>(null);
   const [selectionVersion, setSelectionVersion] = useState(0);
   const [isClosing, setIsClosing] = useState(false);
@@ -139,10 +144,10 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
 
   const value = useMemo(
     () => ({
-      selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, viewStates, composerInputRef,
+      selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, viewStates, composerInputRef, attachAskTarget,
       openStation: open, openEvidence: open, closeInspector,
     }),
-    [selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, open, closeInspector],
+    [selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, attachAskTarget, open, closeInspector],
   );
 
   return (
