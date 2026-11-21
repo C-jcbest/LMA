@@ -59,7 +59,6 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData; onAsk?: (d
   );
   const dates = [...new Set([...histRain.keys(), ...fcByDate.keys()])].sort();
 
-  // 只查历史时没有预报；预报类条目整组省略，避免一排“-”。时间范围已在卡片标题里，标签不再重复。
   const rainCells: { label: string; value: string; detail?: string; forecast?: boolean }[] = [
     {
       label: '期间合计',
@@ -143,7 +142,6 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData; onAsk?: (d
 
   return (
     <div className="space-y-4">
-      {/* 卡片标题已写测点名；只有按坐标查询、没有测点名时才标出位置。 */}
       {!loc.station_name && (
         <p className="text-xs text-muted-foreground tabular-nums">{loc.latitude}, {loc.longitude}</p>
       )}

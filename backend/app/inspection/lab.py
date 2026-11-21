@@ -28,10 +28,8 @@ from app.inspection.vision import judge_chart, render_displacement_chart, vision
 
 logger = logging.getLogger(__name__)
 
-# 2=移动站单点模式，3=移动站RTK模式；与正式巡检一致，基准站和中继站不进入巡检。
 DISPLACEMENT_STATION_TYPES = {2, 3}
 _UPSTREAM_CONCURRENCY = 4
-# 视觉模型调用较慢且按次计费，并发单独限制。
 _VISION_CONCURRENCY = 2
 _AXIS_LABELS = {"n": "北向", "e": "东向", "u": "垂向"}
 
@@ -57,7 +55,6 @@ def stations_in_scope(stations: Sequence[Station], scope: LabScope) -> list[Stat
         candidates = [station for station in candidates if station.group_uuid == scope.get("group_uuid")]
     elif scope.get("kind") == "station":
         candidates = [station for station in candidates if station.station_uuid == scope.get("station_uuid")]
-    # 按分组再按名称排序：推出的顺序就是页面初始顺序，每次巡检一致，便于对照。
     return sorted(candidates, key=lambda station: (station.group_name, station.station_name))
 
 
@@ -83,7 +80,6 @@ def _row_findings(result: ScreeningResult) -> dict:
     triggers = [finding for finding in result.findings if finding.role == "trigger"]
     quality = [finding for finding in result.findings if finding.role == "quality"]
     if not result.findings:
-        # “暂无法分析”只有说明文字，没有结构化线索。
         return {"triggers": [], "quality": [{"text": reason} for reason in result.reasons]}
     return {
         "triggers": [
@@ -97,7 +93,6 @@ def _row_findings(result: ScreeningResult) -> dict:
 
 def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpointer):
     async def announce(state: LabState) -> dict:
-        # 组件必须挂在一条已存在的助手消息上；先写入这条消息，前端才有位置渲染随后推送的组件。
         return {"messages": [AIMessage(id=str(uuid4()), content="正在巡检…")]}
 
     async def inspect(state: LabState) -> dict:
@@ -163,7 +158,6 @@ def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpo
             push_summary(status="error", elapsed_seconds=round(time.monotonic() - started))
             return {"messages": [AIMessage(id=message.id, content="巡检未完成：监测平台暂不可用。")]}
 
-        # 同组同向需要整组结果；单站巡检看不到同组其他测点，界面会说明跳过。
         if scope.get("kind") != "station":
             by_group: dict[str, list[tuple[Station, ScreeningResult]]] = defaultdict(list)
             for station in stations:

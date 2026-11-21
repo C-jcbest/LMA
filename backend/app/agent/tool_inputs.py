@@ -10,8 +10,6 @@ from app.business_time import TIME_FORMAT
 from app.monitoring_data import MAX_WINDOW_DAYS
 
 _MAX_SAMPLE_TIMES = 6
-# 天气单次跨度与位移小时级取数上限一致（一年），一次即可取得与位移窗口对应的天气，不必分段反复调用。
-# Open-Meteo 历史接口实测一次返回 366 天逐日资料和逐小时降水。
 _MAX_WEATHER_DAYS = MAX_WINDOW_DAYS["hourly"]
 _TIME_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
 

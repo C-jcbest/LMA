@@ -136,7 +136,6 @@ class ComputeTests(AgentToolTestCase):
         self.assertEqual(json.loads(results["c1"].content)["result"], {"sum": 2.0, "missing": 1})
 
     async def test_dates_formatting_and_provided_module_imports_work(self):
-        # 真实模型评测中出现过：strftime 与 numpy 归约会隐式导入内部模块，日期结果曾无法序列化。
         results = await self.run_calls(
             call("d1", "displacement"),
             call("c1", "compute", {"description": "按天取北向最大值", "inputs": [evidence_id("d1")], "code": (
@@ -151,7 +150,6 @@ class ComputeTests(AgentToolTestCase):
         value = json.loads(results["c1"].content)["result"]
         self.assertEqual((value["first_day"], value["label"]), ("2026-10-01", "10-01 00:00"))
         self.assertEqual(value["days"]["index"], ["2026-10-01", "2026-10-02", "2026-10-03"])
-        # 中间打印只回给模型，不进入展示依据。
         self.assertEqual(json.loads(results["c1"].content)["printed"], "rows 5\n")
         self.assertNotIn("printed", results["c1"].artifact["data"])
 

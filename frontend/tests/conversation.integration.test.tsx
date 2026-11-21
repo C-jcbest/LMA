@@ -71,10 +71,8 @@ describe('会话关键路径集成回归', () => {
     expect(screen.getByRole('table', { name: '前后两段比较' })).toBeVisible();
     expect(screen.getByText('同组共同时段')).toBeVisible();
     expect(screen.getByText('测点B')).toBeVisible();
-    // 缺失速度显示为“—”，不显示为 0。
     expect(screen.getAllByText('—（描述）').length).toBeGreaterThanOrEqual(4);
     expect(screen.queryByText('0.00')).toBeNull();
-    // 台阶候选只展示数值事实，之后的缺测单独标注，不出现服务端判定标签。
     const steps = screen.getByRole('table', { name: '台阶候选' });
     expect(within(steps).getByText('+8.0')).toBeVisible();
     expect(within(steps).getByText('+7.6')).toBeVisible();
@@ -196,16 +194,12 @@ it('P0-4: decodeToolArtifact 严格验证 version 1 规范与 artifactKind 匹�
     status: 'success',
   });
 
-  // 2. kind 与注册工具不匹配时拒绝
   expect(decodeToolArtifact('station_list', { ...validEnvelope, kind: 'weather' })).toBeUndefined();
 
-  // 3. 非 version 1 拒绝
   expect(decodeToolArtifact('station_list', { ...validEnvelope, version: 2 })).toBeUndefined();
 
-  // 4. 非法 status 拒绝
   expect(decodeToolArtifact('station_list', { ...validEnvelope, status: 'unknown' })).toBeUndefined();
 
-  // 5. 传统无 envelope 结构拒绝
   expect(decodeToolArtifact('station_list', { stations: [] })).toBeUndefined();
   expect(decodeToolArtifact('station_list', 'not an object')).toBeUndefined();
   expect(decodeToolArtifact('station_list', null)).toBeUndefined();
@@ -247,7 +241,6 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
     value: { ...window.location, reload: reloadSpy },
   });
 
-  // 局部组件级 ErrorBoundary
   const onReload = vi.fn();
   render(
     <ErrorBoundary level="component" onReload={onReload}>
@@ -262,7 +255,6 @@ it('ErrorBoundary 不向用户展示 error.message，窗口级提供“刷新页
   fireEvent.click(screen.getByRole('button', { name: '隐藏' }));
   expect(screen.queryByText('该内容暂时无法显示')).not.toBeInTheDocument();
 
-  // 窗口级 ErrorBoundary
   render(
     <ErrorBoundary level="window">
       <ProblematicChild shouldThrow={true} />
@@ -289,7 +281,6 @@ it('计算结果中的嵌套字典展示为对比表和小表，不显示 JSON �
   }} />);
   expect(screen.queryByText(/\{"days"/)).toBeNull();
   const tables = screen.getAllByRole('table');
-  // 代码变量式键名整理成可读表头：下划线换成空格，末尾单位放进括号。
   expect(tables[0]).toHaveTextContent('first period');
   expect(tables[0]).toHaveTextContent('rain（mm）');
   expect(tables[0]).toHaveTextContent('286.3');

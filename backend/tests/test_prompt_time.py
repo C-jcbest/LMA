@@ -22,7 +22,6 @@ from app.business_time import BUSINESS_TZ, business_now
 
 class PromptTimeTests(unittest.TestCase):
     def test_thinking_options_map_provider_specific_params(self):
-        # DeepSeek Chat Completions
         self.assertEqual(
             models.thinking_options("deepseek", True),
             {"extra_body": {"thinking": {"type": "enabled"}}},
@@ -31,7 +30,6 @@ class PromptTimeTests(unittest.TestCase):
             models.thinking_options("deepseek", False),
             {"extra_body": {"thinking": {"type": "disabled"}}},
         )
-        # OpenAI Responses API
         self.assertEqual(
             models.thinking_options("openai", True, protocol="responses", vendor="openai"),
             {
@@ -51,7 +49,6 @@ class PromptTimeTests(unittest.TestCase):
                 "reasoning": None,
             },
         )
-        # DashScope Responses API (按百炼规范 effort=none)
         self.assertEqual(
             models.thinking_options("openai", True, protocol="responses", vendor="dashscope"),
             {
@@ -71,7 +68,6 @@ class PromptTimeTests(unittest.TestCase):
                 "reasoning": {"effort": "none"},
             },
         )
-        # DashScope Chat Completions (Qwen hybrid thinking extra_body.enable_thinking)
         self.assertEqual(
             models.thinking_options("openai", True, protocol="chat_completions", vendor="dashscope"),
             {"extra_body": {"enable_thinking": True}},
@@ -80,7 +76,6 @@ class PromptTimeTests(unittest.TestCase):
             models.thinking_options("openai", False, protocol="chat_completions", vendor="dashscope"),
             {"extra_body": {"enable_thinking": False}},
         )
-        # OpenAI Chat Completions (standard)
         self.assertEqual(
             models.thinking_options("openai", False, protocol="chat_completions", vendor="openai"),
             {},
@@ -169,7 +164,6 @@ class PromptTimeTests(unittest.TestCase):
                 factory.cache_clear()
                 with patch.object(module, "get_settings", return_value=settings):
                     llm = factory()
-                # DeepSeek 关闭思考必须显式 disabled，不能只靠“不传参数”。
                 self.assertEqual(llm.extra_body, {"thinking": {"type": "disabled"}})
         finally:
             for _, factory in factories:
@@ -232,7 +226,6 @@ class PromptTimeTests(unittest.TestCase):
             )
 
     def test_deepseek_adapter_only_used_for_main_tool_loop_with_thinking(self):
-        # 1. 主 Agent + DeepSeek + thinking=True + tool_loop=True -> DeepSeekThinkingChatModel
         with patch.object(models, "DeepSeekThinkingChatModel") as ds_adapter, \
              patch.object(models, "init_chat_model") as init_model:
             ds_adapter.return_value.profile = {"tool_calling": True}
@@ -248,7 +241,6 @@ class PromptTimeTests(unittest.TestCase):
             ds_adapter.assert_called_once()
             init_model.assert_not_called()
 
-        # 2. 主 Agent + DeepSeek + thinking=False + tool_loop=True -> 官方 init_chat_model
         with patch.object(models, "init_chat_model") as init_model, \
              patch.object(models, "DeepSeekThinkingChatModel") as ds_adapter:
             init_model.return_value.profile = {"tool_calling": True}
@@ -263,7 +255,6 @@ class PromptTimeTests(unittest.TestCase):
             self.assertIs(result, init_model.return_value)
             ds_adapter.assert_not_called()
 
-        # 3. 辅助角色 (tool_loop=False) + DeepSeek + thinking=True -> 官方 init_chat_model
         with patch.object(models, "init_chat_model") as init_model, \
              patch.object(models, "DeepSeekThinkingChatModel") as ds_adapter:
             init_model.return_value.profile = {}

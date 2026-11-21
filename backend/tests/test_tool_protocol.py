@@ -156,7 +156,6 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         data = MonitoringData(_SeriesCache(), lambda: platform)
         self.assertEqual((await data.resolve_station("scwm4")).station_uuid, "uuid-4")
         self.assertEqual((await data.resolve_station("SCWM 040")).station_uuid, "uuid-40")
-        # 有歧义或找不到时交给模型修正或请用户确认，不是取数失败。
         with self.assertRaises(ToolInputError):
             await data.resolve_station("scwm")
         with self.assertRaises(ToolInputError):
@@ -185,7 +184,6 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(message.artifact["data"]["points"], [])
         self.assertEqual(message.artifact["data"]["summary"]["n"]["count"], 0)
         self.assertEqual(json.loads(message.content)["quality"]["missing_samples"], 25)
-        # 位置与同组参照点只给界面绘制地图，不增加模型上下文。
         self.assertEqual(message.artifact["data"]["location"], {
             "group_name": "测试组", "latitude": 30.1, "longitude": 103.2, "coordinate_system": "WGS84",
             "group_stations": [{
@@ -290,7 +288,6 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         ])
         with patch.object(site, "_fetch_json", mock_fetch):
             message, _ = await self.run_tool(site.inspect_site_environment, {"station_name_or_uuid": "测试站"})
-        # 地形 503 时已取得的地质资料仍是可引用的依据，用 partial 标明缺失的地形。
         self.assertEqual(message.status, "success")
         self.assertEqual(message.artifact["status"], "partial")
         self.assertEqual(message.artifact["data"]["geology"]["name"], "泥盆系灰岩")
@@ -329,7 +326,6 @@ class ToolProtocolTests(unittest.IsolatedAsyncioTestCase):
         from app.monitoring_data import station_coordinates
         self.assertEqual(station_coordinates(station(latitude="120.5", longitude="30.2")), (30.2, 120.5))
         self.assertEqual(station_coordinates(station(latitude="30.2", longitude="120.5")), (30.2, 120.5))
-        # 两个值都在纬度范围内时无法判断是否颠倒，原样使用。
         self.assertEqual(station_coordinates(station(latitude="60", longitude="30")), (60.0, 30.0))
         self.assertEqual(station_coordinates(station(latitude="120", longitude="100")), (None, None))
 

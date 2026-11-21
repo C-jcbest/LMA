@@ -14,7 +14,6 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
   const { steps, numbers } = useContext(EvidenceContext);
   const { openEvidence } = useStationInspector();
   if (cardReferenceFromHref(href) !== null) {
-    // 卡片标记只应独占一段，由段落组件渲染；混在句中时不显示。
     return null;
   }
   if (!href?.startsWith('#evidence-')) {
@@ -23,7 +22,6 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
   const id = href.slice('#evidence-'.length);
   const citationNumber = numbers.get(id);
   const step = steps.find((item) => item.evidenceId === id && item.state === 'complete');
-  // 不存在或尚未收到的依据不生成跳转，避免暴露内部编号和伪造引用。
   if (!step || !citationNumber || (!step.stationId && !step.inlineEnvelope)) {
     return null;
   }
@@ -37,7 +35,6 @@ const EvidenceLink: FC<ComponentProps<'a'>> = ({ href, children, ...props }) => 
   );
 };
 
-/** 预处理插入的卡片标记独占一段，渲染为卡片而不是段落。 */
 const cardReferenceOfParagraph = (children: ReactNode): CardReference | null => {
   const nodes = Children.toArray(children);
   if (nodes.length !== 1 || !isValidElement<{ href?: string }>(nodes[0])) {
@@ -56,10 +53,6 @@ const Paragraph: FC<ComponentProps<'p'>> = ({ className, children, ...props }) =
 
 const components = { a: EvidenceLink, p: Paragraph };
 
-/**
- * 正文按依据第一次被引用的位置插入曲线、地图等卡片。
- * 一条回答可能有多段正文（工具调用前后各一段），更早段落已显示的卡片不再重复。
- */
 export const EvidenceMarkdown: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
   const text = useAuiState((state) => (state.part.type === 'text' ? state.part.text : ''));

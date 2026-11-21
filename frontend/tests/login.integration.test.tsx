@@ -50,7 +50,6 @@ describe('访问保护', () => {
     await userEvent.type(screen.getByLabelText('密码'), 'right');
     await userEvent.click(screen.getByRole('button', { name: '登录' }));
 
-    // 退出登录在导航底部的设置菜单里，菜单内容由浏览器测试覆盖（jsdom 里弹出层定位极慢）。
     expect(await screen.findByRole('button', { name: '设置' })).toBeInTheDocument();
     await waitFor(() => expect(mockClient.getLatestInspection).toHaveBeenCalled());
 

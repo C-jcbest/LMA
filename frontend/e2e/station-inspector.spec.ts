@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// 只替换 API 返回，页面、会话运行时、图表和布局均使用生产实现；数据为自动化测试数据。
 const session = {
   id: 'station-inspector', name: '测试分组巡检', archived: false,
   created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T01:00:00Z',
@@ -114,11 +113,9 @@ test('框选时间段后就地追问或放大，还原后恢复完整窗口', as
   await page.mouse.move(box.x + box.width * 0.7, box.y + 140, { steps: 8 });
   await page.mouse.up();
 
-  // 外观更新必须保留图表实例和用户正在核查的时间段。
   const selectionBar = inspector(page).getByRole('toolbar', { name: '所选时间段' });
   await expect(selectionBar.getByRole('button', { name: '问这段' })).toBeVisible();
   const originalCanvas = await canvas.elementHandle();
-  // 依据并排时侧栏收为导航条，导航条底部的设置菜单里仍可切换外观。
   await page.getByRole('navigation', { name: '快捷导航' }).getByRole('button', { name: '设置' }).click();
   await page.getByRole('menuitem', { name: /外观/ }).click();
   await page.getByRole('menuitemradio', { name: '深色' }).click();
@@ -134,14 +131,12 @@ test('框选时间段后就地追问或放大，还原后恢复完整窗口', as
 
   await selectionBar.getByRole('button', { name: '问这段' }).click();
   const input = page.getByRole('textbox', { name: '输入监测问题' });
-  // 追问对象作为标签挂在输入框上，草稿里只留用户自己写的话。
   await expect(input).toHaveValue('也看看东向变化');
   await expect(page.getByRole('list', { name: '追问对象' }).getByRole('listitem')).toHaveText([/^测试点 A · 11月\d+日/]);
   await expect(input).toBeFocused();
 
   await expect(selectionBar).toHaveCount(0);
 
-  // 放大是选区上的次要操作；放大后可还原。
   await page.mouse.move(box.x + box.width * 0.3, box.y + 140);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.7, box.y + 140, { steps: 8 });

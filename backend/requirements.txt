@@ -1,5 +1,3 @@
-# 运行时依赖：FastAPI 承载服务，LangGraph OSS 管理图与 checkpoint。
-# 版本固定；升级后需运行隔离数据库与浏览器回归。
 httpx==0.28.1
 pydantic==2.13.5
 pydantic-settings==2.15.0
@@ -18,8 +16,6 @@ langgraph-checkpoint-postgres==3.1.2
 psycopg[binary,pool]==3.3.3
 
 
-# compute 工具在子进程中对会话依据做表格计算（腾讯镜像可取得该版本）
 pandas==3.0.6
 
-# 巡检原型把 90 天位移画成图交给视觉模型初判（Agg 后端，内存内出图）
 matplotlib==3.11.1

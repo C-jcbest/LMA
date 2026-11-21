@@ -11,7 +11,6 @@ from app.agent.message_context import evidence_id, is_evidence
 class StationEvidence:
     station_name: str
     evidence_ids: list[str] = field(default_factory=list)
-    # 成功取得位移数据的窗口 (begin, end)，用于判断结论窗口是否有数据支撑。
     displacement_windows: list[tuple[str, str]] = field(default_factory=list)
     failed: bool = False
 
@@ -39,7 +38,6 @@ def evidence_by_station(messages: list[BaseMessage]) -> dict[str, StationEvidenc
             item.evidence_ids.append(identifier)
             if succeeded and data.get("points"):
                 item.displacement_windows.append((data["begin_time"], data["end_time"]))
-            # 同组对比中的测点也取得了同一窗口的数据。
             comparisons = data.get("comparisons", {})
             for other_uuid, other_name in comparisons.get("station_names", {}).items():
                 if other_uuid == data.get("station_uuid") or other_uuid in comparisons.get("failures", {}):

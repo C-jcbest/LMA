@@ -18,7 +18,6 @@ interface TooltipItem {
   dataIndex: number;
 }
 
-/** 逐日降雨柱状图：带 mm 坐标便于比对各天雨量，悬停或点按看当天数值，预报日用浅色。 */
 export default function RainfallChart({ days, height = 140, onAsk, askDisabled }: { days: readonly DailyRain[]; height?: number; onAsk?: (day: DailyRain) => void; askDisabled?: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);

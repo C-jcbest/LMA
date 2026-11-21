@@ -11,7 +11,6 @@ import httpx
 
 from app.beidou.schemas import GnssDataPoint, Station, StationGroup
 
-# SessionUUID 有效期 8 小时，提前一点刷新留出余量
 _SESSION_TTL_SECONDS = 8 * 3600
 _SESSION_REFRESH_AHEAD = 10 * 60
 
@@ -51,9 +50,6 @@ class BeidouClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    # ------------------------------------------------------------------
-    # 底层请求
-    # ------------------------------------------------------------------
 
     async def _post(self, path: str, payload: dict) -> dict:
         resp = await self._client.post(path, json=payload)
@@ -99,9 +95,6 @@ class BeidouClient:
             resp = await self._post(path, payload)
         return self._ensure_ok(resp)
 
-    # ------------------------------------------------------------------
-    # 业务接口
-    # ------------------------------------------------------------------
 
     async def get_station_groups(self) -> list[StationGroup]:
         """获取当前用户有权限访问的全部监测点分组。"""

@@ -12,7 +12,6 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import get_settings
 
-# 只创建当前使用的表；旧版本留下的调查目标、依据存证等表不再读写，也不在迁移中删除已有数据。
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS lma_sessions (
     id uuid PRIMARY KEY,
@@ -194,7 +193,6 @@ class SessionStorage:
     async def list(self, limit: int, offset: int, station_uuid: str | None = None, search: str | None = None) -> list[dict]:
         async with self.pool.connection() as connection:
             if search and search.strip():
-                # 按文字匹配而非 LIKE 通配符；从数据库全量记录中筛选后再分页。
                 query = search.strip()
                 cursor = await connection.execute(
                     """SELECT s.* FROM lma_sessions s
@@ -490,6 +488,5 @@ class SessionStorage:
 
 
 if __name__ == "__main__":
-    # Psycopg 的异步连接要求 Windows 使用 SelectorEventLoop。
     loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None
     asyncio.run(migrate_database(get_settings().database_uri), loop_factory=loop_factory)

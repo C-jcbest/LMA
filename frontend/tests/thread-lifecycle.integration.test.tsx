@@ -135,7 +135,6 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
     })());
     render(<App />);
     await waitFor(() => expect(screen.getByRole('textbox', { name: '输入监测问题' })).toBeEnabled());
-    // 本例验证连续到达的回答与错误；发送后直接观察UI，不让交互等待包住流式更新。
     fireEvent.change(screen.getByRole('textbox', { name: '输入监测问题' }), { target: { value: '查看近期变化' } });
     fireEvent.click(screen.getByRole('button', { name: '发送消息' }));
     expect(await screen.findByText('本次回答未完成，请重试。')).toBeInTheDocument();
@@ -149,7 +148,6 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       { id: 't-history-2', name: '会话 2', archived: false, created_at: '2026-09-18T11:00:00Z', updated_at: '2026-09-18T11:00:00Z' },
     ]);
 
-    // 1. 初始挂载：URL 带有 ?threadId=t-history-1
     window.history.replaceState(null, '', '?threadId=t-history-1');
     const pushStateSpy = vi.spyOn(window.history, 'pushState');
 
@@ -173,17 +171,13 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       </AssistantProvider>
     );
 
-    // 初始应正确从 URL 读取 t-history-1
     await waitFor(() => {
       expect(capturedAui.threads.getState().mainThreadId).toBe('t-history-1');
       expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-1');
     });
-    // 深链接目标不在首屏列表时，官方 switchToThread 会通过 adapter.fetch 精确加载。
     expect(mockClient.getSession).toHaveBeenCalledWith('t-history-1');
-    // 初始挂载读取 URL，不应重复触发 pushState
     expect(pushStateSpy).not.toHaveBeenCalled();
 
-    // 2. 在 assistant-ui 内部切换会话到 t-history-2
     await act(async () => {
       capturedAui.threads.switchToThread('t-history-2');
     });
@@ -192,10 +186,8 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       expect(screen.getByTestId('active-thread-id')).toHaveTextContent('t-history-2');
       expect(new URL(window.location.href).searchParams.get('threadId')).toBe('t-history-2');
     });
-    // 校验主动切换触发了 window.history.pushState
     expect(pushStateSpy).toHaveBeenCalledTimes(1);
 
-    // 3. 触发真实浏览器后退（window.history.back）通过 history 栈返回上一个会话
     await act(async () => {
       window.history.back();
     });
@@ -206,7 +198,6 @@ describe('AssistantProvider 与 App 组装 (P2)', () => {
       expect(capturedAui.threads.getState().mainThreadId).toBe('t-history-1');
     });
 
-    // 4. 前进应再次切回 t-history-2，且不会额外写入 history。
     await act(async () => {
       window.history.forward();
     });

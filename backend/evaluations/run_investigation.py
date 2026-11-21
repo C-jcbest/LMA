@@ -24,7 +24,6 @@ from app.monitoring_data import monitoring_scope
 from app.server.storage import SessionStorage, connection_pool, migrate_database
 from evaluations.fixtures import MonitoringFixture, NEW_STATION, STATION_A, STATION_B
 
-# 评测只用合成监测平台；天气和场地依赖外部服务，不绑定这些工具。
 _EVALUATION_TOOLS = [find_stations, get_displacement, compute, record_conclusions]
 
 
@@ -93,7 +92,6 @@ def check_deterministic_results(messages):
                     failures.append(f'{message.tool_call_id}/{axis} 净变化与原始首末值不一致')
             checked_metrics += 1
         comparisons = data.get('comparisons', {})
-        # snapshots 只含对比站，主站观测在 points 中。
         point_sets = [data['points'], *comparisons.get('snapshots', {}).values()]
         for axis, station_features in comparisons.get('common_period', {}).items():
             times_by_station = [

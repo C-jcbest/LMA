@@ -32,7 +32,6 @@ const formatTime = (value: string) => new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 }).format(new Date(value));
 
-/** 一次巡检的组件按服务端推送顺序挂在助手消息上；文字只是进度提示，汇总卡片已表达，不再重复显示。 */
 const LabAssistantMessage: FC = () => (
   <MessagePrimitive.Root className="flex flex-col">
     <MessagePrimitive.Parts
@@ -44,7 +43,6 @@ const LabAssistantMessage: FC = () => (
   </MessagePrimitive.Root>
 );
 
-/** 用户消息就是这次巡检的范围说明，显示为结果上方的一行标注。 */
 const LabUserMessage: FC = () => (
   <MessagePrimitive.Root className="mb-2 text-xs text-muted-foreground">
     <MessagePrimitive.Parts />
@@ -120,7 +118,6 @@ const LabContent: FC = () => {
   const scopes = useQuery({ queryKey: ['lab-scopes'], queryFn: ({ signal }) => client.listLabScopes(signal), staleTime: 5 * 60_000 });
   const history = useQuery({ queryKey: ['lab-inspections'], queryFn: ({ signal }) => client.listLabInspections(signal) });
 
-  // 一次巡检开始或结束时刷新最近记录。
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ['lab-inspections'] });
   }, [isRunning, queryClient]);
@@ -129,7 +126,6 @@ const LabContent: FC = () => {
   const [pendingStart, setPendingStart] = useState<{ id: string; scope: LabScope; label: string } | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
 
-  // 先在服务端建好这次巡检并切换过去，载入完成后再发出范围，巡检随之开始。
   const start = async (scope: LabScope, label: string) => {
     setStartError(null);
     try {
@@ -201,7 +197,6 @@ const LabContent: FC = () => {
   );
 };
 
-/** 生成式 UI 巡检的试验页：独立的 Runtime 和线程目录，不影响调查会话与正式巡检。 */
 export const InspectionLabPage: FC = () => {
   const client = useContext(LmaClientContext);
   if (!client) {
@@ -209,7 +204,6 @@ export const InspectionLabPage: FC = () => {
   }
   return (
     <section aria-label="巡检原型" className="h-full overflow-y-auto [scrollbar-gutter:stable]">
-      {/* 与调查会话的 Runtime 隔离：嵌套时官方线程目录会退化为外层会话的一部分。 */}
       <AuiProvider extends={null} config={AuiConfig({})}>
         <LabRuntimeProvider client={client}>
           <LabContent />

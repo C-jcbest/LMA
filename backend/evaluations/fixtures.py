@@ -66,7 +66,6 @@ class MonitoringFixture:
             moment += timedelta(hours=1)
         points = []
         while moment <= end:
-            # B每日缺三小时；A和新站末端单点突变，尚无保持证据。
             missing = station_uuid == STATION_B and moment.hour in {3, 4, 5}
             if self.scenario == 'quality_calendar':
                 missing = moment.hour % 2 == 1 or moment < start + timedelta(hours=2) or moment > end - timedelta(hours=2)

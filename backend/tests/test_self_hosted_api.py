@@ -275,7 +275,6 @@ class SelfHostedApiTests(unittest.TestCase):
         self.assertEqual([message["type"] for message in state["values"]["messages"]], ["human", "ai"])
         self.assertEqual(state["latest_run"]["status"], "success")
         self.assertEqual(state["values"]["messages"][-1]["content"], [{"type": "text", "text": "已完成分析"}])
-        # 新建服务及连接池，验证历史不依赖原进程的流式累积器。
         restarted_app = create_app(self.settings, self.agent_factory)
         options = {"loop_factory": asyncio.SelectorEventLoop} if sys.platform == "win32" else {}
         with TestClient(restarted_app, backend_options=options) as restarted:

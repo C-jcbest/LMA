@@ -7,10 +7,6 @@ import { formatMillimeters, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import { cn } from 'cn';
 
-/**
- * 服务端 push_ui_message 推送的组件。名称与 backend/app/inspection/lab.py 的 SUMMARY_COMPONENT、ROW_COMPONENT 对应；
- * props 随巡检进展分多次合并，每个字段都可能尚未到达。
- */
 export const SUMMARY_COMPONENT = 'inspection_summary';
 export const ROW_COMPONENT = 'station_row';
 
@@ -60,18 +56,15 @@ interface RowProps {
   vision?: VisionProps;
 }
 
-// 汇总卡片在最上；行按初筛结果分区，未完成的排在最后。用 CSS order 排序，组件各自更新时不搬动 DOM。
 const ROW_ORDER: Record<string, number> = { 建议调查: 1, 数据不足: 2, 暂无法分析: 2, 未见明显变化: 3 };
 const PENDING_ORDER = 4;
 
 const WINDOW_LABEL = { long: '90 天', recent: '近 7 天' } as const;
 const RECENT_PREFIX = '近期小时序列：';
 
-/** 线索句子里窗口已用标签表示，去掉重复的前缀。 */
 const triggerText = (trigger: Trigger) =>
   trigger.text.startsWith(RECENT_PREFIX) ? trigger.text.slice(RECENT_PREFIX.length) : trigger.text;
 
-/** 数据质量说明按类型合并成一句：异常跳点、缺测跨越只给数量，其余照原文。 */
 function qualitySummary(notes: readonly QualityNote[]): string {
   const spikes = notes.filter((note) => note.kind === 'spike').length;
   const gaps = notes.filter((note) => note.kind === 'gap').length;
@@ -129,7 +122,6 @@ const VisionVerdict: FC<{ vision: VisionProps }> = ({ vision }) => {
   if (vision.status === 'running') {
     return <p className="text-shimmer mt-2 text-sm">视觉模型判读曲线中…</p>;
   }
-  // 未配置视觉模型时汇总卡片已说明一次，不在每一行重复。
   if (vision.status === 'unavailable') {
     return null;
   }

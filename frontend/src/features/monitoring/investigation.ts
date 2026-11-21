@@ -100,9 +100,7 @@ export interface StationEvidence {
   stationType?: string | null;
   status?: string | null;
   group?: string | null;
-  /** WGS84 位置，来自测点资料或 GNSS 依据；用于在正文中绘制测点地图。 */
   coordinates?: { latitude: number; longitude: number };
-  /** 位移序列，同时带有该窗口的数值特征。 */
   series: Located<'gnss_series'>[];
   weather: Located<'weather'>[];
   site: Located<'site_environment'>[];
@@ -174,7 +172,6 @@ const coordinatesOf = (
   return { latitude: location.latitude, longitude: location.longitude };
 };
 
-/** 依据按测点归集，而不是按工具调用顺序：用户核查的对象是测点。 */
 export function collectStations(parts: readonly { type: string }[]): StationEvidence[] {
   const stations = new Map<string, StationEvidence>();
   const knownStations: StationArtifact[] = [];
@@ -238,9 +235,7 @@ export interface InvestigationStep {
   state: StepState;
   label: string;
   detail?: string;
-  /** 工具正常结束但没有可展示内容时的说明。 */
   notice?: string;
-  /** 能归到测点的步骤打开时间轴，其余结果在步骤内展开。 */
   stationName?: string;
   stationId?: string;
   inlineEnvelope?: ToolArtifactEnvelope;
@@ -282,13 +277,8 @@ const stepStateOf = (part: ToolPart, envelope: ToolArtifactEnvelope | undefined)
   return status.type === 'complete' ? 'complete' : 'running';
 };
 
-/** 不属于任何测点、直接显示结果内容的依据类型。 */
 const INLINE_KINDS = new Set(['station_list', 'weather', 'computation']);
 
-/**
- * 检查器打开不属于测点的依据时，按调用编号取回结果；标题沿用调查过程里的步骤说明。
- * 线程消息不带工具状态，这里只认已有结果的调用。
- */
 export function findInlineEvidence(parts: readonly { type: string }[], toolCallId: string) {
   const part = parts.filter(isToolCall).find((item) => item.toolCallId === toolCallId);
   const envelope = part ? decodeToolPart(part) : undefined;
@@ -298,10 +288,8 @@ export function findInlineEvidence(parts: readonly { type: string }[], toolCallI
   return { title: stepDetail(envelope) ?? '依据', envelope };
 }
 
-/** 结论登记是留档，完成后只体现为测点状态标签。 */
 const HIDDEN_WHEN_SETTLED = new Set([CONCLUSIONS_TOOL_NAME]);
 
-/** 步骤状态只来自官方 tool part，不由前端推测进度。 */
 export function buildSteps(
   parts: readonly PartState[],
   stations: readonly StationEvidence[],
@@ -310,7 +298,6 @@ export function buildSteps(
   const steps: InvestigationStep[] = [];
   const successfulRequests = new Set<string>();
 
-  // 只收起同工具、同参数且随后成功的尝试，不将其他时段或测点的成功当作恢复。
   for (const part of [...parts].reverse()) {
     if (part.type !== 'tool-call') continue;
     if (isToolFeedback(part.artifact)) continue;
@@ -327,7 +314,6 @@ export function buildSteps(
 
     if (HIDDEN_WHEN_SETTLED.has(part.toolName) && state !== 'running') continue;
 
-    // 仅供模型使用的工具答复（如基准站说明、以往结论）不进入用户可见的调查过程。
     if (state === 'complete' && part.artifact === null) continue;
 
     const name = envelope ? stationNameOf(envelope) : null;
@@ -373,7 +359,6 @@ const latestArtifact = <K extends ToolArtifactKind>(
   return undefined;
 };
 
-/** 登记被拒绝时没有 artifact，只有通过校验的结论会被取到。 */
 export const findConclusions = (parts: readonly { type: string }[]): ConclusionsArtifactData | undefined =>
   latestArtifact(parts, CONCLUSIONS_TOOL_NAME, 'conclusions');
 
@@ -394,7 +379,6 @@ const orderedConclusions = (conclusions: ConclusionsArtifactData) =>
 const hasRetainedEvidence = (step: InvestigationStep | undefined) =>
   Boolean(step?.envelope && (step.state === 'complete' || step.state === 'failed'));
 
-/** 导出提供可读的来源与观测范围，不保留只能在当前页面打开的内部锚点。 */
 export function evidenceDescription(step: InvestigationStep | undefined): string {
   const envelope = step?.envelope;
   if (!envelope || !hasRetainedEvidence(step)) {
@@ -453,7 +437,6 @@ export function evidenceDescription(step: InvestigationStep | undefined): string
   return [...new Set(details)].join('；');
 }
 
-/** 模型只登记了结论、没有写正文时，用结论补出可读文本。 */
 export function conclusionsToMarkdown(conclusions: ConclusionsArtifactData): string {
   return orderedConclusions(conclusions)
     .map((station) => `## ${station.station_name} · ${investigationStatusLabel(station.status)}\n\n${station.reason}（${station.begin_time} 至 ${station.end_time}）`)

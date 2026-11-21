@@ -31,14 +31,10 @@ const SPARKLINE_HEIGHT = 14;
 
 const isMessageRunning = (state: AssistantState) => state.message.status?.type === 'running';
 
-/** 一次调查常要一分钟以上，等过这么久后告诉用户可以先去做别的。 */
 const LEAVE_HINT_AFTER_SECONDS = 30;
 
-// 切换页面后同一条回答会重新挂载；开始时间按消息记住，用时不会从零重新计。
-// 刷新页面后接上的运行从重新打开时算起。
 const runStartTimes = new Map<string, number>();
 
-/** 只在回答运行中渲染；不放进 status 区域，每秒变化的数字不应反复打断读屏。 */
 const RunElapsed: FC<{ messageId: string }> = ({ messageId }) => {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -62,7 +58,6 @@ const RunElapsed: FC<{ messageId: string }> = ({ messageId }) => {
   );
 };
 
-/** 测点没有可绘制序列时不画趋势，用名称本身作入口。 */
 export const StationSparkline: FC<{ station: StationEvidence }> = ({ station }) => {
   const longest = [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data))[0];
   const values = useMemo(
@@ -193,10 +188,6 @@ const headlineOf = (steps: readonly InvestigationStep[], stationCount: number, i
     : `已完成 ${steps.length} 项查询`;
 };
 
-/**
- * 一条回答只呈现一次调查过程，放在回答顶部：先查数据、后写结论，长回答不用翻到底就能看到查了什么、有没有失败。
- * 过程收起时只有一行，生成中高度基本不变，不会推动正文。
- */
 export const InvestigationProcess: FC = () => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
@@ -249,7 +240,6 @@ export const InvestigationProcess: FC = () => {
             <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]/failures:rotate-90" aria-hidden />
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-1 text-sm text-muted-foreground">
-            {/* 每项一行：先写缺了哪类数据，原因放在同一行，过长时截断，完整内容在悬停提示里。 */}
             {failures.map((step) => {
               const message = step.envelope!.error!.message;
               const subject = step.detail ? `${step.label} · ${step.detail}` : step.label;
@@ -270,7 +260,6 @@ export const InvestigationProcess: FC = () => {
         </Collapsible>
       )}
 
-      {/* 有登记结论时用测点状态作为入口，否则列出涉及的测点；同一入口只出现一次。调查结束时入口淡入，不突然冒出来。 */}
       {!isRunning && conclusions && (
         <div className="animate-in fade-in duration-200">
           <ConclusionStatusStrip conclusions={conclusions} />
@@ -312,7 +301,6 @@ export const InvestigationProcess: FC = () => {
   );
 };
 
-/** 还没有任何工具调用时的等待提示；有调查过程后由过程行承担。 */
 export const InvestigationIndicator: FC = () => {
   const messageId = useAuiState((state) => state.message.id);
   const hasToolCall = useAuiState((state) => state.message.parts.some((part) => part.type === 'tool-call'));

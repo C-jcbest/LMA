@@ -21,7 +21,6 @@ export interface SessionState {
 
 export type Screening = '建议调查' | '未见明显变化' | '数据不足' | '暂无法分析';
 
-/** 结构化初筛线索，与后端 inspection/screening.py 的 Finding 一致。 */
 export interface ScreeningFinding {
   kind: 'trend' | 'acceleration' | 'gap_jump' | 'tail_step' | 'held_step' | 'spike' | 'common_spike' | 'gap' | 'data';
   role: 'trigger' | 'quality';
@@ -30,7 +29,6 @@ export interface ScreeningFinding {
   window: 'long' | 'recent' | null;
   value_mm: number | null;
   days: number | null;
-  /** 跳变类线索的观测时刻。 */
   time?: string | null;
 }
 
@@ -61,7 +59,6 @@ export interface LatestInspection {
 }
 
 export type TimelineDays = 7 | 30 | 90;
-/** 测点页时间窗口：截至现在的预设天数，或自定义起止日期（YYYY-MM-DD，含当天）。 */
 export type StationWindow = { days: TimelineDays } | { begin: string; end: string };
 
 const windowQuery = (window: StationWindow) => (
@@ -73,10 +70,8 @@ export interface StationDirectoryEntry {
   station_name: string;
   group_name: string;
   station_type: string | null;
-  /** WGS84；可判定的经纬度颠倒已由服务端纠正，无效时为 null。 */
   latitude: number | null;
   longitude: number | null;
-  /** 平台状态不是“正常”时给出（离线、告警、故障）。 */
   platform_status: string | null;
 }
 
@@ -95,12 +90,10 @@ export interface StationTimeline {
   station_uuid: string;
   station_name: string;
   group_name: string;
-  /** 基准站等没有形变序列的测点为 null。 */
   series: GnssArtifactData | null;
   records: StationRecord[];
 }
 
-/** 测点页的逐日降雨与强降雨前后位移速率（服务端 app/rainfall.py）。 */
 export interface StationRainfall {
   daily: Array<{ date: string; value: number | null }>;
   events: RainEvent[];
@@ -134,7 +127,6 @@ export interface LabInspection {
   finished_at: string | null;
 }
 
-/** LangGraph push_ui_message 的组件消息；props 由各组件自行校验。 */
 export interface LabUIMessage {
   type: 'ui';
   id: string;
@@ -157,7 +149,6 @@ export const setStoredApiUrl = (url: string) => {
   if (!import.meta.env.PROD) localStorage.setItem(STORAGE_KEY_CONFIG, url);
 };
 
-/** 任一接口返回 401（未登录或登录过期）时广播，由应用入口切回登录页。 */
 export const UNAUTHORIZED_EVENT = 'lma:unauthorized';
 
 export interface AuthSession {
@@ -187,7 +178,6 @@ export class LmaClient {
     return (await this.request('/auth/session', { signal: AbortSignal.timeout(10000) })).json();
   }
 
-  /** 账号或密码错误时抛出服务端的中文说明；登录接口的 401 不广播为“登录过期”。 */
   async login(username: string, password: string): Promise<void> {
     const response = await fetch(`${this.apiUrl.replace(/\/$/, '')}/auth/login`, {
       method: 'POST',
@@ -327,7 +317,6 @@ export class LmaClient {
     yield* readRunEvents(response);
   }
 
-  /** 刷新后接回仍在进行的原型巡检；没有进行中的巡检时直接结束。 */
   async *joinLabRun(id: string, signal: AbortSignal): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
     const response = await this.request(`/lab/inspections/${encodeURIComponent(id)}/runs/active`, { signal });
     if (response.status === 204) return;
@@ -359,7 +348,6 @@ export class LmaClient {
     }
   }
 
-  /** 刷新或重新打开会话后接回服务端仍在进行的调查；没有进行中的调查时直接结束。 */
   async *joinRun(id: string, signal: AbortSignal): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
     try {
       const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs/active`, { signal });

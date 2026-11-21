@@ -108,7 +108,6 @@ class GnssStationLocationArtifact(ArtifactModel):
     latitude: float | None = None
     longitude: float | None = None
     coordinate_system: Literal["WGS84"] = "WGS84"
-    # 同组其他测点只作地图上的位置参照，不是本次取得的位移依据。
     group_stations: list[GroupStationArtifact] = Field(default_factory=list)
 
 
@@ -239,11 +238,9 @@ class WeatherArtifactData(ArtifactModel):
     rain_summary: RainSummaryArtifact | None = None
     wind_summary: WindSummaryArtifact | None = None
     history: WeatherSeriesArtifact | None = None
-    # 当天逐小时降水：已过去的小时来自当前观测，之后为预报。
     today_hourly: WeatherHourlyArtifact | None = None
     forecast: WeatherSeriesArtifact | None = None
     source: WeatherSourceArtifact | None = None
-    # 强降雨过程及前后位移速率；只在 rain_response 请求时给出。
     rain_events: list["RainEventArtifact"] | None = None
     rain_threshold_mm: float | None = None
 

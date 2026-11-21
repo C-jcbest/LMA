@@ -33,21 +33,16 @@ export interface MapStation {
   stationType: string | null;
   latitude: number;
   longitude: number;
-  /** 最新水平位移（mm）：有固定参考时为累计位移，否则为本窗口变化；没有序列时为 null。 */
   northMillimeters: number | null;
   eastMillimeters: number | null;
   cumulative: boolean;
-  /** 场地依据给出的下坡方向方位角；没有查询场地环境时为 null。 */
   downslopeAzimuth: number | null;
-  /** 最长窗口的水平位移轨迹，用于时间回放。 */
   track: HorizontalSample[];
   status: string | null;
   reason: string | null;
-  /** 状态色对应的 CSS 变量名，没有调查状态时为中性色。 */
   colorToken: string;
 }
 
-/** 同组未取得位移的测点，只作位置参照。 */
 export interface ReferenceStation {
   id: string;
   name: string;
@@ -127,7 +122,6 @@ function createPopupNode(station: MapStation, selectLabel: string, onSelect: (id
   }, container);
 }
 
-/** 回放的时间轴是各测点轨迹时刻的并集；每个测点取不晚于当前时刻的最后一个样本。 */
 function playbackTimeline(stations: readonly MapStation[]) {
   return [...new Set(stations.flatMap((station) => station.track.map((sample) => sample.time)))].sort();
 }
@@ -147,7 +141,6 @@ export default function StationMap({ stations, references = [], onSelect, select
   stations: readonly MapStation[];
   references?: readonly ReferenceStation[];
   onSelect: (id: string) => void;
-  /** 测点弹窗里的跳转按钮文字：回答里打开依据，分组概览里进入测点页。 */
   selectLabel?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -166,7 +159,6 @@ export default function StationMap({ stations, references = [], onSelect, select
   const lastFrame = timeline.length - 1;
   const [frame, setFrame] = useState(lastFrame);
   const [isPlaying, setIsPlaying] = useState(false);
-  // 回放用全程最大位移定箭头比例，箭头随时间变长才能看出变化。
   const largestOverTime = useMemo(() => Math.max(0, ...stations.flatMap((station) => (
     isBaseStation(station) ? [] : station.track.map((sample) => Math.hypot(sample.north, sample.east))
   ))), [stations]);
@@ -194,7 +186,6 @@ export default function StationMap({ stations, references = [], onSelect, select
       resizeEnable: true,
       dragEnable: true,
       touchZoom: true,
-      // 位移箭头以屏幕正上方为北，保持地图北向上。
       rotateEnable: false,
     });
     map.addControl(new sdk.ToolBar({ position: 'RB' }));
@@ -282,14 +273,12 @@ export default function StationMap({ stations, references = [], onSelect, select
       layersRef.current = null;
       markerNodesRef.current.clear();
     };
-    // 3D 开关需要重建地图；底图和道路切换在下面的 effect 里就地完成。
   }, [stations, references, sdk, layerSelection.terrain3d, selectLabel]);
 
   useEffect(() => {
     layersRef.current?.select(layerSelection);
   }, [layerSelection]);
 
-  // 回放：把每个测点的箭头和标签更新到当前时刻；回到末帧时与静态显示一致。
   useEffect(() => {
     if (timeline.length < 2 || frame < 0) {
       return;
@@ -322,7 +311,6 @@ export default function StationMap({ stations, references = [], onSelect, select
       setIsPlaying(false);
       return;
     }
-    // 无论轨迹多长，一次完整回放约 100 帧。
     const step = Math.max(1, Math.ceil(timeline.length / PLAYBACK_FRAMES));
     const timer = window.setTimeout(() => setFrame(Math.min(lastFrame, frame + step)), PLAYBACK_INTERVAL_MS);
     return () => window.clearTimeout(timer);
@@ -365,7 +353,6 @@ export default function StationMap({ stations, references = [], onSelect, select
           </span>
         </div>
       )}
-      {/* 图例只列地图上实际出现的符号；坡向精度等限定写在测点弹窗里。 */}
       <ul aria-label="地图图例" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <li className="inline-flex items-center gap-1.5">
           <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden><path d="M8 14V3M8 3l-4 4M8 3l4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>

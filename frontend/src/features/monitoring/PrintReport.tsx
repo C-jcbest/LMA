@@ -31,7 +31,6 @@ import {
 
 echarts.use([CustomChart, LineChart, GridComponent, LegendComponent, MarkAreaComponent, MarkLineComponent, MarkPointComponent, SVGRenderer]);
 
-/** 打印固定用浅色：纸面不跟随界面深色主题。数值与设计规范的浅色 Token 一致。 */
 const PRINT_COLORS: ChartColors = {
   text: 'hsl(240 10% 8%)',
   mutedText: 'hsl(240 4% 42%)',
@@ -62,7 +61,6 @@ const formatTime = (value: Date) => new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 }).format(value);
 
-/** 位移依据的数据截止：最后一个至少有一个方向有效的观测时刻。 */
 function lastObservation(data: GnssArtifactData): string | null {
   for (let index = data.points.length - 1; index >= 0; index -= 1) {
     const point = data.points[index]!;
@@ -84,7 +82,6 @@ function dataCutoffOf(envelope: ToolArtifactEnvelope): string | null {
   }
 }
 
-/** 正文里的引用编号印成方括号数字，与文末依据说明对应；没有对应依据的引用不印。 */
 const PrintCitation: FC<ComponentProps<'a'> & { numbers: Map<string, number> }> = ({ href, children, numbers, ...props }) => {
   if (!href?.startsWith('#evidence-')) {
     return <a {...props} href={href}>{children}</a>;
@@ -119,7 +116,6 @@ const PrintSeriesChart: FC<{ station: StationEvidence | undefined; data: GnssArt
   return <div ref={containerRef} style={{ width: CHART_WIDTH, height }} />;
 };
 
-/** 测点位置示意：只画点位、状态色与水平位移方向，不依赖地图底图，打印稳定。 */
 const PrintStationMap: FC<{ stations: readonly StationEvidence[]; conclusions: ReadonlyMap<string, { status: string; reason: string }> }> = ({ stations, conclusions }) => {
   const { stations: located, references } = mapContentOf(stations, conclusions);
   if (located.length === 0) {
@@ -175,7 +171,6 @@ const PrintStationMap: FC<{ stations: readonly StationEvidence[]; conclusions: R
             <>
               <line x1={x} y1={y} x2={x + Math.sin(radians) * length} y2={y - Math.cos(radians) * length}
                 stroke={PRINT_COLORS.text} strokeWidth="1.6" markerEnd="url(#print-arrow)" />
-              {/* 数值写在箭头的另一侧，避免与箭头重叠。 */}
               <text x={x + 8} y={Math.cos(radians) < 0 ? y - 10 : y + 18} fontSize="10" fill={PRINT_COLORS.mutedText}>
                 {`${magnitude.toFixed(1)} mm · ${directionName(azimuth)}`}
               </text>
@@ -200,10 +195,6 @@ interface Figure {
   data: GnssArtifactData;
 }
 
-/**
- * 可打印的调查材料：结论、正文、附图与依据说明。只读本条回答已有的依据，不重新取数；
- * 不印调查过程、逐点数据、计算代码和交互控件。渲染完成后调用浏览器打印，可另存为 PDF。
- */
 const PrintReportContent: FC<{ onDone: (error?: boolean) => void }> = ({ onDone }) => {
   const reportRef = useRef<HTMLElement>(null);
   const parts = useAuiState((state) => state.message.parts);
@@ -321,7 +312,6 @@ const PrintReportContent: FC<{ onDone: (error?: boolean) => void }> = ({ onDone 
   );
 };
 
-/** 报告在视口外以固定纸面宽度渲染。 */
 export const PrintReport: FC<{ onDone: (error?: boolean) => void }> = ({ onDone }) => createPortal(
   <div className="print-report" aria-hidden>
     <PrintReportContent onDone={onDone} />

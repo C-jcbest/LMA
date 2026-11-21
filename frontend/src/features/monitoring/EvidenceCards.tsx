@@ -40,7 +40,6 @@ const StationMap = lazy(() => import('./StationMap'));
 
 const CARD_KINDS = new Set(['gnss_series', 'computation', 'weather', 'site_environment']);
 
-/** 能在正文中显示卡片的依据：成功取得且有可展示内容。 */
 export const hasEvidenceCard = (step: InvestigationStep) =>
   step.state === 'complete' && Boolean(step.evidenceId) && step.notice === undefined
   && step.envelope !== undefined && CARD_KINDS.has(step.envelope.kind);
@@ -51,7 +50,6 @@ const STATUS_COLOR_TOKENS: Record<string, string> = {
   未见明显变化: '--status-normal',
 };
 
-/** 场地依据里该测点的下坡方向；只有以它为中心查询过场地环境时才有。 */
 const downslopeAzimuthOf = (station: StationEvidence) => {
   for (const site of [...station.site].reverse()) {
     const aspect = site.data.terrain?.aspect_degrees;
@@ -62,7 +60,6 @@ const downslopeAzimuthOf = (station: StationEvidence) => {
   return null;
 };
 
-/** 同组但本次没有取得位移的测点，作为地图上的位置参照；单测点调查时尤其需要。 */
 const referenceStationsOf = (stations: readonly StationEvidence[]): ReferenceStation[] => {
   const evidenceIds = new Set(stations.map((station) => station.uuid ?? station.id));
   const references = new Map<string, ReferenceStation>();
@@ -93,7 +90,6 @@ export interface MapContent {
   references: ReferenceStation[];
 }
 
-/** 有位置的调查测点画在地图上，同组其他测点作灰色参照。 */
 export const mapContentOf = (
   stations: readonly StationEvidence[],
   conclusionsByStation: ReadonlyMap<string, { status: string; reason: string }>,
@@ -125,7 +121,6 @@ export const mapContentOf = (
   return { stations: mapStations, references: referenceStationsOf(located) };
 };
 
-/** 卡片进入视口附近才挂载图表或地图，长对话不会一次创建几十个画布。 */
 const WhenVisible: FC<{ minHeight: number; children: ReactNode }> = ({ minHeight, children }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -157,16 +152,11 @@ interface CardShellProps {
   children: ReactNode;
 }
 
-/**
- * 依据卡片是正文的附图：标题行整体可以收起，放大入口只在悬停或聚焦时出现，平时只看到标题和图。
- * 卡片紧跟引用它的段落，编号已在句末，标题行不再重复。
- */
 const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true }) => {
   const [isOpen, setIsOpen] = useState(defaultExpanded);
   return (
     <Collapsible asChild open={isOpen} onOpenChange={setIsOpen}>
     <figure data-slot="evidence-card" className="evidence-card not-prose">
-      {/* 卡片内容左右留白一致；标题行的图标按钮自带内边距，向右伸出一点，让图标与卡片边缘的距离和左侧标题相近。 */}
       <figcaption className="-me-1.5 flex items-center gap-1">
         <CollapsibleTrigger className="group/card flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           <span className="min-w-0 flex-1 truncate">
@@ -196,7 +186,6 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
   const isThreadRunning = useAuiState((state) => state.thread.isRunning);
   const colors = useChartColors();
   const data = envelope.data;
-  // 流式输出时每个字都会重建依据数组；按依据编号判断内容是否变化，避免逐字重绘图表。
   const weatherKey = station.weather.map((item) => item.toolCallId).join();
   const weather = useMemo(() => station.weather.map((item) => item.data), [weatherKey]);
   const rainfall = useMemo(
@@ -207,7 +196,6 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
   const narrow = useMediaQuery('(max-width: 599px)');
   const option = useMemo(() => {
     const full = buildTimelineOption({ data, rainfall, peers: [], mode: 'components' }, colors) as Record<string, unknown>;
-    // 正文里不缩放：去掉底部滑块并收回它的空间，悬停读数、图例开关和框选追问保留。
     const { dataZoom, ...inline } = full;
     return {
       ...inline,
@@ -293,7 +281,6 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
     const conclusions = findConclusions(parts);
     return new Map((conclusions?.stations ?? []).map((item) => [item.station_uuid, { status: item.status, reason: item.reason }]));
   }, [parts]);
-  // 地图只在测点、位置、变化或状态改变时重建，流式输出不触发重绘。
   const mapKey = JSON.stringify(mapContentOf(stations, conclusionsByStation));
   const { stations: mapStations, references } = useMemo(() => JSON.parse(mapKey) as MapContent, [mapKey]);
   if (mapStations.length === 0) {
@@ -315,7 +302,6 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
   );
 };
 
-/** 正文中依据卡片的入口：按卡片编号找到本条回答里的依据。 */
 export const EvidenceCard: FC<{ cardId: string; besideTable: boolean }> = ({ cardId, besideTable }) => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
@@ -334,12 +320,10 @@ export const EvidenceCard: FC<{ cardId: string; besideTable: boolean }> = ({ car
   const onOpen = () => openEvidence({ messageId, stationId: step.stationId, toolCallId: step.toolCallId });
   const numbers = evidenceNumbers(parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n\n'));
   const citationNumber = numbers.get(cardId);
-  // 同一测点的额外窗口先显示标题，避免多张相似曲线打断阅读；用户仍可独立展开。
   const hasEarlierSeries = step.envelope?.kind === 'gnss_series' && steps.some((candidate) => (
     candidate.stationId === step.stationId && candidate.envelope?.kind === 'gnss_series'
     && (numbers.get(candidate.evidenceId ?? '') ?? Infinity) < (citationNumber ?? Infinity)
   ));
-  // 正文已经用表格列出计算结果时，计算卡片只留标题行供核对，不再展开第二张表。
   const isComputationBesideTable = besideTable && step.envelope?.kind === 'computation';
   return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries && !isComputationBesideTable} />;
 };

@@ -10,15 +10,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# 决策记录和验收报告保存的是历史，允许出现已删除的名称。
 HISTORY_DIRECTORIES = ("docs/decisions/", "docs/reviews/")
 RETIRED_TERMS_FILE = ROOT / "ops" / "retired-terms.txt"
-# 本文件和名单本身必然包含这些名称。
 RETIRED_TERM_EXEMPT = {"ops/retired-terms.txt", "ops/check_docs.py"}
-# 已删除名称在现行文档、提示词和源码里都不应再出现。
 RETIRED_TERM_SCOPES = (".md", ".py", ".ts", ".tsx", ".css", ".yml", ".example")
 
-# 每次对话都会加载的指令文件和提示词，长度直接占用上下文；超出时先合并或删除旧规则，再加新的。
 SIZE_LIMITS = {
     "AGENTS.md": ("lines", 100),
     "backend/AGENTS.md": ("lines", 40),
@@ -91,7 +87,6 @@ def oversized_files() -> list[str]:
 
 
 def main() -> int:
-    # Windows 控制台默认 GBK，中文提示会乱码。
     sys.stdout.reconfigure(encoding="utf-8")
     files = tracked_files()
     problems = broken_links(files) + retired_term_mentions(files) + oversized_files()

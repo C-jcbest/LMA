@@ -31,17 +31,13 @@ _ACCELERATION_RATIO = 2.0
 _MIN_DIRECTION_CONSISTENCY = 0.7
 _DIRECTION_LAG_POINTS = 7
 _STEP_PERSISTENCE_POINTS = 5
-# 跳变后在新位置至少连续观测到这么久，才算“保持”并作为调查理由；更短的只是少量数据，按数据质量记录，
-# 留给后续巡检确认。这里只看是否保持，不按量级判定成因：长时间保持可能是坡体变形、基准或设备变化等，需要人调查。
 _MIN_HOLD_DAYS = 1.0
-# 工程保护值：序列异常平滑时避免把极小的波动当作显著变化，不代表形变判据。
 _NOISE_FLOOR_MM = 0.5
 
 _MILLIMETERS_PER_METER = 1000.0
 _ROBUST_SIGMA_FACTOR = 1.4826
 _MIN_COMMON_MODE_STATIONS = 3
 _COMMON_MODE_SHARE = 0.6
-# 同组至少这么多测点在同一小时出现跳点，才提示共同原因；分组只有两三个测点也能发现。
 _MIN_COMMON_SPIKE_STATIONS = 2
 _MAX_COMMON_SPIKE_HOURS_LISTED = 3
 
@@ -53,7 +49,6 @@ class AxisSeries:
     days: list[float]
     values: list[float]
     cadence_days: float = 1.0
-    # days 的零点；用于把跳变位置换回观测时刻。
     start: datetime | None = None
 
 
@@ -74,7 +69,6 @@ class Finding:
     window: Window | None = None
     value_mm: float | None = None
     days: float | None = None
-    # 跳变类线索落在新位置的第一个观测时刻（业务时区），用于比对同组测点是否同一时刻跳变。
     time: str | None = None
 
 
@@ -85,7 +79,6 @@ class ScreeningResult:
     metrics: dict = field(default_factory=dict)
     trend: list[float | None] = field(default_factory=list)
     trend_directions: dict[str, int] = field(default_factory=dict)
-    # 结构化线索放在最后，已有按位置构造的调用不受影响。
     findings: list[Finding] = field(default_factory=list)
 
 
@@ -163,7 +156,6 @@ def _step_hold(series: AxisSeries, index: int, step: float, adjacent: Sequence[i
     last = index
     returned = False
     for position in range(index + 1, len(series.values)):
-        # 跳变本身可能跨越缺测；之后的观测必须连续，遇到新的缺测就停止计数。
         if position > index + 1 and position - 1 not in adjacent_steps:
             break
         if abs(series.values[position] - level) <= abs(step) / 2:
@@ -171,7 +163,6 @@ def _step_hold(series: AxisSeries, index: int, step: float, adjacent: Sequence[i
             break
         last = position
     points = last - index
-    # 从第一个落在新位置的观测算起，缺测期间不算保持。
     days = series.days[last] - series.days[index + 1] if points > 0 else 0.0
     return StepHold(points, days, returned)
 
@@ -234,7 +225,6 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
         add("gap", "quality", f"{name}存在缺测跨越，跨越差值不作为单步跳变或保持证据")
     for index, change in enumerate(steps):
         if index not in adjacent and abs(change) > _STEP_NOISE_MULTIPLE * noise:
-            # 变化发生在缺测期间，同样看缺测之后在新位置停留了多久。
             hold = _step_hold(series, index, change, adjacent)
             if _is_held(hold):
                 add("gap_jump", "trigger",
@@ -257,7 +247,6 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
                     f"{name}出现约 {largest:+.1f} mm 的台阶，已保持约 {_duration_text(hold.days)}{ending}，成因需人工调查",
                     largest, held_days)
             elif hold.returned:
-                # 跳出去又很快回到原水平，形变通常不会这样往返；按数据质量处理，不作为位移线索。
                 add("spike", "quality", f"{name}异常跳点约 {largest:+.1f} mm，随后恢复，按数据质量处理", largest,
                     time=time_at(largest_index + 1))
             else:
@@ -389,7 +378,6 @@ def screen_station(
     trend = [] if history_insufficient else _horizontal_trend(series["n"], series["e"])
     triggers = [finding for finding in findings if finding.role == "trigger"]
     notes = [finding for finding in findings if finding.role == "quality"]
-    # 刚出现、尚未确认是否保持的跳变不能算“未见明显变化”，列为待核查，下次巡检再看。
     unconfirmed_steps = [finding for finding in notes if finding.kind in ("tail_step", "gap_jump")]
     if triggers:
         screening: Screening = "建议调查"

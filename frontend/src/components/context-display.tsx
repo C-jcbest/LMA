@@ -191,13 +191,6 @@ type ContextSegment = {
   tokens: number;
 };
 
-// Whether a provider counts cached tokens inside inputTokens, or reasoning
-// inside outputTokens, differs by provider: OpenAI reports cached_tokens as a
-// subset of prompt_tokens, while Anthropic documents input_tokens as excluding
-// cache_read_input_tokens. Nothing in the usage contract says which is in hand,
-// so these are reported as the counts they are and none of them is given a
-// share of the bar, which stays the one reading that always holds: the
-// provider's own total against the window.
 const getContextSegments = (
   usage: TokenUsage | undefined,
 ): ContextSegment[] => {

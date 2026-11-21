@@ -17,12 +17,10 @@ from app.inspection.screening import theil_sen_slope
 
 HEAVY_RAIN_MM = 25.0
 RESPONSE_WINDOW_DAYS = 7
-# 7 天窗口至少要有这么多个观测才计算速率，避免一两个点决定结果。
 _MIN_RATE_POINTS = 4
 _MILLIMETERS_PER_METER = 1000.0
 _AXIS_NAMES = {"n": "北向", "e": "东向", "u": "垂直"}
 
-# 历史日降雨超过几天就不再变化；按坐标与日期范围缓存，同日重复浏览测点页不再请求上游。
 _CACHE_SECONDS = 6 * 3600
 _cache: dict[tuple, tuple[float, list[dict]]] = {}
 

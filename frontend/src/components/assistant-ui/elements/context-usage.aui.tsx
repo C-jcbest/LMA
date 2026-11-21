@@ -36,7 +36,6 @@ export const ContextUsageElement: FC<ContextUsageElementProps> = ({
     return null;
   }
 
-  // 历史压缩是自动的，用量只在接近上限、值得用户留意时出现。
   if (inputTokens / maxInputTokens < VISIBLE_USAGE_RATIO) {
     return null;
   }

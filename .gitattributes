@@ -1,7 +1,5 @@
-# Do not check whitespace errors inside patch files
 *.patch -whitespace
 
-# Keep Docker cache inputs and release scripts identical on Windows and Linux.
 /backend/Dockerfile text eol=lf
 /backend/requirements.txt text eol=lf
 /backend/.dockerignore text eol=lf
@@ -15,7 +13,6 @@
 /ops/*.py text eol=lf
 /.github/workflows/*.yml text eol=lf
 
-# Deployment archives contain runtime and build inputs, not development evidence.
 /.github export-ignore
 /docs export-ignore
 /backend/tests export-ignore

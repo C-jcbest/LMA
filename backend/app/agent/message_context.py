@@ -9,9 +9,7 @@ from app.business_time import BUSINESS_TIMEZONE, business_now
 from app.agent.tool_protocol import is_tool_feedback
 
 
-# 接口层写入、发送时并入快照的临时字段：用户提问时正在查看的测点。
 FOCUS_STATION_KEY = "lma_focus_station"
-# 用户消息 metadata 中的追问对象：图表上选中的测点时间段，由接口层校验后写入。
 ASK_TARGETS_KEY = "ask_targets"
 
 
@@ -37,7 +35,6 @@ def evidence_id(tool_call_id: str) -> str:
     return "E" + hashlib.sha1(tool_call_id.encode("utf-8")).hexdigest()[:6]
 
 
-# 结论登记是留档，不是可引用的观测依据。
 _NON_EVIDENCE_KINDS = {"conclusions"}
 
 
@@ -51,7 +48,6 @@ def is_evidence(message: BaseMessage) -> bool:
 
 
 def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
-    # 每条历史消息使用自身不可变的快照；不改 system prompt 或 checkpoint 正文。
     lines = [f"sent_at: {context['sent_at']}", f"timezone: {context['timezone']}"]
     if context.get("focus_station"):
         lines.append(f"focus_station: {context['focus_station']}")
@@ -65,7 +61,6 @@ def _with_message_context(message: HumanMessage, context: dict) -> HumanMessage:
         content = f"{metadata}\n\n{content}"
     else:
         content = [{"type": "text", "text": metadata}, *content]
-    # metadata 只供界面显示，其中的追问对象已经写进上面的上下文。
     kwargs = {
         key: value for key, value in message.additional_kwargs.items()
         if key not in {"lma_context", "metadata"}
@@ -91,8 +86,6 @@ def model_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
         if isinstance(message, HumanMessage) and context is not None:
             projected.append(_with_message_context(message, context))
         elif isinstance(message, AIMessage) and message.invalid_tool_calls:
-            # 无法解析的调用未执行，不能发给供应商成为没有结果配对的工具请求。
-            # 原始输出仍留在checkpoint；模型只收到受控纠错说明及可执行的调用。
             notice = '上一条回复包含无法解析的工具参数，该部分调用未执行。请重新生成合法JSON参数，或依据已有证据直接回答。'
             content = message.content
             if isinstance(content, str):

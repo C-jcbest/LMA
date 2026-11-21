@@ -64,8 +64,6 @@ class RedactingSpanExporter(OTLPSpanExporter):
         return value
 
     def export(self, spans):
-        # Langfuse 的属性 masking hook 不覆盖 OTEL 异常事件和 status.description。
-        # 创建发送副本，不改写业务异常、原始 span 或其他观察系统收到的内容。
         sanitized = []
         for span in spans:
             events = [Event(
@@ -126,7 +124,6 @@ class AgentTracing:
             input=input,
         ) as observation:
             with propagate_attributes(session_id=session_id, trace_name="lma-investigation"):
-                # Handler 保存正在执行的观察记录；每轮创建，避免并发会话共享可变状态。
                 run_config["callbacks"] = [
                     *config.get("callbacks", []),
                     CallbackHandler(public_key=self.public_key),

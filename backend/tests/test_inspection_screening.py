@@ -55,7 +55,6 @@ class ScreeningTests(unittest.TestCase):
         for days in (90, 30):
             with self.subTest(days=days):
                 result = screen(daily(lambda i: 0, days=days), recent)
-                # 只有少量数据：不作为调查理由，但也不能算未见变化，列为待核查等下次巡检确认。
                 self.assertEqual(result.screening, "数据不足")
                 self.assertEqual(kinds(result, "trigger"), [])
                 self.assertIn("tail_step", kinds(result, "quality"))
@@ -86,7 +85,6 @@ class ScreeningTests(unittest.TestCase):
         held_result = screen(daily(lambda i: 0), held)
         self.assertEqual(held_result.screening, "建议调查")
         step = next(finding for finding in held_result.findings if finding.kind == "held_step")
-        # 只陈述保持了多久，成因留给人调查，不按量级下结论。
         self.assertGreaterEqual(step.days, 2.9)
         self.assertIn("成因需人工调查", step.text)
 
@@ -169,7 +167,6 @@ class ScreeningTests(unittest.TestCase):
             points[index] = point(datetime.strptime(points[index].data_time, "%Y-%m-%d %H:%M:%S"), None)
         result = screen(points)
         self.assertEqual(result.metrics["valid_days"], 80)
-        # 缺测日不进入趋势，不会被当作 0 位移。
         self.assertEqual(len(result.trend), 80)
 
     def test_stale_recent_data_is_not_reported_as_stable(self):
@@ -235,7 +232,6 @@ class ScreeningTests(unittest.TestCase):
             self.assertEqual(common[0].role, "quality")
             self.assertIn("平台解算或基准站", common[0].text)
         self.assertFalse(any(finding.kind == "common_spike" for finding in alone.findings))
-        # 共同跳点只是数据质量提示，不改变调查优先级。
         self.assertTrue(all(result.screening == "未见明显变化" for result in shared))
 
 

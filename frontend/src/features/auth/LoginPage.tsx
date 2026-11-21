@@ -5,7 +5,6 @@ import { Input } from '@/components/ui/input';
 import { cn } from 'cn';
 import type { LmaClient } from '@/services/api';
 
-// 登录成功后先让卡片淡出，再切换到应用，避免整页瞬间替换。
 const EXIT_DURATION_MS = 200;
 
 export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; expired: boolean; onSuccess: () => void }) {

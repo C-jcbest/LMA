@@ -10,14 +10,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isScalar = (value: unknown): value is Scalar =>
   value === null || ['string', 'number', 'boolean'].includes(typeof value);
 
-/** 只含标量的平铺字典，例如一段时间的天数、雨量、最大日雨量。 */
 const isFlatRecord = (value: unknown): value is Record<string, Scalar> =>
   isRecord(value) && value.type === undefined && Object.values(value).every(isScalar);
 
-// 模型偶尔用代码变量写键名，如“北向速率_mm每天”；末段是单位时改写成“北向速率（mm/天）”。
 const UNIT_SUFFIX = /^(.+?)_((?:mm|cm|m|km|%|天|小时|h|d)(?:每天|每小时|每日|\/天|\/小时|\/d|\/h)?)$/;
 
-/** 把键名整理成表头文字：单位放进括号，其余下划线换成空格。 */
 export const formatLabel = (key: string) => {
   const match = UNIT_SUFFIX.exec(key);
   if (match) {
@@ -78,7 +75,6 @@ const Metrics: FC<{ entries: [string, Scalar][] }> = ({ entries }) => (
   </dl>
 );
 
-/** 单个值按形状展示：服务端序列化的表格、序列、平铺字典、数组或数值。 */
 const ResultValue: FC<{ value: unknown; caption?: string }> = ({ value, caption }) => {
   if (isRecord(value) && value.type === 'table' && Array.isArray(value.columns) && Array.isArray(value.rows)) {
     return <ResultTable caption={caption} columns={value.columns.map(String)} rows={value.rows as unknown[][]} total={Number(value.row_count)} />;
@@ -111,15 +107,10 @@ const ResultValue: FC<{ value: unknown; caption?: string }> = ({ value, caption 
   );
 };
 
-/**
- * 模型常把结果写成字典：标量作为指标并排，字段相同的几组平铺字典（如前后两段）合成一张对比表，
- * 其余嵌套内容各自成表，避免把 JSON 原文展示给业务人员。
- */
 const DictionaryResult: FC<{ value: Record<string, unknown> }> = ({ value }) => {
   const entries = Object.entries(value);
   const scalars = entries.filter((entry): entry is [string, Scalar] => isScalar(entry[1]));
   const flatGroups = entries.filter((entry): entry is [string, Record<string, Scalar>] => isFlatRecord(entry[1]));
-  // 字段完全相同的几组才合成对比表；字段不同的（如逐日雨量）各自成表。
   const fieldsOf = (group: Record<string, Scalar>) => Object.keys(group).sort().join('\u0000');
   const groupsByFields = new Map<string, [string, Record<string, Scalar>][]>();
   for (const entry of flatGroups) {
@@ -146,7 +137,6 @@ export const ComputationResultView: FC<{ data: ComputationArtifactData }> = ({ d
   <div className="space-y-3 text-sm">
     <ResultValue value={data.result} />
     {data.truncated && <p className="text-xs text-muted-foreground">结果较长，已截取前 200 行。</p>}
-    {/* 计算代码保存在依据里供复核，按产品约定不向业务人员展示代码。 */}
     <p className="text-xs text-muted-foreground">数据：{data.inputs.map((input) => input.description).join('；')}</p>
   </div>
 );

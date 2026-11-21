@@ -20,7 +20,6 @@ interface MapPopupContent {
   onClose: () => void;
 }
 
-// 测点名称、地址与调查原因来自外部数据，只作为文本写入，不拼接 HTML。
 function textElement<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text: string) {
   const element = document.createElement(tag);
   element.className = className;
@@ -34,11 +33,9 @@ export const directionName = (azimuth: number) => DIRECTIONS[Math.round(azimuth 
 
 export const directionText = (azimuth: number) => `${directionName(azimuth)}（方位 ${Math.round(azimuth)}°）`;
 
-/** 方位角从正北顺时针计，0–360°；位移为零时没有方向。 */
 export const azimuthOf = (north: number, east: number) =>
   (Math.atan2(east, north) * (180 / Math.PI) + 360) % 360;
 
-/** 两个方位之间较小的夹角，0–180°。 */
 export const azimuthDifference = (first: number, second: number) => {
   const difference = Math.abs(first - second) % 360;
   return difference > 180 ? 360 - difference : difference;
@@ -46,7 +43,6 @@ export const azimuthDifference = (first: number, second: number) => {
 
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
-/** 下坡方向画成 ±22.5° 的淡色扇形，放在位移箭头下面，两者夹角一眼可见。 */
 export function appendDownslopeFan(node: HTMLElement, azimuth: number) {
   const svg = document.createElementNS(SVG_NAMESPACE, 'svg');
   svg.setAttribute('viewBox', '0 0 80 80');
@@ -59,7 +55,6 @@ export function appendDownslopeFan(node: HTMLElement, azimuth: number) {
   node.prepend(svg);
 }
 
-/** 更新或移除位移箭头；回放时每一帧复用同一个元素。 */
 export function setDisplacementArrow(node: HTMLElement, arrow: { azimuth: number; lengthPixels: number } | null) {
   let element = node.querySelector<HTMLElement>('.evidence-map-marker__arrow');
   if (!arrow) {
@@ -72,7 +67,6 @@ export function setDisplacementArrow(node: HTMLElement, arrow: { azimuth: number
     node.append(element);
   }
   element.style.height = `${arrow.lengthPixels}px`;
-  // 屏幕坐标中正北朝上，方位角即旋转角。
   element.style.transform = `rotate(${arrow.azimuth}deg)`;
 }
 
@@ -83,7 +77,6 @@ export function setMarkerDetail(node: HTMLElement, detail: string) {
   }
 }
 
-/** 两处地图采用同一套测点标记：小锚点表示真实位置，标签提供可扫读的信息。 */
 export function createMapMarker(content: MapMarkerContent) {
   const node = document.createElement('button');
   node.type = 'button';
@@ -104,7 +97,6 @@ export function createMapMarker(content: MapMarkerContent) {
   return node;
 }
 
-/** 标签留在地图内，并避开其他测点的触屏点击区域；不改变测点的真实坐标。 */
 export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, markers: Array<{ marker: AMap.Marker; element: HTMLElement }>) {
   const positions = markers.map(({ marker }) => map.lngLatToContainer(marker.getPosition()!));
   const placed: Array<{ left: number; top: number; right: number; bottom: number }> = [];
@@ -135,7 +127,6 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
         && other.y + 22 > candidate.top && other.y - 22 < bottom);
       const overlapsLabel = placed.some((other) => other.right > candidate.left && other.left < right
         && other.bottom > candidate.top && other.top < bottom);
-      // 优先留在地图内，其次保证点位可点击，最后减少标签互相覆盖。
       const score = Number(outside) * 1000 + Number(coversMarker) * 100 + Number(overlapsLabel) * 10;
       if (score < bestScore) {
         chosen = candidate;
@@ -146,17 +137,14 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
     label.style.left = `${element.clientWidth / 2 + chosen.left - point.x}px`;
     label.style.top = `${element.clientHeight / 2 + chosen.top - point.y}px`;
     label.style.transform = 'none';
-    // 极密集点位无法完全避让时，标签不拦截下面测点的点击。
     label.style.pointerEvents = blocksMarker ? 'none' : '';
     placed.push({ ...chosen, right: chosen.left + width, bottom: chosen.top + height });
   }
 }
 
-/** 高德自定义信息窗的内容；只组织已有资料，不在地图上补造调查结论。 */
 export function createMapPopup(content: MapPopupContent, mapContainer: HTMLElement) {
   const node = document.createElement('section');
   node.className = 'map-station-popup';
-  // 信息卡内的滚动和按钮操作不交给底下的地图手势处理。
   for (const type of ['pointerdown', 'mousedown', 'touchstart', 'touchmove', 'wheel']) {
     node.addEventListener(type, (event) => event.stopPropagation());
   }

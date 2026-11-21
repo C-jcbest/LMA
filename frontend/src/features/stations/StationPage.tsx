@@ -64,12 +64,10 @@ function storedWindow(stationUuid: string): StationWindow {
       }
     }
   } catch {
-    // 会话存储不可用时直接使用默认时间范围。
   }
   return { days: 90 };
 }
 
-/** 自定义起止日期（含当天，最长一年）；7 天以内看逐小时，更长看每日固定时刻。 */
 const CustomRangeForm: FC<{
   initial?: { begin: string; end: string };
   onApply: (range: { begin: string; end: string }) => void;
@@ -110,7 +108,6 @@ function StationInvestigationTitle() {
   return <span className="min-w-0 flex-1 truncate text-sm font-medium" title={title}>{title}</span>;
 }
 
-/** 在测点自己的会话运行时里开始新调查；必须渲染在 StationConversation 内。 */
 function NewStationInvestigationButton({ onStarted }: { onStarted: () => void }) {
   const aui = useAui();
   const running = useAuiState((state) => state.thread.isRunning);
@@ -131,7 +128,6 @@ function NewStationInvestigationButton({ onStarted }: { onStarted: () => void })
   );
 }
 
-/** 宽屏对话栏的标题行；窄屏这些操作并入测点页顶部的一行。 */
 function StationChatActions({ expanded, onExpand, onClose, onNewInvestigation }: {
   expanded: boolean;
   onExpand: () => void;
@@ -150,7 +146,6 @@ function StationChatActions({ expanded, onExpand, onClose, onNewInvestigation }:
   );
 }
 
-/** 历次调查在测点自己的对话栏里打开，用户不离开正在看的数据。 */
 function StationRecords({ records, anchorId, onOpened }: { records: readonly StationRecord[]; anchorId?: string; onOpened: (anchorId: string) => void }) {
   const aui = useAui();
   const sessionId = useAuiState((state) => state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId);
@@ -170,7 +165,6 @@ const DisplacementChart: FC<{
   stationName: string;
   data: GnssArtifactData;
   rainfall: readonly DailyRainfall[];
-  /** 同组对比时的其他测点序列；为空时画本测点三个方向。 */
   peers: readonly PeerSeries[];
   findings: readonly ScreeningFinding[];
   onAsk: () => void;
@@ -276,12 +270,10 @@ const RecordList: FC<{ records: readonly StationRecord[]; selected: { sessionId?
   );
 };
 
-/** 对话为空时的右侧面板：有初筛线索就提供一键调查，否则只留输入框。 */
 const StationAsk: FC<{ stationName: string; inspection: InspectionStation | undefined }> = ({ stationName, inspection }) => {
   const aui = useAui();
   const isLoading = useConversationLoading();
   const needsLook = inspection?.screening === '建议调查';
-  // 问题里写明本次巡检的线索，模型和以后翻看记录的人都知道从哪里查起。
   const leads = inspection ? triggersOf(inspection.findings).map(findingLabel) : [];
   const question = leads.length > 0
     ? `调查 ${stationName} 的近期变化，巡检线索：${leads.join('、')}`
@@ -303,7 +295,6 @@ const StationAsk: FC<{ stationName: string; inspection: InspectionStation | unde
   );
 };
 
-/** 测点页：左边直接读平台数据，不经过模型；右边是针对这个测点的对话。 */
 export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningChange: (running: boolean) => void }> = ({ stationUuid, active, onRunningChange }) => {
   const client = useLmaClient();
   const globalAui = useAui();
@@ -317,19 +308,16 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     try {
       sessionStorage.setItem('lma-station-window:' + stationUuid, JSON.stringify(next));
     } catch {
-      // 当前页面仍可以切换窗口。
     }
   };
   const [isEditingRange, setIsEditingRange] = useState(false);
   const [showPeers, setShowPeers] = useState(false);
-  // 切换窗口时旧图留在原处等新数据，页面不清空、不跳动。
   const timelineQuery = useQuery({
     queryKey: ['station-timeline', stationUuid, timeWindow],
     queryFn: ({ signal }) => client.getStationTimeline(stationUuid, timeWindow, signal),
     placeholderData: keepPreviousData,
   });
   const timeline = timelineQuery.data ?? null;
-  // 降雨来自外部天气服务，单独读取：曲线先出来，降雨到了再叠加，失败不影响位移。
   const rainfallQuery = useQuery({
     queryKey: ['station-rainfall', stationUuid, timeWindow],
     queryFn: ({ signal }) => client.getStationRainfall(stationUuid, timeWindow, signal),
@@ -345,7 +333,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const hasError = timelineQuery.isError;
   const [panel, setPanel] = useState<Panel>(() => new URL(window.location.href).searchParams.has('stationThread') ? 'chat' : 'data');
   const [chatMode, setChatMode] = useState<'split' | 'closed' | 'expanded'>('split');
-  // 从调查记录打开的会话定位到那次结论；开始新调查后清除。
   const chatRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const chatResize = usePanelResize({
@@ -353,13 +340,11 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     side: 'right', panelRef: chatRef,
     availableWidth: () => (layoutRef.current?.clientWidth ?? window.innerWidth) - 360,
   });
-  // 一轮调查结束后结论可能更新，重新读取这个测点的记录。
   const investigationCompleted = () => {
     void queryClient.invalidateQueries({ queryKey: ['station-timeline', stationUuid] });
     void globalAui.threads().reload();
   };
 
-  // 同组对比：同组其他移动站在同一窗口的序列，只在打开开关后读取。
   const directoryQuery = useQuery({ queryKey: ['stations'], queryFn: ({ signal }) => client.listStations(signal) });
   const self = directoryQuery.data?.find((station) => station.station_uuid === stationUuid);
   const groupPeers = (directoryQuery.data ?? []).filter((station) => (
@@ -427,7 +412,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               <StatusDot status={inspection.screening} />{investigationStatusLabel(inspection.screening)}
             </span>
           )}
-          {/* 并排时与标题同行靠右；窄屏标题在顶栏，这一行只有分组和状态，控件换到下一行时靠左对齐。 */}
           <div className={cn('flex flex-wrap items-center gap-2', isSideBySide && 'ms-auto')}>
             {groupPeers.length > 0 && (
               <Toggle size="sm" variant="outline" pressed={showPeers} onPressedChange={setShowPeers}>同组对比</Toggle>
@@ -459,7 +443,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
           />
         )}
         {viewedCurrentWindow && findings.some((finding) => !finding.time) && <FindingChips findings={findings.filter((finding) => !finding.time)} className="mt-3" />}
-        {/* “暂无法分析”没有结构化线索，只有一句说明。 */}
         {viewedCurrentWindow && inspection && inspection.findings.length === 0 && inspection.reasons.length > 0 && (
           <p className="text-muted-foreground mt-2 text-sm wrap-anywhere">{inspection.reasons[0]}</p>
         )}
@@ -492,7 +475,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             </div>
           )}
           {timeline?.series && lastObservation && (
-            // 等新窗口时调暗旧图；延迟变暗，数据很快到达时不闪一下。
             <div
               aria-busy={isSwitchingWindow}
               className={cn('space-y-5 transition-opacity duration-200', isSwitchingWindow && 'opacity-50 delay-150')}
@@ -546,7 +528,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   return (
     <StationConversation stationUuid={stationUuid} stationName={stationName} onComplete={investigationCompleted} active={active} onRunningChange={onRunningChange}>
         <div className="flex h-full min-h-0 flex-col">
-          {/* 窄屏只保留这一行：返回、测点名、数据/调查切换，调查时附带新调查。 */}
           {!isSideBySide && <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
             <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
             {panel === 'chat' ? <StationInvestigationTitle /> : <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>}
@@ -559,7 +540,6 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             />
           </div>}
           <div ref={layoutRef} className="flex min-h-0 flex-1">
-            {/* 宽屏两栏都保持渲染，靠对话栏宽度过渡切换分栏、展开与关闭；窄屏一次只显示一栏。 */}
             <div
               inert={isSideBySide && chatMode === 'expanded'}
               aria-hidden={isSideBySide && chatMode === 'expanded' ? true : undefined}

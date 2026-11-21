@@ -22,7 +22,6 @@ export const StationStatus: React.FC<{ status: unknown }> = ({ status }) => {
 };
 
 
-/** 测点查询同时返回分组与测点：有测点时列测点，只有分组时列分组。 */
 export const StationResultView: React.FC<{ data: StationListArtifactData }> = ({ data }) => {
   if (data.stations.length === 0) {
     if (data.groups.length === 0) {

@@ -123,7 +123,6 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
       map.destroy();
       layersRef.current = null;
     };
-    // 3D 开关需要重建地图；底图和道路切换在下面的 effect 里就地完成。
   }, [sdk, center, stations, downslopeAzimuth, layerSelection.terrain3d]);
 
   useEffect(() => {

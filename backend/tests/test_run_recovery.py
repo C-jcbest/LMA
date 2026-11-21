@@ -132,7 +132,6 @@ class RunRecoveryTests(unittest.TestCase):
             await migrate_database(self.uri)
             async with self.served_api(slow_seconds=1.5) as (client, sessions):
                 session = await self.start_and_disconnect(client, sessions)
-                # 浏览器刷新或网络中断只断开订阅，调查继续；重新连接先补发当前状态，再接收剩余事件。
                 async with client.stream('GET', f'/sessions/{session}/runs/active') as rejoined:
                     self.assertEqual(rejoined.status_code, 200)
                     body = ''

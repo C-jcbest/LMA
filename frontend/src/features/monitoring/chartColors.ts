@@ -21,7 +21,6 @@ const readChartColors = (): ChartColors => {
   };
 };
 
-/** 图表画在 canvas 上读不到 CSS 变量，主题切换后重新取一次颜色。 */
 export function useChartColors(): ChartColors {
   const { resolvedTheme } = useTheme();
   const [colors, setColors] = useState(readChartColors);

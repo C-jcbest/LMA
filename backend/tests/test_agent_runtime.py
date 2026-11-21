@@ -419,7 +419,6 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
             summary_model=ScriptedModel(script=[]),
         )
 
-        # 直接消费前端 useChannel(["tools"]) 对应的 stream_mode="tools" 事件流
         t0 = time.monotonic()
         finished = []
         async for _ns, mode, payload in agent.astream(
@@ -438,21 +437,16 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
                     "output": payload["output"],
                 })
 
-        # 1. 三个工具都独立产生真实的 tool-finished 事件
         self.assertEqual(len(finished), 3)
 
-        # 2. 完成顺序是 quick -> medium -> slow
         self.assertEqual(
             [item["id"] for item in finished],
             ["call-1", "call-2", "call-3"],
         )
 
-        # 3. 时间阶梯递增：quick 先于 medium，medium 先于 slow 完成
         self.assertLess(finished[0]["time"], finished[1]["time"])
         self.assertLess(finished[1]["time"], finished[2]["time"])
 
-        # 4. output 为携带严格 version: 1 artifact 的 ToolMessage，
-        #    与 Agent Server wire protocol -> useChannel -> getLiveToolArtifact 同源
         quick_output = finished[0]["output"]
         self.assertIsInstance(quick_output, ToolMessage)
         self.assertEqual(quick_output.artifact["version"], 1)

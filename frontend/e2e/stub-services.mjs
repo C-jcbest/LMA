@@ -169,7 +169,6 @@ const server = http.createServer(async (request, response) => {
   const messages = body.messages ?? [];
   const firstText = messageText(messages[0]);
   const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user');
-  // stub 按静态提示词约定只回答用户正文；服务器上下文仍进入真实模型请求。
   const userText = lastUserIndex >= 0
     ? messageText(messages[lastUserIndex]).replace(/^<lma_message_context>[\s\S]*?<\/lma_message_context>\s*/, '')
     : '';
@@ -189,7 +188,6 @@ const server = http.createServer(async (request, response) => {
     }] : [];
     payload = chatResponse(JSON.stringify({ questions }));
   } else if (userText.includes('并行工具停止验证') && !hasToolResult) {
-    // 位移查询很快完成；测点查询要等待较慢的分组接口，用来验证停止时保留已完成的结果。
     payload = parallelToolResponse([
       { name: 'get_displacement', args: { station_name_or_uuid: 'E2E空数据站', begin_time: '2026-09-01 00:00:00', end_time: '2026-09-02 00:00:00' } },
       { name: 'find_stations', args: {} },

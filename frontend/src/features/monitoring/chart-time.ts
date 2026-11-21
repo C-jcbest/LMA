@@ -3,7 +3,6 @@ const clock = new Intl.DateTimeFormat('sv-SE', {
   hourCycle: 'h23',
 });
 
-/** 平台未附偏移的时间戳以北京时间记录。 */
 export function chartMillis(value: string): number {
   const iso = value.length === 10 ? value + 'T00:00:00' : value.replace(' ', 'T');
   return Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : iso + '+08:00');

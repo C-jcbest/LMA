@@ -19,10 +19,6 @@ import { StatusDot } from './status';
 const orderedStations = (conclusions: ConclusionsArtifactData) =>
   [...conclusions.stations].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
 
-/**
- * 结论登记是留档数据，正文才是回答：页面只用一行标签给出各测点状态，点击打开该测点依据。
- * 原因写在标签提示里，避免和正文重复。
- */
 export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }> = ({ conclusions }) => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
@@ -68,7 +64,6 @@ export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }>
   );
 };
 
-/** 模型只登记了结论而没有写正文时，用各测点原因补出可读的回答，避免只剩一行标签。 */
 export const ConclusionsFallback: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
   const conclusions = useMemo(() => findConclusions(parts), [parts]);
@@ -88,7 +83,6 @@ export const ConclusionsFallback: FC = () => {
   );
 };
 
-/** 官方复制和导出只读取消息正文，引用编号需要换成可读的依据目录。 */
 export const AnswerActions: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
   const { isCopied, copyToClipboard } = useCopyToClipboard();

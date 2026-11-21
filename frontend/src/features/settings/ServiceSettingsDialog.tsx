@@ -38,10 +38,6 @@ const STATUS_TEXT_CLASS: Record<ConnectionStatus, string> = {
   error: 'text-destructive',
 };
 
-/**
- * 仅开发环境提供：生产环境固定同源端点，普通用户没有需要配置的内容。
- * 只承载连接设置，不参与 Runtime、Thread 或消息生命周期。
- */
 export function ServiceSettingsDialog({
   open,
   onOpenChange,

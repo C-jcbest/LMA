@@ -13,7 +13,6 @@ function InvestigationEvents({ onComplete, onRunningChange, active }: {
   const { closeInspector } = useStationInspector();
   const sessionId = useAuiState((state) => state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId);
   useEffect(() => {
-    // 返回仍在运行的测点调查时，地址也恢复到正在查看的会话。
     if (active && sessionId) {
       const url = new URL(window.location.href);
       if (!url.searchParams.has('stationThread')) {
@@ -35,7 +34,6 @@ function InvestigationEvents({ onComplete, onRunningChange, active }: {
   return null;
 }
 
-/** 每次进入测点从空白调查开始；历史结果只从记录入口打开。浏览不创建数据库会话。 */
 export function StationConversation({ stationUuid, stationName, onComplete, onRunningChange, active, children }: {
   stationUuid: string;
   stationName: string;

@@ -54,7 +54,6 @@ HISTORY_DAILY_FIELDS = (
     "wind_gusts_10m_max",
 )
 
-# WMO weather code 的简要中文描述，便于直接展示
 _WMO_CODES = {
     0: "晴", 1: "基本晴", 2: "局部多云", 3: "阴",
     45: "雾", 48: "雾凇",
@@ -239,7 +238,6 @@ async def query_weather(
         if history_end >= today:
             raise ToolInputError("历史天气最多只能查询到昨天；今天的情况看当前天气、hourly 逐小时降水和预报")
 
-    # 当前天气和最近 24 小时降水都来自预报接口；预报天数至少为 1 才能取得这两项。
     forecast_params = {
         "latitude": lat,
         "longitude": lon,
@@ -355,7 +353,6 @@ async def query_weather(
     facts = {**data, "limitations": limitations} if limitations else data
     hourly_count = len(history_series.get("hourly", {}).get("time", []))
     if hourly_count > MAX_HOURLY_VALUES_FOR_MODEL:
-        # 逐小时序列完整保存在依据中，模型只在需要时通过 compute 读取，避免长序列占满上下文。
         facts = {**facts, "history": {
             "daily": history_series["daily"],
             "hourly_note": f"已取得 {hourly_count} 个逐小时降水值，未放入本结果；需要按小时统计时用 compute 读取本依据",

@@ -16,7 +16,6 @@ METRIC_NAMES = {
 }
 
 
-# 跳变后逐点给出的连续观测数；足以区分孤立尖峰与保持，又不把长序列塞给模型。
 _FOLLOWUP_POINTS = 5
 
 
@@ -25,7 +24,6 @@ def _candidate_events(moments, mm, adjacent):
     steps = [mm[index + 1] - mm[index] for index in sorted(adjacent)]
     center = median(steps)
     noise = 1.4826 * median(abs(step - center) for step in steps)
-    # 相对本窗噪声及典型单步变化选择候选；数值精度保护不作为形变阈值。
     threshold = max(6 * noise, 3 * median(abs(step) for step in steps), 1e-6)
     candidates = [index for index in sorted(adjacent) if abs(mm[index + 1] - mm[index]) > threshold]
     events = []
@@ -47,7 +45,6 @@ def _candidate_events(moments, mm, adjacent):
             if abs(mm[following] - mm[index + 1]) > tolerance:
                 break
             held_end = following
-        # 跳后连续观测相对跳前水平的偏移，不受后续候选截断，孤立尖峰的回落也能直接看到。
         followup_end = index + 1
         while followup_end < len(mm) - 1 and followup_end in adjacent and followup_end - index < _FOLLOWUP_POINTS:
             followup_end += 1
@@ -112,7 +109,6 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
     result['residual_noise_mm'] = 1.4826 * median(abs(value - residual_center) for value in residuals)
     expected = max(1, round(days[-1] * 24 / cadence_hours) + 1)
     result['trend_supported'] = len(valid) >= 7 and days[-1] * 24 >= cadence_hours * 6 and len(valid) / expected >= .5
-    # 相邻间隔超过 1.5 个采样周期视为跨越缺测；跨越差值不计入单步和连续保持区间。
     adjacent = {index for index in range(len(days) - 1)
                 if 0 < (days[index + 1] - days[index]) * 24 <= cadence_hours * 1.5}
     result['gap_crossing_count'] = len(days) - 1 - len(adjacent)
@@ -124,7 +120,6 @@ def axis_features(times, values, base=None, cadence_hours=1.0):
         result['max_step_time'] = moments[index + 1].strftime(TIME_FORMAT)
     events = _candidate_events(moments, mm, adjacent)
     result['event_count'] = len(events)
-    # event_count 是全部候选数，events 最多保留前 20 个。
     result['events'] = events[:20]
     if events:
         primary = max(events, key=lambda event: abs(event['step_mm']))
@@ -193,7 +188,6 @@ def window_features(points, station, begin_time, end_time, cadence_hours=1.0, sc
             base = 0 if all(reference[key] is not None for key in components) else None
         feature = axis_features(times, values, base=base, cadence_hours=cadence_hours)
         feature['metric_name'] = METRIC_NAMES[axis]
-        # 有效时刻可由 points 复原，这里只记范围，不在每个方向重复保存整列时间戳。
         feature['sample_set'] = {'scope': scope, 'station_uuid': station.station_uuid, 'axis': axis,
                                  'requested_begin': begin_time, 'requested_end': end_time}
         features[axis] = feature

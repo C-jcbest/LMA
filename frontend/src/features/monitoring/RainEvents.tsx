@@ -10,10 +10,6 @@ const formatEventDays = (event: RainEvent) => (
 
 const formatRate = (rate: number | null) => (rate === null ? '—' : formatSigned(rate, RATE_DIGITS));
 
-/**
- * 强降雨过程：只陈述过程雨量与主方向前后速率，不判断因果；没有过程时给一行最大日降雨。
- * 测点页与天气依据共用，数值都来自服务端 app/rainfall.py。
- */
 export const RainEvents: FC<{
   events: readonly RainEvent[];
   daily: ReadonlyArray<{ date: string; value: number | null }>;

@@ -1,4 +1,3 @@
-/** LMA 工具产物版本化协议信封（Version 1）。 */
 
 export type ToolArtifactKind =
   | 'acquisition_failure'
@@ -76,7 +75,6 @@ export interface GapArtifact {
   missing_hours: number | null;
 }
 
-/** 单个方向在本窗口的数值特征（mm、mm/day），由服务端计算。 */
 export type AxisFeature = Record<string, unknown>;
 
 export interface GnssArtifactData {
@@ -103,16 +101,12 @@ export interface GnssArtifactData {
   } | null;
   quality?: Record<string, unknown>;
   reference?: Record<string, unknown>;
-  /** n/e/u/h/d 各方向特征；测点页序列没有特征时为空对象。 */
   features?: Record<string, AxisFeature>;
-  /** 前后分段（按方向）与同组共同时段对比。 */
   comparisons?: Record<string, unknown>;
-  /** 取数时平台登记的测点位置；旧依据没有该字段。 */
   location?: {
     group_name?: string | null;
     latitude?: number | null;
     longitude?: number | null;
-    /** 同组其他测点，只作地图上的位置参照。 */
     group_stations?: Array<{
       station_uuid: string;
       station_name: string;
@@ -135,7 +129,6 @@ export interface WeatherDailyArtifact {
   wind_gusts_10m_max?: Array<number | null> | null;
 }
 
-/** 强降雨过程与主方向前后速率（服务端 app/rainfall.py），测点页与天气依据共用。 */
 export interface RainEvent {
   start: string;
   end: string;
@@ -204,11 +197,9 @@ export interface WeatherArtifactData {
     forecast_max_wind_gust?: number | null;
   } | null;
   history?: { daily: WeatherDailyArtifact; hourly?: { time: string[]; precipitation: Array<number | null> } | null } | null;
-  /** 当天逐小时降水：已过去的小时来自当前观测，之后为预报。 */
   today_hourly?: { time: string[]; precipitation: Array<number | null> } | null;
   forecast?: { daily: WeatherDailyArtifact } | null;
   source?: { provider: string } | null;
-  /** 强降雨过程与前后位移速率；只在 rain_response 请求时给出。 */
   rain_events?: RainEvent[] | null;
   rain_threshold_mm?: number | null;
 }
@@ -246,7 +237,6 @@ export interface ConclusionStationArtifact {
   reason: string;
   begin_time: string;
   end_time: string;
-  /** 服务端关联的本会话依据编号。 */
   evidence: string[];
 }
 

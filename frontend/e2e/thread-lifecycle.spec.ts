@@ -89,7 +89,6 @@ test('测点调查发送到自己的会话，离开页面不停止，返回后�
     await page.getByRole('list', { name: '测点列表' }).getByRole('button', { name: /E2E空数据站/ }).click();
     await page.getByRole('radio', { name: 'AI 调查', exact: true }).click();
     await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
-    // 最后一段文字可先于流结束到达；确认生成结束后再验证完成结果的刷新恢复。
     await expect(page.getByRole('button', { name: '停止生成' })).toBeHidden();
     const unchanged = JSON.stringify((await client.getState(unrelated)).values.messages);
     expect(unchanged).not.toContain('请慢速回答切换会话场景');
@@ -114,7 +113,6 @@ test('调查进行中刷新页面不中断调查，刷新后接回进度并显�
     await expect.poll(async () => (await client.getState(threadId)).latest_run?.status).toBe('running');
 
     await page.reload();
-    // 服务端调查与页面连接解耦：刷新后仍在运行，并从当前进度接着显示。
     await expect(page.getByRole('button', { name: '停止生成' })).toBeVisible();
     await expect(page.getByText('慢速生成已完成，切换会话后状态与内容保持一致。')).toBeVisible();
     await expect(page.getByRole('button', { name: '停止生成' })).toBeHidden();
@@ -182,7 +180,6 @@ test('并行工具执行中 Stop：刷新、继续提问与切换 Thread 后状�
     await expect(page).toHaveURL(new RegExp(`threadId=${threadId}`));
     await send(page, '停止后继续提问');
     await expect(page.getByText('已继续处理：停止后继续提问')).toBeVisible();
-    // 流式正文先于最终 checkpoint 到达；持久化断言等待本轮真正结束。
     await expect.poll(async () => (await client.getState(threadId)).latest_run?.status).toBe('success');
 
     await switchThread(page, otherName, otherId);
@@ -235,7 +232,6 @@ test('重新生成使用 checkpoint fork，刷新后显示最新回答', async (
 });
 
 test('调查记录滚动加载下一页，整页耗尽后隐藏加载入口，侧栏只留最近几条', async ({ page }) => {
-  // 隔离持久化的历史测试数据，只替换列表 HTTP 响应，运行真实 Runtime 与浏览器布局。
   const rows = Array.from({ length: 40 }, (_, index) => ({
     id: `pagination-${index}`,
     name: `滚动分页-${index}`, archived: false,
@@ -280,7 +276,6 @@ test('最新用户消息可编辑重新生成、复制，悬停不改变消息�
     const assistant = page.locator('[data-role="assistant"]').last();
     await page.getByRole('textbox', { name: '输入监测问题' }).hover();
     await expect(user.getByRole('button', { name: '编辑消息' })).toHaveCount(0);
-    // 消息有入场动效（淡入并上移），等它结束再量位置，只比较悬停带来的变化。
     await assistant.evaluate((element) => Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished)));
     const before = await assistant.boundingBox();
     await user.hover();
@@ -309,7 +304,6 @@ test('最新用户消息可编辑重新生成、复制，悬停不改变消息�
     await page.getByRole('textbox', { name: '编辑用户消息' }).fill('第二轮修改');
     await page.getByRole('button', { name: '保存并重新生成' }).click();
     await expect(page.getByText('已继续处理：第二轮修改')).toBeVisible();
-    // 文字出现时 Run 可能仍在收尾，结束后才允许删除会话。
     await expect(page.getByRole('button', { name: '发送消息' })).toBeVisible();
   } finally {
     await client.deleteSession(threadId);

@@ -3,7 +3,6 @@ import { cn } from 'cn';
 import { formatSigned, MILLIMETER_DIGITS } from './format';
 import type { InspectionStation } from '@/services/api';
 
-// 巡检初筛和调查结论共用一套颜色：红色只留给已调查并需要人工复核的测点。
 const STATUS_DOT_CLASS: Record<string, string> = {
   需人工复核: 'bg-status-critical',
   建议调查: 'bg-status-attention',
@@ -20,7 +19,6 @@ export const StatusDot: FC<{ status: string | null | undefined; className?: stri
 
 const AXIS_LABELS = { n: '北向', e: '东向', u: '垂向' } as const;
 
-/** 巡检窗口内变化最大的方向，用一个数字概括“动了多少”。 */
 export function largestChange(station: Pick<InspectionStation, 'metrics'>): { axis: string; millimeters: number } | null {
   const changes = station.metrics?.net_change_mm;
   if (!changes) {

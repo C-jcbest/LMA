@@ -78,7 +78,6 @@ it('正文是回答：结论登记只补测点状态，前后的正文都进入�
   expect(markdown).toContain('测点状态：测试点 A：需人工复核；测试点 B：未见明显变化');
   expect(markdown).toContain('K3-07 需要人工复核。');
   expect(markdown).toContain('补充查询失败，C 尚未覆盖。');
-  // 结论登记是留档，不作为调查步骤出现；失败的查询仍可见。
   expect(stepsOf(parts).map((step) => step.state)).toEqual(['failed']);
 });
 

@@ -3,14 +3,12 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
-  // 文件内仍串行；只有会话生命周期文件写入 API，其余文件使用页面级 HTTP mock。
   workers: 2,
   retries: 0,
   timeout: 60_000,
   expect: { timeout: 15_000 },
   use: {
     baseURL: 'http://127.0.0.1:25174',
-    // 页面按浏览器本地时区解析和显示业务时间，测试浏览器固定为业务时区，与办公电脑一致。
     timezoneId: 'Asia/Shanghai',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

@@ -48,7 +48,6 @@ const METRIC_AXES = [
   { axis: 'u', label: '垂直' },
 ] as const;
 
-/** 有固定参考的方向显示最新累计位移，并附本窗口净变化；没有参考的方向只能给本窗口净变化。 */
 export const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
   const reference = referenceOf(data);
   const displacement = displacementOf(data);
@@ -241,7 +240,6 @@ const EvidenceNotes: FC<{ station: StationEvidence; toolCallId?: string }> = ({ 
   );
 };
 
-/** 引用指向哪类依据就先打开哪一页；从测点入口进入时先看时间轴。 */
 const initialTab = (station: StationEvidence, focusToolCallId: string | undefined): string => {
   const isFocused = (items: readonly { toolCallId: string }[]) => items.some((item) => item.toolCallId === focusToolCallId);
   if (isFocused(station.site)) {
@@ -262,7 +260,6 @@ const initialTab = (station: StationEvidence, focusToolCallId: string | undefine
   return 'details';
 };
 
-// 下划线页签贴住列表底边：指示条下移 1px 与分隔线重合。
 const TAB_CLASS = 'h-11 flex-none px-1 font-normal text-muted-foreground group-data-[orientation=horizontal]/tabs:after:-bottom-px';
 
 interface InspectorBodyProps {
@@ -285,7 +282,6 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
     }
     return state;
   }, [viewKey, viewStates]);
-  // 默认看最长窗口：长期背景决定是否存在缓慢累积，短窗口用于放大细节。
   const sortedSeries = useMemo(
     () => [...station.series].sort((a, b) => seriesDuration(b.data) - seriesDuration(a.data)),
     [station.series],
@@ -334,7 +330,6 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
     if (activeTab !== 'weather' || !focusToolCallId) {
       return;
     }
-    // 同一测点可能查过多段天气，引用指向哪段就滚到哪段。
     const target = weatherRef.current?.querySelector<HTMLElement>(`[data-evidence-tool="${CSS.escape(focusToolCallId)}"]`);
     target?.scrollIntoView({ block: 'nearest' });
   }, [activeTab, focusToolCallId]);
@@ -375,7 +370,6 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
         </TabsList>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
-          {/* 只保留当前测点的时间轴，切页签保留缩放与图例；换测点或关闭时释放。 */}
           {hasTimeline && (
             <TabsContent value="timeline" forceMount hidden={activeTab !== 'timeline'}>
               <TimelineView
@@ -435,7 +429,6 @@ interface EvidenceBodyProps {
   onClose: () => void;
 }
 
-/** 不属于任何测点的依据（如计算结果）：同一面板里只显示这条依据。 */
 const EvidenceBody: FC<EvidenceBodyProps> = ({ envelope, title, onClose }) => {
   const { canExpand, isFullscreen, toggleFullscreen } = useStationInspector();
   return (
@@ -458,10 +451,6 @@ const EvidenceBody: FC<EvidenceBodyProps> = ({ envelope, title, onClose }) => {
   );
 };
 
-/**
- * 依据检查器：宽屏与对话并排可继续追问，窄屏全屏查看。
- * 通常打开一个测点的全部依据；不属于测点的依据单独显示。
- */
 export const StationInspector: FC = () => {
   const { selection, selectionVersion, isClosing, isSplit, openStation, closeInspector } = useStationInspector();
   const panelRef = useRef<HTMLElement>(null);
@@ -473,7 +462,6 @@ export const StationInspector: FC = () => {
     side: 'right',
     panelRef,
     availableWidth: () => {
-      // 展开的侧栏或收起后的导航条都占用宽度，依据面板不能把对话挤到 360px 以下。
       const navigationWidth = [...document.querySelectorAll('[data-navigation-docked], [data-navigation-rail]')]
         .reduce((total, element) => total + element.getBoundingClientRect().width, 0);
       return window.innerWidth - navigationWidth - 360;
@@ -505,7 +493,6 @@ export const StationInspector: FC = () => {
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      // 菜单和弹窗处理 Esc 时会标记 defaultPrevented，此时不关闭检查器。
       if (event.key === 'Escape' && !event.defaultPrevented) {
         closeInspector();
       }

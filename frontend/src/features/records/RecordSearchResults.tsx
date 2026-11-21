@@ -13,7 +13,6 @@ export function RecordSearchResults({ query, onOpen }: { query: string; onOpen?:
   const aui = useAui();
   const [opening, setOpening] = useState<string | null>(null);
   const [openFailed, setOpenFailed] = useState(false);
-  // 组件按搜索词挂载（ThreadList 以搜索词为 key）；停止输入一小段时间后再请求。
   const [isDebounced, setIsDebounced] = useState(false);
   useEffect(() => {
     const timer = window.setTimeout(() => setIsDebounced(true), SEARCH_DEBOUNCE_MS);
@@ -24,7 +23,6 @@ export function RecordSearchResults({ query, onOpen }: { query: string; onOpen?:
     queryKey: ['session-search', query],
     queryFn: ({ pageParam, signal }) => client.listSessions({ search: query, offset: pageParam, limit: PAGE_SIZE + 1 }, signal),
     initialPageParam: 0,
-    // 每页多取一条，用来判断是否还有下一页。
     getNextPageParam: (lastPage, allPages) => (lastPage.length > PAGE_SIZE ? allPages.length * PAGE_SIZE : undefined),
     enabled: isDebounced,
   });

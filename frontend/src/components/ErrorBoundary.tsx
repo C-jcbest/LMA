@@ -29,7 +29,6 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // 内部异常只写日志，不直接向用户展示技术诊断与 stack trace
     console.error('ErrorBoundary caught an error:', error, errorInfo);
   }
 

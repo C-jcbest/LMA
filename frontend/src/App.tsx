@@ -12,11 +12,6 @@ type AccessState =
   | { kind: 'login'; expired: boolean }
   | { kind: 'ready'; authEnabled: boolean };
 
-/**
- * 根应用入口：
- * 先确认访问状态（未登录时只显示登录页），再组装唯一 Runtime Provider (AssistantProvider)、AppLayout、设置弹窗与全局 ErrorBoundary。
- * 绝不自行维护消息状态机、流式生命周期或会话目录轮询。
- */
 export const App: React.FC = () => {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [apiUrl, setApiUrl] = useState(getStoredApiUrl);
@@ -38,7 +33,6 @@ export const App: React.FC = () => {
         }
       })
       .catch(() => {
-        // 服务暂时不可达时先进入应用，由各页面显示连接错误；真正未登录的请求会返回 401 回到登录页。
         if (active) {
           setAccess({ kind: 'ready', authEnabled: false });
         }

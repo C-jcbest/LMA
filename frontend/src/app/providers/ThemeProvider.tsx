@@ -14,7 +14,6 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [preference, setTheme] = useState<ThemePreference>(() => {
-    // index.html 在首屏绘制前读取偏好，避免刷新时闪现另一种主题。
     const initial = document.documentElement.dataset.themePreference;
     return initial === 'light' || initial === 'dark' ? initial : 'system';
   });
@@ -32,7 +31,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     try {
       localStorage.setItem(STORAGE_KEY, next);
     } catch {
-      // 浏览器禁止存储时仍允许切换，本次页面使用内存中的选择。
     }
   }, []);
 

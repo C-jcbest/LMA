@@ -11,15 +11,12 @@ interface NavigationLocation {
 }
 
 interface NavigationValue extends NavigationLocation {
-  /** 页面导航不改变当前会话。 */
   goHome: () => void;
-  /** 回到对话区，保留当前会话。 */
   showConversation: (resultAnchor?: string) => void;
   startConversation: () => void;
   returnFromStation: () => void;
   goStations: () => void;
   goRecords: () => void;
-  /** 巡检原型页：生成式 UI 流式巡检的试验入口。 */
   goLab: () => void;
   openStation: (stationUuid: string) => void;
   showStationResult: (resultAnchor?: string) => void;
@@ -63,18 +60,15 @@ const writeLocation = (location: NavigationLocation) => {
   }
 };
 
-/** 换页时用浏览器的视图过渡做一次短暂的淡入淡出；浏览器不支持或用户减弱动效时直接切换。 */
 const switchPage = (update: () => void) => {
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!document.startViewTransition || prefersReducedMotion) {
     update();
     return;
   }
-  // 浏览器在回调里截取新页面，React 必须在回调返回前完成渲染。
   document.startViewTransition(() => flushSync(update));
 };
 
-/** 只保存用户在看哪一页；会话选择仍由官方 Runtime 管理，并各自写入地址栏。 */
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const aui = useAui();
   const [location, setLocation] = useState(readLocation);

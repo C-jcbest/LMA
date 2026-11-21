@@ -8,7 +8,6 @@ interface SegmentedProps {
   onValueChange: (value: string) => void;
 }
 
-/** 少量互斥选项；始终保持有一项被选中。 */
 export const Segmented: FC<SegmentedProps> = ({ label, value, options, onValueChange }) => (
   <ToggleGroup
     type="single"

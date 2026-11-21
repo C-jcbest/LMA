@@ -9,7 +9,6 @@ test.beforeEach(async ({ page }) => {
   }));
 });
 
-// 只替换 HTTP 边界，实际运行页面、官方 Runtime、抽屉与列表交互。
 const sessions = [
   { id: 'layout-first', name: '测点近期调查', archived: false, created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T02:00:00Z' },
   { id: 'layout-second', name: '同组对比调查', archived: false, created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T01:00:00Z' },
@@ -122,13 +121,11 @@ test('外观、完成通知与退出登录收在导航底部的设置菜单里',
   await page.goto('/');
 
   const navigation = page.getByRole('complementary', { name: '导航' });
-  // 侧栏底部只有一个入口，不平铺三行设置。
   await expect(navigation.getByRole('button', { name: '退出登录' })).toHaveCount(0);
   await navigation.getByRole('button', { name: '设置' }).click();
   const menu = page.getByRole('menu');
   await expect(menu.getByRole('menuitemcheckbox', { name: '完成通知' })).toBeVisible();
   await expect(menu.getByRole('menuitem', { name: '退出登录' })).toBeVisible();
-  // 菜单从入口向上展开，不超出窗口底部。
   const menuBox = (await menu.boundingBox())!;
   expect(menuBox.y + menuBox.height).toBeLessThanOrEqual(800);
 

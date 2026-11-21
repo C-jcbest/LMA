@@ -18,9 +18,7 @@ from app.agent.tool_protocol import ToolInputError, tool_result
 from app.business_time import TIME_FORMAT
 
 CONCLUSIONS_TOOL_NAME = "record_conclusions"
-# 有数据支撑的状态必须有成功的位移依据，且结论窗口落在已取得数据的范围内。
 _DATA_BACKED_STATUSES = {"未见明显变化", "持续关注", "需人工复核"}
-# 模型常把窗口写成整点或整天，与实际查询边界差几分钟到一小时属于同一窗口。
 _WINDOW_TOLERANCE = timedelta(hours=1)
 
 

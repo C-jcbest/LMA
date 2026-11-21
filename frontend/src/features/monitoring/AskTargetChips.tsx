@@ -6,13 +6,11 @@ import { askTargetLabel, askTargetsOfMessage, askTargetsOfRunConfig, clearAskTar
 
 const CHIP_CLASS = 'inline-flex h-7 max-w-full items-center gap-1.5 rounded-md bg-muted px-2 text-xs text-foreground tabular-nums';
 
-/** 输入框上方的追问对象，可逐个移除；发送后清空，只属于这一条消息。 */
 export const ComposerAskTargets: FC = () => {
   const aui = useAui();
   const runConfig = useAuiState((state) => state.composer.runConfig);
   const targets = askTargetsOfRunConfig(runConfig);
   useAuiEvent('composer.send', (event) => {
-    // 编辑历史消息也会触发发送事件，此时不动当前输入框的追问对象。
     if (event.messageId === undefined) {
       clearAskTargets(aui);
     }
@@ -43,7 +41,6 @@ export const ComposerAskTargets: FC = () => {
   );
 };
 
-/** 用户消息上显示这条消息追问的测点时间段，来自服务端保存的消息 metadata。 */
 export const MessageAskTargets: FC = () => {
   const custom = useAuiState((state) => state.message.metadata.custom);
   const targets = askTargetsOfMessage(custom);

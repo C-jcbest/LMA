@@ -124,7 +124,6 @@ class AgentTracingTests(IsolatedAsyncioTestCase):
         run_id = str(uuid4())
         with self.tracing.run({}, session_id="investigation-session", run_id=run_id, input="查询") as trace:
             result = await agent.ainvoke({"messages": [HumanMessage(content="查询")]}, trace.config)
-            # SDK 捕获的异常文本也必须经过导出脱敏，不能只净化模型的工具结果。
             try:
                 with self.tracing.client.start_as_current_observation(name="upstream-error"):
                     raise ValueError(f"failed: {self.settings.beidou_password}")

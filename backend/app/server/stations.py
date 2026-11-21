@@ -8,9 +8,7 @@ from app.business_time import TIME_FORMAT, business_now
 from app.monitoring_data import DISPLACEMENT_STATION_TYPES, MonitoringData, series_artifact_data
 
 TIMELINE_WINDOW_DAYS = (7, 30, 90)
-# 自定义范围与位移工具的小时级取数上限一致。
 MAX_CUSTOM_WINDOW_DAYS = 366
-# 一周内看逐小时细节；更长的窗口每天取同一时刻，避免昼夜波动盖住趋势。
 _HOURLY_WINDOW_DAYS = 7
 
 

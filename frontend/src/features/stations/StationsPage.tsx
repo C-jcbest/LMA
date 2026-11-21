@@ -18,7 +18,6 @@ import type { MapStation } from '@/features/monitoring/StationMap';
 
 const StationMap = lazy(() => import('@/features/monitoring/StationMap'));
 
-/** 台账一行加上最近巡检结果；还没巡检过的测点 screening 为 null。 */
 interface StationListItem extends Omit<InspectionStation, 'screening'>, StationDirectoryEntry {
   screening: Screening | null;
 }
@@ -31,7 +30,6 @@ const FILTERS: readonly { value: Filter; label: string }[] = [
   { value: 'unavailable', label: '数据待核查' },
 ];
 
-// 需要看的排在前面，其次是数据有问题的，正常的放最后。
 const SCREENING_ORDER: Record<Screening, number> = {
   建议调查: 0,
   数据不足: 1,
@@ -51,7 +49,6 @@ const matchesFilter = (station: StationListItem, filter: Filter) => {
 
 const EMPTY_DIRECTORY: StationDirectoryEntry[] = [];
 
-/** 列表行的一句话：首条调查理由的短标签，其次是数据说明；状态已由圆点表达，不再重复。 */
 function stationNote(station: StationListItem) {
   if (station.screening === null) {
     return '未巡检';
@@ -80,7 +77,6 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
       >
         <span className="flex min-w-0 items-center gap-2.5">
           <StatusDot status={station.screening} />
-          {/* 测点名是区分各行的唯一依据，空间不够时先截断分组名。 */}
           <span className="max-w-full shrink-0 truncate font-medium">{station.station_name}</span>
           {station.platform_status && <span className="text-status-attention shrink-0 text-xs font-medium">{station.platform_status}</span>}
           <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
@@ -106,7 +102,6 @@ const STATUS_COLOR_TOKENS: Record<string, string> = {
   未见明显变化: '--status-normal',
 };
 
-/** 分组地图上的测点：最近调查结论优先于初筛着色，箭头为巡检 90 天水平净变化方向。 */
 function overviewMapStation(station: StationListItem): MapStation | null {
   if (station.latitude === null || station.longitude === null) {
     return null;
@@ -150,7 +145,6 @@ const GroupOverviewMap: FC<{ stations: readonly StationListItem[] }> = ({ statio
   );
 };
 
-/** 全部测点：按是否需要看排序，点一行进入测点页。 */
 export const StationsPage: FC = () => {
   const { latest } = useInspection();
   const client = useLmaClient();
@@ -193,7 +187,6 @@ export const StationsPage: FC = () => {
 
   const hasStations = (stations?.length ?? 0) > 0;
   const groups = useMemo(() => [...new Set(stations.map((station) => station.group_name))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [stations]);
-  // 地图展示整组位置关系，不随状态筛选和搜索变化。
   const groupStations = useMemo(() => stations.filter((station) => station.group_name === group), [stations, group]);
 
   return (
@@ -220,7 +213,6 @@ export const StationsPage: FC = () => {
           </p>
         )}
         {!hasStations && isLoading && (
-          // 延迟出现，读取很快时不闪一下。
           <div aria-hidden className="animate-in fade-in fill-mode-both mt-5 space-y-2 [animation-delay:150ms] [animation-duration:200ms]">
             <Skeleton className="h-8 w-64" />
             {Array.from({ length: 5 }, (_, index) => (

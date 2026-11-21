@@ -1,37 +1,29 @@
-# 环境与密钥（.env.example 模板正常提交）
 .env
 .env.*
 !.env.example
 
-# Python
 __pycache__/
 *.py[cod]
 .venv/
 .langgraph_api/
 
-# Node
 node_modules/
 dist/
 test-results/
 playwright-report/
 .npm-cache/
 
-# IDE / 系统
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
 
-# 构建缓存
 *.tsbuildinfo
 
-# 日志
 *.log
 backend/evaluations/results/
 
-# 仓库内的临时工作树（应建在仓库目录之外，见 AGENTS.md）
 .cindy-worktrees/
 .claude/worktrees/
 
-# 本机预览配置（指向线上地址，地址不进 Git）
 .claude/launch.json

@@ -95,7 +95,6 @@ def thinking_options(
             } if enabled else None,
         }
 
-    # protocol == "chat_completions"
     if v == "dashscope":
         return {"extra_body": {"enable_thinking": enabled}}
     if v == "deepseek":
@@ -226,7 +225,6 @@ def create_chat_model(
         vendor=resolved_vendor,
     )
 
-    # 规范合并 extra_body
     if "extra_body" in options:
         extra_body_options = options.pop("extra_body")
         if "extra_body" in kwargs:
@@ -235,7 +233,6 @@ def create_chat_model(
             kwargs["extra_body"] = extra_body_options
 
     if provider == "deepseek" and thinking and tool_loop:
-        # DeepSeek 思考模式多轮 tool calling 需要 reasoning_content 回传，使用极窄请求 adapter。
         chat_model: BaseChatModel = DeepSeekThinkingChatModel(
             model=model,
             api_key=api_key,

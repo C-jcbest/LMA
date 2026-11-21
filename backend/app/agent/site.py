@@ -190,7 +190,6 @@ async def inspect_site_environment(
         "sources": sources,
     }
     if terrain is None and geology is None and limitations:
-        # 地形和地质都没有取得时只剩测点位置，按失败返回，地图仍可展示。
         return tool_error_result(
             "场地环境资料不完整：" + "；".join(limitations),
             tool_call_id=tool_call_id,
@@ -202,7 +201,6 @@ async def inspect_site_environment(
             limitations=limitations,
             observed_at=observed_at,
         )
-    # 只缺其中一类资料时，已取得的部分仍是可引用的依据，用 partial 标明缺失。
     return tool_result(
         content,
         kind="site_environment",

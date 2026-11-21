@@ -72,7 +72,6 @@ class UserInput(ApiInput):
 
 
 class ToolCancellation(ApiInput):
-    # assistant-ui 的官方 autoCancelPendingToolCalls 请求，不接受客户端工具成功结果。
     type: Literal["tool"]
     id: str | None = Field(default=None, max_length=200)
     name: str
@@ -104,7 +103,6 @@ class RunInput(ApiInput):
         default_factory=list, max_length=65,
     )
     checkpoint_id: str | None = Field(default=None, max_length=200)
-    # 用户提问时正在查看的测点；只作为模型可见的上下文，不改变消息正文。
     focus_station: str | None = Field(default=None, min_length=1, max_length=100)
     focus_station_uuid: UUID | None = None
     ask_targets: list[AskTarget] = Field(default_factory=list, max_length=4)
@@ -156,7 +154,6 @@ class ActiveRun:
     subscribers: set[asyncio.Queue] = field(default_factory=set)
     latest_values: dict | None = None
     events_since_values: list[dict] = field(default_factory=list)
-    # 重连时补发的图状态投影；巡检原型还要带上 ui 组件。
     project: Callable[[dict], dict] = project_state
 
     def publish(self, event: dict) -> None:
@@ -165,7 +162,6 @@ class ActiveRun:
             queue.put_nowait(event)
 
     def update_values(self, values: dict) -> None:
-        # 图状态只在内部记录；完整状态含全部依据，每步都发给前端会重复传输大量数据。
         self.latest_values = values
         self.events_since_values = []
 
@@ -217,8 +213,6 @@ async def commit_completed_tool_results(agent, config):
                 results.append(message)
     if not results:
         return snapshot
-    # 并行工具仍有未完成任务时，官方 update_state 以“tools 节点写入”合并；传入完整可见消息，
-    # 已提交的结果不会在后续更新中被未完成任务的父状态覆盖。
     config = await agent.aupdate_state(
         snapshot.config, {"messages": [*snapshot.values.get("messages", []), *results]}, as_node="tools",
     )
@@ -272,7 +266,6 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
         if call is None or call["name"] != cancellation.name:
             raise HTTPException(422, "取消请求与服务端工具调用不匹配。")
         if cancellation.tool_call_id in completed_calls:
-            # 停止与工具完成可能同时发生；真实结果已经提交时，不用取消请求覆盖它。
             continue
         if latest_run is None or latest_run["status"] not in {"cancelled", "interrupted", "error"}:
             raise HTTPException(409, "当前工具调用尚未停止。")
@@ -290,7 +283,6 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
         if body.focus_station:
             kwargs["lma_focus_station"] = body.focus_station
         if body.ask_targets:
-            # metadata 是公开字段：前端从消息历史读出并在用户消息上显示追问对象。
             kwargs["metadata"] = {ASK_TARGETS_KEY: [ask_target_record(target) for target in body.ask_targets]}
         accepted.append(HumanMessage(id=user.id, content=user.content, additional_kwargs=kwargs))
     return accepted
@@ -311,13 +303,11 @@ def ask_target_record(target: AskTarget) -> dict:
     return record
 
 
-# 测点页切换 7/30/90 天窗口时复用已取得的数据块。
 _STATION_PAGE_CACHE = "station-page"
 
 
 def create_app(settings: Settings | None = None, agent_factory=None, platform_client_factory=None) -> FastAPI:
     settings = settings or get_settings()
-    # 调查、巡检和测点页共用同一个平台入口；测试替换它即可替换全部平台访问。
     platform_client_factory = platform_client_factory or build_platform_client
     active_runs: dict[str, ActiveRun] = {}
     active_lab_runs: dict[str, ActiveRun] = {}
@@ -330,7 +320,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         async with connection_pool(settings.database_uri, settings.database_pool_size) as pool:
             await pool.wait()
             storage = SessionStorage(pool)
-            # 本服务固定一个 worker；进程终止的 Run 显式标记中断，不自动重放外部请求。
             await storage.interrupt_previous_runs()
             checkpointer = AsyncPostgresSaver(pool)
             factory = agent_factory or (lambda saver, records: create_lma_agent(_get_llm(), checkpointer=saver, storage=records))
@@ -371,7 +360,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
-        # Pydantic 原始错误包含用户输入，不能将其整包回传或写日志。
         return JSONResponse(status_code=422, content={"detail": "请求参数不符合接口要求。"})
 
     @app.exception_handler(Exception)
@@ -397,7 +385,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
 
     @app.get("/map-config")
     async def map_config():
-        # 浏览器使用该密钥加载高德 SDK；仅向已登录的用户提供地图配置。
         return {"amap_token": settings.amap_token or None}
 
     @app.get("/sessions")
@@ -423,7 +410,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
     @app.patch("/sessions/{session_id}")
     async def update_session(session_id: UUID, body: SessionUpdate):
         await require_session(session_id)
-        # 标题在首条消息运行期间生成并写回，改名不影响运行；归档会把会话移出列表，需等运行结束。
         if body.archived is not None:
             require_idle(session_id)
         return await app.state.storage.update(str(session_id), body.name, body.archived)
@@ -517,7 +503,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                     raise HTTPException(404, "测点不存在。")
                 series = await load_station_series(data, station, window)
         except (BeidouApiError, httpx.HTTPError):
-            # 原始错误可能带上游地址和账号信息，只进日志。
             logger.warning("station timeline request failed", exc_info=True)
             raise HTTPException(502, "监测平台数据暂不可用，请稍后重试。") from None
         return {
@@ -544,7 +529,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         latitude, longitude = station_coordinates(station)
         if latitude is None:
             raise HTTPException(404, "测点没有有效坐标，无法查询降雨。")
-        # 历史降雨最多到昨天；窗口与位移曲线对齐。
         rain_end = min(window.end.date(), business_now().date() - timedelta(days=1))
         rain_start = window.start.date()
         if rain_start > rain_end:
@@ -587,7 +571,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             try:
                 await asyncio.wait_for(run.finished.wait(), timeout=30)
             except TimeoutError:
-                # 已请求停止，收尾仍在进行；客户端随后读取会话状态即可。
                 return Response(status_code=202)
         return Response(status_code=204)
 
@@ -611,7 +594,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                 input=[message.content for message in messages if isinstance(message, HumanMessage)],
             ) as trace:
                 try:
-                    # 平台访问范围随本轮结束关闭连接；该会话已取得的数据块保留给后续追问。
                     async with monitoring_scope(key, platform_client_factory):
                         with anyio.CancelScope() as cancel_scope:
                             control.cancel_scope = cancel_scope
@@ -628,7 +610,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                                     }]))
                                     continue
                                 if branch is not None:
-                                    # 首个状态已写入分叉后的 checkpoint，被替换的旧分支此后不可见。
                                     await app.state.storage.prune_branch(key, **branch)
                                     branch = None
                                 final_state = data
@@ -678,7 +659,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                         message.additional_kwargs["lma_focus_identity"] = {"station_uuid": session["station_uuid"], "station_name": body.focus_station}
             tool_results = [message for message in messages if isinstance(message, ToolMessage)]
             if tool_results:
-                # 用官方 update_state 提交用户对未完成调用的取消确认（同样传入完整可见消息），新输入随后从这一状态开始。
                 config = await app.state.agent.aupdate_state(
                     snapshot.config, {"messages": [*snapshot.values.get("messages", []), *tool_results]}, as_node="tools",
                 )
@@ -698,7 +678,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             raise
         return EventSourceResponse(relay_events(control, queue), ping=15, send_timeout=30)
 
-    # ===== 巡检原型：生成式 UI 流式巡检，独立于正式巡检表 =====
 
     @app.get("/lab/scopes")
     async def lab_scopes():
@@ -774,7 +753,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                             "langgraph_node": metadata.get("langgraph_node"),
                         }]))
                     elif mode == "custom":
-                        # push_ui_message 的组件事件，前端按 id 新增或合并。
                         control.publish(sse_event("custom", data))
                     else:
                         final_state = data
@@ -799,7 +777,6 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
     async def stream_lab_run(inspection_id: UUID, body: LabRunInput):
         await require_lab_inspection(inspection_id)
         key = str(inspection_id)
-        # 原型共用平台账号和视觉额度，同一时间只跑一次巡检。
         if active_lab_runs:
             raise HTTPException(409, "已有原型巡检在进行，请等待完成。")
         control = ActiveRun(id=str(uuid4()), project=project_lab_state)

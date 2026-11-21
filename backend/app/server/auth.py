@@ -16,9 +16,7 @@ from app.config import Settings
 
 SESSION_COOKIE = "lma_session"
 SESSION_DAYS = 7
-# 不需要登录即可访问：健康检查供容器与部署脚本使用，登录接口本身也必须公开。
 PUBLIC_PATHS = {"/health", "/auth/login", "/auth/logout", "/auth/session"}
-# 登录失败后固定等待，单账号场景下足以拖慢在线猜测。
 _FAILED_LOGIN_DELAY_SECONDS = 1.0
 
 
@@ -33,7 +31,6 @@ def auth_enabled(settings: Settings) -> bool:
 
 
 def _signature(settings: Settings, payload: str) -> str:
-    # 账号或密码改变后旧 Cookie 自动失效，不需要另外维护会话表。
     key = f"{settings.auth_secret}\n{settings.auth_username}\n{settings.auth_password}".encode()
     return hmac.new(key, payload.encode(), hashlib.sha256).hexdigest()
 

@@ -5,7 +5,6 @@ import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
 import { TodayAttention } from './TodayAttention';
 
-/** 首页草稿与当前会话分开，直到发送才切换到新的官方会话运行时。 */
 export function TodayPage({ draft, onDraftChange }: { draft: string; onDraftChange: (text: string) => void }) {
   const aui = useAui();
   const { showConversation } = useNavigation();

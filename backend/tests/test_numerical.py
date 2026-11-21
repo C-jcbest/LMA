@@ -115,7 +115,6 @@ class NumericalTests(unittest.TestCase):
         times = [(NOW + timedelta(hours=i)).strftime('%Y-%m-%d %H:%M:%S') for i in range(25)]
         values = [100.0] * 25
         values[10] = 100.1
-        # 尖峰的回落由跳后连续观测直接体现，不被紧随的反向候选截断。
         spike = axis_features(times, values)['events'][0]
         self.assertEqual([round(value, 6) for value in spike['followup_shifts_mm']], [100, 0, 0, 0, 0])
         self.assertIsNone(axis_features(times, [100.0] * 25)['max_step_time'])
@@ -253,7 +252,6 @@ class MonitoringDataCacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(platform.requests), first_requests)
 
     async def test_horizontal_direction_compares_with_slope_aspect_convention(self):
-        # 北 1 mm、东 2 mm：方位从正北顺时针约 63.4°，累计与本窗口分别给出。
         hourly = [point(NOW - timedelta(hours=2 - i), 100.001 + i * .001, 200.002 + i * .002) for i in range(3)]
         platform = FakePlatform([STATION_A], {STATION_A.station_uuid: hourly})
         result = await displacement(platform, station_name_or_uuid='测试点', **window(hours=2))

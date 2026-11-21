@@ -20,7 +20,6 @@ const formatFinishedAt = (value: string) => {
   }).format(new Date(value));
 };
 
-/** 首次读取巡检结果时的占位；延迟出现，读取很快时不闪一下，也不先显示“开始巡检”再跳成结果。 */
 const TodaySkeleton: FC = () => (
   <div aria-hidden className="animate-in fade-in fill-mode-both [animation-delay:150ms] [animation-duration:200ms]">
     <Skeleton className="h-8 w-3/5" />
@@ -32,10 +31,6 @@ const TodaySkeleton: FC = () => (
   </div>
 );
 
-/**
- * 页面打开期间完成了一次新巡检时返回 true，用来提示这次结果里哪些测点变了。
- * 以打开页面时已有的巡检为基准；之后再打开页面，不重复提示。
- */
 function useInspectionFinishedWhileOpen(latest: LatestInspection | null) {
   const [baselineInspectionId, setBaselineInspectionId] = useState<string | null | undefined>(undefined);
   useEffect(() => {
@@ -46,7 +41,6 @@ function useInspectionFinishedWhileOpen(latest: LatestInspection | null) {
   return baselineInspectionId !== undefined && latest?.inspection != null && latest.inspection.id !== baselineInspectionId;
 }
 
-/** 本次巡检之后登记的结论表示这条线索已经调查过；更早的结论只说明以前查过。 */
 function investigationProgress(station: InspectionStation, inspectionFinishedAt: string | undefined) {
   const conclusion = station.last_conclusion;
   if (!conclusion) {
@@ -79,7 +73,6 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-2.5">
             <StatusDot status={station.screening} />
-            {/* 测点名是区分各行的依据，空间不够时先截断分组名。 */}
             <span className="max-w-full shrink-0 truncate text-base font-semibold">{station.station_name}</span>
             <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
             {isNew && <span className="text-status-attention shrink-0 text-xs font-medium">新出现</span>}
@@ -111,7 +104,6 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
   );
 };
 
-/** 首页先回答“今天有没有要看的”；初筛结果不是调查结论，点测点看数据再决定是否调查。 */
 export const TodayAttention: FC = () => {
   const { goStations } = useNavigation();
   const { latest, isLoading, hasLoadError, isStarting, hasStartError, reload, start } = useInspection();
@@ -153,7 +145,6 @@ export const TodayAttention: FC = () => {
 
   let headline = <>今天要查哪个测点？</>;
   if (hasResults && needsLook.length > 0) {
-    // 中文标题按短语换行（不在“测点”中间断开）。
     headline = (
       <>
         <span className="whitespace-nowrap">{stations.length} 个测点，</span>

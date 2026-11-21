@@ -25,11 +25,9 @@ VISION_PROMPT = (Path(__file__).parents[1] / "agent" / "prompts" / "inspection_v
 
 _AXES = (("n", "N (mm)"), ("e", "E (mm)"), ("u", "U (mm)"))
 _MILLIMETERS_PER_METER = 1000.0
-# 显示范围取 2%–98% 分位并留白；个别异常点不再把真实变化压成一条直线。
 _LOW_PERCENTILE = 0.02
 _HIGH_PERCENTILE = 0.98
 _MIN_HALF_RANGE_MM = 2.0
-# 相邻日观测间隔超过 1.5 天视为缺测，画成底色。
 _GAP_DAYS = 1.5
 _VISION_TIMEOUT_SECONDS = 90
 
@@ -128,7 +126,6 @@ async def judge_chart(png: bytes, station_name: str, findings: Sequence[str]) ->
         {"type": "image_url", "image_url": {"url": image_url}},
     ]
     structured = _vision_model().with_structured_output(VisionVerdict, method="json_mode")
-    # 断开图的流式回调：模型逐字输出的 JSON 不能作为助手消息推给页面，页面只接收解析后的初判组件。
     return await structured.ainvoke(
         [SystemMessage(content=VISION_PROMPT), HumanMessage(content=content)], config={"callbacks": []},
     )

@@ -3,7 +3,6 @@ export interface Coordinates {
   longitude: number;
 }
 
-/** 上游有经纬度填反的记录；拒绝非法范围，不猜测或改写原始坐标。 */
 export function validCoordinates(location: { latitude?: number | null; longitude?: number | null } | null | undefined): location is Coordinates {
   const latitude = location?.latitude;
   const longitude = location?.longitude;

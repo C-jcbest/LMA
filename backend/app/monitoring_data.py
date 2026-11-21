@@ -32,7 +32,6 @@ from app.observations import (
 Sampling = Literal["hourly", "daily"]
 
 DAILY_SAMPLE_TIMES = ("15:00",)
-# 单次查询窗口上限：小时数据一年约 8800 点，每日固定时刻十年约 3650 点。
 MAX_WINDOW_DAYS = {"hourly": 366, "daily": 3660}
 _BLOCK_DAYS = {"hourly": 30, "daily": 360}
 _BLOCK_EPOCH = datetime(2000, 1, 1)
@@ -44,7 +43,6 @@ STATION_TYPE_TEXT = {1: "基准站", 2: "移动站单点模式", 3: "移动站RT
 STATION_STATUS_TEXT = {10: "正常", 20: "离线", 30: "告警", 40: "故障"}
 BASE_STATION_TYPE = 1
 DISPLACEMENT_STATION_TYPES = {2, 3}
-# 基准站不是故障也不是缺测；工具直接回答这一点，不生成失败卡片。
 BASE_STATION_NOTE = "未查询形变数据：该监测点为基准站，仅提供差分基准，不适用移动站形变序列分析；这不表示监测异常。"
 
 _UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -230,7 +228,6 @@ class MonitoringData:
         now_text = business_now().strftime(TIME_FORMAT)
         if begin_time > now_text:
             raise ToolInputError("查询窗口在当前时间之后，还没有观测数据")
-        # 结束时间晚于现在时，尚未到来的时刻不是缺测，缺测只统计到当前时间。
         quality_end = min(end_time, now_text)
         times = None
         if sampling == "daily":
@@ -263,7 +260,6 @@ class MonitoringData:
             block_end = block_start + timedelta(days=_BLOCK_DAYS[sampling]) - timedelta(seconds=1)
             now = business_now().replace(tzinfo=None)
             if block_start > now:
-                # 窗口结束时间晚于现在时，未来的日历块没有观测，也不缓存。
                 return _Block(points=[], fetched_at=time.monotonic())
             async with self._limiter:
                 points = await self.client().get_daily_data(

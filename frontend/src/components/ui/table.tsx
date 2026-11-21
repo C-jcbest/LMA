@@ -1,11 +1,6 @@
 import * as React from "react"
 import { cn } from "cn"
 
-/**
- * 监测数据表：表头弱化、单元格紧凑、数字等宽。
- * containerClassName 用于边框和纵向滚动；外层已经负责滚动时传 overflow-visible，
- * 否则这一层的横向滚动会接管粘性表头的滚动容器。
- */
 function Table({
   className,
   containerClassName,

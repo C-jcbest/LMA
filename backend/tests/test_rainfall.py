@@ -39,7 +39,6 @@ class HeavyRainEventsTest(unittest.TestCase):
 
 class DisplacementRatesTest(unittest.TestCase):
     def test_rates_before_and_after_event_use_main_axis(self):
-        # 前 10 天每天 +0.1 mm，雨后每天 +0.5 mm；降雨在第 10、11 天。
         north = [index * 0.1 for index in range(10)] + [0.9 + index * 0.5 for index in range(1, 12)]
         events = heavy_rain_events(_days([0] * 9 + [0, 40, 30] + [0] * 9))
 

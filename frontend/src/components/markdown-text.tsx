@@ -14,7 +14,6 @@ import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { cn } from 'cn';
 
-// StreamdownTextComponents 的索引签名尚未保留 CodeHeaderProps。
 const CodeHeader: FC<any> = ({ language, code }: CodeHeaderProps) => {
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const onCopy = () => {
@@ -247,7 +246,6 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({
         ...components,
       }}
       defer
-      // 流式生成时新到的词淡入，避免整块文字跳出；历史消息不在生成中，不触发。
       animated={STREAMING_REVEAL}
       {...props}
     />

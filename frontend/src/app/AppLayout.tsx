@@ -28,7 +28,6 @@ import { ThemeProvider } from './providers/ThemeProvider';
 
 export interface AppLayoutProps {
   onOpenSettings?: () => void;
-  /** 启用访问保护时提供；未启用时侧栏不显示退出登录。 */
   onLogout?: () => void;
 }
 
@@ -71,7 +70,6 @@ interface PageEntry {
   open: () => void;
 }
 
-/** 侧栏与收起后的导航条显示同一组页面入口。 */
 function usePageEntries(): PageEntry[] {
   const { page, goHome, goStations, goRecords, goLab, startConversation } = useNavigation();
   const { latest } = useInspection();
@@ -85,10 +83,6 @@ function usePageEntries(): PageEntry[] {
   ];
 }
 
-/**
- * 侧栏收起后（用户收起，或依据、测点页需要宽度时自动收起）留下的窄导航条：
- * 页面入口仍在原位置，用户不会以为导航消失了；第一个按钮展开完整侧栏。
- */
 const NavigationRail = forwardRef<HTMLButtonElement, SettingsMenuActions & { expandLabel: string; onExpand: () => void }>(({ expandLabel, onExpand, onOpenSettings, onLogout }, expandButtonRef) => {
   const entries = usePageEntries();
   return (
@@ -182,10 +176,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
   );
 };
 
-/** 只维护布局偏好和当前页面；会话选择、消息和滚动仍由官方 Runtime 管理。 */
 export const AppLayout: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }) => {
-  // 页面数据（测点目录、测点时间轴、记录搜索、结论标记）的缓存跟随布局：
-  // 切换服务地址时布局随 Runtime 重建，缓存一起丢弃。失败只自动重试一次，随后显示可重试的提示。
   const [queryClient] = useState(() => new QueryClient({
     defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 30_000 } },
   }));
@@ -258,7 +249,6 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
     state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.title || '新调查'
   ));
 
-  // 宽度放不下三栏时，导航让位给依据或测点页的对话，改由抽屉打开。依据面板比测点页的对话栏宽，需要更多空间。
   const isInspectorBesideChat = isSplit && selection !== null;
   const isStationPageCramped = page === 'station' && !hasRoomForStationPage;
   const canDockSidebar = isDesktop && (hasRoomForThreeColumns || !(isInspectorBesideChat || isStationPageCramped));
@@ -268,7 +258,6 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
     try {
       localStorage.setItem('lma-navigation-collapsed', String(collapsed));
     } catch {
-      // 折叠仍即时生效；禁用存储的浏览器无法跨刷新保留偏好。
     }
     requestAnimationFrame(() => {
       if (collapsed) {

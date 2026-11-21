@@ -5,7 +5,6 @@ import type { ScreeningFinding } from '@/services/api';
 
 const AXIS_NAMES: Record<string, string> = { n: '北向', e: '东向', u: '垂直' };
 
-/** 一条初筛线索的短标签：方向 + 现象，近期小时序列加“近期”前缀；完整句子放在悬停提示里。 */
 export function findingLabel(finding: ScreeningFinding): string {
   const axis = finding.axis ? AXIS_NAMES[finding.axis] ?? '' : '';
   const recent = finding.window === 'recent' ? '近期' : '';
@@ -31,7 +30,6 @@ export function findingLabel(finding: ScreeningFinding): string {
   }
 }
 
-/** 线索短标签只附幅度。真实观测跨度仍在该线索的详情。 */
 export function findingAmount(finding: ScreeningFinding): string | null {
   if (finding.value_mm === null) {
     return null;
@@ -41,7 +39,6 @@ export function findingAmount(finding: ScreeningFinding): string | null {
 
 export const triggersOf = (findings: readonly ScreeningFinding[]) => findings.filter((finding) => finding.role === 'trigger');
 
-/** 数据质量线索按标签去重，同一类问题只显示一次。 */
 export function qualityLabelsOf(findings: readonly ScreeningFinding[]) {
   const byLabel = new Map<string, string[]>();
   for (const finding of findings) {
@@ -54,14 +51,9 @@ export function qualityLabelsOf(findings: readonly ScreeningFinding[]) {
   return [...byLabel].map(([label, texts]) => ({ label, detail: texts.join('\n') }));
 }
 
-/**
- * 测点的初筛线索：调查理由在前、数据质量在后，标签之外不再重复整句；
- * limit 控制显示几条调查理由，其余合并为“另 N 条”。
- */
 export const FindingChips: FC<{
   findings: readonly ScreeningFinding[];
   limit?: number;
-  /** 行内另有幅度列时不在标签里重复幅度。 */
   showAmount?: boolean;
   className?: string;
 }> = ({ findings, limit = Infinity, showAmount = true, className }) => {
@@ -73,7 +65,6 @@ export const FindingChips: FC<{
     return null;
   }
   return (
-    // 标签会放进今日页的整行按钮里，只能用行内元素；列表语义由 role 提供。
     <span role="list" aria-label="初筛线索" className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {visible.map((finding, index) => {
         const amount = showAmount ? findingAmount(finding) : null;

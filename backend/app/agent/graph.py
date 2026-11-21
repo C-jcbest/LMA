@@ -135,7 +135,6 @@ class LmaMiddleware(AgentMiddleware):
         if not latest_results or any(message.status == "error" for message in latest_results):
             return None
         recorded = any(message.name == CONCLUSIONS_TOOL_NAME for message in latest_results)
-        # 只登记了结论、没有写正文时回到模型补上回答；与其他查询并行发出时也需要模型继续。
         only_conclusions = all(message.name == CONCLUSIONS_TOOL_NAME for message in latest_results)
         if recorded and only_conclusions and index >= 0 and messages[index].text.strip():
             return {"jump_to": "end"}
@@ -143,7 +142,6 @@ class LmaMiddleware(AgentMiddleware):
 
     async def awrap_model_call(self, request, handler):
         request = request.override(messages=model_messages(request.messages))
-        # 模型调用超限会让整轮报错、已取得的证据无法交付；最后一次调用撤掉工具，让模型直接作答。
         completed_model_calls = request.state.get("run_model_call_count", 0)
         if completed_model_calls >= self.model_run_limit - 1:
             final_system_message = SystemMessage(
@@ -172,12 +170,10 @@ class LmaMiddleware(AgentMiddleware):
         if message.invalid_tool_calls and not message.tool_calls:
             if not budget_left:
                 raise ValueError("模型在本轮预算内未能给出有效工具调用或回答")
-            # 使用官方模型节点纠错并计入本轮调用预算，不解析或执行损坏的参数。
             updates["jump_to"] = "model"
         elif not message.tool_calls and not message.text.strip():
             if not budget_left:
                 raise ValueError("模型未返回可用回答；已取得的证据保留")
-            # 思考模型偶尔只输出推理、正文为空；删掉这条空回复再调用一次，仍计入本轮预算。
             return {"messages": [RemoveMessage(id=message.id)], "jump_to": "model"}
         if self.max_input_tokens is None:
             logger.warning("model profile does not include max_input_tokens; preserve previous context_usage")
@@ -227,7 +223,6 @@ def create_lma_agent(model, *, agent_tools=None, checkpointer=None, retry_delay=
         system_prompt=SYSTEM_PROMPT,
         state_schema=AgentState, checkpointer=checkpointer,
         middleware=[
-            # 顺序有意义：测点记录在消息加上服务端上下文之后读取；它包在纠错层外面，才能看到取数失败依据。
             LmaMiddleware(model, model_run_limit=settings.agent_model_run_limit),
             *([StationRecordsMiddleware(storage)] if storage is not None else []),
             ToolFeedbackMiddleware(),

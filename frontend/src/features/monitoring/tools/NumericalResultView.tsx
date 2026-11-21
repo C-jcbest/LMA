@@ -49,7 +49,6 @@ const featureRow = (label: string, feature: Feature): ReactNode[] => [
 
 const FEATURE_HEAD = ['方向', '累计 (mm)', '本窗口 (mm)', '速率 (mm/天)', '最大单步 (mm)', '有效点'];
 
-/** 已观察到的保持时长；之后出现缺测时注明，避免把未观察的时段读成仍在保持。 */
 const heldText = (event: Feature) => {
   const held = `${formatNumber(event.held_hours, 0)} 小时`;
   const hasLaterGap = Array.isArray(event.later_unknown_intervals) && event.later_unknown_intervals.length > 0;
@@ -63,7 +62,6 @@ const eventsOf = (features: Record<string, Feature>) =>
       : []
   ));
 
-/** 位移结果中服务端计算的数值特征：先看各方向汇总，再看台阶与分段对比。 */
 export function NumericalResultView({ data }: { data: GnssArtifactData }) {
   const features = (data.features ?? {}) as Record<string, Feature>;
   const comparisons = data.comparisons ?? {};

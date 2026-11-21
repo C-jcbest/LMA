@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 
-// 只替换 API 返回，页面、会话运行时和布局均使用生产实现；数据为自动化测试数据。
 const session = {
   id: 'report-session', name: '测试分组巡检', archived: false,
   created_at: '2026-11-09T00:00:00Z', updated_at: '2026-11-09T01:00:00Z',
@@ -34,7 +33,6 @@ const conclusions = {
     { station_uuid: support.station_uuid, station_name: '测试点 A', status: '需人工复核', reason: '长期同向变化', begin_time: support.begin_time, end_time: support.end_time, evidence: ['E123abc'] },
   ],
 };
-// 只登记结论、没有正文时，界面用各测点原因补出的文字。
 const fallbackText = '测试点 A（需人工复核）：长期同向变化';
 
 const messages = [
@@ -115,7 +113,6 @@ async function mockApi(page: Page) {
 
 const inspector = (page: Page) => page.locator('[data-station-inspector]');
 
-/** 章节式正文引用长、短两个窗口；结论登记只作为留档数据随同提交。 */
 const withEvidence = (result: ReturnType<typeof gnssResult>, evidenceId: string) => ({
   ...result, artifact: { ...result.artifact, evidence_id: evidenceId },
 });
@@ -186,7 +183,6 @@ test('调查记录在测点对话栏打开并定位追问', async ({ page }) => 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/?station=测试点 A');
   await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
-  // 不离开测点页：窄屏切到 AI 调查，在测点自己的对话栏里打开那次调查。
   await expect(page).toHaveURL(/station=/);
   await expect(page.getByRole('radio', { name: 'AI 调查', exact: true })).toHaveAttribute('aria-checked', 'true');
   const target = page.getByText('接下来观察什么？');
@@ -220,7 +216,6 @@ test('窄屏切换调查保留数据滚动、图表选区与追问草稿', async
   await page.mouse.down();
   await page.mouse.move(box.x + box.width * 0.7, box.y + 140, { steps: 8 });
   await page.mouse.up();
-  // 框选后在选区上方就地出现追问按钮，不需要先缩放。
   const ask = data.getByRole('toolbar', { name: '所选时间段' }).getByRole('button', { name: '问这段' });
   await expect(ask).toBeVisible();
   const originalCanvas = await canvas.elementHandle();
@@ -238,7 +233,6 @@ test('窄屏切换调查保留数据滚动、图表选区与追问草稿', async
   await expect(askTargets.getByRole('listitem')).toHaveText([/^测试点 A · 11月\d+日/]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
 
-  // 发送时追问对象作为结构化字段提交，正文不夹带测点编号和时间；发出后标签清空。
   let runBody: { messages: { content: unknown }[]; ask_targets: { station_uuid: string; start: string; end: string }[] } | undefined;
   await page.route('**/api/sessions', (route) => route.fulfill({ json: { ...session, id: 'station-ask-session' } }));
   await page.route('**/api/sessions/station-ask-session', (route) => route.fulfill({ json: { ...session, id: 'station-ask-session' } }));
@@ -262,7 +256,6 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/?threadId=report-session');
 
-  // 状态按优先级排列，原因放在提示里，点击打开该测点依据。
   const statuses = page.getByRole('list', { name: '测点状态' });
   await expect(statuses.getByRole('button').first()).toHaveAccessibleName('查看 测试点 A 需人工复核 的依据');
   await expect(statuses.getByRole('button').first()).toHaveAttribute('title', '长期同向变化');
@@ -294,7 +287,6 @@ test('测点状态、复制导出及引用定位依据时间窗口', async ({ pa
 
   await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
   await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
-  // 在面板内换窗口后，再点相同引用仍应回到被引用的窗口。
   await inspector(page).getByRole('radio', { name: /08-01 至 11-03/ }).click();
   await page.getByRole('button', { name: /查看依据 2：/ }).first().click();
   await expect(inspector(page).getByRole('radio', { name: /11-01 至 11-03/ })).toHaveAttribute('aria-checked', 'true');
@@ -326,7 +318,6 @@ test('天气和计算引用直接打开对应依据，用户消息显示追问�
   await page.goto('/?threadId=report-session');
 
   await expect(page.locator('[data-role="user"]').getByRole('list', { name: '追问对象' })).toHaveText('测试点 A · 10月27日–10月28日');
-  // 卡片标题写明对象和时间，编号只留在句末引用上。
   await expect(page.locator('[data-slot="evidence-card"]').filter({ hasText: '测试点 A 同期天气' })).toContainText('10-26 至 10-28');
   await expect(page.locator('[data-slot="evidence-card"]').filter({ hasText: /\[\d\]/ })).toHaveCount(0);
 
@@ -334,7 +325,6 @@ test('天气和计算引用直接打开对应依据，用户消息显示追问�
   await expect(inspector(page).getByRole('heading', { name: '测试点 A' })).toBeVisible();
   await expect(inspector(page).getByRole('tab', { name: '天气', exact: true })).toHaveAttribute('aria-selected', 'true');
 
-  // 不属于测点的计算结果在同一面板里打开，而不是另起弹窗。
   await page.getByRole('button', { name: /查看依据 3：/ }).click();
   await expect(inspector(page).getByRole('heading', { name: '降雨前后北向变化对比' })).toBeVisible();
   await expect(inspector(page).getByRole('cell', { name: '2.8' })).toBeVisible();
@@ -369,14 +359,12 @@ for (const width of [320, 390, 1440]) {
     await expect(cards.nth(0).locator('canvas')).toBeVisible();
     const answer = page.getByText('测试点 A 需要优先复核，测试点 B 未见明显变化。', { exact: true });
     const process = page.locator('[data-slot="investigation"]');
-    // 调查过程在回答顶部，收起时很矮，结论紧随其后。
     const processBox = (await process.boundingBox())!;
     expect(processBox.y).toBeLessThan((await answer.boundingBox())!.y);
     expect(processBox.height).toBeLessThan(120);
     await answer.scrollIntoViewIfNeeded();
     await page.screenshot({ path: `test-results/answer-${width}.png`, animations: 'disabled' });
     const entry = cards.nth(1).getByRole('button', { name: '展开测试点 A 位移', exact: true });
-    // 输入框固定在底部；先滚到按钮可点击的位置，再记录实际打开时的阅读位置。
     await entry.click({ trial: true });
     const entryTop = (await entry.boundingBox())!.y;
     await page.screenshot({ path: `test-results/reading-${width}.png`, animations: 'disabled' });
@@ -418,7 +406,6 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await expect(page.getByRole('heading', { name: /3 个测点.*1 个.*建议调查/ })).toBeVisible();
   expect(await page.getByRole('region', { name: '今日页面', exact: true }).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect(page.getByRole('list', { name: '建议调查的测点' }).getByRole('button', { name: /^查看 / })).toHaveCount(1);
-  // 每行只显示首条理由的短标签与幅度；上次不是建议调查的标“新出现”，巡检前的结论只算“上次调查”。
   const attention = page.getByRole('list', { name: '建议调查的测点' });
   await expect(attention.getByText('北向持续变化')).toBeVisible();
   await expect(attention.getByText('新出现')).toBeVisible();
@@ -430,7 +417,6 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await expect(page.getByRole('heading', { name: '测试点 A' })).toBeVisible();
   await expect(page.getByText('北向本窗口变化')).toBeVisible();
   await expect(page.getByRole('img', { name: '测试点 A 位移时间轴' })).toBeVisible();
-  // 强降雨过程只列雨量与主方向前后速率，不经过模型。
   await expect(page.getByRole('list', { name: '强降雨过程' })).toContainText('11-03');
   await expect(page.getByRole('list', { name: '强降雨过程' })).toContainText('+0.08 → +0.21');
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
@@ -439,7 +425,6 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.getByRole('radio', { name: '30 天' }).click();
   await expect.poll(() => timelineQueries.at(-1)).toBe('?days=30');
 
-  // 自定义起止日期：两个日期都给出后才查询，含当天。
   await page.getByRole('radio', { name: '自定义' }).click();
   await page.getByLabel('开始日期').fill('2026-10-01');
   await page.getByLabel('结束日期').fill('2026-10-20');
@@ -450,12 +435,10 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await expect.poll(() => timelineQueries.at(-1)).toBe('?begin=2026-10-01&end=2026-10-20');
   await expect(page.getByText('2026-10-01 至 2026-10-20')).toBeVisible();
 
-  // 同组对比只在打开时读取同组其他移动站。
   expect(timelineStations).not.toContain('测试点 B');
   await page.getByRole('button', { name: '同组对比' }).click();
   await expect.poll(() => timelineStations).toContain('测试点 B');
 
-  // 历次调查在测点页自己的对话面板里打开，窄屏切到对话显示那次的结论。
   await page.getByRole('button', { name: /需人工复核.*长期同向变化/ }).click();
   await expect(page).toHaveURL(/station=/);
   await expect(page.getByRole('complementary', { name: 'AI 调查' }).getByText(fallbackText)).toBeVisible();

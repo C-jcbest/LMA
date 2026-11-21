@@ -8,7 +8,6 @@ const THREAD_PARAMETER = 'labThread';
 const SCOPE_KEY = 'lmaLabScope';
 const JOIN_RUN_KEY = 'lmaLabJoin';
 
-/** 切换到某次原型巡检。用受控 threadId 切换：嵌套 Runtime 的线程目录不支持 switchToNewThread。 */
 const OpenInspectionContext = createContext<((id: string) => void) | null>(null);
 
 export function useOpenLabInspection() {
@@ -21,7 +20,6 @@ export function useOpenLabInspection() {
 
 const readThreadId = () => new URL(window.location.href).searchParams.get(THREAD_PARAMETER) || undefined;
 
-/** 发起巡检时把范围放进 runConfig；接回进行中的巡检时只带接回标记。 */
 export const labRunConfig = (scope: LabScope) => ({ custom: { [SCOPE_KEY]: scope } });
 
 const customOf = (runConfig: unknown): Record<string, unknown> =>
@@ -41,7 +39,6 @@ function threadMetadata(inspection: LabInspection) {
   };
 }
 
-/** 原型巡检的线程目录：一条线程就是一次巡检，不改名、不归档。 */
 function createLabThreadAdapter(client: LmaClient): RemoteThreadListAdapter {
   return {
     async list() {
@@ -64,7 +61,6 @@ function createLabThreadAdapter(client: LmaClient): RemoteThreadListAdapter {
   };
 }
 
-/** 载入时巡检仍在服务端进行（例如刷新了页面），载入完成后接回它的事件流。 */
 function ActiveRunRejoin({ pendingJoins }: { pendingJoins: Set<string> }) {
   const send = useLangGraphSend();
   const remoteId = useAuiState((state) =>
@@ -81,10 +77,6 @@ function ActiveRunRejoin({ pendingJoins }: { pendingJoins: Set<string> }) {
   return null;
 }
 
-/**
- * 巡检原型独立的 assistant-ui Runtime：与调查会话互不影响。
- * 服务端用 push_ui_message 推送的组件经官方 LangGraph 适配器变成助手消息里的 data part。
- */
 export function LabRuntimeProvider({ client, children }: { client: LmaClient; children: ReactNode }) {
   const [threadId, setThreadId] = useState(readThreadId);
   const pendingJoins = useRef(new Set<string>());
@@ -125,7 +117,6 @@ export function LabRuntimeProvider({ client, children }: { client: LmaClient; ch
         if (!scope) {
           throw new Error('没有选择巡检范围。');
         }
-        // 离开页面只断开订阅，巡检在服务端继续，回来时接回。
         yield* client.streamLabRun(externalId, messages, scope, config.abortSignal);
       } catch (reason) {
         if (!config.abortSignal.aborted) {

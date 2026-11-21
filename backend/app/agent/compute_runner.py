@@ -22,14 +22,12 @@ _BANNED_NAMES = {
     "globals", "locals", "vars", "dir", "getattr", "setattr", "delattr", "type", "object",
     "memoryview", "classmethod", "staticmethod", "property", "super",
 }
-# 文件、网络、进程与动态执行入口；pandas/numpy 的读写方法按名称前缀拦截。
 _BANNED_ATTRIBUTES = {
     "eval", "query", "load", "loads", "save", "savez", "savez_compressed", "savetxt", "loadtxt",
     "genfromtxt", "fromfile", "tofile", "fromregex", "memmap", "DataSource", "ctypeslib", "ctypes",
     "f2py", "distutils", "testing", "os", "sys", "subprocess", "system", "popen", "lib", "io",
     "dump", "ExcelWriter", "HDFStore",
 }
-# 这些模块本来就已提供；模型习惯先写 import，放行可省去一次纠错往返。只接受模块本身，不接受子模块。
 _PROVIDED_MODULES = {"pandas", "numpy", "math", "statistics"}
 _IO_ATTRIBUTE = re.compile(
     r"^(read_\w+|to_(csv|pickle|parquet|excel|sql|hdf|feather|json|html|clipboard|xml|latex|stata|orc|markdown))$"
@@ -62,14 +60,10 @@ def validate_code(code: str) -> ast.Module:
                 raise ValueError(f"不能使用 .{node.attr}")
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "to_string"
                 and (node.args or any(keyword.arg == "buf" for keyword in node.keywords))):
-            # to_string 传入 buf 时会写文件；只允许返回字符串。
             raise ValueError("to_string 只能返回字符串，不能写入文件")
     return tree
 
 
-# 解释器和 numpy/pandas 在执行用户代码时会按需导入内部模块（例如 Timestamp.strftime 需要 time，
-# 归约运算需要 numpy._core._methods）。用户代码本身不能写 import 也不能引用 __import__，
-# 这里只放行这些内部需要的模块。
 _IMPLICIT_IMPORTS = {"time", "_strptime", "datetime", "calendar", "locale", "encodings", "numpy", "pandas", "math", "statistics"}
 
 
@@ -96,7 +90,6 @@ def _limit_resources():
     try:
         import resource
     except ImportError:
-        # Windows 没有 resource 模块；开发环境只依赖父进程超时。
         return
     resource.setrlimit(resource.RLIMIT_AS, (1536 * 1024 * 1024, 1536 * 1024 * 1024))
     resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
@@ -143,7 +136,6 @@ class _Serializer:
         self.truncated = False
 
     def number(self, value):
-        # 去掉二进制浮点噪声（如 0.99999999999），6 位小数远高于毫米级位移的有效精度。
         value = float(value)
         return round(value, 6) if math.isfinite(value) else None
 
@@ -152,7 +144,6 @@ class _Serializer:
         if depth > 6:
             raise ValueError("结果嵌套过深，请返回更简单的结构")
         if isinstance(value, pd.DataFrame):
-            # 默认整数行号对用户没有意义，只有带业务含义的索引（时间、分段名）才作为首列展示。
             frame = value if isinstance(value.index, pd.RangeIndex) else value.reset_index()
             if len(frame) > MAX_ROWS:
                 self.truncated = True
@@ -207,7 +198,6 @@ class _Serializer:
 
 
 def main():
-    # -I 会忽略 PYTHONIOENCODING；Windows 默认按本地代码页读写，统一改为 UTF-8。
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
     request = json.loads(sys.stdin.read())
@@ -220,7 +210,6 @@ def main():
     import numpy as np
     import pandas as pd
 
-    # 模型习惯用 print 查看中间值；收集起来随结果返回，而不是写到协议使用的 stdout。
     printed = []
 
     def collect_print(*values, sep=" ", end="\n"):

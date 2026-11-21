@@ -80,7 +80,6 @@ class InspectionLabTests(unittest.IsolatedAsyncioTestCase):
 
         first_screened = next(index for index, event in enumerate(events) if event["props"].get("status") == "screened")
         pending = [event for event in events[:first_screened] if event["name"] == ROW_COMPONENT]
-        # 范围内的移动站先全部出现在页面上；基准站和别组测点不进入巡检。
         self.assertEqual({event["props"]["station_name"] for event in pending}, {"台阶点", "平稳点"})
         self.assertTrue(all(event["metadata"]["message_id"] for event in events))
 

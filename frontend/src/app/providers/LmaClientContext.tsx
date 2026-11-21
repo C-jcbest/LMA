@@ -11,7 +11,6 @@ export function useLmaClient(): LmaClient {
   return client;
 }
 
-/** 测点页登记用户正在查看的测点，下一次提问随请求带给模型；离开页面时清除。 */
 export const FocusStationContext = createContext<((stationName: string | null) => void) | null>(null);
 
 export function useSetFocusStation() {

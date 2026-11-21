@@ -75,7 +75,6 @@ def suggestion_context(sources: dict) -> dict:
             conclusions.append(conclusion)
         recorded_at = row.get("inspection_recorded_at")
         if row.get("screening") and recorded_at:
-            # 取数失败的巡检没有观测窗口，不能把巡检记录时间说成事件发生时间。
             windows["inspection_record"] = {"recorded_at": recorded_at}
         stations.append({
             "station_uuid": row["station_uuid"],
@@ -97,7 +96,6 @@ def suggestion_context(sources: dict) -> dict:
 
 
 def summary_version(context: dict) -> str:
-    # 内容本身是版本，不引入数据库 revision 或额外的失效写入链路。
     return json.dumps(context, sort_keys=True, ensure_ascii=False, default=str)
 
 
@@ -168,7 +166,6 @@ class SuggestionService:
                 return []
             task = asyncio.create_task(self._generate(version, context))
             self._pending[version] = task
-        # 取消一个页面请求不取消其他页面共享的生成；任务自身最多运行 12 秒。
         questions = await asyncio.shield(task)
         current = suggestion_context(await storage.suggestion_sources())
         if summary_version(current) != version:
@@ -179,13 +176,11 @@ class SuggestionService:
         try:
             async with asyncio.timeout(_GENERATION_TIMEOUT_SECONDS):
                 questions = await suggest_questions(context)
-            # 成功选择“不推荐”也是结果；解析失败、超时等异常不会进入缓存。
             self._cache[version] = questions
             while len(self._cache) > 8:
                 self._cache.popitem(last=False)
             return questions
         except Exception:
-            # 由 API 静默收起推荐；不缓存失败，也不在后台重试。
             logger.warning("question suggestion generation unavailable", exc_info=True)
             return []
         finally:

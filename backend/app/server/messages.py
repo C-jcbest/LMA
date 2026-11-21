@@ -5,8 +5,6 @@ from app.agent.message_context import evidence_id, is_evidence
 from app.agent.tool_protocol import FEEDBACK_CATEGORY, is_tool_feedback
 
 
-# 客户端只接收明确公开的字段。用白名单而不是拦截已知推理字段，
-# 供应商新增内部字段时默认不外发。
 _PUBLIC_CONTENT_BLOCKS = {"text", "tool_call", "tool_call_chunk", "invalid_tool_call"}
 _PUBLIC_ADDITIONAL_KWARGS = {"metadata", "lc_source", "created_at"}
 _PUBLIC_RESPONSE_METADATA = {"finish_reason", "model_name", "model_provider"}
@@ -19,13 +17,11 @@ def _pick(source: dict, allowed: set[str]) -> dict:
 def project_message(message: BaseMessage) -> dict:
     result = message.model_dump(mode="json")
     if is_tool_feedback(message):
-        # 保留官方调用/结果配对和 error 状态；技术诊断仅留在 checkpoint 供模型与审计使用。
         result["content"] = "查询参数需调整，该调用未取得观测数据。"
         result["artifact"] = {"version": 1, "kind": "tool_feedback", "category": FEEDBACK_CATEGORY}
     if is_evidence(message) and isinstance(result.get("artifact"), dict):
         result["artifact"]["evidence_id"] = evidence_id(message.tool_call_id)
     if isinstance(message, (AIMessage, AIMessageChunk)):
-        # checkpoint 保留供应商工具协议所需的推理字段，客户端只接收公开内容。
         result["content"] = [
             block for block in message.content_blocks
             if block.get("type") in _PUBLIC_CONTENT_BLOCKS

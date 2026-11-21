@@ -16,7 +16,6 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # 只取消过时测试，不中断已进入服务器更新阶段的部署。
     concurrency:
       group: lma-test-${{ github.workflow }}-${{ github.ref }}
       cancel-in-progress: true
@@ -113,7 +112,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # 业务接口未登录必须被拒绝；健康检查保持公开，供容器与部署脚本使用。
           status="$(curl --silent --show-error --connect-timeout 10 --max-time 20 \
             --output /dev/null --write-out '%{http_code}' "https://$LMA_HOST/api/sessions")"
           test "$status" = 401

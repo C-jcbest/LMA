@@ -1,4 +1,3 @@
-# 独立项目与数据卷：不会接管原 lma 项目的 Agent Server、Redis 或 lma_pgdata。
 name: lma-oss
 
 services:

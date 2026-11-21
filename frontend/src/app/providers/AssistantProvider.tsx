@@ -14,7 +14,6 @@ const getStationThreadId = (stationUuid: string) => {
 };
 
 type RecoveryError = 'history' | 'run' | null;
-/** runConfig 标记：本次“运行”只接回服务端仍在进行的调查，不提交新消息。 */
 const JOIN_RUN_KEY = 'lmaJoinActiveRun';
 const isJoinRun = (runConfig: unknown) =>
   typeof runConfig === 'object' && runConfig !== null && (runConfig as Record<string, unknown>)[JOIN_RUN_KEY] === true;
@@ -43,7 +42,6 @@ function StationDraft({ stationUuid }: { stationUuid: string }) {
   return null;
 }
 
-/** 载入会话时服务端调查仍在进行（例如刷新了页面），载入完成后接回它的事件流。 */
 function ActiveRunRejoin({ pendingJoins }: { pendingJoins: Set<string> }) {
   const send = useLangGraphSend();
   const remoteId = useAuiState((state) =>
@@ -60,7 +58,6 @@ function ActiveRunRejoin({ pendingJoins }: { pendingJoins: Set<string> }) {
   return null;
 }
 
-/** URL 选中的历史会话尚未接管 Runtime 时，不能向临时的新会话发送。 */
 export function useConversationLoading() {
   const requestedId = useContext(RequestedSessionContext);
   return useAuiState((state) => {
@@ -85,7 +82,6 @@ export function RecoveryNotice() {
   const retry = () => {
     const question = [...messages].reverse().find((message) => message.role === 'user');
     if (error === 'run' && question) {
-      // 运行失败已由 Provider 显示局部反馈，消费官方 Runtime 返回的拒绝以免成为未处理异常。
       void Promise.resolve(runtime.thread.startRun({ parentId: question.id })).catch(() => {});
       return;
     }
@@ -170,7 +166,6 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
             hasAssistantOutput ||= event.data.some((message) => message?.type === 'ai' || message?.type === 'AIMessageChunk');
           }
           if (event.event === 'error' && !hasAssistantOutput) {
-            // SDK 的 error 事件会标记最近一条 AI 消息；本轮尚无输出时不能误伤旧回答。
             setError('run');
             continue;
           }
@@ -179,7 +174,6 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
       } catch (reason) {
         if (!config.abortSignal.aborted) {
           setError('run');
-          // 与服务端 SSE 错误使用同一公开事件，SDK 保留部分回答并结束运行。
           if (hasAssistantOutput) {
             yield { event: 'error', data: { message: '本次回答未完成。' } };
           }
@@ -206,7 +200,6 @@ export function AssistantProvider({ client, children, scope }: { client: LmaClie
     getCheckpointId: (id, messages) => client.findCheckpoint(id, messages),
     eventHandlers: {
       onError: () => setError('run'),
-      // 子图错误可由主调查恢复，不将内部尝试提升为全局故障。
       onSubgraphError: () => setError(null),
     },
   });

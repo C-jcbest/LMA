@@ -22,14 +22,9 @@ export interface InspectorViewState {
   charts: Map<string, ChartViewState>;
 }
 
-/**
- * 检查器打开的对象：通常是一个测点（可定位到它的某条依据）；
- * 计算结果等不属于任何测点的依据没有 stationId，只显示这条依据本身。
- */
 export interface InspectorSelection {
   messageId: string;
   stationId?: string;
-  /** 从引用进入时，定位到这条工具结果。 */
   toolCallId?: string;
 }
 
@@ -45,7 +40,6 @@ interface StationInspectorContextValue {
   selection: InspectorSelection | null;
   selectionVersion: number;
   isClosing: boolean;
-  /** 宽度足够时检查器与对话并排，否则全屏覆盖。 */
   isSplit: boolean;
   canExpand: boolean;
   isFullscreen: boolean;
@@ -54,14 +48,12 @@ interface StationInspectorContextValue {
   composerInputRef: RefObject<HTMLTextAreaElement | null>;
   attachAskTarget: (target: AskTarget) => void;
   openStation: (selection: StationSelection) => void;
-  /** 打开引用指向的那条依据：属于测点时在该测点里定位到对应页签和窗口，否则单独显示。 */
   openEvidence: (selection: EvidenceSelection) => void;
   closeInspector: (options?: { focusComposer?: boolean }) => void;
 }
 
 const StationInspectorContext = createContext<StationInspectorContextValue | null>(null);
 
-/** 保存查看位置和图表交互状态；证据始终从当前消息的官方 tool part 派生。 */
 export function StationInspectorProvider({ children, canSplit = true }: { children: ReactNode; canSplit?: boolean }) {
   const aui = useAui();
   const attachAskTarget = useCallback((target: AskTarget) => addAskTarget(aui, target), [aui]);
@@ -71,7 +63,6 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
   const [isFullscreen, setIsFullscreen] = useState(false);
   const viewStates = useRef(new Map<string, InspectorViewState>());
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
-  // 测点页已经是数据与对话并排，依据在那里全屏打开，不再挤出第四栏。
   const isWide = useMediaQuery('(min-width: 1024px)');
   const canExpand = canSplit && isWide;
   const isSplit = canExpand && !isFullscreen;
@@ -84,7 +75,6 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
     setSelectionVersion((version) => version + 1);
     const saved = next.stationId ? viewStates.current.get(`${next.messageId}:${next.stationId}`) : undefined;
     if (saved && next.toolCallId) {
-      // 引用必须定位指定证据；保留该证据自身的缩放和图例。
       saved.selectedToolCallId = next.toolCallId;
       saved.tab = undefined;
     }
@@ -114,7 +104,6 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
     if (!isClosing) {
       return;
     }
-    // 保留依据到退场结束，避免立即卸载截断关闭动画；新打开会取消这次退场。
     const timer = window.setTimeout(() => {
       setSelection(null);
       setIsClosing(false);

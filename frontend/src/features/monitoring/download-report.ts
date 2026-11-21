@@ -2,7 +2,6 @@ const MARGIN_MM = 15;
 const CONTENT_WIDTH_MM = 180;
 const CONTENT_HEIGHT_MM = 267;
 
-/** 在段落、行和图表之间分页；长段落也可从文字行之间换页。 */
 function pageBreaks(report: HTMLElement, pageHeight: number): number[] {
   const top = report.getBoundingClientRect().top;
   const height = Math.ceil(report.getBoundingClientRect().height);
@@ -33,7 +32,6 @@ export async function downloadReport(report: HTMLElement, signal: AbortSignal) {
   const [{ jsPDF }, { default: capture }] = await Promise.all([import('jspdf'), import('html2canvas-pro')]);
   await document.fonts.ready;
   if (signal.aborted) return;
-  // SVG charts are drawn synchronously by their mounted effects, with animation disabled.
   const width = Math.ceil(report.getBoundingClientRect().width);
   const pages = pageBreaks(report, Math.floor(width * CONTENT_HEIGHT_MM / CONTENT_WIDTH_MM));
   const pdf = new jsPDF({ format: 'a4', compress: true });

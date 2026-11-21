@@ -25,7 +25,6 @@ from app.observations import station_reference
 
 _MAX_REQUESTED_POINTS = 1000
 _MAX_EVENTS_FOR_MODEL = 5
-# 这些字段只服务于复核界面或审计，模型判断不需要，避免占用上下文。
 _FEATURE_FIELDS_FOR_MODEL = (
     "metric_name", "count", "begin_time", "end_time", "effective_span_hours",
     "cum_start_mm", "cum_end_mm", "net_change_mm", "robust_slope_mm_day", "trend_supported",
@@ -57,7 +56,6 @@ async def find_stations(group_name: str | None = None, station_name: str | None 
         groups = matched
         stations = [station for station in stations if station.group_uuid == matched[0].group_uuid]
     if station_name:
-        # 列表筛选保留所有名称相符的测点（忽略大小写、分隔符和数字前导零），由模型或用户再确认。
         key = name_key(station_name)
         stations = [station for station in stations if key in name_key(station.station_name)]
     if station_status:
@@ -168,7 +166,6 @@ def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
     for other, outcome in zip(others, outcomes):
         names[other.station_uuid] = other.station_name
         if isinstance(outcome, BaseException):
-            # 比较站失败不影响主站结论，但不能拿其他站代替它。
             failures[other.station_uuid] = "未取得可用数据"
             observations[other.station_uuid] = []
         else:
@@ -180,7 +177,6 @@ def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
         },
         "station_names": names,
         "failures": failures,
-        # 对比站的清洗后观测与固定参考，供 compute 计算站间差值；主站观测已在 points 中，不重复保存。
         "snapshots": {
             other.station_uuid: [point.as_dict() for point in observations[other.station_uuid]]
             for other in others if other.station_uuid not in failures
@@ -190,7 +186,6 @@ def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
 
 
 def _rounded(value):
-    # 位移以 mm 计，0.001 mm 以下只是浮点运算噪声，保留会让模型复述出 1.9999999 这类数字。
     if isinstance(value, float):
         return round(value, 3)
     if isinstance(value, list):
@@ -244,7 +239,6 @@ def _model_facts(series: DisplacementSeries, features: dict, comparisons: dict, 
         "features": {axis: _model_feature(feature) for axis, feature in features.items()},
     }
     north, east = features.get("n", {}), features.get("e", {})
-    # 方位与场地坡向（下坡方向）比较，是判断位移是否符合坡体下滑的关键事实；由系统计算，避免模型自行换算角度。
     direction = {
         "cumulative": horizontal_direction(north.get("cum_end_mm"), east.get("cum_end_mm")),
         "window_change": horizontal_direction(north.get("net_change_mm"), east.get("net_change_mm")),

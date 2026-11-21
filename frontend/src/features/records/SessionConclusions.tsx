@@ -7,7 +7,6 @@ import type { SessionConclusion } from '@/services/api';
 import type { InvestigationStatus } from '@/types/envelope';
 
 export interface SessionVerdict {
-  /** 这次调查里最需要处理的那个结论。 */
   status: string;
   stations: string[];
 }
@@ -34,7 +33,6 @@ function toVerdicts(conclusions: readonly SessionConclusion[]): Map<string, Sess
   return verdicts;
 }
 
-/** 会话列表旁的结论标记。它只是补充信息：读取失败时保留上一次结果，不打断会话列表。 */
 export function SessionConclusionsProvider({ children }: { children: ReactNode }) {
   const client = useLmaClient();
   const queryClient = useQueryClient();
@@ -43,7 +41,6 @@ export function SessionConclusionsProvider({ children }: { children: ReactNode }
     queryFn: ({ signal }) => client.listSessionConclusions(signal),
   });
 
-  // 一轮调查结束可能登记了新结论。
   useAuiEvent('thread.runEnd', () => {
     void queryClient.invalidateQueries({ queryKey: ['session-conclusions'] });
   });

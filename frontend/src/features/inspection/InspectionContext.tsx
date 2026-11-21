@@ -16,7 +16,6 @@ interface InspectionValue {
 
 const InspectionContext = createContext<InspectionValue | null>(null);
 
-/** 今日页、测点列表和测点页读取同一份巡检结果，切换页面不重复请求。 */
 export function InspectionProvider({ children }: { children: ReactNode }) {
   const client = useLmaClient();
   const [latest, setLatest] = useState<LatestInspection | null>(null);
@@ -66,7 +65,6 @@ export function InspectionProvider({ children }: { children: ReactNode }) {
     if (!isRunning || isLoading) {
       return;
     }
-    // 请求结束后才开始计时，慢接口不会被下一轮取消，也不累积并发请求。
     const timer = window.setTimeout(() => void load(), POLL_INTERVAL_MS);
     return () => window.clearTimeout(timer);
   }, [isRunning, isLoading, load]);

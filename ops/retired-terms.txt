@@ -31,3 +31,4 @@ executed_evidence  # 2026-11-17 随自建依据存证删除
 raw_points  # 2026-11-17 位移依据不再另存原始记录，原始数据以上游平台为准
 generate_title_node  # 2026-11-17 标题改为单次模型调用 generate_title
 numerical_model_data  # 2026-11-17 删除未使用的投影函数
+vite-env.d.ts  # Vite 类型移至前端 tsconfig.json

@@ -1,4 +1,3 @@
-# 重建并重载新 lma-oss 后端；本机原 lma 项目及其会话卷保留不动。
 param([switch]$NoBuild)
 
 $ErrorActionPreference = 'Stop'

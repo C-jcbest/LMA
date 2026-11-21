@@ -30,7 +30,6 @@ echarts.use([
   MarkAreaComponent,
   MarkLineComponent,
   MarkPointComponent,
-  // 拖选依赖 brush，而 brush 内部需要 toolbox 组件，界面上不显示工具栏。
   ToolboxComponent,
   TooltipComponent,
   CanvasRenderer,
@@ -58,15 +57,12 @@ interface TimelineChartProps {
   label: string;
   resetSignal: number;
   onRangeChange: (range: ChartRange | null) => void;
-  /** 把一段时间带入追问；不传时不显示就地追问按钮。 */
   onAsk?: (range: ChartSelection) => void;
   hasRainfall?: boolean;
   askDisabled?: boolean;
   initialState?: ChartViewState;
   onStateChange?: (state: ChartViewState) => void;
-  /** 绘图区高度（px）。 */
   height?: number;
-  /** 正文里的图表不缩放，框选后只提供追问；缩放留给依据面板和测点页。 */
   allowZoom?: boolean;
 }
 
@@ -83,13 +79,11 @@ interface BrushEndEvent {
 }
 
 const FULL_RANGE_TOLERANCE = 0.01;
-/** 追问按钮放在图例与绘图区之间的空白带，不压在曲线上。 */
 const ASK_BAR_TOP = 18;
 const ASK_BAR_HALF_WIDTH = 64;
 const PLOT_LEFT = 48;
 const PLOT_RIGHT = 12;
 
-/** 有指针时拖选；触屏上拖动留给页面滚动，用底部滑块缩放。 */
 const enableDragSelection = (chart: echarts.ECharts) => {
   if (!window.matchMedia('(hover: hover)').matches) return;
   chart.dispatchAction({
@@ -112,7 +106,6 @@ export default function TimelineChart({
   const chartRef = useRef<echarts.ECharts | null>(null);
   const previousViewRef = useRef<string | null>(null);
   const [isReady, setIsReady] = useState(false);
-  // 悬停时刻与拖选范围只存时间值，按钮位置在渲染时由图表换算，缩放或改尺寸后不会错位。
   const [hover, setHover] = useState<{ time: number; kind: AskKind } | null>(null);
   const [selection, setSelection] = useState<ChartSelection | null>(null);
   const dragKind = useRef<AskKind>('displacement');
@@ -158,7 +151,6 @@ export default function TimelineChart({
       previousViewRef.current = null;
 
       chart.on('datazoom', () => {
-        // 缩放后选区的像素位置已变，重新框选比保留一个错位的选区更清楚。
         chart.dispatchAction({ type: 'brush', areas: [] });
         setSelection(null);
         const zooms = chart.getOption().dataZoom as SliderState[];
@@ -206,7 +198,6 @@ export default function TimelineChart({
       chart.on('brushEnd', (event) => {
         isSelectingRef.current = false;
         const range = (event as BrushEndEvent).areas[0]?.coordRange;
-        // 选区保留在图上，由用户决定追问还是放大，而不是松开鼠标就缩放。
         const selected = range && range[1] > range[0] ? { start: range[0], end: range[1], kind: dragKind.current } : null;
         setSelection(selected);
         saveViewState(selected);
@@ -215,7 +206,6 @@ export default function TimelineChart({
     };
     initializeChart();
 
-    // 拖动分隔线和布局过渡都可能连续触发尺寸通知，一帧至多重绘一次。
     let resizeFrame: number | null = null;
     const observer = new ResizeObserver(() => {
       if (resizeFrame === null) {
@@ -251,7 +241,6 @@ export default function TimelineChart({
     chart.setOption(option, { notMerge: isNewView });
     previousViewRef.current = viewKey;
     enableDragSelection(chart);
-    // 仅换测点、窗口或曲线内容时复位；换主题保留图例与已框选的范围。
     if (isNewView) {
       zoomKind.current = initialState?.zoom?.kind ?? 'displacement';
       onRangeChangeRef.current(null);
@@ -281,10 +270,8 @@ export default function TimelineChart({
     if (!selection) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      // 焦点在别的弹层（如导航抽屉）里时，Esc 属于那个弹层，选区保持不变。
       const layer = event.target instanceof Element ? event.target.closest('[role="dialog"], [role="menu"]') : null;
       if (layer && !layer.contains(containerRef.current)) return;
-      // 先取消选区，不同时关闭外层的依据面板。
       event.preventDefault();
       clearSelection();
     };
@@ -292,7 +279,6 @@ export default function TimelineChart({
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [selection]);
 
-  /** 按钮中心对准时间位置，并限制在绘图区宽度内。 */
   const askBarLeft = (time: number) => {
     const chart = chartRef.current;
     const container = containerRef.current;

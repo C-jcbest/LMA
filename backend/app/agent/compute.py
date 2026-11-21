@@ -93,7 +93,6 @@ def _point_rows(points: list[dict]) -> list[list]:
 def _run_sandbox(request: dict) -> dict:
     environment = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1"}
     if os.name == "nt":
-        # Windows 上 numpy 加载依赖系统目录。
         environment["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", "")
     with tempfile.TemporaryDirectory() as workdir:
         completed = subprocess.run(
@@ -151,6 +150,5 @@ async def compute(
 
     result = {"description": description, "result": outcome["result"], "truncated": outcome["truncated"]}
     display = {**result, "code": code, "inputs": described_inputs}
-    # 中间打印只给模型参考，不进入展示依据。
     facts = {**result, "printed": outcome["printed"]} if outcome.get("printed") else result
     return tool_result(facts, kind="computation", display=display)

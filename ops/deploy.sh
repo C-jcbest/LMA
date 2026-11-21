@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# 安装到 /usr/local/sbin/lma-deploy；由受限 SSH 密钥经 sudo 调用。
 set -euo pipefail
 umask 077
 
@@ -47,7 +46,6 @@ export LMA_ENV_FILE="$environment_file"
 export LMA_RELEASE="$release_sha"
 compose=(docker compose --project-name lma-cloud --env-file "$environment_file" --file "$release_dir/docker-compose.yml")
 
-# 新镜像构建失败时，旧容器继续运行；构建不接触数据库。
 "${compose[@]}" build
 if [[ -L "$deploy_root/current" ]]; then
     previous_release="$(readlink -f "$deploy_root/current")"

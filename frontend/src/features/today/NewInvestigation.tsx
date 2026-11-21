@@ -25,7 +25,6 @@ function InvestigationWelcome() {
 
   useEffect(() => {
     let active = true;
-    // StrictMode 重放 effect 时复用本次请求；推荐不进入会话运行时。
     if (!request.current) {
       request.current = client.suggestQuestions().catch(() => []);
     }

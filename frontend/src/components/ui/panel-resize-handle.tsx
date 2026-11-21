@@ -28,7 +28,6 @@ interface DragState {
   panel: HTMLElement;
 }
 
-/** 拖动只改 CSS 变量；React 状态和同步存储只在一次操作结束时更新。 */
 export function usePanelResize({
   storageKey,
   defaultWidth,
@@ -45,7 +44,6 @@ export function usePanelResize({
         return stored;
       }
     } catch {
-      // 无存储权限时仍可调整当前页面的面板。
     }
     return Math.min(maxWidth, Math.max(minWidth, defaultWidth));
   });
@@ -61,7 +59,6 @@ export function usePanelResize({
     try {
       localStorage.setItem(storageKey, String(next));
     } catch {
-      // 宽度仍保留在当前页面中，不阻止继续操作。
     }
   };
 
@@ -117,7 +114,6 @@ export function usePanelResize({
     const startWidth = panel.getBoundingClientRect().width;
     const maximum = constrain(maxWidth);
     event.currentTarget.setAttribute('aria-valuemax', String(maximum));
-    // 边界在按下时测量一次，移动事件中不读取布局。
     dragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -172,7 +168,6 @@ export function usePanelResize({
   return {
     style: { '--panel-width': `${width}px` } as CSSProperties,
     onEscapeKeyDown: (event: globalThis.KeyboardEvent) => {
-      // Radix 在 document 捕获阶段处理 Esc，需先撤销拖动，避免把抽屉一并关闭。
       if (dragRef.current) {
         event.preventDefault();
         finishDrag(false);

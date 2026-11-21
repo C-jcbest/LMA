@@ -38,7 +38,6 @@ import {
   type FC,
 } from "react";
 
-/** 直接投影官方列表错误；重试不重建 Runtime，也不清空已确认的会话。 */
 export const ThreadListLoadError: FC = () => {
   const aui = useAui();
   const hasLoadError = useAuiState((state) => state.threads.loadError != null);
@@ -69,7 +68,6 @@ export const ThreadListLoadError: FC = () => {
 
 const ThreadListNavigationContext = createContext<(() => void) | undefined>(undefined);
 
-/** 侧栏只放最近几条，行高紧凑；记录页是完整列表，并写出结论。 */
 type ThreadListVariant = "recent" | "all";
 const ThreadListVariantContext = createContext<ThreadListVariant>("all");
 const RECENT_THREAD_COUNT = 6;
@@ -87,7 +85,6 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
           )}
           <div
             data-slot="aui_thread-list-viewport"
-            // 最近只有几条，通常不滚动；不预留滚动条位置，条目才能和上方导航一样宽。
             className={cn(
               "min-h-0 flex-1 overflow-y-auto overscroll-contain",
               variant === "all" && "[scrollbar-gutter:stable]",
@@ -110,7 +107,6 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
   );
 };
 
-/** Runtime 已按最近活动排序，取前几条即可；更早的在记录页查看。 */
 const RecentThreadListItems: FC = () => {
   const threadIds = useAuiState((s) => s.threads.threadIds);
   const isLoading = useAuiState((s) => s.threads.isLoading);
@@ -127,7 +123,6 @@ const RecentThreadListItems: FC = () => {
   );
 };
 
-/** 只观察列表底部；分页游标、去重和并发保护仍由官方 Runtime 管理。 */
 const ThreadListPagination: FC<{ autoLoad: boolean }> = ({ autoLoad }) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const hasMore = useAuiState((s) => s.threads.hasMore);
@@ -141,7 +136,6 @@ const ThreadListPagination: FC<{ autoLoad: boolean }> = ({ autoLoad }) => {
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting && !button.disabled) {
-          // 每批新增条目后才重新观察，失败时不自动循环重试。
           observer.disconnect();
           button.click();
         }
@@ -244,11 +238,6 @@ const dateGroupLabel = (
 
 export type ThreadListGroup = { label: string; indices: number[] };
 
-/**
- * Filters the thread list by title and buckets the matches by last activity
- * (今天, 昨天, 更早). `groups` is null when no thread carries a
- * date, in which case `filteredIndices` keeps the runtime order.
- */
 export const useThreadListGroups = (searchQuery = "") => {
   const threadIds = useAuiState((s) => s.threads.threadIds);
   const threadItems = useAuiState((s) => s.threads.threadItems);
@@ -383,7 +372,6 @@ export const ThreadListItem: FC = () => {
   const remoteId = useAuiState((s) => s.threadListItem.remoteId);
   const isOpen = useAuiState((s) => s.threads.mainThreadId === s.threadListItem.id);
   const verdict = useSessionVerdict(remoteId);
-  // 后台完成、还没打开看过的调查，标题加粗。
   const title = useAuiState((s) => s.threadListItem.title);
   useRunCompletionNotice(remoteId, isRunning, isOpen, title);
   const isUnread = useIsSessionUnread(remoteId);
@@ -421,7 +409,6 @@ export const ThreadListItem: FC = () => {
           data-slot="aui_thread-list-item-trigger"
           className="flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9"
         >
-          {/* 侧栏“最近”里，状态点居中在导航图标的位置上，标题与上方导航文字对齐。 */}
           {isRunning ? (
             <Loader2Icon
               aria-hidden
@@ -432,7 +419,6 @@ export const ThreadListItem: FC = () => {
               )}
             />
           ) : (
-            // 没有结论的记录留出同样的位置，标题才能对齐。
             <StatusDot
               status={verdict?.status}
               className={cn(variant === "recent" ? "ms-1 me-3.5" : "me-2.5", !verdict && "invisible")}
@@ -484,7 +470,6 @@ const ThreadListItemRename: FC<{
       return;
     }
 
-    // Deferred so a synchronous throw lands on the rejection path too.
     Promise.resolve()
       .then(() => aui.threadListItem.rename(next))
       .then(

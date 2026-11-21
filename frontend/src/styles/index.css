@@ -29,12 +29,10 @@
   --ring: hsl(240 5% 65%);
   --radius: 0.75rem;
 
-  /* 状态色只表达业务状态，界面其余部分保持中性。 */
   --status-normal: hsl(152 60% 36%);
   --status-attention: hsl(36 92% 46%);
   --status-critical: hsl(2 72% 48%);
   --status-unknown: hsl(240 4% 66%);
-  /* 界面提醒（如上下文将满）沿用“需注意”的色相，但语义独立于业务状态。 */
   --warning: var(--status-attention);
 
   --chart-north: hsl(212 86% 46%);
@@ -111,7 +109,6 @@
   --color-chart-north: var(--chart-north);
   --color-chart-rain: var(--chart-rain);
 
-  /* 回答正文的阅读字号：介于 text-sm 与 text-base 之间，长段落更紧凑。 */
   --text-reading: 0.9375rem;
   --text-reading--line-height: 1.75rem;
 
@@ -120,7 +117,6 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  /* 动效只用两条曲线：进入和状态反馈用减速曲线，离开用加速曲线。 */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in: cubic-bezier(0.4, 0, 1, 1);
   --default-transition-duration: 150ms;
@@ -132,7 +128,6 @@
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @layer base {
-  /* Tailwind v4 的边框默认取 currentColor，这里统一为分隔线颜色。 */
   *,
   ::before,
   ::after {
@@ -148,7 +143,6 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* Tailwind v4 把按钮指针改回了箭头；这里恢复手型，让可点击的依据、测点和入口一眼可辨。 */
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
   [role="tab"]:not(:disabled),
@@ -161,17 +155,12 @@
   }
 }
 
-/*
- * 动效时长三档：反馈 120ms、状态切换 200ms、面板和视图 300ms。
- * 自定义 CSS 用这里的变量，Tailwind 类用 duration-150 / duration-200 / duration-300。
- */
 :root {
   --duration-fast: 120ms;
   --duration-base: 200ms;
   --duration-slow: 300ms;
 }
 
-/* 系统要求减少动态效果时统一关闭位移和动画，组件里不再逐个写 motion-reduce。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,
@@ -188,7 +177,6 @@
   }
 }
 
-/* 今日、测点和记录三个页面共用同一列宽与留白，和对话列对齐。 */
 .page-column {
   width: 100%;
   max-width: 52rem;
@@ -246,7 +234,6 @@
     order: 0;
   }
 }
-/* 按列表自身宽度切换：侧栏或依据面板占去宽度时，窗口宽不代表列表放得下四列。 */
 .station-list {
   container-type: inline-size;
 }
@@ -260,7 +247,6 @@
   }
 }
 
-/* 句末引用编号：小号圆角标记，不打断行高；触屏用透明外扩区域保证点按面积。 */
 .evidence-citation {
   position: relative;
   display: inline-flex;
@@ -287,7 +273,6 @@
   .evidence-citation::after { content: ""; position: absolute; inset: -12px -8px; }
 }
 
-/* 正文中的依据卡片：跟随所引用的段落，宽度与正文一致；用浅底色而不是边框和阴影，读起来像附图。 */
 .evidence-card {
   margin-block: 12px 20px;
   padding: 2px 12px 10px;
@@ -295,14 +280,12 @@
   background: color-mix(in oklab, var(--muted) 55%, transparent);
 }
 .evidence-card[data-state="closed"] { padding-bottom: 2px; }
-/* 放大入口平时隐藏，指针悬停或键盘聚焦到卡片时出现；触屏没有悬停，始终显示。 */
 @media (hover: hover) {
   .evidence-card-open { opacity: 0; transition: opacity var(--duration-fast); }
   .evidence-card:hover .evidence-card-open,
   .evidence-card:focus-within .evidence-card-open { opacity: 1; }
 }
 
-/* 地图位置锚点保持小巧，44px 点击区域便于触屏选择；信息标签不改变真实坐标。 */
 .evidence-map-marker {
   position: relative;
   width: 44px;
@@ -411,7 +394,6 @@
   outline-offset: 2px;
 }
 
-/* 自定义信息窗沿用应用主题，单位、测点身份与真实数据各有独立阅读层次。 */
 .map-station-popup {
   display: flex;
   flex-direction: column;
@@ -561,7 +543,6 @@
   margin-block: 8px;
 }
 
-/* 进度文字的扫光只表示“仍在进行”，减弱动效时保持静态。 */
 .text-shimmer {
   background: linear-gradient(
     90deg,
@@ -592,7 +573,6 @@
   }
 }
 
-/* 布局偏好只决定面板宽度，视口不足时临时收窄，不回写用户保存的宽度。 */
 .navigation-panel {
   width: min(var(--panel-width), calc(100vw - 360px));
   overflow: clip;
@@ -607,7 +587,6 @@
   width: 0;
 }
 
-/* 窄屏导航抽屉沿用侧栏宽度偏好，但始终给右侧留出可点击关闭的空白。 */
 .session-drawer {
   width: min(var(--panel-width), calc(100vw - 2rem));
 }
@@ -632,7 +611,6 @@
   }
 }
 
-/* 测点页宽屏的对话栏：分栏、展开、关闭之间过渡宽度，数据区随之伸缩，用户能看到数据去了哪里。 */
 .station-chat-panel {
   flex-shrink: 0;
   transition: width var(--duration-slow) var(--ease-out), opacity var(--duration-base) var(--ease-out);
@@ -653,7 +631,6 @@
   opacity: 0;
 }
 
-/* 宽度跟随指针时不能再叠加缓动，否则分隔线会落后于鼠标。 */
 [data-resizing] {
   transition: none;
 }
@@ -694,7 +671,6 @@
   user-select: none !important;
 }
 
-/* 使用 Radix 的测量高度及退场生命周期，内容关闭后才卸载。 */
 [data-slot="collapsible-content"][data-state="open"] {
   animation: disclosure-open var(--duration-base) var(--ease-out);
 }
@@ -715,19 +691,16 @@
   to { height: 0; opacity: 0; }
 }
 
-/* 窄屏的依据面板全屏覆盖，从右侧滑入，和宽屏面板出现的方向一致。 */
 .inspector-overlay[data-state="open"] { animation: evidence-in var(--duration-slow) var(--ease-out); }
 .inspector-overlay[data-state="closed"] { animation: evidence-out var(--duration-base) var(--ease-in); }
 @keyframes evidence-in { from { opacity: 0; transform: translateX(24px); } }
 @keyframes evidence-out { to { opacity: 0; transform: translateX(24px); } }
 
-/* 换页的淡入淡出要短：过渡期间页面不接收点击，过长会让人觉得点了没反应。 */
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 160ms;
 }
 
-/* 新巡检完成后，结论有变化的行底色亮起一次再褪去，告诉用户“这几行是新的”。 */
 .row-changed {
   animation: row-changed 1600ms var(--ease-out);
 }
@@ -745,7 +718,6 @@
   animation: investigation-enter var(--duration-slow) var(--ease-out) both;
 }
 
-/* 可打印的调查材料：屏幕上移出视口供图表完成绘制，打印时只显示它，纸面固定浅色。 */
 .print-report {
   position: fixed;
   top: 0;

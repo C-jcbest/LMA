@@ -1,19 +1,13 @@
-/**
- * 证据卡片在正文中的位置：依据第一次被引用的段落之后显示一次，同一依据后续只保留引用编号。
- * 位置由前端按引用决定，模型只需在支持结论的句末标注依据。
- */
 
 export const CARD_HREF_PREFIX = '#evidence-card-';
 export const STATION_MAP_CARD = 'station-map';
 
 const CITATION_PATTERN = /\]\(#evidence-([A-Za-z0-9]+)\)/g;
-/** 工具结果末尾的依据编号标记只写给模型；模型偶尔把它原样抄进正文，显示和导出前去掉。 */
 const ECHOED_EVIDENCE_MARKER = /<lma_evidence\b[^>]*\/?>/g;
 
 export const withoutEchoedEvidenceMarkers = (markdown: string) => markdown.replace(ECHOED_EVIDENCE_MARKER, '');
 const FENCE_PATTERN = /^\s*(```|~~~)/;
 
-/** 卡片紧邻模型自己写的表格时带上这个标记，计算结果卡片据此默认收起，避免同一张表出现两遍。 */
 const BESIDE_TABLE_SUFFIX = '?beside-table';
 const TABLE_LINE_PATTERN = /^\s*\|/;
 
@@ -34,7 +28,6 @@ export const cardReferenceFromHref = (href: string | undefined): CardReference |
   return { cardId: besideTable ? marker.slice(0, -BESIDE_TABLE_SUFFIX.length) : marker, besideTable };
 };
 
-/** 依次返回正文引用的依据编号，重复引用只记第一次。 */
 export function citedEvidenceIds(markdown: string): string[] {
   const ids: string[] = [];
   for (const match of markdown.matchAll(CITATION_PATTERN)) {
@@ -45,7 +38,6 @@ export function citedEvidenceIds(markdown: string): string[] {
   return ids;
 }
 
-/** 显示和导出共用首次引用的顺序，模型给出的标签不决定用户看到的编号。 */
 export const evidenceNumbers = (markdown: string) =>
   new Map(citedEvidenceIds(markdown).map((id, index) => [id, index + 1]));
 
@@ -53,11 +45,9 @@ interface Block {
   lines: string[];
   isHeading: boolean;
   isTable: boolean;
-  /** 缩进开头的块属于上一列表项，卡片不能插在它和列表之间。 */
   isContinuation: boolean;
 }
 
-/** 按空行切分顶层块；代码块内部的空行不切分。 */
 function splitBlocks(markdown: string): Block[] {
   const blocks: Block[] = [];
   let current: string[] = [];
@@ -90,11 +80,8 @@ function splitBlocks(markdown: string): Block[] {
 }
 
 interface InsertOptions {
-  /** 有卡片可显示的依据编号；其余引用只保留编号。 */
   cardEvidenceIds: ReadonlySet<string>;
-  /** 本条回答更早的正文已经显示过卡片的依据。 */
   alreadyShown: ReadonlySet<string>;
-  /** 是否在第一段正文后显示测点地图。 */
   includeStationMap: boolean;
 }
 
@@ -119,7 +106,6 @@ export function insertEvidenceCards(markdown: string, options: InsertOptions): s
     }
     const next = blocks[index + 1];
     if (pendingCards.length > 0 && !next?.isContinuation) {
-      // 引用写在表格里，或写在紧接表格的那句话里，都算正文已经列出了数据。
       const besideTable = block.isTable || Boolean(next?.isTable);
       output.push(...pendingCards.map((cardId) => cardMarker(cardId, besideTable)));
       pendingCards = [];

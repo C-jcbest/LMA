@@ -48,23 +48,18 @@ const messageGroupBy = groupPartByType({
 
 export type ThreadProps = {
   autoFocus?: boolean | undefined;
-  /** 还没有消息时显示的内容：首页是今日关注，测点页是针对该测点的提示。 */
   welcome?: ReactNode;
   overview?: ReactNode;
   placeholder?: string | undefined;
-  /** 要定位的历史结论；不传时使用地址栏中的定位（对话页）。 */
   resultAnchor?: string | undefined;
 };
 
 const DEFAULT_PLACEHOLDER = "询问监测数据、变化趋势、降雨关联或场地环境…";
 
-// Startup exposes a loading placeholder thread; treat it as a new chat so
-// the welcome content shows at once instead of a history skeleton.
 const isNewChatView = (s: AssistantState) =>
   s.thread.messages.length === 0 &&
   (!s.thread.isLoading || s.threads.isLoading);
 
-// A switched thread that is still fetching its history: skeleton, not welcome.
 const isHistoryLoadingView = (s: AssistantState) =>
   s.thread.messages.length === 0 &&
   s.thread.isLoading &&
@@ -124,7 +119,6 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, p
       ref={rootRef}
       className={cn(
         "aui-root aui-thread-root bg-background @container flex h-full min-h-0 min-w-0 flex-col font-sans",
-        // 定位历史结果时需要实际段落高度，不能使用离屏消息的估算高度。
         resultAnchor && "[&_[data-message-id]]:[content-visibility:visible]",
       )}
       style={{
@@ -160,7 +154,6 @@ export const Thread: FC<ThreadProps> = ({ autoFocus = true, welcome, overview, p
             className={cn(
               "aui-thread-viewport-footer bg-background flex flex-col gap-4 overflow-visible px-2 pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-6",
               "sticky bottom-0 mt-auto",
-              // 内容滑入输入框下方时渐隐，而不是被硬切。
               "before:from-background before:pointer-events-none before:absolute before:inset-x-0 before:-top-6 before:h-6 before:bg-linear-to-t",
             )}
           >
@@ -229,8 +222,6 @@ export const ThreadSummaryMessage: FC<{ text?: string }> = ({
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-// 官方 converter 保持摘要 HumanMessage 的 user 角色，且不会把顶层 lc_source
-// 提升到 assistant-ui custom metadata，因此按消息 ID 从公开 LangGraph state 复核。
 export const hasSummarizationSource = (
   messages: readonly unknown[],
   messageId: string,
@@ -382,7 +373,6 @@ const AssistantMessage: FC = () => {
         <MessageError />
       </div>
 
-      {/* 预留固定工具栏高度，显示隐藏按钮时不改变消息布局。 */}
       <div
         data-slot="aui_assistant-message-footer"
         className="ms-2 flex h-10 shrink-0 items-center pt-1.5"

@@ -119,15 +119,12 @@ describe('测点时间轴数据', () => {
     expect(option.axisPointer.link).toEqual([{ xAxisIndex: 'all' }]);
     const names = option.series.map((item: { name: string }) => item.name);
     expect(names).toEqual(['缺测', '北向 N', '东向 E', '垂直 U', '台阶', '日降雨']);
-    // 缺测区段的含义由图例说明，图例可以整体开关缺测底色。
     expect(option.series[0].markArea.data).toHaveLength(1);
     expect(option.legend.data.map((item: string | { name: string }) => (typeof item === 'string' ? item : item.name)))
       .toEqual(['北向 N', '东向 E', '垂直 U', '日降雨', '缺测']);
     expect(option.series[1].connectNulls).toBe(false);
-    // 降雨坐标保留刻度与单位，便于比对各天雨量。
     expect(option.yAxis[1].name).toBe('mm');
 
-    // 当天 0–24 时整段，提示框对齐点取正午：15:00 的采样点落在同一天的降雨块内。
     const [middle, value, start, end] = option.series[5].data[0].value;
     const day = (time: string) => Date.parse(time + '+08:00');
     expect([middle, value, start, end]).toEqual([day('2026-11-02T12:00:00'), 7, day('2026-11-02T00:00:00'), day('2026-11-03T00:00:00')]);
@@ -142,7 +139,6 @@ describe('测点时间轴数据', () => {
       peers: [],
       mode: 'components',
     }, colors) as Record<string, any>;
-    // 台阶集中在图例“台阶”序列上，可整体开关；标记颜色跟随所在方向。
     const steps = option.series.find((item: { name: string }) => item.name === '台阶');
     expect(steps.markPoint.data).toEqual([{
       name: '北向台阶 +4.0 mm · 11-03 00:00', coord: [Date.parse('2026-11-03T00:00:00+08:00'), 4],

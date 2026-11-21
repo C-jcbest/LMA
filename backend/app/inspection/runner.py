@@ -23,7 +23,6 @@ from app.server.storage import SessionStorage
 
 logger = logging.getLogger(__name__)
 
-# 2=移动站单点模式，3=移动站RTK模式；基准站和中继站没有形变序列，不进入巡检。
 _DISPLACEMENT_STATION_TYPES = {2, 3}
 _LONG_WINDOW_SAMPLE_TIMES = ["15:00"]
 _UPSTREAM_CONCURRENCY = 4
@@ -49,11 +48,9 @@ async def screen_with_points(
                 end_time,
             )
     except (BeidouApiError, httpx.HTTPError):
-        # 单点失败不影响其余测点；原始错误只进日志。
         logger.warning("inspection data request failed", exc_info=True)
         return ScreeningResult("暂无法分析", ["监测平台数据暂不可用"]), []
     except Exception:
-        # 平台返回无法解析的数据等意外情况同样只影响这个测点，不让整次巡检作废。
         logger.exception("inspection station failed: %s", station.station_uuid)
         return ScreeningResult("暂无法分析", ["该测点数据无法解析，初筛未完成"]), []
     try:
@@ -71,7 +68,6 @@ async def run_inspection(
     status = "error"
     try:
         async with build_client() as client:
-            # 先完成一次登录，避免并发请求各自登录。
             stations = [
                 station for station in await client.get_stations()
                 if station.station_type in _DISPLACEMENT_STATION_TYPES

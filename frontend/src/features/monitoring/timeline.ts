@@ -32,7 +32,6 @@ export interface DisplacementPoint {
 
 export type ReferenceCoordinates = Record<Axis, number | null>;
 
-/** 平台登记的固定参考坐标（m）；旧依据或平台未登记的方向为 null。 */
 export function referenceOf(data: GnssArtifactData): ReferenceCoordinates {
   const coordinates = data.reference?.coordinates_m;
   const record = typeof coordinates === 'object' && coordinates !== null ? coordinates as Record<string, unknown> : {};
@@ -56,10 +55,6 @@ const BASIS_LABELS: Record<DisplacementBasis, string> = {
 
 export const displacementBasisLabel = (data: GnssArtifactData) => BASIS_LABELS[displacementBasis(data)];
 
-/**
- * 位移（mm）：有固定参考的方向是累计位移，没有的方向退回本窗口首个有效点，
- * 并由 displacementBasisLabel 向用户说明。缺测保持 null，折线在此断开，不转换为 0。
- */
 export function toDisplacement(
   points: readonly GnssPointArtifact[],
   reference: ReferenceCoordinates = { n: null, e: null, u: null },
@@ -88,7 +83,6 @@ export function toDisplacement(
 
 export const displacementOf = (data: GnssArtifactData) => toDisplacement(data.points, referenceOf(data));
 
-/** 窗口内最后一个水平分量齐全的点；用于地图上的位移方向。 */
 export function latestHorizontal(data: GnssArtifactData): { north: number; east: number } | null {
   const points = displacementOf(data);
   for (let index = points.length - 1; index >= 0; index -= 1) {
@@ -106,7 +100,6 @@ export interface HorizontalSample {
   east: number;
 }
 
-/** 地图回放用的水平位移轨迹；点数过多时等间隔抽取，保留首末点。 */
 export function horizontalTrack(data: GnssArtifactData, maxSamples = 240): HorizontalSample[] {
   const samples = displacementOf(data).flatMap((point) => (
     point.n === null || point.e === null ? [] : [{ time: point.time, north: point.n, east: point.e }]
@@ -118,7 +111,6 @@ export function horizontalTrack(data: GnssArtifactData, maxSamples = 240): Horiz
   return Array.from({ length: maxSamples }, (_, index) => samples[Math.round(index * step)]!);
 }
 
-/** 同一次取数里一并对比的其他测点名称；单站取数为空。 */
 export function comparedStationNames(data: GnssArtifactData): string[] {
   const names = data.comparisons?.station_names;
   if (typeof names !== 'object' || names === null) {
@@ -129,7 +121,6 @@ export function comparedStationNames(data: GnssArtifactData): string[] {
     .map(([, name]) => name as string);
 }
 
-/** 依据卡片标题：单站写“位移”，带同组对比的写清对比对象，避免同一窗口出现两张同名卡片。 */
 export function seriesTitle(data: GnssArtifactData): string {
   const compared = comparedStationNames(data);
   return compared.length > 0 ? `${data.station_name} 与 ${compared.join('、')} 对比` : `${data.station_name} 位移`;
@@ -155,7 +146,6 @@ export interface DailyRainfall {
   isForecast: boolean;
 }
 
-/** 按日合并降雨；同一天既有历史又有预报时以历史为准。 */
 export function dailyRainfallWithin(
   weather: readonly WeatherArtifactData[],
   begin: string,
@@ -184,7 +174,6 @@ export interface PeerSeries {
   points: DisplacementPoint[];
 }
 
-/** 同组对比只取与当前窗口重叠过半的序列，位移基准与本测点一致（有固定参考时为累计位移）。 */
 export function peerSeriesFor(
   current: GnssArtifactData,
   peers: readonly { name: string; series: readonly GnssArtifactData[] }[],
@@ -222,7 +211,6 @@ export interface StepEvent {
   stepMillimeters: number;
 }
 
-/** 服务端在本窗口检测到的台阶候选（数值特征 events），不是视觉判断。 */
 export function stepEventsOf(data: GnssArtifactData, axes: readonly (Axis | 'h')[]): StepEvent[] {
   const events: StepEvent[] = [];
   for (const axis of axes) {
@@ -270,10 +258,6 @@ export interface TimelineInput {
   findings?: readonly ScreeningFinding[];
 }
 
-/**
- * 台阶标在曲线上的发生时刻，悬停看幅度；颜色跟随所在方向。
- * 放在独立的空序列上，图例里的“台阶”即可整体开关，不影响曲线本身。
- */
 const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPoint[], colorOf: (axis: Axis | 'h') => string) => {
   const valueAt = new Map(points.map((point) => [point.time, point]));
   return {
@@ -310,7 +294,6 @@ const displacementLine = (
   emphasis: { disabled: true },
 });
 
-/** 缺测区段只画浅色底，含义由图例“缺测”说明，不在每段上重复写字。 */
 const gapBands = (gaps: readonly GapArtifact[], colors: ChartColors) => ({
   silent: true,
   label: { show: false },
@@ -320,14 +303,12 @@ const gapBands = (gaps: readonly GapArtifact[], colors: ChartColors) => ({
   ]),
 });
 
-/** 日降雨是整日累计，画成覆盖当天 0–24 时的色块，任何采样时刻都落在当天之内。 */
 const rainfallSeries = (rainfall: readonly DailyRainfall[], colors: ChartColors) => ({
   name: RAINFALL_SERIES_NAME,
   type: 'custom',
   xAxisIndex: 1,
   yAxisIndex: 1,
   clip: true,
-  // 取当天正午作为提示框的对齐点：当天任一时刻离它都比离相邻日更近。
   encode: { x: 0, y: 1 },
   itemStyle: { color: colors.rain },
   data: rainfall.map((day) => {
@@ -372,7 +353,6 @@ const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
   return [header, ...lines].join('<br/>');
 };
 
-/** 位移、降雨、缺测和台阶共用同一时间轴，时间对齐由图本身完成。 */
 export function buildTimelineOption(input: TimelineInput, colors: ChartColors): EChartsCoreOption {
   const { data, rainfall, peers, mode, findings } = input;
   const displacement = displacementOf(data);
@@ -403,7 +383,6 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
   const hasSteps = steps.length > 0;
   const hasGaps = data.summary.gaps.length > 0;
 
-  // 缺测与台阶各放在一个空序列上，图例可以单独开关，隐藏某个方向时它们仍然可见。
   const gapSeries = {
     ...displacementLine(GAP_SERIES_NAME, [], colors.gap, 0),
     markArea: gapBands(data.summary.gaps, colors),
@@ -444,7 +423,6 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     animation: false,
     useUTC: true,
     textStyle: { fontFamily: 'inherit' },
-    // 降雨图的坐标名“mm”在其上方约 15px，两图间留足距离，避免与位移图底部的刻度叠在一起。
     grid: hasRainfall
       ? [
           { left: 48, right: 12, top: 44, bottom: 176 },
@@ -457,7 +435,6 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       itemWidth: 14,
       itemHeight: 8,
       textStyle: { color: colors.text, fontSize: 12 },
-      // 同组灰线只作背景，不进入图例。
       data: [
         ...(mode === 'components' ? lines : lines.slice(-1)).map((line) => line.name),
         ...(hasRainfall ? [RAINFALL_SERIES_NAME] : []),
@@ -486,7 +463,6 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
       textStyle: { color: colors.text, fontSize: 13 },
       formatter: formatTooltip,
     },
-    // brush 需要 toolbox 组件，拖选由图表本身触发，不显示工具栏。
     toolbox: { show: false },
     brush: {
       xAxisIndex: axisIndexes,
