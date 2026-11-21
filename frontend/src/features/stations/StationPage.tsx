@@ -80,7 +80,7 @@ const CustomRangeForm: FC<{
   const isValid = Boolean(begin && end) && span >= 1 && span <= MAX_RANGE_DAYS && end <= today;
   return (
     <form
-      className="mt-3 flex flex-wrap items-center gap-2 text-sm"
+      className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"
       onSubmit={(event) => {
         event.preventDefault();
         if (isValid) {
@@ -88,12 +88,16 @@ const CustomRangeForm: FC<{
         }
       }}
     >
-      <Input type="date" aria-label="开始日期" value={begin} max={end || today} onChange={(event) => setBegin(event.target.value)} className="h-8 w-40" />
-      <span className="text-muted-foreground">至</span>
-      <Input type="date" aria-label="结束日期" value={end} min={begin} max={today} onChange={(event) => setEnd(event.target.value)} className="h-8 w-40" />
-      <Button type="submit" size="sm" disabled={!isValid}>查看</Button>
-      <Button type="button" size="sm" variant="ghost" onClick={onCancel}>取消</Button>
-      {span > MAX_RANGE_DAYS && <span role="alert" className="text-muted-foreground">最多 366 天（含起止日）</span>}
+      <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 sm:w-auto">
+        <Input type="date" aria-label="开始日期" value={begin} max={end || today} onChange={(event) => setBegin(event.target.value)} className="min-w-0 px-2" />
+        <span aria-hidden className="text-muted-foreground">至</span>
+        <Input type="date" aria-label="结束日期" value={end} min={begin} max={today} onChange={(event) => setEnd(event.target.value)} className="min-w-0 px-2" />
+      </div>
+      <div className="ms-auto flex shrink-0 items-center gap-2">
+        <Button type="button" variant="ghost" onClick={onCancel}>取消</Button>
+        <Button type="submit" disabled={!isValid}>查看</Button>
+      </div>
+      {span > MAX_RANGE_DAYS && <p role="alert" className="w-full text-muted-foreground">最多 366 天（含起止日）</p>}
     </form>
   );
 };
@@ -189,13 +193,13 @@ const DisplacementChart: FC<{
 
   return (
     <div>
-      <div className="flex min-h-8 items-center justify-between gap-3">
-        <p className="text-muted-foreground min-w-0 truncate text-sm tabular-nums">
+      <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className="text-muted-foreground min-w-0 text-sm tabular-nums">
           {range && `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`}
           {!range && displacementBasis(data) !== 'fixed' && displacementBasisLabel(data)}
         </p>
         {range && (
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="ms-auto flex shrink-0 items-center gap-1">
             <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
             <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={() => askAbout(range)}>{range.kind === 'rainfall' ? '问当前降雨' : '问当前范围'}</Button>
           </div>

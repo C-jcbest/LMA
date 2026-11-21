@@ -159,9 +159,9 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultE
     <figure data-slot="evidence-card" className="evidence-card not-prose">
       <figcaption className="-me-1.5 flex items-center gap-1">
         <CollapsibleTrigger className="group/card flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
-          <span className="min-w-0 flex-1 truncate">
-            <span className="text-sm font-medium">{title}</span>
-            {meta && <span className="ms-2 text-xs text-muted-foreground tabular-nums">{meta}</span>}
+          <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 py-1">
+            <span className="break-words text-sm font-medium">{title}</span>
+            {meta && <span className="text-xs text-muted-foreground tabular-nums">{meta}</span>}
           </span>
           <ChevronDownIcon
             aria-hidden

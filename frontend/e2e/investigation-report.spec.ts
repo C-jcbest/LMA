@@ -415,7 +415,7 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.getByRole('button', { name: '查看 测试点 A' }).click();
   await expect(page).toHaveURL(/station=/);
   await expect(page.getByRole('heading', { name: '测试点 A' })).toBeVisible();
-  await expect(page.getByText('北向本窗口变化')).toBeVisible();
+  await expect(page.getByText('本窗口净变化')).toBeVisible();
   await expect(page.getByRole('img', { name: '测试点 A 位移时间轴' })).toBeVisible();
   await expect(page.getByRole('list', { name: '强降雨过程' })).toContainText('11-03');
   await expect(page.getByRole('list', { name: '强降雨过程' })).toContainText('+0.08 → +0.21');

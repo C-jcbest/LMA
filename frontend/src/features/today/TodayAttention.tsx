@@ -159,10 +159,9 @@ export const TodayAttention: FC = () => {
 
   return (
     <section aria-label="今日" className="aui-thread-welcome-root today mb-8">
-      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{historical && <span className="whitespace-nowrap">上次巡检 · </span>}{headline}</h1>
+      <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{headline}</h1>
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{formatFinishedAt(latest.inspection.finished_at)} 巡检</time>}
-        {needsLook.some((station) => triggersOf(station.findings).some((finding) => finding.window === 'long')) && <span>近 90 天</span>}
+        {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{historical ? '上次巡检 ' : ''}{formatFinishedAt(latest.inspection.finished_at)}{historical ? '' : ' 巡检'}</time>}
         {needsLook.length > 0 && investigatedCount > 0 && (
           <span className="tabular-nums">已调查 {investigatedCount}/{needsLook.length}</span>
         )}

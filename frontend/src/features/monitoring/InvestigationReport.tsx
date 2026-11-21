@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type FC } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { CheckIcon, CopyIcon, DownloadIcon, PrinterIcon } from 'lucide-react';
+import { CheckIcon, CopyIcon, DownloadIcon, FileTextIcon } from 'lucide-react';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { cn } from 'cn';
@@ -115,7 +115,7 @@ export const AnswerActions: FC = () => {
         setExportFailed(false);
         setIsPrinting(true);
       }}>
-        <PrinterIcon />
+        <FileTextIcon />
       </TooltipIconButton>
       {exportFailed && <span role="alert" className="text-xs">PDF 未能导出，请重试</span>}
       {isPrinting && <PrintReport onDone={finishPrinting} />}

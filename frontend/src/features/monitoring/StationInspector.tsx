@@ -51,6 +51,7 @@ const METRIC_AXES = [
 export const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
   const reference = referenceOf(data);
   const displacement = displacementOf(data);
+  const basis = displacementBasis(data);
   const latestOf = (axis: 'n' | 'e' | 'u') => {
     for (let index = displacement.length - 1; index >= 0; index -= 1) {
       const value = displacement[index]![axis];
@@ -63,31 +64,39 @@ export const WindowMetrics: FC<{ data: GnssArtifactData }> = ({ data }) => {
     return meters === null || meters === undefined ? null : meters * MILLIMETERS_PER_METER;
   };
   return (
-    <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
-      {METRIC_AXES.map(({ axis, label }) => {
-        const hasReference = reference[axis] !== null;
-        return (
-          <div key={axis} className="min-w-0">
-            <dt className="text-sm text-muted-foreground">{label}{hasReference ? '累计' : '本窗口变化'}</dt>
-            <dd className="mt-0.5 text-xl font-medium tabular-nums">
-              {formatMillimeters(hasReference ? latestOf(axis) : windowChange(axis))}
-              <span className="ms-1 text-sm font-normal text-muted-foreground">mm</span>
-            </dd>
-            {hasReference && (
-              <dd className="text-xs text-muted-foreground tabular-nums">本窗口 {formatMillimeters(windowChange(axis))} mm</dd>
-            )}
-          </div>
-        );
-      })}
-      {data.summary.gaps.length > 0 && (
-        <div className="min-w-0">
-          <dt className="text-sm text-muted-foreground">缺测</dt>
-          <dd className="mt-0.5 text-xl font-medium tabular-nums text-status-attention">
-            {data.summary.gaps.length}<span className="ms-1 text-sm font-normal text-muted-foreground">段</span>
-          </dd>
-        </div>
+    <div>
+      {basis !== 'partial' && (
+        <p className="mb-2 text-sm text-muted-foreground">{basis === 'fixed' ? '累计位移' : '本窗口净变化'}</p>
       )}
-    </dl>
+      <dl className="grid grid-cols-3 gap-x-3 gap-y-3 sm:grid-cols-4">
+        {METRIC_AXES.map(({ axis, label }) => {
+          const hasReference = reference[axis] !== null;
+          return (
+            <div key={axis} className="min-w-0">
+              <dt className="text-sm text-muted-foreground">
+                {label}
+                {basis === 'partial' && <span className="block text-xs">{hasReference ? '累计' : '本窗口变化'}</span>}
+              </dt>
+              <dd className="mt-0.5 text-xl font-medium tabular-nums">
+                {formatMillimeters(hasReference ? latestOf(axis) : windowChange(axis))}
+                <span className="ms-1 text-sm font-normal text-muted-foreground">mm</span>
+              </dd>
+              {hasReference && (
+                <dd className="text-xs text-muted-foreground tabular-nums">本窗口 {formatMillimeters(windowChange(axis))} mm</dd>
+              )}
+            </div>
+          );
+        })}
+        {data.summary.gaps.length > 0 && (
+          <div className="min-w-0">
+            <dt className="text-sm text-muted-foreground">缺测</dt>
+            <dd className="mt-0.5 text-xl font-medium tabular-nums text-status-attention">
+              {data.summary.gaps.length}<span className="ms-1 text-sm font-normal text-muted-foreground">段</span>
+            </dd>
+          </div>
+        )}
+      </dl>
+    </div>
   );
 };
 
@@ -161,13 +170,13 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
       <WindowMetrics data={data} />
 
       <div>
-        <div className="flex min-h-8 items-center justify-between gap-3">
-          <p className="min-w-0 truncate text-sm text-muted-foreground tabular-nums">
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p className="min-w-0 text-sm text-muted-foreground tabular-nums">
             {range && `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`}
             {!range && displacementBasis(data) !== 'fixed' && displacementBasisLabel(data)}
           </p>
           {range && (
-            <div className="flex shrink-0 items-center gap-1">
+            <div className="ms-auto flex shrink-0 items-center gap-1">
               <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>
                 还原
               </Button>
