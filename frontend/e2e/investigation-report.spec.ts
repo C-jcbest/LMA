@@ -425,7 +425,7 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.getByRole('radio', { name: '30 天' }).click();
   await expect.poll(() => timelineQueries.at(-1)).toBe('?days=30');
 
-  await page.getByRole('radio', { name: '自定义' }).click();
+  await page.getByRole('button', { name: '自定义' }).click();
   await page.getByLabel('开始日期').fill('2026-10-01');
   await page.getByLabel('结束日期').fill('2026-10-20');
   await page.getByRole('button', { name: '查看' }).click();
@@ -434,6 +434,14 @@ test('今日页只列建议调查的测点，点击进入测点页直接看数�
   await page.reload();
   await expect.poll(() => timelineQueries.at(-1)).toBe('?begin=2026-10-01&end=2026-10-20');
   await expect(page.getByText('2026-10-01 至 2026-10-20')).toBeVisible();
+
+  await page.getByRole('button', { name: '自定义' }).click();
+  await expect(page.getByLabel('开始日期')).toHaveValue('2026-10-01');
+  await expect(page.getByLabel('结束日期')).toHaveValue('2026-10-20');
+  await page.getByLabel('结束日期').fill('2026-10-21');
+  await page.getByRole('button', { name: '查看' }).click();
+  await expect.poll(() => timelineQueries.at(-1)).toBe('?begin=2026-10-01&end=2026-10-21');
+  await expect(page.getByText('2026-10-01 至 2026-10-21')).toBeVisible();
 
   expect(timelineStations).not.toContain('测试点 B');
   await page.getByRole('button', { name: '同组对比' }).click();
@@ -606,7 +614,7 @@ test('历史空窗可回到最近一次巡检实际有数据的日期', async ({
   });
   await page.setViewportSize({ width: 320, height: 900 });
   await page.goto('/?station=测试点 A');
-  await page.getByRole('radio', { name: '自定义' }).click();
+  await page.getByRole('button', { name: '自定义' }).click();
   await page.getByRole('textbox', { name: '开始日期' }).fill('2026-10-01');
   await page.getByRole('textbox', { name: '结束日期' }).fill('2026-10-03');
   await page.getByRole('button', { name: '查看', exact: true }).click();

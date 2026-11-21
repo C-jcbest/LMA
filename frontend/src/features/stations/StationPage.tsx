@@ -42,7 +42,6 @@ const WINDOW_OPTIONS: readonly { value: string; label: string }[] = [
   { value: '7', label: '7 天' },
   { value: '30', label: '30 天' },
   { value: '90', label: '90 天' },
-  { value: 'custom', label: '自定义' },
 ];
 
 const DAY_MILLIS = 86400e3;
@@ -420,19 +419,25 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
             {groupPeers.length > 0 && (
               <Toggle size="sm" variant="outline" pressed={showPeers} onPressedChange={setShowPeers}>同组对比</Toggle>
             )}
-            <Segmented
-              label="时间范围"
-              value={'days' in timeWindow && !isEditingRange ? String(timeWindow.days) : 'custom'}
-              options={WINDOW_OPTIONS}
-              onValueChange={(value) => {
-                if (value === 'custom') {
-                  setIsEditingRange(true);
-                  return;
-                }
-                setIsEditingRange(false);
-                setTimeWindow({ days: Number(value) as TimelineDays });
-              }}
-            />
+            <div className="flex items-center gap-1">
+              <Segmented
+                label="时间范围"
+                value={'days' in timeWindow && !isEditingRange ? String(timeWindow.days) : ''}
+                options={WINDOW_OPTIONS}
+                onValueChange={(value) => {
+                  setIsEditingRange(false);
+                  setTimeWindow({ days: Number(value) as TimelineDays });
+                }}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-expanded={isEditingRange}
+                className={cn('px-2.5 font-normal', isEditingRange || 'begin' in timeWindow ? 'bg-muted' : 'text-muted-foreground')}
+                onClick={() => setIsEditingRange((editing) => !editing)}
+              >自定义</Button>
+            </div>
           </div>
           {isSideBySide && chatMode === 'closed' && <Button variant="outline" size="sm" onClick={showChat}>AI 调查</Button>}
         </div>
