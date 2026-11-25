@@ -384,7 +384,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
         <div className="min-h-0 flex-1 overflow-hidden">
           {(page === 'home' || page === 'lab') && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} initialScopedOpen={page === 'lab'} />}
           {page === 'conversation' && <Thread autoFocus={isDesktop} welcome={<NewInvestigation />} />}
-          <div className="h-full" hidden={page !== 'stations'}><StationsPage /></div>
+          <div className="h-full" hidden={page !== 'stations'}><StationsPage active={page === 'stations'} /></div>
           {page === 'records' && <RecordsPage />}
           {[...mountedStations].map((id) => (
             <div key={id} className="h-full" hidden={id !== visibleStation}>

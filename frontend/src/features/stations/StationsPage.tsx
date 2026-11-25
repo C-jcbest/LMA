@@ -156,7 +156,7 @@ const GroupOverviewMap: FC<{ stations: readonly StationListItem[] }> = ({ statio
   );
 };
 
-export const StationsPage: FC = () => {
+export const StationsPage: FC<{ active?: boolean }> = ({ active = true }) => {
   const { latest } = useInspection();
   const client = useLmaClient();
   const stationsQuery = useQuery({
@@ -283,7 +283,7 @@ export const StationsPage: FC = () => {
                 })}
               </div>
             )}
-            {activeGroup !== ALL_GROUPS && (
+            {active && activeGroup !== ALL_GROUPS && (
               <div role="region" aria-label={`${activeGroup}位置概览`} className="mt-4">
                 <GroupOverviewMap stations={groupStations} />
               </div>

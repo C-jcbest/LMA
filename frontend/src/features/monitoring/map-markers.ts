@@ -154,6 +154,8 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
       { left: point.x - 18 - width, top: point.y - height - 18 },
       { left: point.x + 18, top: point.y + 18 },
       { left: point.x - 18 - width, top: point.y + 18 },
+      { left: point.x - width / 2, top: point.y - height - 48 },
+      { left: point.x - width / 2, top: point.y + 48 },
     ];
     let chosen = candidates[0]!;
     let bestScore = Infinity;

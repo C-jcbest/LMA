@@ -98,4 +98,42 @@ describe('UI 体验与动效约束回归测试', () => {
     expect(await screen.findByText('K1-01')).toBeInTheDocument();
     expect(await screen.findByRole('region', { name: '唯一分组位置概览' })).toBeInTheDocument();
   });
+
+  it('测点页面非激活态时卸载分组地图，避免隐藏容器触发 3D 渲染异常', async () => {
+    const stations: Station[] = [
+      {
+        station_uuid: 'st-1',
+        station_name: 'K1-01',
+        group_name: '唯一分组',
+        station_type: '移动站RTK模式',
+        station_status: '正常',
+        latitude: 30.1,
+        longitude: 103.2,
+      },
+    ];
+    const client = {
+      listStations: vi.fn().mockResolvedValue(stations),
+      listSessions: vi.fn().mockResolvedValue([]),
+      getLatestInspection: vi.fn().mockResolvedValue({ inspection: null, latest_attempt: null, running: null, stations: [] }),
+      getMapConfig: vi.fn().mockResolvedValue({ amap_token: null }),
+    } as unknown as LmaClient;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <LmaClientContext.Provider value={client}>
+          <AssistantProvider client={client}>
+            <NavigationProvider>
+              <InspectionProvider>
+                <StationsPage active={false} />
+              </InspectionProvider>
+            </NavigationProvider>
+          </AssistantProvider>
+        </LmaClientContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('K1-01')).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: '唯一分组位置概览' })).not.toBeInTheDocument();
+  });
 });

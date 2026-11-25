@@ -171,7 +171,7 @@ export default function StationMap({ stations, references = [], onSelect, select
   useEffect(() => {
     const container = containerRef.current;
     const located = stations.filter(validCoordinates);
-    if (!container || !sdk || located.length === 0) {
+    if (!container || !sdk || located.length === 0 || container.clientWidth === 0 || container.clientHeight === 0) {
       return;
     }
     const layers = createBaseLayers(sdk, layerSelectionRef.current);
@@ -256,6 +256,7 @@ export default function StationMap({ stations, references = [], onSelect, select
     map.setFitView(allMarkers.map((item) => item.marker), true, [72, 72, 72, 72], 16);
 
     let destroyed = false;
+    let settleTimer = 0;
     const placeLabels = () => {
       if (destroyed || container.clientWidth === 0 || container.clientHeight === 0) {
         return;
@@ -269,9 +270,15 @@ export default function StationMap({ stations, references = [], onSelect, select
       window.clearTimeout(loadTimeout);
       setMapError('');
       placeLabels();
+      if (layerSelectionRef.current.terrain3d) {
+        window.clearTimeout(settleTimer);
+        settleTimer = window.setTimeout(placeLabels, 200);
+      }
     };
     map.on('mapmove', placeLabels);
+    map.on('moveend', placeLabels);
     map.on('zoomchange', placeLabels);
+    map.on('zoomend', placeLabels);
     map.on('resize', placeLabels);
     const loadTimeout = window.setTimeout(() => setMapError('高德地图暂时不可用，请检查地图密钥授权和网络后刷新。'), 20000);
     map.on('complete', onComplete);
@@ -279,8 +286,11 @@ export default function StationMap({ stations, references = [], onSelect, select
       destroyed = true;
       unbindWheel();
       window.clearTimeout(loadTimeout);
+      window.clearTimeout(settleTimer);
       map.off('mapmove', placeLabels);
+      map.off('moveend', placeLabels);
       map.off('zoomchange', placeLabels);
+      map.off('zoomend', placeLabels);
       map.off('resize', placeLabels);
       map.off('complete', onComplete);
       try {

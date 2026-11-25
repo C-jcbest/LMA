@@ -39,7 +39,7 @@ export const Segmented: FC<SegmentedProps> = ({ label, value, options, onValueCh
             key={option.value}
             value={option.value}
             aria-label={option.label}
-            className="relative px-2.5 font-normal text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-transparent data-[state=on]:text-foreground"
+            className="relative px-2.5 font-normal text-muted-foreground duration-75 hover:bg-transparent hover:text-foreground data-[state=on]:bg-transparent data-[state=on]:text-foreground"
           >
             {active && (
               <motion.span
