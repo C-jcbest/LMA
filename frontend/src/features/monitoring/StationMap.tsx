@@ -255,21 +255,40 @@ export default function StationMap({ stations, references = [], onSelect, select
     const allMarkers = [...markers, ...referenceMarkers];
     map.setFitView(allMarkers.map((item) => item.marker), true, [72, 72, 72, 72], 16);
 
-    const placeLabels = () => placeMapMarkerLabels(map, container, allMarkers);
+    let destroyed = false;
+    const placeLabels = () => {
+      if (destroyed || container.clientWidth === 0 || container.clientHeight === 0) {
+        return;
+      }
+      placeMapMarkerLabels(map, container, allMarkers);
+    };
+    const onComplete = () => {
+      if (destroyed) {
+        return;
+      }
+      window.clearTimeout(loadTimeout);
+      setMapError('');
+      placeLabels();
+    };
     map.on('mapmove', placeLabels);
     map.on('zoomchange', placeLabels);
     map.on('resize', placeLabels);
-    map.on('complete', placeLabels);
     const loadTimeout = window.setTimeout(() => setMapError('高德地图暂时不可用，请检查地图密钥授权和网络后刷新。'), 20000);
-    map.on('complete', () => {
-      window.clearTimeout(loadTimeout);
-      setMapError('');
-    });
+    map.on('complete', onComplete);
     return () => {
+      destroyed = true;
       unbindWheel();
       window.clearTimeout(loadTimeout);
-      popup.close();
-      map.destroy();
+      map.off('mapmove', placeLabels);
+      map.off('zoomchange', placeLabels);
+      map.off('resize', placeLabels);
+      map.off('complete', onComplete);
+      try {
+        popup.close();
+        map.destroy();
+      } catch {
+        // 高德 3D 销毁期间可能触发内部坐标收尾异常，忽略组件卸载期残留。
+      }
       layersRef.current = null;
       markerNodesRef.current.clear();
     };
@@ -324,6 +343,7 @@ export default function StationMap({ stations, references = [], onSelect, select
   };
 
   const hasSlope = stations.some((station) => station.downslopeAzimuth !== null);
+  const hasBase = stations.some((station) => isBaseStation(station));
 
   return (
     <div className="space-y-2">
@@ -354,6 +374,16 @@ export default function StationMap({ stations, references = [], onSelect, select
         </div>
       )}
       <ul aria-label="地图图例" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <li className="inline-flex items-center gap-1.5">
+          <span className="size-2.5 rounded-full border border-background bg-foreground/60" aria-hidden />
+          移动站
+        </li>
+        {hasBase && (
+          <li className="inline-flex items-center gap-1.5">
+            <span className="size-2.5 rotate-45 rounded-xs border border-background bg-status-unknown" aria-hidden />
+            基准站
+          </li>
+        )}
         <li className="inline-flex items-center gap-1.5">
           <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden><path d="M8 14V3M8 3l-4 4M8 3l4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
           水平位移方向

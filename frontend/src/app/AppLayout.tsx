@@ -1,7 +1,7 @@
 import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { useAuiEvent, useAuiState } from '@assistant-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ActivityIcon, FlaskConicalIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
+import { ActivityIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,6 @@ import {
   StationInspectorProvider,
   useStationInspector,
 } from '@/features/monitoring/StationInspectorContext';
-import { InspectionLabPage } from '@/features/lab/InspectionLabPage';
 import { RecordsPage } from '@/features/records/RecordsPage';
 import { SessionConclusionsProvider } from '@/features/records/SessionConclusions';
 import { SettingsMenu, type SettingsMenuActions } from '@/features/settings/SettingsMenu';
@@ -71,15 +70,15 @@ interface PageEntry {
 }
 
 function usePageEntries(): PageEntry[] {
-  const { page, goHome, goStations, goRecords, goLab, startConversation } = useNavigation();
+  const { page, goHome, goStations, goRecords, startConversation } = useNavigation();
   const { latest } = useInspection();
+  const isNewConversation = useAuiState((state) => state.thread.messages.length === 0);
   const attentionCount = latest?.stations.filter((station) => station.screening === '建议调查').length;
   return [
-    { icon: PlusIcon, label: '新调查', isCurrent: false, open: startConversation },
-    { icon: SunIcon, label: '今日', isCurrent: page === 'home', badge: attentionCount, open: goHome },
+    { icon: PlusIcon, label: '新调查', isCurrent: page === 'conversation' && isNewConversation, open: startConversation },
+    { icon: SunIcon, label: '今日', isCurrent: page === 'home' || page === 'lab', badge: attentionCount, open: goHome },
     { icon: ActivityIcon, label: '测点', isCurrent: page === 'stations' || page === 'station', open: goStations },
     { icon: ListIcon, label: '记录', isCurrent: page === 'records', open: goRecords },
-    { icon: FlaskConicalIcon, label: '巡检原型', isCurrent: page === 'lab', open: goLab },
   ];
 }
 
@@ -209,7 +208,7 @@ const PAGE_TITLES: Record<Exclude<Page, 'home'>, string> = {
   stations: '测点',
   station: '测点',
   records: '调查记录',
-  lab: '巡检原型',
+  lab: '今日',
 };
 
 const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }) => {
@@ -289,6 +288,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
 
   const navigationLabel = canDockSidebar ? '展开侧边栏' : '打开导航';
   const headerTitle = page === 'conversation' ? threadTitle : page === 'home' ? '今日' : PAGE_TITLES[page];
+  const showHeader = !isDesktop || page === 'conversation' || page === 'station';
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background">
@@ -364,6 +364,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
       )}
 
       <main className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden" style={{ minWidth: isSplit && selection !== null ? 360 : undefined }}>
+        {showHeader && (
           <header className="flex min-h-12 shrink-0 items-center gap-3 border-b px-3 pt-[env(safe-area-inset-top)]">
             {!isDesktop && <Button
               ref={navigationButtonRef}
@@ -378,13 +379,13 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
             </Button>}
             <span className="min-w-0 flex-1 truncate text-sm font-medium" title={headerTitle}>{headerTitle}</span>
           </header>
+        )}
         <ThreadListLoadError />
         <div className="min-h-0 flex-1 overflow-hidden">
-          {page === 'home' && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} />}
+          {(page === 'home' || page === 'lab') && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} initialScopedOpen={page === 'lab'} />}
           {page === 'conversation' && <Thread autoFocus={isDesktop} welcome={<NewInvestigation />} />}
           <div className="h-full" hidden={page !== 'stations'}><StationsPage /></div>
           {page === 'records' && <RecordsPage />}
-          {page === 'lab' && <InspectionLabPage />}
           {[...mountedStations].map((id) => (
             <div key={id} className="h-full" hidden={id !== visibleStation}>
               <StationPage stationUuid={id} active={id === visibleStation} onRunningChange={(running) => {

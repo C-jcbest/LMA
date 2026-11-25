@@ -20,3 +20,7 @@ export function useSetFocusStation() {
   }
   return setFocusStation;
 }
+
+export function useOptionalSetFocusStation() {
+  return useContext(FocusStationContext);
+}

@@ -192,7 +192,7 @@ export const InvestigationProcess: FC = () => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
   const isRunning = useAuiState(isMessageRunning);
-  const { selection, openStation } = useStationInspector();
+  const { selection, openStation, closeInspector } = useStationInspector();
   const [isExpanded, setIsExpanded] = useState(false);
   const [showFailures, setShowFailures] = useState(true);
 
@@ -203,7 +203,13 @@ export const InvestigationProcess: FC = () => {
 
   if (steps.length === 0) return null;
 
-  const open = (stationId: string) => openStation({ messageId, stationId });
+  const toggleStation = (stationId: string) => {
+    if (selection?.messageId === messageId && selection.stationId === stationId) {
+      closeInspector();
+      return;
+    }
+    openStation({ messageId, stationId });
+  };
   let headlineState: StepState = 'complete';
   if (isRunning) {
     headlineState = 'running';
@@ -275,7 +281,7 @@ export const InvestigationProcess: FC = () => {
                 type="button"
                 aria-label={`查看 ${station.name} 的依据`}
                 aria-pressed={isSelected}
-                onClick={() => open(station.id)}
+                onClick={() => toggleStation(station.id)}
                 className={cn(
                   'flex min-h-9 max-w-full items-center gap-2 rounded-full border px-3 text-sm transition hover:bg-muted active:scale-98 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   isSelected && 'border-foreground/40 bg-muted',

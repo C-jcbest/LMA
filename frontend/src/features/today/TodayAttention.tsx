@@ -1,8 +1,12 @@
-import { useEffect, useState, type FC } from 'react';
+import { useContext, useEffect, useState, type FC } from 'react';
 import { isInspectionFromToday } from './inspection-date';
-import { ArrowRightIcon, RefreshCwIcon } from 'lucide-react';
+import { ArrowRightIcon, RefreshCwIcon, SlidersHorizontalIcon } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { motion } from 'motion/react';
 import { useNavigation } from '@/app/navigation';
+import { LmaClientContext } from '@/app/providers/LmaClientContext';
 import { Button } from '@/components/ui/button';
+import { EASE_OUT } from '@/components/ui/motion-primitives';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FindingChips, triggersOf } from '@/features/inspection/findings';
@@ -51,7 +55,7 @@ function investigationProgress(station: InspectionStation, inspectionFinishedAt:
   return { isAfterInspection, status: investigationStatusLabel(conclusion.status) };
 }
 
-const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: string | undefined; highlightChange: boolean }> = ({ station, inspectionFinishedAt, highlightChange }) => {
+const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: string | undefined; highlightChange: boolean; index: number }> = ({ station, inspectionFinishedAt, highlightChange, index }) => {
   const { openStation } = useNavigation();
   const leadTrigger = triggersOf(station.findings)[0];
   const change = largestChange(station);
@@ -60,7 +64,11 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
   const progress = investigationProgress(station, inspectionFinishedAt);
 
   return (
-    <li className="animate-in fade-in duration-200">
+    <motion.li
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ ...EASE_OUT, delay: Math.min(index, 6) * 0.025 }}
+    >
       <button
         type="button"
         aria-label={`查看 ${station.station_name}`}
@@ -78,7 +86,7 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
             {isNew && <span className="text-status-attention shrink-0 text-xs font-medium">新出现</span>}
           </span>
           <span className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 ps-4.5">
-            <FindingChips findings={station.findings} limit={1} showAmount={false} />
+            <FindingChips findings={station.findings} limit={1} qualityLimit={1} showAmount={false} />
             {progress && (
               <span className={cn('text-xs', progress.isAfterInspection ? 'text-foreground' : 'text-muted-foreground')}>
                 {progress.isAfterInspection ? `已调查 · ${progress.status}` : `上次调查 · ${progress.status}`}
@@ -91,6 +99,9 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
           <span className="today-row-change text-base font-medium tabular-nums">
             {formatMillimeters(leadTrigger.value_mm)}
             <span className="text-muted-foreground ms-1 text-xs font-normal">mm</span>
+            {leadTrigger.kind === 'acceleration' && (
+              <span className="text-muted-foreground block text-[11px] font-normal">近期变快</span>
+            )}
           </span>
         )}
         {leadTrigger?.value_mm == null && change && (
@@ -100,12 +111,18 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
           </span>
         )}
       </button>
-    </li>
+    </motion.li>
   );
 };
 
-export const TodayAttention: FC = () => {
+export const TodayAttention: FC<{ onOpenScopedInspection?: () => void }> = ({ onOpenScopedInspection }) => {
   const { goStations } = useNavigation();
+  const client = useContext(LmaClientContext);
+  const directoryQuery = useQuery({
+    queryKey: ['stations'],
+    queryFn: ({ signal }) => client!.listStations(signal),
+    enabled: Boolean(client),
+  });
   const { latest, isLoading, hasLoadError, isStarting, hasStartError, reload, start } = useInspection();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -134,6 +151,7 @@ export const TodayAttention: FC = () => {
   const needsLook = stations.filter((station) => station.screening === '建议调查');
   const quietCount = stations.filter((station) => station.screening === '未见明显变化').length;
   const unavailableCount = stations.length - needsLook.length - quietCount;
+  const unscreenedCount = directoryQuery.data && hasResults ? Math.max(0, directoryQuery.data.length - stations.length) : 0;
   const investigatedCount = needsLook
     .filter((station) => investigationProgress(station, latest?.inspection?.finished_at)?.isAfterInspection)
     .length;
@@ -160,8 +178,12 @@ export const TodayAttention: FC = () => {
   return (
     <section aria-label="今日" className="aui-thread-welcome-root today mb-8">
       <h1 className="text-2xl leading-snug font-semibold tracking-tight text-balance sm:text-3xl">{headline}</h1>
-      <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        {latest?.inspection && <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>{historical ? '上次巡检 ' : ''}{formatFinishedAt(latest.inspection.finished_at)}{historical ? '' : ' 巡检'}</time>}
+      <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+        {latest?.inspection && (
+          <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>
+            {historical ? '上次巡检 ' : ''}{formatFinishedAt(latest.inspection.finished_at)}{historical ? '' : ' 巡检'}
+          </time>
+        )}
         {needsLook.length > 0 && investigatedCount > 0 && (
           <span className="tabular-nums">已调查 {investigatedCount}/{needsLook.length}</span>
         )}
@@ -171,11 +193,23 @@ export const TodayAttention: FC = () => {
           size="sm"
           disabled={isRunning || isStarting || isLoading}
           onClick={start}
-          className={cn(hasResults && '-ms-2 text-muted-foreground')}
+          className={cn(hasResults && !historical && '-ms-2 text-muted-foreground')}
         >
           <RefreshCwIcon className={cn('size-3.5', (isRunning || isStarting) && 'animate-spin')} aria-hidden />
           {startLabel}
         </Button>
+        {onOpenScopedInspection && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onOpenScopedInspection}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <SlidersHorizontalIcon className="size-3.5" aria-hidden />
+            专项巡检
+          </Button>
+        )}
       </div>
       {latest?.running && (
         <Progress
@@ -205,8 +239,8 @@ export const TodayAttention: FC = () => {
 
       {needsLook.length > 0 && (
         <ul aria-label="建议调查的测点" className="mt-7 -mx-3 space-y-1">
-          {needsLook.map((station) => (
-            <AttentionRow key={station.station_uuid} station={station} inspectionFinishedAt={latest?.inspection?.finished_at} highlightChange={isInspectionFinishedWhileOpen} />
+          {needsLook.map((station, index) => (
+            <AttentionRow key={station.station_uuid} station={station} inspectionFinishedAt={latest?.inspection?.finished_at} highlightChange={isInspectionFinishedWhileOpen} index={index} />
           ))}
         </ul>
       )}
@@ -222,6 +256,9 @@ export const TodayAttention: FC = () => {
           )}
           {unavailableCount > 0 && (
             <span className="inline-flex items-center gap-2"><StatusDot status={null} />{unavailableCount} 个数据待核查</span>
+          )}
+          {unscreenedCount > 0 && (
+            <span>另有 {unscreenedCount} 个未参与上次巡检</span>
           )}
           <span className="group-hover/all:text-foreground ms-auto inline-flex items-center gap-1">
             全部测点<ArrowRightIcon className="size-3.5" aria-hidden />

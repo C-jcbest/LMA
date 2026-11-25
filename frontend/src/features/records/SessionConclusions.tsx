@@ -11,6 +11,14 @@ export interface SessionVerdict {
   stations: string[];
 }
 
+export type SessionStatusFilter = 'all' | '需人工复核' | '持续关注' | 'none';
+
+export function matchesSessionStatusFilter(verdict: SessionVerdict | undefined, filter: SessionStatusFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'none') return !verdict;
+  return verdict?.status === filter;
+}
+
 const NO_CONCLUSIONS: readonly SessionConclusion[] = [];
 
 const SessionConclusionsContext = createContext<ReadonlyMap<string, SessionVerdict>>(new Map());
@@ -52,4 +60,8 @@ export function SessionConclusionsProvider({ children }: { children: ReactNode }
 export function useSessionVerdict(sessionId: string | undefined): SessionVerdict | undefined {
   const verdicts = useContext(SessionConclusionsContext);
   return sessionId ? verdicts.get(sessionId) : undefined;
+}
+
+export function useSessionVerdicts(): ReadonlyMap<string, SessionVerdict> {
+  return useContext(SessionConclusionsContext);
 }

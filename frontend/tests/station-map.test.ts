@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { mapContentOf } from '../src/features/monitoring/EvidenceCards';
 import type { StationEvidence } from '../src/features/monitoring/investigation';
-import { azimuthDifference, azimuthOf } from '../src/features/monitoring/map-markers';
+import { azimuthDifference, azimuthOf, createMapMarker, placeMapMarkerLabels, setDisplacementArrow } from '../src/features/monitoring/map-markers';
 import { horizontalTrack } from '../src/features/monitoring/timeline';
 import type { GnssArtifactData, SiteEnvironmentArtifactData } from '../src/types/envelope';
 
@@ -87,5 +87,31 @@ describe('对话中的测点地图', () => {
     expect(azimuthOf(-1, 0)).toBe(180);
     expect(azimuthDifference(350, 10)).toBe(20);
     expect(azimuthDifference(90, 270)).toBe(180);
+  });
+
+  it('标签避开向右位移箭头，且忽略非有限坐标点位而不抛出错误', () => {
+    const container = document.createElement('div');
+    Object.defineProperty(container, 'clientWidth', { value: 400 });
+    Object.defineProperty(container, 'clientHeight', { value: 300 });
+    const element = createMapMarker({ name: '测点A', detail: '10 mm', colorToken: '--status-critical' });
+    Object.defineProperty(element, 'clientWidth', { value: 44 });
+    Object.defineProperty(element, 'clientHeight', { value: 44 });
+    setDisplacementArrow(element, { azimuth: 90, lengthPixels: 40 });
+    const label = element.querySelector<HTMLElement>('.evidence-map-marker__label')!;
+    Object.defineProperty(label, 'offsetWidth', { value: 80 });
+    Object.defineProperty(label, 'offsetHeight', { value: 36 });
+
+    const broken = createMapMarker({ name: '坏坐标', detail: '-', colorToken: '--status-normal' });
+    const mockMap = {
+      lngLatToContainer: (pos: unknown) => (pos === 'ok' ? { x: 200, y: 150 } : { x: Number.NaN, y: Number.NaN }),
+    } as unknown as AMap.Map;
+
+    placeMapMarkerLabels(mockMap, container, [
+      { marker: { getPosition: () => 'ok' } as unknown as AMap.Marker, element },
+      { marker: { getPosition: () => 'bad' } as unknown as AMap.Marker, element: broken },
+    ]);
+
+    const leftOffset = Number.parseFloat(label.style.left);
+    expect(leftOffset).toBeLessThan(0);
   });
 });

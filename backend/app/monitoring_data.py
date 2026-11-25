@@ -14,6 +14,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Literal
+from weakref import WeakKeyDictionary
 
 from app.agent.tool_protocol import ToolFailure, ToolInputError
 from app.beidou.client import BeidouClient
@@ -123,6 +124,12 @@ class _SeriesCache:
 
     def __init__(self):
         self.blocks: dict[tuple, _Block] = {}
+        self.loop_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple, asyncio.Lock]] = WeakKeyDictionary()
+
+    def lock_for(self, key: tuple) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        locks = self.loop_locks.setdefault(loop, {})
+        return locks.setdefault(key, asyncio.Lock())
 
     def fresh(self, key: tuple) -> _Block | None:
         block = self.blocks.get(key)
@@ -175,7 +182,6 @@ class MonitoringData:
         self._client: BeidouClient | None = None
         self._stations: list[Station] | None = None
         self._station_lock = asyncio.Lock()
-        self._block_locks: dict[tuple, asyncio.Lock] = {}
         self._limiter = asyncio.Semaphore(_UPSTREAM_CONCURRENCY)
 
     async def aclose(self):
@@ -251,7 +257,7 @@ class MonitoringData:
 
     async def _block(self, station_uuid: str, sampling: Sampling, sample_times: list[str] | None, index: int) -> _Block:
         key = (station_uuid, sampling, tuple(sample_times or ()), index)
-        lock = self._block_locks.setdefault(key, asyncio.Lock())
+        lock = self._cache.lock_for(key)
         async with lock:
             cached = self._cache.fresh(key)
             if cached is not None:

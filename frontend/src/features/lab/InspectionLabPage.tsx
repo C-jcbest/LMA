@@ -6,6 +6,7 @@ import { LmaClientContext } from '@/app/providers/LmaClientContext';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import type { LabInspection, LabScope, LabScopeGroup } from '@/services/api';
 import { cn } from 'cn';
 import { InspectionSummaryPart, ROW_COMPONENT, StationRowPart, SUMMARY_COMPONENT } from './LabParts';
@@ -106,34 +107,43 @@ const ScopePicker: FC<ScopePickerProps> = ({ groups, onStart, disabled }) => {
   );
 };
 
-const LabContent: FC = () => {
+const ScopedInspectionBody: FC<{ compact?: boolean }> = ({ compact = false }) => {
   const client = useContext(LmaClientContext)!;
-  const aui = useAui();
   const queryClient = useQueryClient();
-  const isRunning = useAuiState((state) => state.thread.isRunning);
-  const isLoading = useAuiState((state) => state.thread.isLoading);
-  const hasMessages = useAuiState((state) => state.thread.messages.length > 0);
+  const aui = useAui();
   const currentId = useAuiState((state) =>
     state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId);
-  const scopes = useQuery({ queryKey: ['lab-scopes'], queryFn: ({ signal }) => client.listLabScopes(signal), staleTime: 5 * 60_000 });
-  const history = useQuery({ queryKey: ['lab-inspections'], queryFn: ({ signal }) => client.listLabInspections(signal) });
+  const hasMessages = useAuiState((state) => state.thread.messages.length > 0);
+  const isLoading = useAuiState((state) => state.thread.isLoading);
+  const isRunning = useAuiState((state) => state.thread.isRunning);
+  const openInspection = useOpenLabInspection();
+  const [pendingStart, setPendingStart] = useState<{ id: string; scope: LabScope; label: string } | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  const scopes = useQuery({
+    queryKey: ['lab-scopes'],
+    queryFn: ({ signal }) => client.listLabScopes(signal),
+    staleTime: 5 * 60_000,
+  });
+  const history = useQuery({
+    queryKey: ['lab-inspections'],
+    queryFn: ({ signal }) => client.listLabInspections(signal),
+  });
 
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ['lab-inspections'] });
   }, [isRunning, queryClient]);
 
-  const openInspection = useOpenLabInspection();
-  const [pendingStart, setPendingStart] = useState<{ id: string; scope: LabScope; label: string } | null>(null);
-  const [startError, setStartError] = useState<string | null>(null);
-
   const start = async (scope: LabScope, label: string) => {
     setStartError(null);
     try {
       const created = await client.createLabInspection();
+      void queryClient.invalidateQueries({ queryKey: ['lab-inspections'] });
       setPendingStart({ id: created.id, scope, label });
       openInspection(created.id);
     } catch {
-      setStartError('原型巡检未能创建，请稍后重试。');
+      setPendingStart(null);
+      setStartError('专项巡检未能启动，请稍后重试。');
     }
   };
 
@@ -150,13 +160,15 @@ const LabContent: FC = () => {
   }, [aui, currentId, isLoading, pendingStart]);
 
   return (
-    <div className="@container mx-auto w-full max-w-208 px-4 pt-6 pb-10 sm:px-6 sm:pt-8">
-      <h1 className="text-2xl font-semibold tracking-tight">巡检原型</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        点击巡检后，服务端逐站推送结果：先列出范围内的测点，初筛完成一站更新一站；建议调查的测点再由视觉模型看 90 天曲线给出一句初判。初判不是调查结论，也不写入今日页。
-      </p>
+    <div className={cn('@container mx-auto w-full max-w-208', compact ? 'px-5 pb-8 pt-2 sm:px-6' : 'px-4 pt-6 pb-10 sm:px-6 sm:pt-8')}>
+      {!compact && (
+        <div className="mb-5">
+          <h1 className="text-2xl font-semibold tracking-tight">专项巡检</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">按全部、分组或单站执行逐站初筛与曲线初判。</p>
+        </div>
+      )}
 
-      <div className="mt-5">
+      <div>
         {scopes.isError && <p role="alert" className="text-sm text-muted-foreground">测点列表尚未载入。</p>}
         <ScopePicker
           groups={scopes.data ?? []}
@@ -167,7 +179,7 @@ const LabContent: FC = () => {
       </div>
 
       {(history.data?.length ?? 0) > 0 && (
-        <nav aria-label="最近的原型巡检" className="mt-4 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-muted-foreground">
+        <nav aria-label="最近的专项巡检" className="mt-4 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-muted-foreground">
           <span className="me-1">最近</span>
           {history.data!.slice(0, 6).map((inspection) => (
             <button
@@ -197,16 +209,38 @@ const LabContent: FC = () => {
   );
 };
 
+export const ScopedInspectionSheet: FC<{ open: boolean; onOpenChange: (open: boolean) => void }> = ({ open, onOpenChange }) => {
+  const client = useContext(LmaClientContext);
+  if (!client) {
+    return null;
+  }
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-2xl">
+        <SheetHeader className="border-b px-5 py-4 sm:px-6">
+          <SheetTitle>专项巡检</SheetTitle>
+          <SheetDescription>按全部、分组或单站范围执行逐站初筛与 90 天曲线初判，结果不影响今日全局巡检。</SheetDescription>
+        </SheetHeader>
+        <AuiProvider extends={null} config={AuiConfig({})}>
+          <LabRuntimeProvider client={client}>
+            <ScopedInspectionBody compact />
+          </LabRuntimeProvider>
+        </AuiProvider>
+      </SheetContent>
+    </Sheet>
+  );
+};
+
 export const InspectionLabPage: FC = () => {
   const client = useContext(LmaClientContext);
   if (!client) {
     return null;
   }
   return (
-    <section aria-label="巡检原型" className="h-full overflow-y-auto [scrollbar-gutter:stable]">
+    <section aria-label="专项巡检" className="h-full overflow-y-auto [scrollbar-gutter:stable]">
       <AuiProvider extends={null} config={AuiConfig({})}>
         <LabRuntimeProvider client={client}>
-          <LabContent />
+          <ScopedInspectionBody />
         </LabRuntimeProvider>
       </AuiProvider>
     </section>

@@ -276,12 +276,17 @@
 .evidence-card {
   margin-block: 12px 20px;
   padding: 2px 12px 10px;
+  border: 1px solid color-mix(in oklab, var(--border) 65%, transparent);
   border-radius: 12px;
   background: color-mix(in oklab, var(--muted) 55%, transparent);
+  transition: border-color var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
+}
+.evidence-card:hover {
+  border-color: var(--border);
 }
 .evidence-card[data-state="closed"] { padding-bottom: 2px; }
 @media (hover: hover) {
-  .evidence-card-open { opacity: 0; transition: opacity var(--duration-fast); }
+  .evidence-card-open { opacity: 0.45; transition: opacity var(--duration-fast) var(--ease-out); }
   .evidence-card:hover .evidence-card-open,
   .evidence-card:focus-within .evidence-card-open { opacity: 1; }
 }
@@ -392,6 +397,14 @@
 .evidence-map-marker:focus-visible .evidence-map-marker__label {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+
+.amap-scale-line {
+  text-shadow: 0 1px 2px rgb(255 255 255 / 88%), 0 0 4px rgb(255 255 255 / 72%);
+}
+.amap-copyright,
+.amap-logo {
+  opacity: 0.85;
 }
 
 .map-station-popup {
@@ -525,13 +538,15 @@
   min-height: 40px;
   margin-top: 12px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--primary);
   color: var(--primary-foreground);
   font: inherit;
   font-weight: 550;
   cursor: pointer;
+  transition: opacity var(--duration-fast) var(--ease-out), transform var(--duration-fast) var(--ease-out);
 }
+.map-station-popup__action:active { transform: scale(0.985); }
 .map-station-popup button:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .assistant-answer > .aui-md + .aui-md {
   margin-top: 16px;
@@ -576,15 +591,18 @@
 .navigation-panel {
   width: min(var(--panel-width), calc(100vw - 360px));
   overflow: clip;
-  transition: width var(--duration-slow) var(--ease-out);
+  transition: width var(--duration-slow) var(--ease-out), opacity var(--duration-base) var(--ease-out);
 }
 
 .navigation-panel .panel-inner {
   width: min(var(--panel-width), calc(100vw - 360px));
+  white-space: nowrap;
 }
 
 .navigation-panel[data-state="closed"] {
   width: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .session-drawer {

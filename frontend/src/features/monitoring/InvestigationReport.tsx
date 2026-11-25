@@ -22,7 +22,7 @@ const orderedStations = (conclusions: ConclusionsArtifactData) =>
 export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }> = ({ conclusions }) => {
   const messageId = useAuiState((state) => state.message.id);
   const parts = useAuiState((state) => state.message.parts);
-  const { selection, openStation } = useStationInspector();
+  const { selection, openStation, closeInspector } = useStationInspector();
   const stationIds = useMemo(() => new Set(collectStations(parts).map((station) => station.id)), [parts]);
 
   return (
@@ -48,7 +48,7 @@ export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }>
               title={item.reason}
               aria-label={`查看 ${label} 的依据`}
               aria-pressed={isSelected}
-              onClick={() => openStation({ messageId, stationId: item.station_uuid })}
+              onClick={() => (isSelected ? closeInspector() : openStation({ messageId, stationId: item.station_uuid }))}
               className={cn(
                 chipClass,
                 'transition hover:bg-muted active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',

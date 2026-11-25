@@ -349,13 +349,9 @@ export class LmaClient {
   }
 
   async *joinRun(id: string, signal: AbortSignal): AsyncGenerator<LangGraphMessagesEvent<LangChainMessage>> {
-    try {
-      const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs/active`, { signal });
-      if (response.status === 204) return;
-      yield* readRunEvents(response);
-    } finally {
-      if (signal.aborted) await this.cancelRun(id);
-    }
+    const response = await this.request(`/sessions/${encodeURIComponent(id)}/runs/active`, { signal });
+    if (response.status === 204) return;
+    yield* readRunEvents(response);
   }
 }
 

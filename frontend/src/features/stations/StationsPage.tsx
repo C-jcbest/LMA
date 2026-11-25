@@ -1,9 +1,10 @@
+import { cn } from 'cn';
 import { lazy, Suspense, useMemo, useState, type FC } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
 import { useNavigation } from '@/app/navigation';
 import { Input } from '@/components/ui/input';
-import { Segmented } from '@/components/ui/segmented';
+import { Segmented, type SegmentedOption } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useInspection } from '@/features/inspection/InspectionContext';
 import { findingLabel, triggersOf } from '@/features/inspection/findings';
@@ -50,6 +51,9 @@ const matchesFilter = (station: StationListItem, filter: Filter) => {
 const EMPTY_DIRECTORY: StationDirectoryEntry[] = [];
 
 function stationNote(station: StationListItem) {
+  if (station.station_type === '基准站' || station.station_type === '中继站') {
+    return station.station_type;
+  }
   if (station.screening === null) {
     return '未巡检';
   }
@@ -58,9 +62,16 @@ function stationNote(station: StationListItem) {
     return findingLabel(lead);
   }
   if (station.screening === '未见明显变化') {
-    return '';
+    return '平稳';
   }
   return station.reasons[0] ?? '';
+}
+
+function platformStatusClass(status: string) {
+  if (status === '故障' || status === '告警') {
+    return 'rounded-sm bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive';
+  }
+  return 'rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground';
 }
 
 const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
@@ -78,7 +89,7 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
         <span className="flex min-w-0 items-center gap-2.5">
           <StatusDot status={station.screening} />
           <span className="max-w-full shrink-0 truncate font-medium">{station.station_name}</span>
-          {station.platform_status && <span className="text-status-attention shrink-0 text-xs font-medium">{station.platform_status}</span>}
+          {station.platform_status && <span className={cn('shrink-0', platformStatusClass(station.platform_status))}>{station.platform_status}</span>}
           <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
         </span>
         <span className="station-row-trend"><TrendLine values={station.trend} emphasized={isAttention} className="h-7" /></span>
@@ -169,10 +180,13 @@ export const StationsPage: FC = () => {
       ...inspections.get(station.station_uuid), ...station,
     }));
   }, [directory, latest]);
+  const hasStations = (stations?.length ?? 0) > 0;
+  const groups = useMemo(() => [...new Set(stations.map((station) => station.group_name))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [stations]);
+  const activeGroup = groups.length === 1 ? groups[0]! : group;
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return (stations ?? [])
-      .filter((station) => group === ALL_GROUPS || station.group_name === group)
+      .filter((station) => activeGroup === ALL_GROUPS || station.group_name === activeGroup)
       .filter((station) => matchesFilter(station, filter))
       .filter((station) => (
         !query
@@ -183,17 +197,28 @@ export const StationsPage: FC = () => {
         (a.screening ? SCREENING_ORDER[a.screening] : 3) - (b.screening ? SCREENING_ORDER[b.screening] : 3)
         || a.station_name.localeCompare(b.station_name, 'zh-CN')
       ));
-  }, [stations, filter, search, group]);
-
-  const hasStations = (stations?.length ?? 0) > 0;
-  const groups = useMemo(() => [...new Set(stations.map((station) => station.group_name))].sort((a, b) => a.localeCompare(b, 'zh-CN')), [stations]);
-  const groupStations = useMemo(() => stations.filter((station) => station.group_name === group), [stations, group]);
+  }, [stations, filter, search, activeGroup]);
+  const groupStations = useMemo(() => stations.filter((station) => station.group_name === activeGroup), [stations, activeGroup]);
+  const scopedStations = useMemo(
+    () => stations.filter((station) => activeGroup === ALL_GROUPS || station.group_name === activeGroup),
+    [stations, activeGroup],
+  );
+  const filterOptions = useMemo<SegmentedOption[]>(() => [
+    { value: 'all', label: '全部', count: scopedStations.length },
+    { value: 'attention', label: '建议调查', count: scopedStations.filter((item) => matchesFilter(item, 'attention')).length },
+    { value: 'unavailable', label: '数据待核查', count: scopedStations.filter((item) => matchesFilter(item, 'unavailable')).length },
+  ], [scopedStations]);
 
   return (
     <div className="h-full overflow-y-auto [scrollbar-gutter:stable]">
       <section aria-label="测点" className="page-column">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">测点</h1>
+          <div className="flex items-baseline gap-2.5">
+            <h1 className="text-2xl font-semibold tracking-tight">测点</h1>
+            {hasStations && (
+              <span className="text-sm text-muted-foreground tabular-nums">{stations.length} 个</span>
+            )}
+          </div>
           {hasStations && (
             <Input
               type="search"
@@ -201,7 +226,7 @@ export const StationsPage: FC = () => {
               onChange={(event) => setSearch(event.target.value)}
               aria-label="搜索测点"
               placeholder="搜索测点或分组"
-              className="h-9 w-52 max-w-full"
+              className="h-9 w-full max-w-full sm:w-64"
             />
           )}
         </div>
@@ -236,10 +261,30 @@ export const StationsPage: FC = () => {
                   </SelectContent>
                 </Select>
               )}
-              <Segmented label="筛选" value={filter} options={FILTERS} onValueChange={(value) => setFilter(value as Filter)} />
+              <Segmented label="筛选" value={filter} options={filterOptions} onValueChange={(value) => setFilter(value as Filter)} />
             </div>
-            {group !== ALL_GROUPS && (
-              <div className="mt-4">
+            {groups.length > 1 && activeGroup === ALL_GROUPS && (
+              <div aria-label="按分组查看地图" className="mt-3 flex flex-wrap items-center gap-1.5">
+                {groups.map((name) => {
+                  const members = stations.filter((station) => station.group_name === name);
+                  const hasAttention = members.some((station) => station.screening === '建议调查');
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setGroup(name)}
+                      className="inline-flex min-h-8 items-center gap-1.5 rounded-full border bg-card/50 px-3 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                    >
+                      {hasAttention && <span className="size-1.5 rounded-full bg-status-attention" aria-hidden />}
+                      <span>{name}</span>
+                      <span className="tabular-nums text-muted-foreground/75">{members.length}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {activeGroup !== ALL_GROUPS && (
+              <div role="region" aria-label={`${activeGroup}位置概览`} className="mt-4">
                 <GroupOverviewMap stations={groupStations} />
               </div>
             )}

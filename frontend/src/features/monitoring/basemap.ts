@@ -81,16 +81,16 @@ export function createBaseLayers(sdk: typeof AMap, selection: MapLayerSelection)
   const select = ({ baseLayer, showRoads }: MapLayerSelection) => {
     if (baseLayer === 'road') {
       road.show();
-      satellite.hide();
       roadLabels.hide();
+      satellite.hide();
     } else {
-      road.hide();
       satellite.show();
       if (showRoads) {
         roadLabels.show();
       } else {
         roadLabels.hide();
       }
+      road.hide();
     }
   };
   select(selection);

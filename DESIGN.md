@@ -200,7 +200,7 @@ components:
 - **Shape:** `rounded-md`，默认高 36px（`h-9`），小号 32px、超小 24px；图标按钮正方形。
 - **Primary:** 墨黑底、纸白字；每屏一个。
 - **Outline / Ghost / Link:** outline 用于次要操作和错误恢复；ghost 用于工具栏和图标按钮；link 用于句内“重试”，保留下划线提示可点击。
-- **States:** 悬停底色加深或换为雾灰；按下 `active:scale-98`（图标按钮 `scale-95`）；键盘焦点 `ring-2 ring-ring`；禁用 50% 透明且不响应指针；加载时前置旋转的 `Loader2Icon` 并禁用。
+- **States:** 悬停底色加深或换为雾灰；按下 `active:scale-98`（图标按钮 `scale-95`）；键盘焦点 `ring-2 ring-ring`；禁用态不响应指针，`default` 主按钮禁用时降为柔和中性底色与灰字（不在深色模式下用半透明近白高亮抢夺焦点），其余按钮禁用 50% 透明；加载时前置旋转的 `Loader2Icon` 并禁用。
 - **Source:** [button.tsx](frontend/src/components/ui/button.tsx)；所有按钮都用它，不手写按钮样式。
 
 ### Chips
@@ -247,12 +247,14 @@ components:
 
 ### 交互状态与动效
 
-- **时长**：反馈 120ms（`--duration-fast`）、状态切换 200ms（`--duration-base`）、面板与视图 300ms（`--duration-slow`）；Tailwind 类用 `duration-150 / 200 / 300`。
-- **曲线**：进入与反馈用 `--ease-out`（cubic-bezier(0.22, 1, 0.36, 1)），离开用 `--ease-in`；Tailwind 的 `ease-out` / `ease-in` 已指向这两条曲线。
-- **入场**：用 tw-animate-css 的 `animate-in fade-in zoom-in-95 slide-in-from-*` 等类，配合 Radix 的 `data-[state]` 做退场。
+- **统一动效体系**：CSS 变量与 `motion/react`（根节点配置 `MotionConfig reducedMotion="user"`）协同表达同一套物理与节奏语言：
+  - **短反馈与微滑块**：`120ms`（`--duration-fast`）或紧致物理弹簧（用于分段选择胶囊、页签下划线、芯片选中、图标切换，可随时打断换向）。
+  - **状态切换**：`200ms`（`--duration-base`），用于折叠内容、行更新提示与轻提示。
+  - **面板与视图容器**：`300ms`（`--duration-slow`）或阻尼平滑弹簧（用于侧栏、抽屉与依据面板的进退场和全屏连续变形；退出动画须在退场完成后卸载，不得用短定时器截断）。
+- **曲线**：CSS 进入与反馈用 `--ease-out`（`cubic-bezier(0.22, 1, 0.36, 1)`），离开用 `--ease-in`。
 - **流式回答**：新到的词 200ms 淡入（Streamdown `animated`），不做打字机延迟。
 - **换页**：浏览器视图过渡淡入淡出 160ms，不支持时直接切换。
-- **减弱动效**：系统开启“减少动态效果”时，index.css 的全局规则把动画和过渡压到瞬时，组件里不再逐个写 `motion-reduce:`。
+- **减弱动效**：系统开启“减少动态效果”时，`index.css` 的全局规则和 `MotionConfig` 协同把位移与动画收敛到瞬时或极短淡变。
 
 ### Map Markers
 
@@ -278,4 +280,4 @@ components:
 - **Don't** 用 Emoji 或 Unicode 符号代替图标。
 - **Don't** 加装饰性动画（悬浮上移、视差、滚动揭示）；动效只交代状态变化。
 - **Don't** 改动回答的整体呈现、去掉可点击的依据卡片，或在地图之外另做方向指示；回答呈现的取舍见 [0010](docs/decisions/0010-keep-answer-presentation.md)。
-- **Don't** 引入 Magic UI、Aceternity 一类装饰组件库，或与现有能力重复的动画、状态库。
+- **Don't** 引入 Magic UI、Aceternity 一类堆砌式炫技装饰组件库（允许使用精简的 `motion/react` 表达状态转换与连续布局过渡）。

@@ -56,3 +56,35 @@ class BeidouClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(points[-1].e)
         self.assertIsNone(points[-1].u)
         self.assertEqual(quality['invalid_values']['u'], 1)
+
+    async def test_concurrent_cold_requests_share_block_lock_per_session(self):
+        data_requests = 0
+
+        async def respond(request):
+            nonlocal data_requests
+            if request.url.path.endswith('doLogin.php'):
+                return httpx.Response(200, json={'ResponseCode': '200', 'SessionUUID': 'test-session'})
+            if request.url.path.endswith('getStationListInfo.php'):
+                return httpx.Response(200, json={'ResponseCode': '200', 'StationList': [{
+                    'StationUUID': 'station-lock', 'StationName': 'LockStation', 'StationGroupUUID': 'g',
+                    'StationGroupName': 'G', 'StationType': 3, 'StationN0': 100, 'StationE0': 200,
+                }]})
+            data_requests += 1
+            await asyncio.sleep(0.02)
+            return httpx.Response(200, json={'ResponseCode': '200', 'Data': [
+                {'DataTime': '2026-11-01 00:00:00', 'PJKInfoN': 100.001, 'PJKInfoE': 200.001, 'PJKInfoU': 300},
+            ]})
+
+        def client_for():
+            client = BeidouClient('https://monitoring.invalid/', 'account-lock', 'test-password')
+            client._client = httpx.AsyncClient(base_url='https://monitoring.invalid/', transport=httpx.MockTransport(respond))
+            return client
+
+        async def query_once():
+            async with monitoring_scope(session_id='shared-lock-session', client_factory=client_for) as data:
+                station = await data.resolve_station('LockStation')
+                return await data.displacement(station, '2026-11-01 00:00:00', '2026-11-02 00:00:00', sampling='daily')
+
+        first, second = await asyncio.gather(query_once(), query_once())
+        self.assertEqual(data_requests, 1)
+        self.assertEqual(len(first.observations), len(second.observations))

@@ -50,6 +50,7 @@ interface StationInspectorContextValue {
   openStation: (selection: StationSelection) => void;
   openEvidence: (selection: EvidenceSelection) => void;
   closeInspector: (options?: { focusComposer?: boolean }) => void;
+  finishClose: () => void;
 }
 
 const StationInspectorContext = createContext<StationInspectorContextValue | null>(null);
@@ -98,19 +99,21 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
     setIsClosing(true);
   }, [isSplit]);
 
+  const finishClose = useCallback(() => {
+    setSelection(null);
+    setIsClosing(false);
+    setIsFullscreen(false);
+  }, []);
+
   const toggleFullscreen = useCallback(() => setIsFullscreen((current) => !current), []);
 
   useEffect(() => {
     if (!isClosing) {
       return;
     }
-    const timer = window.setTimeout(() => {
-      setSelection(null);
-      setIsClosing(false);
-      setIsFullscreen(false);
-    }, reduceMotion ? 0 : 200);
+    const timer = window.setTimeout(finishClose, reduceMotion ? 0 : 400);
     return () => window.clearTimeout(timer);
-  }, [isClosing, reduceMotion]);
+  }, [isClosing, reduceMotion, finishClose]);
 
   useEffect(() => {
     if (selection !== null) return;
@@ -134,9 +137,9 @@ export function StationInspectorProvider({ children, canSplit = true }: { childr
   const value = useMemo(
     () => ({
       selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, viewStates, composerInputRef, attachAskTarget,
-      openStation: open, openEvidence: open, closeInspector,
+      openStation: open, openEvidence: open, closeInspector, finishClose,
     }),
-    [selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, attachAskTarget, open, closeInspector],
+    [selection, selectionVersion, isClosing, isSplit, canExpand, isFullscreen, toggleFullscreen, attachAskTarget, open, closeInspector, finishClose],
   );
 
   return (

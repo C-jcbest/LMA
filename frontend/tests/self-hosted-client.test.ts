@@ -36,3 +36,26 @@ it('HTTP 失败显示服务端受控原因，不启动第二套重试', async ()
   await expect(createLmaClient('/api').deleteSession('session')).rejects.toThrow('当前会话仍在运行');
   expect(fetchSpy).toHaveBeenCalledTimes(1);
 });
+
+it('joinRun 仅订阅运行流，订阅中断时不取消服务端后台运行', async () => {
+  const encoder = new TextEncoder();
+  const abortController = new AbortController();
+  const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: values\ndata: {"messages":[]}\n\n'));
+        init?.signal?.addEventListener('abort', () => controller.close(), { once: true });
+      },
+    });
+    return Promise.resolve(new Response(stream));
+  });
+  const received: unknown[] = [];
+  for await (const event of createLmaClient('/api').joinRun('run-123', abortController.signal)) {
+    received.push(event);
+    abortController.abort();
+    break;
+  }
+  expect(received).toHaveLength(1);
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('/api/sessions/run-123/runs/active');
+});

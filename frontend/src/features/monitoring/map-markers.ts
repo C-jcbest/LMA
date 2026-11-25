@@ -97,15 +97,51 @@ export function createMapMarker(content: MapMarkerContent) {
   return node;
 }
 
+/** 标签留在地图内，避开其他测点点位、位移箭头和已放置标签。 */
 export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, markers: Array<{ marker: AMap.Marker; element: HTMLElement }>) {
-  const positions = markers.map(({ marker }) => map.lngLatToContainer(marker.getPosition()!));
+  if (container.clientWidth === 0 || container.clientHeight === 0) {
+    return;
+  }
+  const positions = markers.map(({ marker }) => {
+    try {
+      const point = map.lngLatToContainer(marker.getPosition()!);
+      if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+        return null;
+      }
+      return point;
+    } catch {
+      return null;
+    }
+  });
+  const arrowBoxes = markers.map(({ element }, index) => {
+    const point = positions[index];
+    const arrow = element.querySelector<HTMLElement>('.evidence-map-marker__arrow');
+    if (!point || !arrow) {
+      return null;
+    }
+    const match = arrow.style.transform.match(/rotate\(([-0-9.]+)deg\)/);
+    const angleDeg = match ? Number(match[1]) : NaN;
+    const len = parseFloat(arrow.style.height);
+    if (!Number.isFinite(angleDeg) || !Number.isFinite(len) || len <= 0) {
+      return null;
+    }
+    const rad = (angleDeg * Math.PI) / 180;
+    const tipX = point.x + Math.sin(rad) * (len + 6);
+    const tipY = point.y - Math.cos(rad) * (len + 6);
+    return {
+      left: Math.min(point.x, tipX) - 8,
+      right: Math.max(point.x, tipX) + 8,
+      top: Math.min(point.y, tipY) - 8,
+      bottom: Math.max(point.y, tipY) + 8,
+    };
+  });
   const placed: Array<{ left: number; top: number; right: number; bottom: number }> = [];
   for (const [index, { element }] of markers.entries()) {
     const label = element.querySelector<HTMLElement>('.evidence-map-marker__label');
-    if (!label) {
+    const point = positions[index];
+    if (!label || !point) {
       continue;
     }
-    const point = positions[index]!;
     label.style.maxWidth = `${Math.max(64, Math.min(168, container.clientWidth - 32))}px`;
     const width = label.offsetWidth;
     const height = label.offsetHeight;
@@ -114,6 +150,10 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
       { left: point.x - 16 - width, top: point.y - height / 2 },
       { left: point.x - width / 2, top: point.y + 26 },
       { left: point.x - width / 2, top: point.y - height - 26 },
+      { left: point.x + 18, top: point.y - height - 18 },
+      { left: point.x - 18 - width, top: point.y - height - 18 },
+      { left: point.x + 18, top: point.y + 18 },
+      { left: point.x - 18 - width, top: point.y + 18 },
     ];
     let chosen = candidates[0]!;
     let bestScore = Infinity;
@@ -122,12 +162,15 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
       const right = candidate.left + width;
       const bottom = candidate.top + height;
       const outside = candidate.left < 8 || right > container.clientWidth - 8 || candidate.top < 8 || bottom > container.clientHeight - 8;
-      const coversMarker = positions.some((other, otherIndex) => otherIndex !== index
+      const coversMarker = positions.some((other, otherIndex) => other && otherIndex !== index
         && other.x + 22 > candidate.left && other.x - 22 < right
         && other.y + 22 > candidate.top && other.y - 22 < bottom);
-      const overlapsLabel = placed.some((other) => other.right > candidate.left && other.left < right
-        && other.bottom > candidate.top && other.top < bottom);
-      const score = Number(outside) * 1000 + Number(coversMarker) * 100 + Number(overlapsLabel) * 10;
+      const coversArrow = arrowBoxes.some((box) => box
+        && box.right > candidate.left && box.left < right
+        && box.bottom > candidate.top && box.top < bottom);
+      const overlapsLabel = placed.some((other) => other.right + 4 > candidate.left && other.left - 4 < right
+        && other.bottom + 4 > candidate.top && other.top - 4 < bottom);
+      const score = Number(outside) * 1000 + Number(coversMarker) * 150 + Number(coversArrow) * 80 + Number(overlapsLabel) * 20;
       if (score < bestScore) {
         chosen = candidate;
         bestScore = score;

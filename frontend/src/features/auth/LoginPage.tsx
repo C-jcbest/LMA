@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Loader2Icon, Mountain } from 'lucide-react';
+import { useRef, useState, type FormEvent } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { EyeIcon, EyeOffIcon, Loader2Icon, Mountain } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { cn } from 'cn';
+import { EASE_IN, EASE_OUT } from '@/components/ui/motion-primitives';
 import type { LmaClient } from '@/services/api';
 
 const EXIT_DURATION_MS = 200;
@@ -10,15 +11,11 @@ const EXIT_DURATION_MS = 200;
 export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; expired: boolean; onSuccess: () => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [phase, setPhase] = useState<'entering' | 'shown' | 'leaving'>('entering');
+  const [leaving, setLeaving] = useState(false);
   const passwordRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => setPhase('shown'));
-    return () => cancelAnimationFrame(frame);
-  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -29,7 +26,7 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
     setError(null);
     try {
       await client.login(username.trim(), password);
-      setPhase('leaving');
+      setLeaving(true);
       window.setTimeout(onSuccess, EXIT_DURATION_MS);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '登录失败，请重试。');
@@ -41,17 +38,16 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
-      <form
+      <motion.form
         onSubmit={submit}
         aria-label="登录"
-        className={cn(
-          'w-full max-w-sm transition duration-300 ease-out',
-          phase === 'entering' && 'translate-y-2 opacity-0',
-          phase === 'leaving' && 'scale-98 opacity-0 duration-200 ease-in',
-        )}
+        initial={{ opacity: 0, y: 10 }}
+        animate={leaving ? { opacity: 0, scale: 0.98 } : { opacity: 1, y: 0, scale: 1 }}
+        transition={leaving ? EASE_IN : { duration: 0.28, ease: EASE_OUT.ease }}
+        className="w-full max-w-sm rounded-xl border bg-card/60 p-6 sm:p-8"
       >
-        <div className="mb-8 flex flex-col items-center text-center">
-          <div className="mb-5 flex size-12 items-center justify-center rounded-xl border bg-card shadow-xs">
+        <div className="mb-7 flex flex-col items-center text-center">
+          <div className="mb-4 flex size-12 items-center justify-center rounded-xl border bg-background shadow-xs">
             <Mountain aria-hidden className="size-6 text-foreground/80" />
           </div>
           <h1 className="text-xl font-semibold tracking-tight">LMA Monitor</h1>
@@ -60,54 +56,78 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
           </p>
         </div>
 
-        <div className="space-y-3">
-          <label className="block">
-            <span className="mb-1.5 block text-sm text-muted-foreground">账号</span>
+        <div className="space-y-3.5">
+          <div>
+            <label htmlFor="login-username" className="mb-1.5 block text-sm text-muted-foreground">账号</label>
             <Input
+              id="login-username"
               name="username"
               autoComplete="username"
               autoFocus
               required
               value={username}
-              onChange={(event) => setUsername(event.target.value)}
+              onChange={(event) => {
+                setUsername(event.target.value);
+                if (error) setError(null);
+              }}
               disabled={submitting}
               className="h-10"
             />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-sm text-muted-foreground">密码</span>
-            <Input
-              ref={passwordRef}
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              disabled={submitting}
-              aria-invalid={error ? true : undefined}
-              aria-describedby="login-error"
-              className="h-10"
-            />
-          </label>
+          </div>
+          <div>
+            <label htmlFor="login-password" className="mb-1.5 block text-sm text-muted-foreground">密码</label>
+            <div className="relative">
+              <Input
+                id="login-password"
+                ref={passwordRef}
+                name="password"
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value);
+                  if (error) setError(null);
+                }}
+                disabled={submitting}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={error ? 'login-error' : undefined}
+                className="h-10 pe-10"
+              />
+              <button
+                type="button"
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                onClick={() => setShowPassword((value) => !value)}
+                tabIndex={-1}
+                className="absolute inset-y-0 end-0 flex w-10 items-center justify-center rounded-e-md text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              >
+                {showPassword ? <EyeOffIcon className="size-4" aria-hidden /> : <EyeIcon className="size-4" aria-hidden />}
+              </button>
+            </div>
+          </div>
         </div>
 
-        <p
-          id="login-error"
-          role="alert"
-          className={cn(
-            'mt-3 min-h-5 text-sm text-destructive transition-opacity duration-200',
-            error ? 'opacity-100' : 'opacity-0',
+        <AnimatePresence initial={false}>
+          {error && (
+            <motion.p
+              id="login-error"
+              role="alert"
+              initial={{ opacity: 0, height: 0, marginTop: 0 }}
+              animate={{ opacity: 1, height: 'auto', marginTop: 12 }}
+              exit={{ opacity: 0, height: 0, marginTop: 0 }}
+              transition={EASE_OUT}
+              className="overflow-hidden text-sm text-destructive"
+            >
+              {error}
+            </motion.p>
           )}
-        >
-          {error}
-        </p>
+        </AnimatePresence>
 
-        <Button type="submit" className="mt-2 h-10 w-full" disabled={submitting || !username.trim() || !password}>
+        <Button type="submit" className="mt-5 h-10 w-full" disabled={submitting || !username.trim() || !password}>
           {submitting && <Loader2Icon aria-hidden className="size-4 animate-spin" />}
           登录
         </Button>
-      </form>
+      </motion.form>
     </main>
   );
 }

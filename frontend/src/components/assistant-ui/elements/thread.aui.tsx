@@ -29,6 +29,7 @@ import {
   ThreadPrimitive,
   useAuiState,
 } from "@assistant-ui/react";
+import { answerToMarkdown } from "@/features/monitoring/investigation";
 import {
   ArchiveIcon,
   ArrowDownIcon,
@@ -36,6 +37,7 @@ import {
   CheckIcon,
   ChevronDownIcon,
   CopyIcon,
+  HistoryIcon,
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
@@ -341,6 +343,10 @@ const MessageError: FC = () => {
 
 const AssistantMessage: FC = () => {
   const messageId = useAuiState((state) => state.message.id);
+  const parts = useAuiState((state) => state.message.parts);
+  const [previousMarkdown, setPreviousMarkdown] = useState<string | null>(null);
+  const [showPrevious, setShowPrevious] = useState(false);
+
   return (
     <MessagePrimitive.Root
       data-message-id={messageId}
@@ -373,30 +379,72 @@ const AssistantMessage: FC = () => {
         <MessageError />
       </div>
 
+      {showPrevious && previousMarkdown && (
+        <div className="bg-muted/40 mx-1 mt-3 rounded-lg border px-3.5 py-3 text-sm sm:mx-2">
+          <div className="text-muted-foreground mb-1.5 flex items-center justify-between text-xs">
+            <span>重新生成前的回答</span>
+            <button
+              type="button"
+              onClick={() => setShowPrevious(false)}
+              className="hover:text-foreground focus-visible:ring-ring rounded px-1 focus-visible:ring-2 focus-visible:outline-none"
+            >
+              收起
+            </button>
+          </div>
+          <pre className="text-muted-foreground max-h-48 overflow-y-auto font-sans text-xs leading-6 whitespace-pre-wrap">{previousMarkdown}</pre>
+        </div>
+      )}
+
       <div
         data-slot="aui_assistant-message-footer"
         className="ms-2 flex h-10 shrink-0 items-center pt-1.5"
       >
-        <AssistantActionBar />
+        <AssistantActionBar
+          onBeforeReload={() => {
+            const snapshot = answerToMarkdown(parts).trim();
+            if (snapshot) {
+              setPreviousMarkdown(snapshot);
+              setShowPrevious(false);
+            }
+          }}
+          hasPrevious={Boolean(previousMarkdown)}
+          showPrevious={showPrevious}
+          onTogglePrevious={() => setShowPrevious((open) => !open)}
+        />
       </div>
     </MessagePrimitive.Root>
   );
 };
 
-const AssistantActionBar: FC = () => {
-
+const AssistantActionBar: FC<{
+  onBeforeReload: () => void;
+  hasPrevious: boolean;
+  showPrevious: boolean;
+  onTogglePrevious: () => void;
+}> = ({ onBeforeReload, hasPrevious, showPrevious, onTogglePrevious }) => {
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
       autohide="not-last"
-      className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in -ms-1 flex gap-1 duration-200"
+      className="aui-assistant-action-bar-root text-muted-foreground animate-in fade-in -ms-1 flex items-center gap-1 duration-200"
     >
       <AnswerActions />
+      <span aria-hidden className="mx-0.5 h-3.5 w-px bg-border" />
       <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip="重新生成">
+        <TooltipIconButton tooltip="重新生成" onClick={onBeforeReload}>
           <RefreshCwIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Reload>
+      {hasPrevious && (
+        <TooltipIconButton
+          tooltip={showPrevious ? "隐藏上一版" : "对比上一版"}
+          aria-pressed={showPrevious}
+          onClick={onTogglePrevious}
+          className={cn(showPrevious && "bg-muted text-foreground")}
+        >
+          <HistoryIcon />
+        </TooltipIconButton>
+      )}
     </ActionBarPrimitive.Root>
   );
 };

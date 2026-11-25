@@ -54,13 +54,16 @@ export function qualityLabelsOf(findings: readonly ScreeningFinding[]) {
 export const FindingChips: FC<{
   findings: readonly ScreeningFinding[];
   limit?: number;
+  qualityLimit?: number;
   showAmount?: boolean;
   className?: string;
-}> = ({ findings, limit = Infinity, showAmount = true, className }) => {
+}> = ({ findings, limit = Infinity, qualityLimit = Infinity, showAmount = true, className }) => {
   const triggers = triggersOf(findings);
   const visible = triggers.slice(0, limit);
   const hidden = triggers.slice(limit);
   const quality = qualityLabelsOf(findings);
+  const visibleQuality = quality.slice(0, qualityLimit);
+  const hiddenQuality = quality.slice(qualityLimit);
   if (triggers.length === 0 && quality.length === 0) {
     return null;
   }
@@ -81,12 +84,17 @@ export const FindingChips: FC<{
           另 {hidden.length} 条
         </span>
       )}
-      {quality.map((item) => (
+      {visibleQuality.map((item) => (
         <span role="listitem" key={item.label} title={item.detail}
           className="inline-flex min-h-6 items-center rounded-full border px-2.5 text-xs text-muted-foreground">
           {item.label}
         </span>
       ))}
+      {hiddenQuality.length > 0 && (
+        <span role="listitem" title={hiddenQuality.map((item) => `${item.label}：${item.detail}`).join('\n')} className="px-1 text-xs text-muted-foreground">
+          +{hiddenQuality.length}
+        </span>
+      )}
     </span>
   );
 };

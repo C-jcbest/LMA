@@ -1,7 +1,9 @@
 import { useState, type CSSProperties, type FC } from 'react';
 import type { DataMessagePartProps } from '@assistant-ui/react';
 import { ChevronDownIcon } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useNavigation } from '@/app/navigation';
+import { EASE_IN, EASE_OUT, SPRING_SNAPPY } from '@/components/ui/motion-primitives';
 import { Progress } from '@/components/ui/progress';
 import { formatMillimeters, StatusDot } from '@/features/monitoring/status';
 import { TrendLine } from '@/features/monitoring/TrendLine';
@@ -147,7 +149,22 @@ const VisionVerdict: FC<{ vision: VisionProps }> = ({ vision }) => {
             模型看到的图
             <ChevronDownIcon aria-hidden className={cn('size-3.5 transition-transform', showImage && 'rotate-180')} />
           </button>
-          {showImage && <img src={vision.image} alt="交给视觉模型的 90 天位移图" className="mt-1 w-full rounded-md border" />}
+          <AnimatePresence initial={false}>
+            {showImage && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto', transition: EASE_OUT }}
+                exit={{ opacity: 0, height: 0, transition: EASE_IN }}
+                className="overflow-hidden"
+              >
+                <img
+                  src={vision.image}
+                  alt="交给视觉模型的 90 天位移图"
+                  className="mt-1 w-full rounded-md border dark:invert-[0.91] dark:hue-rotate-180"
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </>
       )}
     </div>
@@ -165,7 +182,13 @@ export const StationRowPart: FC<DataMessagePartProps<RowProps>> = ({ data }) => 
   const style: CSSProperties = { order: isPending ? PENDING_ORDER : ROW_ORDER[data.screening ?? ''] ?? 3 };
 
   return (
-    <article aria-label={data.station_name} style={style} className="today-row rounded-lg animate-in fade-in duration-200">
+    <motion.article
+      layout="position"
+      transition={SPRING_SNAPPY}
+      aria-label={data.station_name}
+      style={style}
+      className="today-row rounded-lg"
+    >
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2.5">
           <StatusDot status={isPending ? null : data.screening} className={cn(isPending && 'animate-pulse')} />
@@ -216,6 +239,6 @@ export const StationRowPart: FC<DataMessagePartProps<RowProps>> = ({ data }) => 
           </>
         )}
       </span>
-    </article>
+    </motion.article>
   );
 };

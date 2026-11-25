@@ -2,8 +2,14 @@
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useSessionUndo } from "@/components/ui/motion-primitives";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSessionVerdict } from "@/features/records/SessionConclusions";
+import {
+  matchesSessionStatusFilter,
+  useSessionVerdict,
+  useSessionVerdicts,
+  type SessionStatusFilter,
+} from "@/features/records/SessionConclusions";
 import { investigationStatusLabel } from "@/features/monitoring/investigation";
 import { StatusDot } from "@/features/monitoring/status";
 import { RecordSearchResults } from "@/features/records/RecordSearchResults";
@@ -72,7 +78,11 @@ type ThreadListVariant = "recent" | "all";
 const ThreadListVariantContext = createContext<ThreadListVariant>("all");
 const RECENT_THREAD_COUNT = 6;
 
-export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => void }> = ({ variant, onNavigate }) => {
+export const ThreadList: FC<{
+  variant: ThreadListVariant;
+  statusFilter?: SessionStatusFilter;
+  onNavigate?: () => void;
+}> = ({ variant, statusFilter = "all", onNavigate }) => {
   const [search, setSearch] = useState("");
   const hasThreads = useAuiState((s) => s.threads.threadIds.length > 0);
 
@@ -93,11 +103,11 @@ export const ThreadList: FC<{ variant: ThreadListVariant; onNavigate?: () => voi
             {variant === "recent" ? (
               <RecentThreadListItems />
             ) : search.trim() ? (
-              <RecordSearchResults key={search.trim()} query={search.trim()} onOpen={onNavigate} />
+              <RecordSearchResults query={search.trim()} statusFilter={statusFilter} onOpen={onNavigate} />
             ) : (
               <>
-                <ThreadListItems searchQuery={hasThreads ? search : ""} />
-                <ThreadListPagination autoLoad={!search.trim()} />
+                <ThreadListItems searchQuery={hasThreads ? search : ""} statusFilter={statusFilter} />
+                <ThreadListPagination autoLoad={!search.trim() && statusFilter === "all"} />
               </>
             )}
           </div>
@@ -207,8 +217,8 @@ export const ThreadListRoot: FC<
 };
 
 export const ThreadListItems: FC<
-  ComponentPropsWithoutRef<"div"> & { searchQuery?: string }
-> = ({ className, searchQuery = "", ...props }) => {
+  ComponentPropsWithoutRef<"div"> & { searchQuery?: string; statusFilter?: SessionStatusFilter }
+> = ({ className, searchQuery = "", statusFilter = "all", ...props }) => {
   return (
     <div
       data-slot="aui_thread-list-items"
@@ -219,7 +229,7 @@ export const ThreadListItems: FC<
         <ThreadListSkeleton />
       </AuiIf>
       <AuiIf condition={(s) => !s.threads.isLoading || s.threads.threadIds.length > 0}>
-        <ThreadListItemGroups searchQuery={searchQuery} />
+        <ThreadListItemGroups searchQuery={searchQuery} statusFilter={statusFilter} />
       </AuiIf>
     </div>
   );
@@ -238,9 +248,10 @@ const dateGroupLabel = (
 
 export type ThreadListGroup = { label: string; indices: number[] };
 
-export const useThreadListGroups = (searchQuery = "") => {
+export const useThreadListGroups = (searchQuery = "", statusFilter: SessionStatusFilter = "all") => {
   const threadIds = useAuiState((s) => s.threads.threadIds);
   const threadItems = useAuiState((s) => s.threads.threadItems);
+  const verdicts = useSessionVerdicts();
 
   const query = searchQuery.trim().toLowerCase();
 
@@ -249,13 +260,16 @@ export const useThreadListGroups = (searchQuery = "") => {
     const dates = threadIds.map((id) => itemsById.get(id)?.lastMessageAt);
     const filteredIndices = threadIds
       .map((id, index) => ({ id, index }))
-      .filter(
-        ({ id }) =>
-          !query ||
-          (itemsById.get(id)?.title || "新会话")
-            .toLowerCase()
-            .includes(query),
-      )
+      .filter(({ id }) => {
+        const item = itemsById.get(id);
+        const matchesQuery =
+          !query || (item?.title || "新会话").toLowerCase().includes(query);
+        const matchesStatus = matchesSessionStatusFilter(
+          verdicts.get(item?.remoteId ?? id),
+          statusFilter,
+        );
+        return matchesQuery && matchesStatus;
+      })
       .map(({ index }) => index);
     if (!filteredIndices.some((index) => dates[index])) {
       return { threadIds, filteredIndices, groups: null };
@@ -282,14 +296,15 @@ export const useThreadListGroups = (searchQuery = "") => {
       }
     }
     return { threadIds, filteredIndices, groups: result };
-  }, [threadIds, threadItems, query]);
+  }, [threadIds, threadItems, verdicts, query, statusFilter]);
 };
 
-const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
+const ThreadListItemGroups: FC<{ searchQuery?: string; statusFilter?: SessionStatusFilter }> = ({
   searchQuery = "",
+  statusFilter = "all",
 }) => {
   const { threadIds, filteredIndices, groups } =
-    useThreadListGroups(searchQuery);
+    useThreadListGroups(searchQuery, statusFilter);
   const hasLoadError = useAuiState((s) => s.threads.loadError != null);
   const query = searchQuery.trim();
 
@@ -304,7 +319,7 @@ const ThreadListItemGroups: FC<{ searchQuery?: string }> = ({
     );
   }
 
-  if (query && filteredIndices.length === 0) {
+  if ((query || statusFilter !== "all") && filteredIndices.length === 0) {
     return (
       <div
         data-slot="aui_thread-list-empty"
@@ -366,10 +381,14 @@ const ThreadListSkeleton: FC = () => {
 };
 
 export const ThreadListItem: FC = () => {
+  const aui = useAui();
   const onNavigate = useContext(ThreadListNavigationContext);
   const variant = useContext(ThreadListVariantContext);
+  const { pendingIds, scheduleDelete } = useSessionUndo();
+  const itemId = useAuiState((s) => s.threadListItem.id);
   const isRunning = useAuiState((s) => s.threadListItem.isRunning);
   const remoteId = useAuiState((s) => s.threadListItem.remoteId);
+  const lastMessageAt = useAuiState((s) => s.threadListItem.lastMessageAt);
   const isOpen = useAuiState((s) => s.threads.mainThreadId === s.threadListItem.id);
   const verdict = useSessionVerdict(remoteId);
   const title = useAuiState((s) => s.threadListItem.title);
@@ -378,6 +397,7 @@ export const ThreadListItem: FC = () => {
   const [isRenaming, setIsRenaming] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(false);
+  const isPendingDelete = pendingIds.has(itemId);
 
   useEffect(() => {
     if (isRenaming || !restoreFocusRef.current) return;
@@ -388,9 +408,11 @@ export const ThreadListItem: FC = () => {
   return (
     <ThreadListItemPrimitive.Root
       data-slot="aui_thread-list-item"
+      aria-hidden={isPendingDelete || undefined}
       className={cn(
-        "group hover:bg-muted focus-visible:bg-muted data-active:bg-muted has-focus-visible:bg-muted has-data-[state=open]:bg-muted relative flex items-center rounded-md transition-colors focus-visible:outline-none",
+        "group hover:bg-muted focus-visible:bg-muted data-active:bg-muted has-focus-visible:bg-muted has-data-[state=open]:bg-muted relative flex items-center overflow-hidden rounded-md transition-[height,opacity,background-color] duration-200 focus-visible:outline-none",
         variant === "all" ? "h-11" : "h-8",
+        isPendingDelete && "pointer-events-none h-0 opacity-0",
       )}
     >
       {isRenaming ? (
@@ -403,11 +425,12 @@ export const ThreadListItem: FC = () => {
       ) : (
         <ThreadListItemPrimitive.Trigger
           ref={triggerRef}
+          tabIndex={isPendingDelete ? -1 : undefined}
           onClick={() => {
             onNavigate?.();
           }}
           data-slot="aui_thread-list-item-trigger"
-          className="flex h-full min-w-0 flex-1 items-center rounded-md px-2.5 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:pe-9 group-has-focus-visible:pe-9 group-has-data-[state=open]:pe-9 group-data-active:pe-9"
+          className="flex h-full min-w-0 flex-1 items-center rounded-md ps-2.5 pe-9 text-start text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {isRunning ? (
             <Loader2Icon
@@ -440,9 +463,23 @@ export const ThreadListItem: FC = () => {
               {verdict.stations.join("、")} · {investigationStatusLabel(verdict.status)}
             </span>
           )}
+          {variant === "all" && lastMessageAt && (
+            <time
+              className="text-muted-foreground ms-3 shrink-0 text-xs tabular-nums"
+              dateTime={lastMessageAt.toISOString()}
+            >
+              {new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(lastMessageAt)}
+            </time>
+          )}
         </ThreadListItemPrimitive.Trigger>
       )}
-      <ThreadListItemMore onRename={() => setIsRenaming(true)} />
+      <ThreadListItemMore
+        isRunning={isRunning}
+        onRename={() => setIsRenaming(true)}
+        onDelete={() => {
+          scheduleDelete(itemId, title || "新会话", () => Promise.resolve(aui.threadListItem().delete()));
+        }}
+      />
     </ThreadListItemPrimitive.Root>
   );
 };
@@ -510,7 +547,11 @@ const ThreadListItemRename: FC<{
   );
 };
 
-const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
+const ThreadListItemMore: FC<{
+  isRunning: boolean;
+  onRename: () => void;
+  onDelete: () => void;
+}> = ({ isRunning, onRename, onDelete }) => {
   return (
     <ThreadListItemMorePrimitive.Root sharedFocusGroup>
       <ThreadListItemMorePrimitive.Trigger asChild>
@@ -539,15 +580,20 @@ const ThreadListItemMore: FC<{ onRename: () => void }> = ({ onRename }) => {
           <PencilIcon className="size-4" />
           重命名
         </ThreadListItemMorePrimitive.Item>
-        <ThreadListItemPrimitive.Delete asChild>
-          <ThreadListItemMorePrimitive.Item
-            data-slot="aui_thread-list-item-more-item"
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none"
-          >
-            <TrashIcon className="size-4" />
-            删除
-          </ThreadListItemMorePrimitive.Item>
-        </ThreadListItemPrimitive.Delete>
+        <ThreadListItemMorePrimitive.Item
+          disabled={isRunning}
+          data-slot="aui_thread-list-item-more-item"
+          title={isRunning ? "分析进行中，暂不可删除" : undefined}
+          className="text-destructive hover:bg-destructive/10 hover:text-destructive focus:bg-destructive/10 focus:text-destructive flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-sm outline-none select-none data-disabled:pointer-events-none data-disabled:opacity-45"
+          onSelect={() => {
+            if (!isRunning) {
+              onDelete();
+            }
+          }}
+        >
+          <TrashIcon className="size-4" />
+          {isRunning ? "运行中不可删除" : "删除"}
+        </ThreadListItemMorePrimitive.Item>
       </ThreadListItemMorePrimitive.Content>
     </ThreadListItemMorePrimitive.Root>
   );

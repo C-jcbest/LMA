@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useAui, useAuiState } from '@assistant-ui/react';
 import { ChevronLeftIcon, ChevronRightIcon, Maximize2Icon, Minimize2Icon, XIcon } from 'lucide-react';
-import { Dialog as DialogPrimitive } from 'radix-ui';
+import { useOptionalSetFocusStation } from '@/app/providers/LmaClientContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
@@ -345,7 +345,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
 
   return (
     <>
-      <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 px-4 sm:px-6">
+      <header className="flex min-h-12 shrink-0 items-center justify-between gap-3 px-4 sm:px-6">
         <div className="flex min-w-0 items-baseline gap-3">
           {title}
           {station.status && <StationStatus status={station.status} />}
@@ -442,7 +442,7 @@ const EvidenceBody: FC<EvidenceBodyProps> = ({ envelope, title, onClose }) => {
   const { canExpand, isFullscreen, toggleFullscreen } = useStationInspector();
   return (
     <>
-      <header className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b px-4 sm:px-6">
+      <header className="flex min-h-12 shrink-0 items-center justify-between gap-3 border-b px-4 sm:px-6">
         {title}
         <div className="flex shrink-0 items-center">
           {canExpand && <Button type="button" variant="ghost" size="icon" className="size-10" aria-label={isFullscreen ? '恢复依据分栏' : '展开依据全屏'} onClick={toggleFullscreen}>
@@ -461,8 +461,10 @@ const EvidenceBody: FC<EvidenceBodyProps> = ({ envelope, title, onClose }) => {
 };
 
 export const StationInspector: FC = () => {
-  const { selection, selectionVersion, isClosing, isSplit, openStation, closeInspector } = useStationInspector();
+  const { selection, selectionVersion, isClosing, isSplit, openStation, closeInspector, finishClose } = useStationInspector();
+  const setFocusStation = useOptionalSetFocusStation();
   const panelRef = useRef<HTMLElement>(null);
+  const titleId = useId();
   const resize = usePanelResize({
     storageKey: 'lma-inspector-width',
     defaultWidth: Math.min(896, window.innerWidth * 0.56),
@@ -489,6 +491,12 @@ export const StationInspector: FC = () => {
   }, [messageContent, selection]);
   const hasContent = station !== undefined || evidence !== undefined;
 
+  useEffect(() => {
+    if (!setFocusStation) return;
+    setFocusStation(hasContent && station ? station.name : null);
+    return () => setFocusStation(null);
+  }, [hasContent, station, setFocusStation]);
+
   const hasLostSelection = selection !== null && !hasContent;
   useEffect(() => {
     if (hasLostSelection) {
@@ -496,9 +504,9 @@ export const StationInspector: FC = () => {
     }
   }, [hasLostSelection, closeInspector]);
 
-  const isOpenBesideChat = hasContent && isSplit;
+  const isInspectorOpen = hasContent && !isClosing;
   useEffect(() => {
-    if (!isOpenBesideChat) {
+    if (!isInspectorOpen) {
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -508,7 +516,13 @@ export const StationInspector: FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpenBesideChat, closeInspector]);
+  }, [isInspectorOpen, closeInspector]);
+
+  useEffect(() => {
+    if (hasContent && !isSplit && !isClosing) {
+      panelRef.current?.focus({ preventScroll: true });
+    }
+  }, [hasContent, isSplit, isClosing]);
 
   if (!selection || !hasContent) {
     return null;
@@ -518,62 +532,52 @@ export const StationInspector: FC = () => {
   const close = () => closeInspector();
   const viewKey = station ? `${selection.messageId}:${station.id}` : `${selection.messageId}:${selection.toolCallId}`;
   const inspectorKey = `${viewKey}:${selectionVersion}`;
-  const renderBody = (title: ReactNode) => {
-    if (!station) {
-      return <EvidenceBody key={inspectorKey} envelope={evidence!.envelope} title={title} onClose={close} />;
-    }
-    return (
-      <InspectorBody
-        key={inspectorKey}
-        viewKey={viewKey}
-        station={station}
-        focusToolCallId={selection.toolCallId}
-        stations={stations}
-        title={title}
-        onSelectStation={(stationId) => openStation({ messageId: selection.messageId, stationId })}
-        onClose={close}
-      />
-    );
-  };
-  const title = <h2 className="min-w-0 truncate text-base font-medium">{titleText}</h2>;
-
-  if (isSplit) {
-    return (
-      <aside
-        id="station-evidence"
-        ref={panelRef}
-        aria-label={`${titleText} 依据`}
-        data-station-inspector=""
-        data-state={isClosing ? 'closed' : 'open'}
-        inert={isClosing}
-        style={resize.style}
-        className="inspector-panel relative flex h-full min-w-0 flex-col border-l bg-background pt-[env(safe-area-inset-top)]"
-      >
-        <PanelResizeHandle label="调整聊天与依据宽度" panelId="station-evidence" edge="left" {...resize.handleProps} />
-        {renderBody(title)}
-      </aside>
-    );
-  }
+  const title = <h2 id={titleId} className="min-w-0 truncate text-base font-medium">{titleText}</h2>;
 
   return (
-    <DialogPrimitive.Root
-      open={!isClosing}
-      onOpenChange={(open) => {
-        if (!open) {
-          close();
+    <aside
+      id={isSplit ? 'station-evidence' : undefined}
+      ref={panelRef}
+      tabIndex={!isSplit ? -1 : undefined}
+      role={!isSplit ? 'dialog' : undefined}
+      aria-modal={!isSplit ? true : undefined}
+      aria-labelledby={!isSplit ? titleId : undefined}
+      aria-label={isSplit ? `${titleText} 依据` : undefined}
+      data-station-inspector=""
+      data-state={isClosing ? 'closed' : 'open'}
+      inert={isClosing}
+      onTransitionEnd={(event) => {
+        if (isClosing && isSplit && event.target === event.currentTarget && event.propertyName === 'width') {
+          finishClose();
         }
       }}
+      onAnimationEnd={(event) => {
+        if (isClosing && !isSplit && event.target === event.currentTarget) {
+          finishClose();
+        }
+      }}
+      style={isSplit ? resize.style : undefined}
+      className={
+        isSplit
+          ? 'inspector-panel relative flex h-full min-w-0 flex-col border-l bg-background pt-[env(safe-area-inset-top)]'
+          : 'inspector-overlay fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none'
+      }
     >
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Content
-          data-station-inspector=""
-          aria-describedby={undefined}
-          onCloseAutoFocus={(event) => event.preventDefault()}
-          className="inspector-overlay fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none"
-        >
-          {renderBody(<DialogPrimitive.Title asChild>{title}</DialogPrimitive.Title>)}
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+      {isSplit && <PanelResizeHandle label="调整聊天与依据宽度" panelId="station-evidence" edge="left" {...resize.handleProps} />}
+      {!station ? (
+        <EvidenceBody key={inspectorKey} envelope={evidence!.envelope} title={title} onClose={close} />
+      ) : (
+        <InspectorBody
+          key={inspectorKey}
+          viewKey={viewKey}
+          station={station}
+          focusToolCallId={selection.toolCallId}
+          stations={stations}
+          title={title}
+          onSelectStation={(stationId) => openStation({ messageId: selection.messageId, stationId })}
+          onClose={close}
+        />
+      )}
+    </aside>
   );
 };
