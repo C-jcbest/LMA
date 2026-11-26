@@ -4,6 +4,15 @@ interface MapMarkerContent {
   colorToken: string;
   reference?: boolean;
   current?: boolean;
+  priority?: number;
+}
+
+export interface PlaceableMarker {
+  marker: AMap.Marker;
+  element: HTMLElement;
+  id?: string;
+  priority?: number;
+  isPrimary?: boolean;
 }
 
 function textElement<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text: string) {
@@ -88,17 +97,22 @@ export function createMapMarker(content: MapMarkerContent) {
   swatch.setAttribute('aria-hidden', 'true');
   const value = textElement('span', 'evidence-map-marker__value', detail);
   value.hidden = !detail;
+  const clusterBadge = textElement('span', 'evidence-map-marker__cluster', '');
+  clusterBadge.hidden = true;
   label.append(
     swatch,
     textElement('span', 'evidence-map-marker__name', content.name),
     value,
+    clusterBadge,
   );
   node.append(dot, label);
   return node;
 }
 
-/** 标签留在地图内，避开其他测点点位、位移箭头和已放置标签；批量读后再批量写避免重排。 */
-export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, markers: Array<{ marker: AMap.Marker; element: HTMLElement }>) {
+const CLUSTER_RADIUS_PX = 26;
+
+/** 标签留在地图内，对屏幕近距重合测点自动聚类并裁剪重叠次要标签；批量读后再批量写避免重排。 */
+export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, markers: PlaceableMarker[]) {
   const containerWidth = container.clientWidth;
   const containerHeight = container.clientHeight;
   if (containerWidth === 0 || containerHeight === 0) {
@@ -118,9 +132,11 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
     }
   });
 
-  const measurements = markers.map(({ element }, index) => {
+  // Reset cluster visibility state before measuring labels
+  const measurements = markers.map(({ element, id, priority = 0, isPrimary = true }, index) => {
     const label = element.querySelector<HTMLElement>('.evidence-map-marker__label');
     const arrow = element.querySelector<HTMLElement>('.evidence-map-marker__arrow');
+    const clusterBadge = element.querySelector<HTMLElement>('.evidence-map-marker__cluster');
     const point = positions[index];
     if (!label || !point) {
       return null;
@@ -142,7 +158,13 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
       }
     }
     return {
+      index,
+      id,
+      priority,
+      isPrimary,
+      element,
       label,
+      clusterBadge,
       point,
       elementWidth: element.clientWidth,
       elementHeight: element.clientHeight,
@@ -152,63 +174,136 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
     };
   });
 
-  // Phase 2: pure compute
-  const arrowBoxes = measurements.map((item) => item?.arrowBox ?? null);
-  const placed: Array<{ left: number; top: number; right: number; bottom: number }> = [];
-  const writes: Array<{ label: HTMLElement; left: number; top: number; blocksMarker: boolean }> = [];
+  // Phase 2: proximity clustering (highest-priority marker becomes cluster leader)
+  const validItems = measurements
+    .filter((item): item is NonNullable<typeof item> => item !== null)
+    .sort((a, b) => b.priority - a.priority || a.index - b.index);
 
-  for (let index = 0; index < measurements.length; index += 1) {
-    const item = measurements[index];
-    if (!item) continue;
-    const { point, width, height, elementWidth, elementHeight, label } = item;
+  const clusterMembers = new Map<number, number[]>();
+  const hiddenByCluster = new Set<number>();
+
+  for (const item of validItems) {
+    if (hiddenByCluster.has(item.index)) continue;
+    const members = [item.index];
+    for (const other of validItems) {
+      if (other.index === item.index || hiddenByCluster.has(other.index)) continue;
+      if (Math.hypot(other.point.x - item.point.x, other.point.y - item.point.y) < CLUSTER_RADIUS_PX) {
+        members.push(other.index);
+        hiddenByCluster.add(other.index);
+      }
+    }
+    clusterMembers.set(item.index, members);
+  }
+
+  const visibleItems = validItems.filter((item) => !hiddenByCluster.has(item.index));
+  const visiblePositions = visibleItems.map((item) => ({ index: item.index, x: item.point.x, y: item.point.y }));
+  const visibleArrowBoxes = visibleItems.map((item) => item.arrowBox);
+
+  // Phase 3: label placement & collision pruning
+  const placed: Array<{ left: number; top: number; right: number; bottom: number }> = [];
+  const labelWrites: Array<{
+    item: (typeof visibleItems)[number];
+    left: number;
+    top: number;
+    blocksMarker: boolean;
+    hideLabel: boolean;
+    clusterCount: number;
+    memberIds: string[];
+  }> = [];
+
+  for (const item of visibleItems) {
+    const { point, width, height, elementWidth, elementHeight, index, isPrimary } = item;
+    const members = clusterMembers.get(index) ?? [index];
+    const clusterCount = members.length;
+    const badgeVisible = Boolean(item.clusterBadge && !item.clusterBadge.hidden);
+    const extraWidth = clusterCount > 1 && !badgeVisible ? 26 : 0;
+    const effectiveWidth = width + extraWidth;
     const candidates = [
       { left: point.x + 14, top: point.y - height / 2 },
-      { left: point.x - 14 - width, top: point.y - height / 2 },
-      { left: point.x - width / 2, top: point.y + 18 },
-      { left: point.x - width / 2, top: point.y - height - 18 },
+      { left: point.x - 14 - effectiveWidth, top: point.y - height / 2 },
+      { left: point.x - effectiveWidth / 2, top: point.y + 18 },
+      { left: point.x - effectiveWidth / 2, top: point.y - height - 18 },
       { left: point.x + 14, top: point.y - height - 14 },
-      { left: point.x - 14 - width, top: point.y - height - 14 },
+      { left: point.x - 14 - effectiveWidth, top: point.y - height - 14 },
       { left: point.x + 14, top: point.y + 14 },
-      { left: point.x - 14 - width, top: point.y + 14 },
-      { left: point.x - width / 2, top: point.y - height - 38 },
-      { left: point.x - width / 2, top: point.y + 38 },
+      { left: point.x - 14 - effectiveWidth, top: point.y + 14 },
+      { left: point.x - effectiveWidth / 2, top: point.y - height - 38 },
+      { left: point.x - effectiveWidth / 2, top: point.y + 38 },
     ];
     let chosen = candidates[0]!;
     let bestScore = Infinity;
     let blocksMarker = false;
+    let overlapsPlacedLabel = false;
     for (const candidate of candidates) {
-      const right = candidate.left + width;
+      const right = candidate.left + effectiveWidth;
       const bottom = candidate.top + height;
-      const outside = candidate.left < 8 || right > containerWidth - 8 || candidate.top < 44 || bottom > containerHeight - 12;
-      const coversMarker = positions.some((other, otherIndex) => other && otherIndex !== index
+      const outside = candidate.left < 8 || right > containerWidth - 8 || candidate.top < 46 || bottom > containerHeight - 12;
+      const coversMarker = visiblePositions.some((other) => other.index !== index
         && other.x + 18 > candidate.left && other.x - 18 < right
         && other.y + 18 > candidate.top && other.y - 18 < bottom);
-      const coversArrow = arrowBoxes.some((box) => box
+      const coversArrow = visibleArrowBoxes.some((box) => box
         && box.right > candidate.left && box.left < right
         && box.bottom > candidate.top && box.top < bottom);
       const overlapsLabel = placed.some((other) => other.right + 4 > candidate.left && other.left - 4 < right
         && other.bottom + 4 > candidate.top && other.top - 4 < bottom);
-      const score = Number(outside) * 1000 + Number(coversMarker) * 160 + Number(coversArrow) * 80 + Number(overlapsLabel) * 30;
+      const score = Number(outside) * 1000 + Number(coversMarker) * 180 + Number(coversArrow) * 80 + Number(overlapsLabel) * 40;
       if (score < bestScore) {
         chosen = candidate;
         bestScore = score;
         blocksMarker = coversMarker;
+        overlapsPlacedLabel = overlapsLabel;
       }
     }
-    writes.push({
-      label,
+    const hideLabel = !isPrimary && clusterCount === 1 && (blocksMarker || overlapsPlacedLabel);
+    const memberIds = members.map((memberIdx) => measurements[memberIdx]?.id).filter((value): value is string => Boolean(value));
+    labelWrites.push({
+      item,
       left: elementWidth / 2 + chosen.left - point.x,
       top: elementHeight / 2 + chosen.top - point.y,
       blocksMarker,
+      hideLabel,
+      clusterCount,
+      memberIds,
     });
-    placed.push({ ...chosen, right: chosen.left + width, bottom: chosen.top + height });
+    if (!hideLabel) {
+      placed.push({ ...chosen, right: chosen.left + effectiveWidth, bottom: chosen.top + height });
+    }
   }
 
-  // Phase 3: pure writes
-  for (const write of writes) {
-    write.label.style.left = `${write.left}px`;
-    write.label.style.top = `${write.top}px`;
-    write.label.style.transform = 'none';
-    write.label.style.pointerEvents = write.blocksMarker ? 'none' : '';
+  // Phase 4: pure writes
+  for (const item of validItems) {
+    if (hiddenByCluster.has(item.index)) {
+      item.element.dataset.clustered = 'hidden';
+      delete item.element.dataset.clusterIds;
+      item.element.tabIndex = -1;
+      item.element.setAttribute('aria-hidden', 'true');
+    } else {
+      delete item.element.dataset.clustered;
+      item.element.tabIndex = 0;
+      item.element.removeAttribute('aria-hidden');
+    }
+  }
+
+  for (const write of labelWrites) {
+    const { item, left, top, blocksMarker, hideLabel, clusterCount, memberIds } = write;
+    if (clusterCount > 1) {
+      item.element.dataset.clustered = 'leader';
+      item.element.dataset.clusterIds = memberIds.join(',');
+      if (item.clusterBadge) {
+        item.clusterBadge.textContent = `+${clusterCount - 1}`;
+        item.clusterBadge.hidden = false;
+      }
+    } else {
+      delete item.element.dataset.clusterIds;
+      if (item.clusterBadge) {
+        item.clusterBadge.textContent = '';
+        item.clusterBadge.hidden = true;
+      }
+    }
+    item.label.dataset.collapsed = hideLabel ? 'true' : 'false';
+    item.label.style.left = `${left}px`;
+    item.label.style.top = `${top}px`;
+    item.label.style.transform = 'none';
+    item.label.style.pointerEvents = blocksMarker || hideLabel ? 'none' : '';
   }
 }

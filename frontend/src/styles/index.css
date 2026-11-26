@@ -288,7 +288,13 @@
 .evidence-card:hover {
   border-color: var(--border);
 }
+.evidence-card--flush {
+  padding: 0;
+  overflow: hidden;
+  background: var(--card);
+}
 .evidence-card[data-state="closed"] { padding-bottom: 2px; }
+.evidence-card--flush[data-state="closed"] { padding-bottom: 0; }
 @media (hover: hover) {
   .evidence-card-open { opacity: 0.45; transition: opacity var(--duration-fast) var(--ease-out); }
   .evidence-card:hover .evidence-card-open,
@@ -429,6 +435,28 @@
 }
 .evidence-map-marker__value[hidden] {
   display: none;
+}
+.evidence-map-marker[data-clustered="hidden"] {
+  opacity: 0;
+  pointer-events: none;
+}
+.evidence-map-marker__cluster {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+.evidence-map-marker__cluster[hidden] {
+  display: none;
+}
+.evidence-map-marker__label[data-collapsed="true"] {
+  opacity: 0;
+  transform: translateY(-50%) scale(0.96);
+  pointer-events: none;
 }
 .evidence-map-marker:is(:hover, :focus-visible) .evidence-map-marker__label {
   border-color: var(--marker-color);

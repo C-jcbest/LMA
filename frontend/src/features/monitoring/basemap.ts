@@ -94,8 +94,12 @@ export function createBaseLayers(sdk: typeof AMap, selection: MapLayerSelection)
   return { layers: [road, satellite, roadLabels], select };
 }
 
+export function mapStyleFor(baseLayer: BaseLayer, resolvedTheme: 'light' | 'dark') {
+  return baseLayer === 'road' && resolvedTheme === 'dark' ? 'amap://styles/dark' : 'amap://styles/normal';
+}
+
 export function applyMapStyle(map: AMap.Map, baseLayer: BaseLayer, resolvedTheme: 'light' | 'dark') {
-  map.setMapStyle?.(baseLayer === 'road' && resolvedTheme === 'dark' ? 'amap://styles/dark' : 'amap://styles/normal');
+  map.setMapStyle?.(mapStyleFor(baseLayer, resolvedTheme));
 }
 
 export function bindMapWheelZoom(map: AMap.Map, container: HTMLElement) {

@@ -132,7 +132,20 @@ export interface MapSheetInfo {
   action?: { label: string; run: () => void };
 }
 
-export const MapStationSheet: FC<{ info: MapSheetInfo | null; onClose: () => void }> = ({ info, onClose }) => {
+export interface ClusterOption {
+  id: string;
+  name: string;
+  colorToken: string;
+}
+
+export const MapStationSheet: FC<{
+  info: MapSheetInfo | null;
+  clusterOptions?: readonly ClusterOption[];
+  activeClusterId?: string;
+  onSelectClusterMember?: (id: string) => void;
+  docked?: boolean;
+  onClose: () => void;
+}> = ({ info, clusterOptions, activeClusterId, onSelectClusterMember, docked = false, onClose }) => {
   useEffect(() => {
     if (!info) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -146,18 +159,54 @@ export const MapStationSheet: FC<{ info: MapSheetInfo | null; onClose: () => voi
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [info, onClose]);
 
+  const showSwitcher = Boolean(clusterOptions && clusterOptions.length > 1 && onSelectClusterMember);
+
   return (
-    <AnimatePresence>
+    <AnimatePresence initial={false}>
       {info && (
         <motion.section
-          key={info.id}
+          key={docked ? 'docked-sheet' : info.id}
           data-map-overlay=""
           aria-label={`${info.name} 测点信息`}
-          initial={{ opacity: 0, y: 12, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1, transition: SPRING_SNAPPY }}
-          exit={{ opacity: 0, y: 8, scale: 0.98, transition: EASE_IN }}
-          className="pointer-events-auto absolute inset-x-3 bottom-3 z-30 flex max-h-[calc(100%-3.5rem)] flex-col overflow-hidden rounded-xl border border-border/80 bg-popover/95 p-3.5 text-start text-sm text-popover-foreground shadow-lg backdrop-blur-md sm:inset-x-auto sm:start-3 sm:w-76"
+          initial={docked ? { opacity: 0, height: 0 } : { opacity: 0, y: 12, scale: 0.98 }}
+          animate={docked ? { opacity: 1, height: 'auto', transition: SPRING_SNAPPY } : { opacity: 1, y: 0, scale: 1, transition: SPRING_SNAPPY }}
+          exit={docked ? { opacity: 0, height: 0, transition: EASE_IN } : { opacity: 0, y: 8, scale: 0.98, transition: EASE_IN }}
+          className={cn(
+            'pointer-events-auto flex flex-col overflow-hidden text-start text-sm text-popover-foreground',
+            docked
+              ? 'border-t border-border/70 bg-card px-3.5 py-3'
+              : 'absolute bottom-3 start-3 z-30 max-h-[calc(100%-3.5rem)] w-76 rounded-xl border border-border/80 bg-popover/95 p-3.5 shadow-lg backdrop-blur-md',
+          )}
         >
+          {showSwitcher && (
+            <div className="mb-2.5 flex items-center gap-1 overflow-x-auto pb-0.5">
+              {clusterOptions!.map((member) => {
+                const active = member.id === activeClusterId;
+                return (
+                  <button
+                    key={member.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => onSelectClusterMember!(member.id)}
+                    className={cn(
+                      'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      active
+                        ? 'border-foreground/30 bg-foreground font-medium text-background'
+                        : 'border-border/70 bg-muted/60 text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <span
+                      aria-hidden
+                      className="size-1.5 shrink-0 rounded-full"
+                      style={{ background: `var(${member.colorToken})` }}
+                    />
+                    <span>{member.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <header className="flex shrink-0 items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -170,6 +219,7 @@ export const MapStationSheet: FC<{ info: MapSheetInfo | null; onClose: () => voi
                 {info.stationType && !info.stationType.startsWith('移动站') && (
                   <span className="shrink-0">· {info.stationType}</span>
                 )}
+                {info.status && <span className="shrink-0 font-medium text-foreground">· {info.status}</span>}
               </div>
               <h3 className="mt-0.5 truncate text-base font-semibold leading-snug">{info.name}</h3>
             </div>
@@ -183,27 +233,26 @@ export const MapStationSheet: FC<{ info: MapSheetInfo | null; onClose: () => voi
             </button>
           </header>
 
-          <div className="mt-2.5 min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain pe-0.5">
-            {info.status && (
-              <p className="text-xs font-medium text-foreground">{info.status}</p>
-            )}
+          <div className={cn('mt-2 space-y-2', !docked && 'min-h-0 flex-1 overflow-y-auto overscroll-contain pe-0.5')}>
             {info.reason && (
-              <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">{info.reason}</p>
+              <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground wrap-anywhere">{info.reason}</p>
             )}
             {info.metric && (
-              <div className="rounded-lg bg-muted/70 px-3 py-2">
-                <p className="text-xs text-muted-foreground">{info.metric.label}</p>
-                <div className="mt-0.5 flex items-baseline gap-1.5 tabular-nums">
-                  <span className="text-2xl font-semibold tracking-tight">{info.metric.value}</span>
-                  <span className="text-xs text-muted-foreground">{info.metric.unit}</span>
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-lg bg-muted/70 px-3 py-2">
+                <div>
+                  <p className="text-xs text-muted-foreground">{info.metric.label}</p>
+                  <div className="mt-0.5 flex items-baseline gap-1 tabular-nums">
+                    <span className="text-xl font-semibold tracking-tight">{info.metric.value}</span>
+                    <span className="text-xs text-muted-foreground">{info.metric.unit}</span>
+                  </div>
                 </div>
                 {info.metric.direction && (
-                  <p className="mt-0.5 text-xs text-muted-foreground">{info.metric.direction}</p>
+                  <p className="text-xs text-muted-foreground">{info.metric.direction}</p>
                 )}
               </div>
             )}
             {info.fields.length > 0 && (
-              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
                 {info.fields.map((field) => (
                   <div key={field.label} className={cn('min-w-0', field.wide && 'col-span-2')}>
                     <dt className="text-muted-foreground">{field.label}</dt>

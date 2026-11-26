@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useAuiState } from '@assistant-ui/react';
 import { ChevronDownIcon, MapPinIcon, Maximize2Icon } from 'lucide-react';
+import { cn } from 'cn';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -150,6 +151,7 @@ interface CardShellProps {
   meta?: string;
   onOpen?: () => void;
   defaultExpanded?: boolean;
+  flush?: boolean;
   children: ReactNode;
 }
 
@@ -203,12 +205,12 @@ const CompactSiteSummary: FC<{ environment: SiteEnvironmentArtifactData; onOpenM
   );
 };
 
-const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true }) => {
+const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true, flush = false }) => {
   const [isOpen, setIsOpen] = useState(defaultExpanded);
   return (
     <Collapsible asChild open={isOpen} onOpenChange={setIsOpen}>
-    <figure data-slot="evidence-card" className="evidence-card not-prose">
-      <figcaption className="-me-1.5 flex items-center gap-1">
+    <figure data-slot="evidence-card" className={cn('evidence-card not-prose', flush && 'evidence-card--flush')}>
+      <figcaption className={cn('flex items-center gap-1', flush ? 'px-3 py-0.5' : '-me-1.5')}>
         <CollapsibleTrigger className="group/card flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
           <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 py-0.5">
             <span className="break-words text-sm font-medium">{title}</span>
@@ -226,7 +228,7 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultE
           </button>
         )}
       </figcaption>
-      <CollapsibleContent className="pt-1.5">{children}</CollapsibleContent>
+      <CollapsibleContent className={flush ? 'border-t border-border/60' : 'pt-1.5'}>{children}</CollapsibleContent>
     </figure>
     </Collapsible>
   );
@@ -351,11 +353,12 @@ const StationMapCard: FC<{ stations: readonly StationEvidence[]; onOpenStation: 
     <CardShell
       title="测点位置"
       meta={mapStations.every((station) => station.cumulative) ? undefined : '无固定参考的测点为本窗口变化'}
+      flush
     >
       <WhenVisible minHeight={288}>
         <ErrorBoundary fallbackTitle="地图渲染异常">
-          <Suspense fallback={<Skeleton className="h-72 w-full" />}>
-            <StationMap stations={mapStations} references={references} onSelect={onOpenStation} />
+          <Suspense fallback={<Skeleton className="h-72 w-full rounded-none" />}>
+            <StationMap stations={mapStations} references={references} onSelect={onOpenStation} framed={false} />
           </Suspense>
         </ErrorBoundary>
       </WhenVisible>

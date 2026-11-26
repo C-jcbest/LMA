@@ -120,7 +120,7 @@ class PersistedToolFeedbackTests(unittest.TestCase):
 
     def test_real_permission_and_timeout_failures_remain_business_evidence(self):
         for failure, public_message in (
-            (BeidouApiError('PRIVATE', 'private diagnostic'), '访问权限'),
+            (BeidouApiError('PRIVATE', 'private diagnostic'), '监测平台暂未返回'),
             (httpx.ReadTimeout('private diagnostic'), '数据服务暂不可用'),
         ):
             platform = FakePlatform(stations=[STATION])

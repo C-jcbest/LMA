@@ -1,6 +1,7 @@
 import { cn } from 'cn';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTheme } from '@/app/providers/ThemeProvider';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { MapLayerControl, MapStationSheet, MapZoomControls, type MapSheetInfo } from '../MapLayerControl';
 import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
 import {
@@ -10,6 +11,7 @@ import {
   createBaseLayers,
   DEFAULT_LAYER_SELECTION,
   MAP_2D_OPTIONS,
+  mapStyleFor,
   useAMap,
   type MapLayerSelection,
 } from '../basemap';
@@ -33,6 +35,7 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
   const mapRef = useRef<AMap.Map | null>(null);
   const allMarkersRef = useRef<AMap.Marker[]>([]);
   const { resolvedTheme } = useTheme();
+  const isCompact = useMediaQuery('(max-width: 639px)');
   const amap = useAMap();
   const sdk = amap.status === 'ready' ? amap.sdk : null;
   const [layerSelection, setLayerSelection] = useState<MapLayerSelection>(DEFAULT_LAYER_SELECTION);
@@ -83,6 +86,7 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
       center: amapPosition(center),
       zoom: 15,
       zooms: [2, 20],
+      mapStyle: mapStyleFor(layerSelectionRef.current.baseLayer, resolvedThemeRef.current),
       ...MAP_2D_OPTIONS,
       scrollWheel: false,
       resizeEnable: true,
@@ -91,7 +95,6 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
       rotateEnable: false,
     });
     mapRef.current = map;
-    applyMapStyle(map, layerSelectionRef.current.baseLayer, resolvedThemeRef.current);
     map.addControl(new sdk.Scale());
     const unbindWheel = bindMapWheelZoom(map, container);
     const markers = stations.map((station, index) => {
@@ -104,6 +107,9 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
         detail: isCenter ? '当前测点' : (station.station_type === '基准站' ? '基准站' : ''),
         reference: station.station_type === '基准站',
       });
+      if (!isCenter && station.station_type !== '基准站') {
+        element.classList.add('evidence-map-marker--context');
+      }
       if (isCenter && downslopeAzimuth !== null) {
         appendDownslopeFan(element, downslopeAzimuth);
       }
@@ -114,7 +120,7 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
         setSelectedIndex(index);
       });
       marker.setMap(map);
-      return { marker, element };
+      return { marker, element, id: String(index), priority: isCenter ? 30 : 5, isPrimary: isCenter };
     });
     allMarkersRef.current = markers.map((item) => item.marker);
     if (markers.length > 1) {
@@ -190,22 +196,25 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
     <div className="space-y-4">
       <div
         data-map-basemap={layerSelection.baseLayer}
-        className="relative isolate overflow-hidden rounded-xl border border-border/70 bg-muted/40"
+        className="overflow-hidden rounded-xl border border-border/70 bg-card"
       >
-        <div
-          ref={containerRef}
-          role="region"
-          aria-label="场地环境地图"
-          aria-busy={amap.status === 'loading'}
-          className={cn('h-[min(56dvh,28rem)] min-h-72 w-full touch-none', amap.status === 'loading' && 'animate-pulse')}
-        />
-        <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-end">
-          <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
+        <div className="relative isolate bg-muted/40">
+          <div
+            ref={containerRef}
+            role="region"
+            aria-label="场地环境地图"
+            aria-busy={amap.status === 'loading'}
+            className={cn('h-[min(54dvh,26rem)] min-h-72 w-full touch-none', amap.status === 'loading' && 'animate-pulse')}
+          />
+          <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-end">
+            <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
+          </div>
+          <div className="pointer-events-none absolute end-3 bottom-3 z-20">
+            <MapZoomControls onZoomIn={() => zoomBy(1)} onZoomOut={() => zoomBy(-1)} onFitView={fitAllMarkers} />
+          </div>
+          {!isCompact && <MapStationSheet info={sheetInfo} onClose={() => setSelectedIndex(null)} />}
         </div>
-        <div className="pointer-events-none absolute end-3 bottom-3 z-20">
-          <MapZoomControls onZoomIn={() => zoomBy(1)} onZoomOut={() => zoomBy(-1)} onFitView={fitAllMarkers} />
-        </div>
-        <MapStationSheet info={sheetInfo} onClose={() => setSelectedIndex(null)} />
+        {isCompact && <MapStationSheet docked info={sheetInfo} onClose={() => setSelectedIndex(null)} />}
       </div>
       {downslopeAzimuth !== null && (
         <p className="text-xs text-muted-foreground">虚线扇形为当前测点下坡方向（约 90 m 地形平均坡面，不代替现场勘查主滑方向）。</p>

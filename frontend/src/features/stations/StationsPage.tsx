@@ -222,7 +222,9 @@ export const StationsPage: FC<{ active?: boolean }> = ({ active = true }) => {
           <div className="flex items-baseline gap-2.5">
             <h1 className="text-2xl font-semibold tracking-tight">测点</h1>
             {hasStations && (
-              <span className="text-sm text-muted-foreground tabular-nums">{stations.length} 个</span>
+              <span className="text-sm text-muted-foreground tabular-nums">
+                {activeGroup === ALL_GROUPS ? `${stations.length} 个` : `${scopedStations.length} / ${stations.length} 个`}
+              </span>
             )}
           </div>
           {hasStations && (

@@ -1,4 +1,4 @@
-import type { FC } from 'react';
+import { useState, type FC } from 'react';
 import { cn } from 'cn';
 import { formatSigned, MILLIMETER_DIGITS } from '@/features/monitoring/format';
 import type { ScreeningFinding } from '@/services/api';
@@ -58,15 +58,17 @@ export const FindingChips: FC<{
   showAmount?: boolean;
   className?: string;
 }> = ({ findings, limit = Infinity, qualityLimit = Infinity, showAmount = true, className }) => {
+  const [expanded, setExpanded] = useState(false);
   const triggers = triggersOf(findings);
-  const visible = triggers.slice(0, limit);
-  const hidden = triggers.slice(limit);
+  const visible = expanded ? triggers : triggers.slice(0, limit);
+  const hidden = expanded ? [] : triggers.slice(limit);
   const quality = qualityLabelsOf(findings);
-  const visibleQuality = quality.slice(0, qualityLimit);
-  const hiddenQuality = quality.slice(qualityLimit);
+  const visibleQuality = expanded ? quality : quality.slice(0, qualityLimit);
+  const hiddenQuality = expanded ? [] : quality.slice(qualityLimit);
   if (triggers.length === 0 && quality.length === 0) {
     return null;
   }
+  const hasHidden = hidden.length > 0 || hiddenQuality.length > 0;
   return (
     <span role="list" aria-label="初筛线索" className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {visible.map((finding, index) => {
@@ -79,20 +81,32 @@ export const FindingChips: FC<{
           </span>
         );
       })}
-      {hidden.length > 0 && (
-        <span role="listitem" title={hidden.map((finding) => finding.text).join('\n')} className="px-1 text-xs text-muted-foreground">
-          另 {hidden.length} 条
-        </span>
-      )}
       {visibleQuality.map((item) => (
         <span role="listitem" key={item.label} title={item.detail}
           className="inline-flex min-h-6 items-center rounded-full border px-2.5 text-xs text-muted-foreground">
           {item.label}
         </span>
       ))}
-      {hiddenQuality.length > 0 && (
-        <span role="listitem" title={hiddenQuality.map((item) => `${item.label}：${item.detail}`).join('\n')} className="px-1 text-xs text-muted-foreground">
-          +{hiddenQuality.length}
+      {hasHidden && (
+        <span
+          role="button"
+          tabIndex={0}
+          aria-expanded={false}
+          title={[...hidden.map((finding) => finding.text), ...hiddenQuality.map((item) => `${item.label}：${item.detail}`)].join('\n')}
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              event.stopPropagation();
+              setExpanded(true);
+            }
+          }}
+          className="inline-flex min-h-6 items-center rounded-full px-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          另 {hidden.length + hiddenQuality.length} 条
         </span>
       )}
     </span>

@@ -114,4 +114,52 @@ describe('对话中的测点地图', () => {
     const leftOffset = Number.parseFloat(label.style.left);
     expect(leftOffset).toBeLessThan(0);
   });
+
+  it('屏幕近距重合测点按优先级自动聚类并标注数量，次要重叠参照点自动折叠标签', () => {
+    const container = document.createElement('div');
+    Object.defineProperty(container, 'clientWidth', { value: 420 });
+    Object.defineProperty(container, 'clientHeight', { value: 320 });
+
+    const makeNode = (name: string) => {
+      const el = createMapMarker({ name, detail: '', colorToken: '--status-critical' });
+      Object.defineProperty(el, 'clientWidth', { value: 44 });
+      Object.defineProperty(el, 'clientHeight', { value: 44 });
+      const lbl = el.querySelector<HTMLElement>('.evidence-map-marker__label')!;
+      Object.defineProperty(lbl, 'offsetWidth', { value: 110 });
+      Object.defineProperty(lbl, 'offsetHeight', { value: 28 });
+      return { el, lbl };
+    };
+
+    const primary = makeNode('主测点');
+    const colocated = makeNode('同址测点');
+    const crowdedRef = makeNode('拥挤参照点');
+
+    const coords: Record<string, { x: number; y: number }> = {
+      p1: { x: 200, y: 160 },
+      p2: { x: 204, y: 162 },
+      // Positioned in a tight corner surrounded by markers so all label candidates collide
+      p3: { x: 18, y: 56 },
+      b1: { x: 80, y: 56 },
+      b2: { x: 18, y: 92 },
+    };
+    const blocker1 = makeNode('占位1');
+    const blocker2 = makeNode('占位2');
+    const mockMap = {
+      lngLatToContainer: (pos: string) => coords[pos]!,
+    } as unknown as AMap.Map;
+
+    placeMapMarkerLabels(mockMap, container, [
+      { marker: { getPosition: () => 'p2' } as unknown as AMap.Marker, element: colocated.el, id: 'station:2', priority: 10, isPrimary: true },
+      { marker: { getPosition: () => 'p1' } as unknown as AMap.Marker, element: primary.el, id: 'station:1', priority: 40, isPrimary: true },
+      { marker: { getPosition: () => 'b1' } as unknown as AMap.Marker, element: blocker1.el, id: 'station:b1', priority: 30, isPrimary: true },
+      { marker: { getPosition: () => 'b2' } as unknown as AMap.Marker, element: blocker2.el, id: 'station:b2', priority: 30, isPrimary: true },
+      { marker: { getPosition: () => 'p3' } as unknown as AMap.Marker, element: crowdedRef.el, id: 'ref:3', priority: 5, isPrimary: false },
+    ]);
+
+    expect(primary.el.dataset.clustered).toBe('leader');
+    expect(primary.el.dataset.clusterIds).toBe('station:1,station:2');
+    expect(primary.el.querySelector('.evidence-map-marker__cluster')?.textContent).toBe('+1');
+    expect(colocated.el.dataset.clustered).toBe('hidden');
+    expect(crowdedRef.lbl.dataset.collapsed).toBe('true');
+  });
 });

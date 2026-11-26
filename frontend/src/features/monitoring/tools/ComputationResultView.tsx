@@ -16,6 +16,9 @@ const isFlatRecord = (value: unknown): value is Record<string, Scalar> =>
 const UNIT_SUFFIX = /^(.+?)_((?:mm|cm|m|km|%|天|小时|h|d)(?:每天|每小时|每日|\/天|\/小时|\/d|\/h)?)$/;
 
 export const formatLabel = (key: string) => {
+  if (key.trim().toLowerCase() === 'index') {
+    return '对象';
+  }
   const match = UNIT_SUFFIX.exec(key);
   if (match) {
     const unit = match[2]!.replace(/^(.+?)每(天|日|小时)$/, '$1/$2').replace('/日', '/天');

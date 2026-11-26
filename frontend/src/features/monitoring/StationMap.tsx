@@ -3,7 +3,8 @@ import { PauseIcon, PlayIcon } from 'lucide-react';
 import { cn } from 'cn';
 import { useTheme } from '@/app/providers/ThemeProvider';
 import { MorphIcon } from '@/components/ui/motion-primitives';
-import { MapLayerControl, MapStationSheet, MapZoomControls, type MapSheetInfo } from './MapLayerControl';
+import { useMediaQuery } from '@/hooks/use-media-query';
+import { MapLayerControl, MapStationSheet, MapZoomControls, type ClusterOption, type MapSheetInfo } from './MapLayerControl';
 import {
   amapPosition,
   applyMapStyle,
@@ -11,6 +12,7 @@ import {
   createBaseLayers,
   DEFAULT_LAYER_SELECTION,
   MAP_2D_OPTIONS,
+  mapStyleFor,
   useAMap,
   type MapLayerSelection,
 } from './basemap';
@@ -24,6 +26,7 @@ import {
   placeMapMarkerLabels,
   setDisplacementArrow,
   setMarkerDetail,
+  type PlaceableMarker,
 } from './map-markers';
 import { validCoordinates } from './coordinates';
 import type { HorizontalSample } from './timeline';
@@ -56,6 +59,7 @@ const MAX_ARROW_PIXELS = 42;
 const MIN_ARROW_PIXELS = 14;
 const PLAYBACK_FRAMES = 100;
 const PLAYBACK_INTERVAL_MS = 110;
+const SEPARABLE_COORD_DEG = 0.00018;
 
 const isBaseStation = (station: { stationType: string | null }) => station.stationType === '基准站';
 
@@ -65,6 +69,13 @@ const arrowLength = (magnitude: number, largest: number) =>
 const compactDisplacementDetail = (north: number, east: number) => {
   const magnitude = Math.hypot(north, east);
   return magnitude > 0 ? `${magnitude.toFixed(1)}mm ${directionName(azimuthOf(north, east))}` : '0.0mm';
+};
+
+const stationPriority = (station: MapStation) => {
+  if (station.colorToken === '--status-critical') return 40;
+  if (station.colorToken === '--status-attention') return 30;
+  if (!isBaseStation(station) && station.northMillimeters !== null && station.eastMillimeters !== null) return 20;
+  return 15;
 };
 
 function slopeField(station: MapStation, displacementAzimuth: number | null) {
@@ -92,15 +103,17 @@ const sampleAt = (track: readonly HorizontalSample[], time: string) => {
   return latest;
 };
 
-type SelectedTarget =
-  | { kind: 'station'; id: string }
-  | { kind: 'reference'; id: string };
+interface SelectionState {
+  activeKey: string;
+  clusterKeys: string[];
+}
 
-export default function StationMap({ stations, references = [], onSelect, selectLabel = '查看测点依据 →' }: {
+export default function StationMap({ stations, references = [], onSelect, selectLabel = '查看测点依据 →', framed = true }: {
   stations: readonly MapStation[];
   references?: readonly ReferenceStation[];
   onSelect: (id: string) => void;
   selectLabel?: string;
+  framed?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<AMap.Map | null>(null);
@@ -108,6 +121,7 @@ export default function StationMap({ stations, references = [], onSelect, select
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const { resolvedTheme } = useTheme();
+  const isCompact = useMediaQuery('(max-width: 639px)');
   const amap = useAMap();
   const sdk = amap.status === 'ready' ? amap.sdk : null;
   const [layerSelection, setLayerSelection] = useState<MapLayerSelection>(DEFAULT_LAYER_SELECTION);
@@ -118,7 +132,7 @@ export default function StationMap({ stations, references = [], onSelect, select
   const layersRef = useRef<ReturnType<typeof createBaseLayers> | null>(null);
   const markerNodesRef = useRef(new Map<string, HTMLElement>());
   const [mapError, setMapError] = useState('');
-  const [selected, setSelected] = useState<SelectedTarget | null>(null);
+  const [selection, setSelection] = useState<SelectionState | null>(null);
 
   const timeline = useMemo(() => playbackTimeline(stations), [stations]);
   const lastFrame = Math.max(0, timeline.length - 1);
@@ -140,7 +154,7 @@ export default function StationMap({ stations, references = [], onSelect, select
     const map = mapRef.current;
     const markers = allMarkersRef.current;
     if (!map || markers.length === 0) return;
-    map.setFitView(markers, false, [64, 64, 72, 64], 16);
+    map.setFitView(markers, false, [64, 64, 64, 64], 16);
   }, []);
 
   useEffect(() => {
@@ -156,6 +170,7 @@ export default function StationMap({ stations, references = [], onSelect, select
       center: amapPosition(located[0]!),
       zoom: 16,
       zooms: [2, 20],
+      mapStyle: mapStyleFor(layerSelectionRef.current.baseLayer, resolvedThemeRef.current),
       ...MAP_2D_OPTIONS,
       scrollWheel: false,
       resizeEnable: true,
@@ -164,7 +179,6 @@ export default function StationMap({ stations, references = [], onSelect, select
       rotateEnable: false,
     });
     mapRef.current = map;
-    applyMapStyle(map, layerSelectionRef.current.baseLayer, resolvedThemeRef.current);
     map.addControl(new sdk.Scale());
     const unbindWheel = bindMapWheelZoom(map, container);
     const largest = Math.max(0, ...located.map((station) => (
@@ -173,7 +187,29 @@ export default function StationMap({ stations, references = [], onSelect, select
         : Math.hypot(station.northMillimeters, station.eastMillimeters)
     )));
     markerNodesRef.current.clear();
-    const markers = located.map((station) => {
+
+    const markerByKey = new Map<string, { marker: AMap.Marker; lat: number; lng: number }>();
+
+    const handleMarkerClick = (key: string, element: HTMLElement) => {
+      const clusterKeys = (element.dataset.clusterIds ?? '').split(',').filter(Boolean);
+      if (clusterKeys.length > 1) {
+        const entries = clusterKeys.map((k) => markerByKey.get(k)).filter((v): v is NonNullable<typeof v> => Boolean(v));
+        const lats = entries.map((e) => e.lat);
+        const lngs = entries.map((e) => e.lng);
+        const span = Math.max(Math.max(...lats) - Math.min(...lats), Math.max(...lngs) - Math.min(...lngs));
+        if (span > SEPARABLE_COORD_DEG && map.getZoom() < 18) {
+          setSelection(null);
+          map.setFitView(entries.map((e) => e.marker), false, [72, 72, 72, 72], 18);
+          return;
+        }
+        setSelection({ activeKey: clusterKeys[0]!, clusterKeys });
+        return;
+      }
+      setSelection({ activeKey: key, clusterKeys: [key] });
+    };
+
+    const markers: PlaceableMarker[] = located.map((station) => {
+      const key = `station:${station.id}`;
       const hasDisplacement = !isBaseStation(station) && station.northMillimeters !== null && station.eastMillimeters !== null;
       const element = createMapMarker({
         name: station.name,
@@ -194,33 +230,38 @@ export default function StationMap({ stations, references = [], onSelect, select
       markerNodesRef.current.set(station.id, element);
       const position = amapPosition(station);
       const marker = new sdk.Marker({ position, content: element, anchor: 'center' });
+      markerByKey.set(key, { marker, lat: station.latitude, lng: station.longitude });
       element.addEventListener('click', (event) => {
         event.stopPropagation();
-        setSelected({ kind: 'station', id: station.id });
+        handleMarkerClick(key, element);
       });
       marker.setMap(map);
-      return { marker, element };
+      return { marker, element, id: key, priority: stationPriority(station), isPrimary: true };
     });
-    const referenceMarkers = references.filter(validCoordinates).map((station) => {
+
+    const referenceMarkers: PlaceableMarker[] = references.filter(validCoordinates).map((station) => {
+      const key = `ref:${station.id}`;
       const element = createMapMarker({
         name: station.name,
         detail: isBaseStation(station) ? '基准站' : '',
         colorToken: '--status-unknown',
-        reference: true,
+        reference: isBaseStation(station),
       });
       element.classList.add('evidence-map-marker--context');
       const position = amapPosition(station);
       const marker = new sdk.Marker({ position, content: element, anchor: 'center' });
+      markerByKey.set(key, { marker, lat: station.latitude, lng: station.longitude });
       element.addEventListener('click', (event) => {
         event.stopPropagation();
-        setSelected({ kind: 'reference', id: station.id });
+        handleMarkerClick(key, element);
       });
       marker.setMap(map);
-      return { marker, element };
+      return { marker, element, id: key, priority: isBaseStation(station) ? 8 : 5, isPrimary: false };
     });
+
     const allMarkers = [...markers, ...referenceMarkers];
     allMarkersRef.current = allMarkers.map((item) => item.marker);
-    map.setFitView(allMarkersRef.current, true, [64, 64, 72, 64], 16);
+    map.setFitView(allMarkersRef.current, true, [64, 64, 64, 64], 16);
 
     let destroyed = false;
     const placeLabels = () => {
@@ -235,7 +276,7 @@ export default function StationMap({ stations, references = [], onSelect, select
       setMapError('');
       placeLabels();
     };
-    const onMapClick = () => setSelected(null);
+    const onMapClick = () => setSelection(null);
     map.on('click', onMapClick);
     map.on('mapmove', placeLabels);
     map.on('moveend', placeLabels);
@@ -311,13 +352,26 @@ export default function StationMap({ stations, references = [], onSelect, select
     setIsPlaying((value) => !value);
   };
 
+  const clusterOptions = useMemo<ClusterOption[]>(() => {
+    if (!selection || selection.clusterKeys.length <= 1) return [];
+    return selection.clusterKeys.flatMap((key) => {
+      if (key.startsWith('station:')) {
+        const station = stations.find((item) => item.id === key.slice('station:'.length));
+        return station ? [{ id: key, name: station.name, colorToken: station.colorToken }] : [];
+      }
+      const refStation = references.find((item) => item.id === key.slice('ref:'.length));
+      return refStation ? [{ id: key, name: refStation.name, colorToken: '--status-unknown' }] : [];
+    });
+  }, [selection, stations, references]);
+
   const sheetInfo = useMemo<MapSheetInfo | null>(() => {
-    if (!selected) return null;
-    if (selected.kind === 'reference') {
-      const refStation = references.find((item) => item.id === selected.id);
+    if (!selection) return null;
+    const key = selection.activeKey;
+    if (key.startsWith('ref:')) {
+      const refStation = references.find((item) => item.id === key.slice('ref:'.length));
       if (!refStation) return null;
       return {
-        id: `ref:${refStation.id}`,
+        id: key,
         name: refStation.name,
         context: '同组参照',
         stationType: refStation.stationType,
@@ -326,7 +380,7 @@ export default function StationMap({ stations, references = [], onSelect, select
         note: '本次未读取该测点的位移序列。',
       };
     }
-    const station = stations.find((item) => item.id === selected.id);
+    const station = stations.find((item) => item.id === key.slice('station:'.length));
     if (!station) return null;
     const liveSample = currentTime && !isBaseStation(station) && station.track.length > 0
       ? sampleAt(station.track, currentTime)
@@ -353,7 +407,7 @@ export default function StationMap({ stations, references = [], onSelect, select
       note = '暂无可用位移序列。';
     }
     return {
-      id: `station:${station.id}`,
+      id: key,
       name: station.name,
       context: '调查测点',
       stationType: station.stationType,
@@ -371,15 +425,16 @@ export default function StationMap({ stations, references = [], onSelect, select
       action: {
         label: selectLabel,
         run: () => {
-          setSelected(null);
+          setSelection(null);
           onSelectRef.current(station.id);
         },
       },
     };
-  }, [selected, stations, references, currentTime, selectLabel]);
+  }, [selection, stations, references, currentTime, selectLabel]);
 
   const hasSlope = stations.some((station) => station.downslopeAzimuth !== null);
-  const hasBase = stations.some((station) => isBaseStation(station));
+  const hasBase = stations.some((station) => isBaseStation(station)) || references.some((station) => isBaseStation(station));
+  const hasContextPeer = references.some((station) => !isBaseStation(station));
   const zoomBy = (delta: number) => {
     const map = mapRef.current;
     if (!map) return;
@@ -388,35 +443,50 @@ export default function StationMap({ stations, references = [], onSelect, select
   };
 
   return (
-    <div className="space-y-2">
+    <div className={framed ? 'space-y-2' : undefined}>
       <div
         data-map-basemap={layerSelection.baseLayer}
-        className="relative isolate overflow-hidden rounded-xl border border-border/70 bg-muted/40"
+        className={cn(
+          'overflow-hidden bg-card',
+          framed && 'rounded-xl border border-border/70',
+        )}
       >
-        <div
-          ref={containerRef}
-          role="region"
-          aria-label="测点位置与水平位移方向"
-          aria-busy={amap.status === 'loading'}
-          className={cn('h-[min(60dvh,26rem)] min-h-80 w-full touch-none', amap.status === 'loading' && 'animate-pulse')}
-        />
-
-        <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-end">
-          <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
-        </div>
-
-        <div className={cn('pointer-events-none absolute end-3 z-20', timeline.length > 1 ? 'bottom-16' : 'bottom-3')}>
-          <MapZoomControls
-            onZoomIn={() => zoomBy(1)}
-            onZoomOut={() => zoomBy(-1)}
-            onFitView={fitAllMarkers}
+        <div className="relative isolate bg-muted/40">
+          <div
+            ref={containerRef}
+            role="region"
+            aria-label="测点位置与水平位移方向"
+            aria-busy={amap.status === 'loading'}
+            className={cn('h-[min(56dvh,25rem)] min-h-76 w-full touch-none', amap.status === 'loading' && 'animate-pulse')}
           />
+
+          <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-end">
+            <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
+          </div>
+
+          <div className="pointer-events-none absolute end-3 bottom-3 z-20">
+            <MapZoomControls
+              onZoomIn={() => zoomBy(1)}
+              onZoomOut={() => zoomBy(-1)}
+              onFitView={fitAllMarkers}
+            />
+          </div>
+
+          {!isCompact && (
+            <MapStationSheet
+              info={sheetInfo}
+              clusterOptions={clusterOptions}
+              activeClusterId={selection?.activeKey}
+              onSelectClusterMember={(activeKey) => setSelection((prev) => (prev ? { ...prev, activeKey } : null))}
+              onClose={() => setSelection(null)}
+            />
+          )}
         </div>
 
         {timeline.length > 1 && (
           <div
             data-map-overlay=""
-            className="pointer-events-auto absolute inset-x-3 bottom-3 z-20 flex items-center gap-2.5 rounded-full border border-border/70 bg-popover/90 px-2.5 py-1.5 shadow-sm backdrop-blur-md"
+            className="flex items-center gap-2.5 border-t border-border/70 bg-card px-3 py-2"
           >
             <button
               type="button"
@@ -440,16 +510,31 @@ export default function StationMap({ stations, references = [], onSelect, select
               }}
               className="min-w-0 flex-1 accent-primary"
             />
-            <span className="shrink-0 pe-1 text-xs text-muted-foreground tabular-nums">
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
               {currentTime?.slice(5, 16) ?? ''}
             </span>
           </div>
         )}
 
-        <MapStationSheet info={sheetInfo} onClose={() => setSelected(null)} />
+        {isCompact && (
+          <MapStationSheet
+            docked
+            info={sheetInfo}
+            clusterOptions={clusterOptions}
+            activeClusterId={selection?.activeKey}
+            onSelectClusterMember={(activeKey) => setSelection((prev) => (prev ? { ...prev, activeKey } : null))}
+            onClose={() => setSelection(null)}
+          />
+        )}
       </div>
 
-      <ul aria-label="地图图例" className="flex flex-wrap items-center gap-x-4 gap-y-1 px-0.5 text-xs text-muted-foreground">
+      <ul
+        aria-label="地图图例"
+        className={cn(
+          'flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground',
+          framed ? 'px-0.5' : 'border-t border-border/60 bg-muted/25 px-3 py-2',
+        )}
+      >
         <li className="inline-flex items-center gap-1.5">
           <span className="size-2.5 rounded-full border border-background bg-foreground/75" aria-hidden />
           移动站
@@ -470,15 +555,15 @@ export default function StationMap({ stations, references = [], onSelect, select
             下坡方向
           </li>
         )}
-        {references.length > 0 && (
+        {hasContextPeer && (
           <li className="inline-flex items-center gap-1.5">
             <span className="size-2.5 rounded-full border border-status-unknown bg-transparent" aria-hidden />
             同组参照
           </li>
         )}
       </ul>
-      {amap.status === 'error' && <p role="status" className="text-xs text-muted-foreground">{amap.message}</p>}
-      {mapError && <p role="status" className="text-xs text-muted-foreground">{mapError}</p>}
+      {amap.status === 'error' && <p role="status" className={cn('text-xs text-muted-foreground', !framed && 'px-3 pb-2')}>{amap.message}</p>}
+      {mapError && <p role="status" className={cn('text-xs text-muted-foreground', !framed && 'px-3 pb-2')}>{mapError}</p>}
     </div>
   );
 }
