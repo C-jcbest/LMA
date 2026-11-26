@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { EyeIcon, EyeOffIcon, Loader2Icon, Mountain } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { EASE_IN, EASE_OUT } from '@/components/ui/motion-primitives';
+import { EASE_IN, EASE_OUT, MorphIcon } from '@/components/ui/motion-primitives';
 import type { LmaClient } from '@/services/api';
 
 const EXIT_DURATION_MS = 200;
@@ -30,9 +30,11 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
       window.setTimeout(onSuccess, EXIT_DURATION_MS);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '登录失败，请重试。');
-      setPassword('');
       setSubmitting(false);
-      passwordRef.current?.focus();
+      requestAnimationFrame(() => {
+        passwordRef.current?.focus();
+        passwordRef.current?.select();
+      });
     }
   };
 
@@ -97,11 +99,13 @@ export function LoginPage({ client, expired, onSuccess }: { client: LmaClient; e
               <button
                 type="button"
                 aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                aria-pressed={showPassword}
                 onClick={() => setShowPassword((value) => !value)}
-                tabIndex={-1}
                 className="absolute inset-y-0 end-0 flex w-10 items-center justify-center rounded-e-md text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               >
-                {showPassword ? <EyeOffIcon className="size-4" aria-hidden /> : <EyeIcon className="size-4" aria-hidden />}
+                <MorphIcon activeKey={showPassword ? 'hide' : 'show'}>
+                  {showPassword ? <EyeOffIcon className="size-4" aria-hidden /> : <EyeIcon className="size-4" aria-hidden />}
+                </MorphIcon>
               </button>
             </div>
           </div>

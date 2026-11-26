@@ -1,5 +1,15 @@
 import React from 'react';
-import { CloudRain } from 'lucide-react';
+import {
+  ChevronRightIcon,
+  Cloud,
+  CloudFog,
+  CloudLightning,
+  CloudRain,
+  CloudSnow,
+  CloudSun,
+  Sun,
+} from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from 'cn';
 import type { WeatherArtifactData } from '@/types/envelope';
@@ -10,13 +20,27 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 const RainfallChart = React.lazy(() => import('./RainfallChart'));
 const RAIN_CHART_HEIGHT = 140;
 
+const ConditionIcon: React.FC<{ condition?: string | null }> = ({ condition }) => {
+  const iconClass = 'size-4 shrink-0 text-muted-foreground';
+  if (!condition) return <Cloud className={iconClass} aria-hidden />;
+  if (condition.includes('雷')) return <CloudLightning className={iconClass} aria-hidden />;
+  if (condition.includes('雪') || condition.includes('冻')) return <CloudSnow className={iconClass} aria-hidden />;
+  if (condition.includes('雾') || condition.includes('霾')) return <CloudFog className={iconClass} aria-hidden />;
+  if (condition.includes('雨') || condition.includes('阵')) return <CloudRain className={iconClass} aria-hidden />;
+  if (condition.includes('多云') || condition.includes('少云')) return <CloudSun className={iconClass} aria-hidden />;
+  if (condition.includes('阴')) return <Cloud className={iconClass} aria-hidden />;
+  if (condition.includes('晴')) return <Sun className={iconClass} aria-hidden />;
+  return <Cloud className={iconClass} aria-hidden />;
+};
+
 const DetailTable: React.FC<{ summary: string; children: React.ReactNode }> = ({ summary, children }) => (
-  <details className="group rounded-lg border">
-    <summary className="flex min-h-9 cursor-pointer items-center px-3 text-xs text-muted-foreground hover:text-foreground">
-      {summary}
-    </summary>
-    <div className="max-h-72 overflow-auto border-t">{children}</div>
-  </details>
+  <Collapsible className="rounded-lg border">
+    <CollapsibleTrigger className="group/detail flex min-h-9 w-full items-center gap-2 px-3 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <ChevronRightIcon className="size-3.5 shrink-0 transition-transform duration-200 group-data-[state=open]/detail:rotate-90" aria-hidden />
+      <span>{summary}</span>
+    </CollapsibleTrigger>
+    <CollapsibleContent className="max-h-72 overflow-auto border-t">{children}</CollapsibleContent>
+  </Collapsible>
 );
 
 export const WeatherResultView: React.FC<{ data: WeatherArtifactData; onAsk?: (date: string) => void; askDisabled?: boolean }> = ({ data, onAsk, askDisabled }) => {
@@ -169,10 +193,10 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData; onAsk?: (d
       )}
       {data.current && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <CloudRain className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="font-medium">{cur.condition ?? '-'}</span>
+          <ConditionIcon condition={cur.condition} />
+          <span className="font-medium">{cur.condition ?? '—'}</span>
           <span className="text-muted-foreground tabular-nums">
-            {cur.temperature_2m ?? '-'}℃ · 体感 {cur.apparent_temperature ?? '-'}℃ · 湿度 {cur.relative_humidity_2m ?? '-'}%
+            {cur.temperature_2m ?? '—'}℃ · 体感 {cur.apparent_temperature ?? '—'}℃ · 湿度 {cur.relative_humidity_2m ?? '—'}%
           </span>
         </div>
       )}
@@ -192,10 +216,10 @@ export const WeatherResultView: React.FC<{ data: WeatherArtifactData; onAsk?: (d
               {dates.map((date) => (
                 <TableRow key={date}>
                   <TableCell className="whitespace-nowrap text-muted-foreground">{date}</TableCell>
-                  <TableCell>{histRain.get(date) ?? '-'}</TableCell>
-                  {hasForecast && <TableCell>{fcByDate.get(date)?.rain ?? '-'}</TableCell>}
-                  {hasForecast && <TableCell>{fcByDate.get(date)?.prob ?? '-'}</TableCell>}
-                  {hasForecast && <TableCell>{fcByDate.get(date)?.wind ?? '-'}</TableCell>}
+                  <TableCell>{histRain.get(date) ?? '—'}</TableCell>
+                  {hasForecast && <TableCell>{fcByDate.get(date)?.rain ?? '—'}</TableCell>}
+                  {hasForecast && <TableCell>{fcByDate.get(date)?.prob ?? '—'}</TableCell>}
+                  {hasForecast && <TableCell>{fcByDate.get(date)?.wind ?? '—'}</TableCell>}
                 </TableRow>
               ))}
             </TableBody>

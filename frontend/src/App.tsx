@@ -8,6 +8,7 @@ import { LoginPage } from './features/auth/LoginPage';
 import { ServiceSettingsDialog } from './features/settings/ServiceSettingsDialog';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SessionUndoProvider } from './components/ui/motion-primitives';
+import { TooltipProvider } from './components/ui/tooltip';
 
 type AccessState =
   | { kind: 'checking' }
@@ -51,19 +52,21 @@ export const App: React.FC = () => {
   }, []);
 
   if (access.kind === 'checking') {
-    return null;
+    return <div className="h-dvh w-full bg-background" />;
   }
 
   if (access.kind === 'login') {
     return (
       <MotionConfig reducedMotion="user">
-        <ThemeProvider>
-          <LoginPage
-            client={client}
-            expired={access.expired}
-            onSuccess={() => setAccess({ kind: 'ready', authEnabled: true })}
-          />
-        </ThemeProvider>
+        <TooltipProvider delayDuration={300} skipDelayDuration={120}>
+          <ThemeProvider>
+            <LoginPage
+              client={client}
+              expired={access.expired}
+              onSuccess={() => setAccess({ kind: 'ready', authEnabled: true })}
+            />
+          </ThemeProvider>
+        </TooltipProvider>
       </MotionConfig>
     );
   }
@@ -78,29 +81,31 @@ export const App: React.FC = () => {
 
   return (
     <MotionConfig reducedMotion="user">
-      <ErrorBoundary fallbackTitle="会话界面加载异常" level="window">
-        <AssistantProvider key={apiUrl} client={client}>
-          <SessionUndoProvider>
-            <AppLayout
-              onOpenSettings={import.meta.env.DEV ? () => setIsConfigOpen(true) : undefined}
-              onLogout={access.authEnabled ? logout : undefined}
-            />
-          </SessionUndoProvider>
-        </AssistantProvider>
+      <TooltipProvider delayDuration={300} skipDelayDuration={120}>
+        <ErrorBoundary fallbackTitle="会话界面加载异常" level="window">
+          <AssistantProvider key={apiUrl} client={client}>
+            <SessionUndoProvider>
+              <AppLayout
+                onOpenSettings={import.meta.env.DEV ? () => setIsConfigOpen(true) : undefined}
+                onLogout={access.authEnabled ? logout : undefined}
+              />
+            </SessionUndoProvider>
+          </AssistantProvider>
 
-        {import.meta.env.DEV && (
-          <ServiceSettingsDialog
-            open={isConfigOpen}
-            onOpenChange={setIsConfigOpen}
-            onSaved={() => {
-              const nextUrl = getStoredApiUrl();
-              if (nextUrl !== apiUrl) {
-                setApiUrl(nextUrl);
-              }
-            }}
-          />
-        )}
-      </ErrorBoundary>
+          {import.meta.env.DEV && (
+            <ServiceSettingsDialog
+              open={isConfigOpen}
+              onOpenChange={setIsConfigOpen}
+              onSaved={() => {
+                const nextUrl = getStoredApiUrl();
+                if (nextUrl !== apiUrl) {
+                  setApiUrl(nextUrl);
+                }
+              }}
+            />
+          )}
+        </ErrorBoundary>
+      </TooltipProvider>
     </MotionConfig>
   );
 };

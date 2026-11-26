@@ -5,7 +5,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 from typing import Annotated, Callable, Literal
 from uuid import UUID, uuid4
 from weakref import WeakValueDictionary
@@ -27,19 +27,22 @@ from app.agent.message_context import ASK_TARGETS_KEY
 from app.agent.title import generate_title
 from app.agent.suggestions import SuggestionService
 from app.beidou.client import BeidouApiError
-from app.business_time import BUSINESS_TZ, business_now
+from app.business_time import BUSINESS_TZ, TIME_FORMAT, business_now
 from app.config import Settings, get_settings
 from app.observability import AgentTracing
 from app.inspection.lab import SUMMARY_COMPONENT, build_lab_graph, stations_in_scope
 from app.inspection.runner import run_inspection
 from app.monitoring_data import (
+    DISPLACEMENT_STATION_TYPES,
+    MAX_WINDOW_DAYS,
     STATION_STATUS_TEXT,
     STATION_TYPE_TEXT,
     build_platform_client,
     monitoring_scope,
+    series_artifact_data,
     station_coordinates,
 )
-from app.rainfall import daily_rainfall, heavy_rain_events, rainfall_payload, with_displacement_rates
+from app.rainfall import RESPONSE_WINDOW_DAYS, daily_rainfall, heavy_rain_events, rainfall_payload, with_displacement_rates
 from app.server.auth import auth_enabled, auth_router, require_login
 from app.server.messages import project_message, project_state
 from app.server.stations import TimelineWindow, find_station, load_station_series, timeline_window
@@ -255,7 +258,7 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
     users = [message for message in body.messages if isinstance(message, UserInput)]
     cancellations = [message for message in body.messages if isinstance(message, ToolCancellation)]
     if len(users) > 1 or (not users and body.checkpoint_id is None):
-        raise HTTPException(422, "每次提交一条用户消息；重新生成必须指定 checkpoint。")
+        raise HTTPException(422, "每次提交一条用户消息；重新生成需要指定历史位置。")
     if users and not users[0].content:
         raise HTTPException(422, "消息不能为空。")
 
@@ -264,20 +267,28 @@ def prepare_messages(body: RunInput, snapshot, latest_run: dict | None) -> list:
     for cancellation in cancellations:
         call = known_calls.get(cancellation.tool_call_id)
         if call is None or call["name"] != cancellation.name:
-            raise HTTPException(422, "取消请求与服务端工具调用不匹配。")
+            raise HTTPException(422, "取消请求与未完成的查询不匹配。")
         if cancellation.tool_call_id in completed_calls:
             continue
         if latest_run is None or latest_run["status"] not in {"cancelled", "interrupted", "error"}:
-            raise HTTPException(409, "当前工具调用尚未停止。")
+            raise HTTPException(409, "当前查询仍在运行中。")
         if cancellation.tool_call_id in cancelled_ids:
-            raise HTTPException(422, "工具取消请求重复。")
+            raise HTTPException(422, "取消请求重复。")
         cancelled_ids.add(cancellation.tool_call_id)
         accepted.append(ToolMessage(
             id=str(uuid4()), name=call["name"], tool_call_id=call["id"],
             content="上轮运行已停止，此工具调用没有返回结果。", status="error", artifact=None,
         ))
-    if set(pending_calls) != cancelled_ids:
-        raise HTTPException(409, "上轮有未完成的工具调用，请重新载入会话后提交。")
+    remaining_pending = [call for call_id, call in pending_calls.items() if call_id not in cancelled_ids]
+    if remaining_pending:
+        if latest_run is not None and latest_run["status"] in {"cancelled", "interrupted", "error"}:
+            for call in remaining_pending:
+                accepted.append(ToolMessage(
+                    id=str(uuid4()), name=call["name"], tool_call_id=call["id"],
+                    content="上轮运行已停止，此工具调用没有返回结果。", status="error", artifact=None,
+                ))
+        else:
+            raise HTTPException(409, "上轮有未完成的查询，请稍后重试。")
     for user in users:
         kwargs = {}
         if body.focus_station:
@@ -324,7 +335,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             checkpointer = AsyncPostgresSaver(pool)
             factory = agent_factory or (lambda saver, records: create_lma_agent(_get_llm(), checkpointer=saver, storage=records))
             app.state.agent = factory(checkpointer, storage)
-            app.state.lab = build_lab_graph(platform_client_factory, checkpointer)
+            app.state.lab = build_lab_graph(platform_client_factory, checkpointer, storage=storage)
             app.state.storage = storage
             app.state.checkpointer = checkpointer
             app.state.suggestions = SuggestionService()
@@ -360,7 +371,13 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
-        return JSONResponse(status_code=422, content={"detail": "请求参数不符合接口要求。"})
+        detail = "请求参数格式有误，请检查后重试。"
+        for item in error.errors():
+            message = str(item.get("msg") or "").removeprefix("Value error, ").strip()
+            if message and any("\u4e00" <= ch <= "\u9fff" for ch in message):
+                detail = message
+                break
+        return JSONResponse(status_code=422, content={"detail": detail})
 
     @app.exception_handler(Exception)
     async def server_error(request: Request, error: Exception):
@@ -445,7 +462,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             ids = [message.id for message in snapshot.values.get("messages", [])]
             if ids == body.message_ids:
                 return {"checkpoint_id": snapshot.config["configurable"]["checkpoint_id"]}
-        raise HTTPException(409, "找不到对应的历史 checkpoint，请重新载入会话。")
+        raise HTTPException(409, "找不到对应的历史对话位置，请刷新后重试。")
 
     @app.get("/inspections/latest")
     async def latest_inspection():
@@ -462,6 +479,15 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             active_inspections.add(task)
             task.add_done_callback(active_inspections.discard)
         return {"id": inspection_id}
+
+    @app.post("/inspections/cancel", status_code=204)
+    async def cancel_inspection():
+        tasks = list(active_inspections)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        return Response(status_code=204)
 
     def station_directory_entry(station) -> dict:
         """测点列表与分组地图的一行：坐标采用统一的颠倒纠正；平台状态只在不是“正常”时给出。"""
@@ -515,32 +541,40 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
 
     @app.get("/stations/{station_uuid}/rainfall")
     async def station_rainfall(station_uuid: str, days: int | None = None, begin: date | None = None, end: date | None = None):
-        """测点页时间轴下方的逐日降雨与强降雨前后速率；位移序列复用测点页缓存，不重复取数。"""
+        """测点页时间轴下方的逐日降雨与强降雨前后速率；前后各外扩 7 天取日序列，与智能体天气工具同一口径。"""
         window = requested_window(days, begin, end)
         try:
             async with monitoring_scope(_STATION_PAGE_CACHE, platform_client_factory) as data:
                 station = await find_station(data, station_uuid)
                 if station is None:
                     raise HTTPException(404, "测点不存在。")
-                series = await load_station_series(data, station, window)
+                latitude, longitude = station_coordinates(station)
+                if latitude is None:
+                    raise HTTPException(404, "测点没有有效坐标，无法查询降雨。")
+                rain_end = min(window.end.date(), business_now().date() - timedelta(days=1))
+                rain_start = window.start.date()
+                if rain_start > rain_end:
+                    return rainfall_payload([], [])
+                try:
+                    daily = await daily_rainfall(latitude, longitude, rain_start, rain_end)
+                except (httpx.HTTPError, ValueError):
+                    logger.warning("station rainfall request failed", exc_info=True)
+                    raise HTTPException(502, "降雨资料暂不可用，请稍后重试。") from None
+                events = heavy_rain_events(daily)
+                if events and station.station_type in DISPLACEMENT_STATION_TYPES:
+                    now_naive = business_now().replace(tzinfo=None)
+                    pad_begin = datetime.combine(rain_start - timedelta(days=RESPONSE_WINDOW_DAYS), dt_time.min)
+                    pad_end = min(datetime.combine(rain_end + timedelta(days=RESPONSE_WINDOW_DAYS + 1), dt_time.min), now_naive)
+                    if (pad_end - pad_begin).days <= MAX_WINDOW_DAYS["daily"]:
+                        daily_series = await data.displacement(
+                            station, pad_begin.strftime(TIME_FORMAT), pad_end.strftime(TIME_FORMAT), "daily",
+                        )
+                        events = with_displacement_rates(events, series_artifact_data(daily_series)["points"])
+        except HTTPException:
+            raise
         except (BeidouApiError, httpx.HTTPError):
             logger.warning("station rainfall displacement request failed", exc_info=True)
             raise HTTPException(502, "监测平台数据暂不可用，请稍后重试。") from None
-        latitude, longitude = station_coordinates(station)
-        if latitude is None:
-            raise HTTPException(404, "测点没有有效坐标，无法查询降雨。")
-        rain_end = min(window.end.date(), business_now().date() - timedelta(days=1))
-        rain_start = window.start.date()
-        if rain_start > rain_end:
-            return rainfall_payload([], [])
-        try:
-            daily = await daily_rainfall(latitude, longitude, rain_start, rain_end)
-        except (httpx.HTTPError, ValueError):
-            logger.warning("station rainfall request failed", exc_info=True)
-            raise HTTPException(502, "降雨资料暂不可用，请稍后重试。") from None
-        events = heavy_rain_events(daily)
-        if series:
-            events = with_displacement_rates(events, series["points"])
         return rainfall_payload(daily, events)
 
     @app.post("/suggestions")
@@ -623,7 +657,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
                     status = "error"
                     logger.exception("agent run failed: %s", control.id)
                     control.publish(sse_event("error", {
-                        "message": "本轮运行失败，已保存完成的步骤，请重新载入会话后重试。",
+                        "message": "本次回答未能完成，已保留已完成步骤，可直接重试。",
                     }))
                 finally:
                     with anyio.CancelScope(shield=True):
@@ -648,7 +682,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         config = snapshot.config if snapshot.created_at else config
         try:
             if body.checkpoint_id is not None and not snapshot.created_at:
-                raise HTTPException(404, "checkpoint 不存在。")
+                raise HTTPException(404, "对应的历史对话位置不存在。")
             latest_run = await app.state.storage.latest_run(key)
             messages = prepare_messages(body, snapshot, latest_run)
             if body.focus_station_uuid is not None and session.get("station_uuid") != str(body.focus_station_uuid):
@@ -706,7 +740,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
     async def require_lab_inspection(inspection_id: UUID) -> dict:
         inspection = await app.state.storage.get_lab_inspection(str(inspection_id))
         if inspection is None:
-            raise HTTPException(404, "原型巡检不存在。")
+            raise HTTPException(404, "巡检记录不存在。")
         return inspection
 
     @app.get("/lab/inspections/{inspection_id}")
@@ -736,6 +770,10 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             control.stop_requested = True
             if control.cancel_scope is not None:
                 control.cancel_scope.cancel()
+            try:
+                await asyncio.wait_for(control.finished.wait(), timeout=15)
+            except TimeoutError:
+                return Response(status_code=202)
         return Response(status_code=204)
 
     async def execute_lab_run(control: ActiveRun, key: str, graph_input: dict) -> None:
@@ -744,6 +782,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         try:
             with anyio.CancelScope() as cancel_scope:
                 control.cancel_scope = cancel_scope
+                if control.stop_requested:
+                    return
                 async for mode, data in app.state.lab.astream(
                     graph_input, graph_config(key), stream_mode=["messages", "values", "custom"], durability="sync",
                 ):
@@ -764,8 +804,8 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
             raise
         except Exception:
             status = "error"
-            logger.exception("inspection lab run failed: %s", control.id)
-            control.publish(sse_event("error", {"message": "本次原型巡检失败，已推送的结果保留。"}))
+            logger.exception("inspection run failed: %s", control.id)
+            control.publish(sse_event("error", {"message": "本次巡检未能完成，已推送的结果保留。"}))
         finally:
             with anyio.CancelScope(shield=True):
                 await app.state.storage.finish_lab_inspection(key, status, lab_label(final_state))
@@ -778,7 +818,7 @@ def create_app(settings: Settings | None = None, agent_factory=None, platform_cl
         await require_lab_inspection(inspection_id)
         key = str(inspection_id)
         if active_lab_runs:
-            raise HTTPException(409, "已有原型巡检在进行，请等待完成。")
+            raise HTTPException(409, "已有巡检在进行，请等待完成或先停止。")
         control = ActiveRun(id=str(uuid4()), project=project_lab_state)
         active_lab_runs[key] = control
         try:

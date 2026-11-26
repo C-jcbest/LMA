@@ -41,7 +41,7 @@ class AuthTests(unittest.IsolatedAsyncioTestCase):
         login = await self.client.post("/auth/login", json={"username": "admin", "password": PASSWORD})
         self.assertEqual(login.status_code, 204)
         cookie = login.headers["set-cookie"].lower()
-        for attribute in ("httponly", "secure", "samesite=strict", "path=/"):
+        for attribute in ("httponly", "secure", "samesite=lax", "path=/"):
             self.assertIn(attribute, cookie)
         session = await self.client.get("/auth/session")
         self.assertEqual(session.json(), {"enabled": True, "authenticated": True})

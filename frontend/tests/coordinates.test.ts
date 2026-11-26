@@ -61,7 +61,7 @@ it('地图滚轮可放大缩小并限制级别，移除监听后恢复页面滚�
   wheel(6, WheelEvent.DOM_DELTA_LINE);
   expect(zoom).toBe(16);
   const popup = document.createElement('div');
-  popup.className = 'map-station-popup';
+  popup.dataset.mapOverlay = '';
   container.append(popup);
   const popupWheel = new WheelEvent('wheel', { deltaY: 240, bubbles: true, cancelable: true });
   popup.dispatchEvent(popupWheel);

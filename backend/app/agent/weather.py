@@ -100,7 +100,7 @@ def _raise_unavailable(error: BaseException):
     """两类资料都没有取得时整体失败；瞬时故障交给官方工具重试。"""
     if is_transient_error(error):
         raise error
-    raise ToolFailure("Open-Meteo 拒绝了本次天气查询，请检查参数后重试")
+    raise ToolFailure("天气服务暂不可用，请稍后重试")
 
 
 def _series(payload: dict, group: str, field: str) -> list:
@@ -229,14 +229,22 @@ async def query_weather(
     now = business_now()
     today = now.date()
     yesterday = today - timedelta(days=1)
+    include_today_note = False
+    skip_archive = False
     if start_date is None and end_date is None:
         history_end = yesterday
         history_start = history_end - timedelta(days=DEFAULT_HISTORY_DAYS - 1)
     else:
         history_start = date.fromisoformat(start_date)
-        history_end = date.fromisoformat(end_date)
-        if history_end >= today:
-            raise ToolInputError("历史天气最多只能查询到昨天；今天的情况看当前天气、hourly 逐小时降水和预报")
+        requested_end = date.fromisoformat(end_date)
+        if requested_end >= today:
+            include_today_note = True
+            history_end = yesterday
+            if history_start > yesterday:
+                skip_archive = True
+                history_start = yesterday
+        else:
+            history_end = requested_end
 
     forecast_params = {
         "latitude": lat,
@@ -265,12 +273,16 @@ async def query_weather(
     if hourly:
         history_params["hourly"] = "precipitation"
 
-    (forecast, forecast_error), (history, history_error) = await asyncio.gather(
-        _fetch_part(FORECAST_ENDPOINT, forecast_params, "forecast"),
-        _fetch_part(ARCHIVE_ENDPOINT, history_params, "archive"),
-    )
-    if forecast is None and history is None:
-        _raise_unavailable(history_error)
+    if skip_archive:
+        forecast, forecast_error = await _fetch_part(FORECAST_ENDPOINT, forecast_params, "forecast")
+        history, history_error = {}, None
+    else:
+        (forecast, forecast_error), (history, history_error) = await asyncio.gather(
+            _fetch_part(FORECAST_ENDPOINT, forecast_params, "forecast"),
+            _fetch_part(ARCHIVE_ENDPOINT, history_params, "archive"),
+        )
+    if forecast is None and (history is None or skip_archive):
+        _raise_unavailable(history_error or forecast_error)
     limitations = []
     if forecast is None:
         limitations.append("当前天气、最近 24 小时降水与预报暂不可用")
@@ -278,6 +290,8 @@ async def query_weather(
     if history is None:
         limitations.append(f"{history_start.isoformat()} 至 {history_end.isoformat()} 的历史逐日资料暂不可用")
         history = {}
+    if include_today_note:
+        limitations.append("历史再分析资料截至昨天，今天的数据来自当前观测与预报")
 
     current = forecast.get("current", {})
     weather_code = current.get("weather_code")
@@ -332,7 +346,7 @@ async def query_weather(
             "temperature_2m": current.get("temperature_2m"),
             "apparent_temperature": current.get("apparent_temperature"),
             "relative_humidity_2m": current.get("relative_humidity_2m"),
-            "condition": _WMO_CODES.get(weather_code, f"weather_code={weather_code}") if weather_code is not None else None,
+            "condition": _WMO_CODES.get(weather_code, "未知天气") if weather_code is not None else None,
             "precipitation": current.get("precipitation"),
             "wind_speed_10m": current.get("wind_speed_10m"),
             "wind_gusts_10m": current.get("wind_gusts_10m"),

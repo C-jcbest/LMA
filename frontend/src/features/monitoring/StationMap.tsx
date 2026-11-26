@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PauseIcon, PlayIcon } from 'lucide-react';
 import { cn } from 'cn';
-import { Button } from '@/components/ui/button';
-import { MapLayerControl } from './MapLayerControl';
+import { useTheme } from '@/app/providers/ThemeProvider';
+import { MorphIcon } from '@/components/ui/motion-primitives';
+import { MapLayerControl, MapStationSheet, MapZoomControls, type MapSheetInfo } from './MapLayerControl';
 import {
   amapPosition,
+  applyMapStyle,
   bindMapWheelZoom,
   createBaseLayers,
   DEFAULT_LAYER_SELECTION,
-  mapViewOptions,
+  MAP_2D_OPTIONS,
   useAMap,
   type MapLayerSelection,
 } from './basemap';
@@ -17,7 +19,6 @@ import {
   azimuthDifference,
   azimuthOf,
   createMapMarker,
-  createMapPopup,
   directionName,
   directionText,
   placeMapMarkerLabels,
@@ -51,22 +52,19 @@ export interface ReferenceStation {
   longitude: number;
 }
 
-const MAX_ARROW_PIXELS = 44;
+const MAX_ARROW_PIXELS = 42;
 const MIN_ARROW_PIXELS = 14;
 const PLAYBACK_FRAMES = 100;
-const PLAYBACK_INTERVAL_MS = 120;
+const PLAYBACK_INTERVAL_MS = 110;
 
 const isBaseStation = (station: { stationType: string | null }) => station.stationType === '基准站';
 
 const arrowLength = (magnitude: number, largest: number) =>
   MIN_ARROW_PIXELS + (MAX_ARROW_PIXELS - MIN_ARROW_PIXELS) * (magnitude / largest);
 
-const displacementDetail = (station: MapStation, north: number, east: number) => {
+const compactDisplacementDetail = (north: number, east: number) => {
   const magnitude = Math.hypot(north, east);
-  const kind = station.cumulative ? '累计' : '窗口';
-  return magnitude > 0
-    ? `${kind} ${magnitude.toFixed(1)} mm · ${directionName(azimuthOf(north, east))}`
-    : `${kind} 0.0 mm`;
+  return magnitude > 0 ? `${magnitude.toFixed(1)}mm ${directionName(azimuthOf(north, east))}` : '0.0mm';
 };
 
 function slopeField(station: MapStation, displacementAzimuth: number | null) {
@@ -76,50 +74,7 @@ function slopeField(station: MapStation, displacementAzimuth: number | null) {
   const value = displacementAzimuth === null
     ? directionText(station.downslopeAzimuth)
     : `${directionText(station.downslopeAzimuth)} · 与位移夹角 ${Math.round(azimuthDifference(displacementAzimuth, station.downslopeAzimuth))}°`;
-  return { label: '下坡方向 · 约 90 m 地形平均坡面，不代替勘查主滑方向', value, wide: true };
-}
-
-function createPopupNode(station: MapStation, selectLabel: string, onSelect: (id: string) => void, onClose: () => void, container: HTMLElement) {
-  const hasDisplacement = !isBaseStation(station) && station.northMillimeters !== null && station.eastMillimeters !== null;
-  const magnitude = hasDisplacement ? Math.hypot(station.northMillimeters!, station.eastMillimeters!) : null;
-  const displacementAzimuth = magnitude ? azimuthOf(station.northMillimeters!, station.eastMillimeters!) : null;
-  const fields = [];
-  if (hasDisplacement) {
-    fields.push(
-      { label: '北向分量', value: `${station.northMillimeters!.toFixed(1)} mm` },
-      { label: '东向分量', value: `${station.eastMillimeters!.toFixed(1)} mm` },
-    );
-  }
-  const slope = slopeField(station, displacementAzimuth);
-  if (slope) {
-    fields.push(slope);
-  }
-  fields.push({ label: '坐标 · WGS84', value: `${station.latitude.toFixed(6)}, ${station.longitude.toFixed(6)}`, wide: true });
-  let note: string | undefined;
-  if (isBaseStation(station)) {
-    note = '提供差分基准，不展示位移方向。';
-  } else if (!hasDisplacement) {
-    note = '本次没有可用的位移序列。';
-  }
-  return createMapPopup({
-    name: station.name, context: '调查测点', stationType: station.stationType,
-    status: station.status, reason: station.reason, colorToken: station.colorToken,
-    metric: magnitude === null ? undefined : {
-      label: station.cumulative ? '累计水平位移' : '本窗口水平变化',
-      value: magnitude.toFixed(1), unit: 'mm',
-      direction: displacementAzimuth === null ? null : directionText(displacementAzimuth),
-    },
-    fields,
-    note,
-    action: {
-      label: selectLabel,
-      run: () => {
-        onClose();
-        onSelect(station.id);
-      },
-    },
-    onClose,
-  }, container);
+  return { label: '下坡方向（约 90 m 坡面）', value, wide: true };
 }
 
 function playbackTimeline(stations: readonly MapStation[]) {
@@ -137,6 +92,10 @@ const sampleAt = (track: readonly HorizontalSample[], time: string) => {
   return latest;
 };
 
+type SelectedTarget =
+  | { kind: 'station'; id: string }
+  | { kind: 'reference'; id: string };
+
 export default function StationMap({ stations, references = [], onSelect, selectLabel = '查看测点依据 →' }: {
   stations: readonly MapStation[];
   references?: readonly ReferenceStation[];
@@ -144,19 +103,25 @@ export default function StationMap({ stations, references = [], onSelect, select
   selectLabel?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<AMap.Map | null>(null);
+  const allMarkersRef = useRef<AMap.Marker[]>([]);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const { resolvedTheme } = useTheme();
   const amap = useAMap();
   const sdk = amap.status === 'ready' ? amap.sdk : null;
   const [layerSelection, setLayerSelection] = useState<MapLayerSelection>(DEFAULT_LAYER_SELECTION);
   const layerSelectionRef = useRef(layerSelection);
   layerSelectionRef.current = layerSelection;
+  const resolvedThemeRef = useRef(resolvedTheme);
+  resolvedThemeRef.current = resolvedTheme;
   const layersRef = useRef<ReturnType<typeof createBaseLayers> | null>(null);
   const markerNodesRef = useRef(new Map<string, HTMLElement>());
   const [mapError, setMapError] = useState('');
+  const [selected, setSelected] = useState<SelectedTarget | null>(null);
 
   const timeline = useMemo(() => playbackTimeline(stations), [stations]);
-  const lastFrame = timeline.length - 1;
+  const lastFrame = Math.max(0, timeline.length - 1);
   const [frame, setFrame] = useState(lastFrame);
   const [isPlaying, setIsPlaying] = useState(false);
   const largestOverTime = useMemo(() => Math.max(0, ...stations.flatMap((station) => (
@@ -167,6 +132,16 @@ export default function StationMap({ stations, references = [], onSelect, select
     setFrame(lastFrame);
     setIsPlaying(false);
   }, [lastFrame]);
+
+  const safeFrame = Math.max(0, Math.min(frame, lastFrame));
+  const currentTime = timeline.length > 1 ? timeline[safeFrame] : undefined;
+
+  const fitAllMarkers = useCallback(() => {
+    const map = mapRef.current;
+    const markers = allMarkersRef.current;
+    if (!map || markers.length === 0) return;
+    map.setFitView(markers, false, [64, 64, 72, 64], 16);
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -181,23 +156,17 @@ export default function StationMap({ stations, references = [], onSelect, select
       center: amapPosition(located[0]!),
       zoom: 16,
       zooms: [2, 20],
-      ...mapViewOptions(layerSelection),
+      ...MAP_2D_OPTIONS,
       scrollWheel: false,
       resizeEnable: true,
       dragEnable: true,
       touchZoom: true,
       rotateEnable: false,
     });
-    map.addControl(new sdk.ToolBar({ position: 'RB' }));
+    mapRef.current = map;
+    applyMapStyle(map, layerSelectionRef.current.baseLayer, resolvedThemeRef.current);
     map.addControl(new sdk.Scale());
     const unbindWheel = bindMapWheelZoom(map, container);
-    const popup = new sdk.InfoWindow({
-      isCustom: true,
-      autoMove: true,
-      avoid: [12, 12, 24, 12],
-      closeWhenClickMap: true,
-      offset: new sdk.Pixel(0, -14),
-    });
     const largest = Math.max(0, ...located.map((station) => (
       isBaseStation(station) || station.northMillimeters === null || station.eastMillimeters === null
         ? 0
@@ -208,7 +177,7 @@ export default function StationMap({ stations, references = [], onSelect, select
       const hasDisplacement = !isBaseStation(station) && station.northMillimeters !== null && station.eastMillimeters !== null;
       const element = createMapMarker({
         name: station.name,
-        detail: hasDisplacement ? displacementDetail(station, station.northMillimeters!, station.eastMillimeters!) : (station.stationType || '暂无位移数据'),
+        detail: hasDisplacement ? compactDisplacementDetail(station.northMillimeters!, station.eastMillimeters!) : (isBaseStation(station) ? '基准站' : ''),
         colorToken: station.colorToken,
         reference: isBaseStation(station),
       });
@@ -225,38 +194,35 @@ export default function StationMap({ stations, references = [], onSelect, select
       markerNodesRef.current.set(station.id, element);
       const position = amapPosition(station);
       const marker = new sdk.Marker({ position, content: element, anchor: 'center' });
-      element.addEventListener('click', () => {
-        popup.setContent(createPopupNode(station, selectLabel, (id) => onSelectRef.current(id), () => popup.close(), container));
-        popup.open(map, position);
+      element.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setSelected({ kind: 'station', id: station.id });
       });
       marker.setMap(map);
       return { marker, element };
     });
     const referenceMarkers = references.filter(validCoordinates).map((station) => {
       const element = createMapMarker({
-        name: station.name, detail: station.stationType || '同组测点', colorToken: '--status-unknown', reference: true,
+        name: station.name,
+        detail: isBaseStation(station) ? '基准站' : '',
+        colorToken: '--status-unknown',
+        reference: true,
       });
       element.classList.add('evidence-map-marker--context');
       const position = amapPosition(station);
       const marker = new sdk.Marker({ position, content: element, anchor: 'center' });
-      element.addEventListener('click', () => {
-        popup.setContent(createMapPopup({
-          name: station.name, context: '同组测点（位置参照）', stationType: station.stationType,
-          colorToken: '--status-unknown',
-          fields: [{ label: '坐标 · WGS84', value: `${station.latitude.toFixed(6)}, ${station.longitude.toFixed(6)}`, wide: true }],
-          note: '本次回答没有取得它的位移数据。',
-          onClose: () => popup.close(),
-        }, container));
-        popup.open(map, position);
+      element.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setSelected({ kind: 'reference', id: station.id });
       });
       marker.setMap(map);
       return { marker, element };
     });
     const allMarkers = [...markers, ...referenceMarkers];
-    map.setFitView(allMarkers.map((item) => item.marker), true, [72, 72, 72, 72], 16);
+    allMarkersRef.current = allMarkers.map((item) => item.marker);
+    map.setFitView(allMarkersRef.current, true, [64, 64, 72, 64], 16);
 
     let destroyed = false;
-    let settleTimer = 0;
     const placeLabels = () => {
       if (destroyed || container.clientWidth === 0 || container.clientHeight === 0) {
         return;
@@ -264,17 +230,13 @@ export default function StationMap({ stations, references = [], onSelect, select
       placeMapMarkerLabels(map, container, allMarkers);
     };
     const onComplete = () => {
-      if (destroyed) {
-        return;
-      }
+      if (destroyed) return;
       window.clearTimeout(loadTimeout);
       setMapError('');
       placeLabels();
-      if (layerSelectionRef.current.terrain3d) {
-        window.clearTimeout(settleTimer);
-        settleTimer = window.setTimeout(placeLabels, 200);
-      }
     };
+    const onMapClick = () => setSelected(null);
+    map.on('click', onMapClick);
     map.on('mapmove', placeLabels);
     map.on('moveend', placeLabels);
     map.on('zoomchange', placeLabels);
@@ -286,106 +248,210 @@ export default function StationMap({ stations, references = [], onSelect, select
       destroyed = true;
       unbindWheel();
       window.clearTimeout(loadTimeout);
-      window.clearTimeout(settleTimer);
+      map.off('click', onMapClick);
       map.off('mapmove', placeLabels);
       map.off('moveend', placeLabels);
       map.off('zoomchange', placeLabels);
       map.off('zoomend', placeLabels);
       map.off('resize', placeLabels);
       map.off('complete', onComplete);
-      try {
-        popup.close();
-        map.destroy();
-      } catch {
-        // 高德 3D 销毁期间可能触发内部坐标收尾异常，忽略组件卸载期残留。
-      }
+      map.destroy();
+      mapRef.current = null;
+      allMarkersRef.current = [];
       layersRef.current = null;
       markerNodesRef.current.clear();
     };
-  }, [stations, references, sdk, layerSelection.terrain3d, selectLabel]);
+  }, [stations, references, sdk]);
 
   useEffect(() => {
     layersRef.current?.select(layerSelection);
-  }, [layerSelection]);
+    if (mapRef.current) {
+      applyMapStyle(mapRef.current, layerSelection.baseLayer, resolvedTheme);
+    }
+  }, [layerSelection, resolvedTheme]);
 
   useEffect(() => {
-    if (timeline.length < 2 || frame < 0) {
+    if (!currentTime) {
       return;
     }
-    const time = timeline[Math.min(frame, lastFrame)]!;
     for (const station of stations) {
       const element = markerNodesRef.current.get(station.id);
       if (!element || isBaseStation(station) || station.track.length === 0) {
         continue;
       }
-      const sample = sampleAt(station.track, time);
+      const sample = sampleAt(station.track, currentTime);
       if (!sample) {
         setDisplacementArrow(element, null);
-        setMarkerDetail(element, '尚无数据');
+        setMarkerDetail(element, '');
         continue;
       }
       const magnitude = Math.hypot(sample.north, sample.east);
       setDisplacementArrow(element, magnitude > 0 && largestOverTime > 0
         ? { azimuth: azimuthOf(sample.north, sample.east), lengthPixels: arrowLength(magnitude, largestOverTime) }
         : null);
-      setMarkerDetail(element, displacementDetail(station, sample.north, sample.east));
+      setMarkerDetail(element, compactDisplacementDetail(sample.north, sample.east));
     }
-  }, [frame, timeline, lastFrame, stations, largestOverTime, sdk, layerSelection.terrain3d]);
+  }, [currentTime, stations, largestOverTime, sdk]);
 
   useEffect(() => {
-    if (!isPlaying) {
-      return;
-    }
-    if (frame >= lastFrame) {
+    if (!isPlaying) return;
+    if (safeFrame >= lastFrame) {
       setIsPlaying(false);
       return;
     }
     const step = Math.max(1, Math.ceil(timeline.length / PLAYBACK_FRAMES));
-    const timer = window.setTimeout(() => setFrame(Math.min(lastFrame, frame + step)), PLAYBACK_INTERVAL_MS);
+    const timer = window.setTimeout(() => setFrame(Math.min(lastFrame, safeFrame + step)), PLAYBACK_INTERVAL_MS);
     return () => window.clearTimeout(timer);
-  }, [isPlaying, frame, timeline.length, lastFrame]);
+  }, [isPlaying, safeFrame, timeline.length, lastFrame]);
 
   const togglePlayback = () => {
-    if (!isPlaying && frame >= lastFrame) {
+    if (!isPlaying && safeFrame >= lastFrame) {
       setFrame(0);
     }
     setIsPlaying((value) => !value);
   };
 
+  const sheetInfo = useMemo<MapSheetInfo | null>(() => {
+    if (!selected) return null;
+    if (selected.kind === 'reference') {
+      const refStation = references.find((item) => item.id === selected.id);
+      if (!refStation) return null;
+      return {
+        id: `ref:${refStation.id}`,
+        name: refStation.name,
+        context: '同组参照',
+        stationType: refStation.stationType,
+        colorToken: '--status-unknown',
+        fields: [{ label: '坐标（WGS84）', value: `${refStation.latitude.toFixed(6)}, ${refStation.longitude.toFixed(6)}`, wide: true }],
+        note: '本次未读取该测点的位移序列。',
+      };
+    }
+    const station = stations.find((item) => item.id === selected.id);
+    if (!station) return null;
+    const liveSample = currentTime && !isBaseStation(station) && station.track.length > 0
+      ? sampleAt(station.track, currentTime)
+      : null;
+    const north = liveSample ? liveSample.north : station.northMillimeters;
+    const east = liveSample ? liveSample.east : station.eastMillimeters;
+    const hasDisplacement = !isBaseStation(station) && north !== null && east !== null;
+    const magnitude = hasDisplacement ? Math.hypot(north!, east!) : null;
+    const displacementAzimuth = magnitude ? azimuthOf(north!, east!) : null;
+    const fields: MapSheetInfo['fields'] = [];
+    if (hasDisplacement) {
+      fields.push(
+        { label: '北向分量', value: `${north!.toFixed(1)} mm` },
+        { label: '东向分量', value: `${east!.toFixed(1)} mm` },
+      );
+    }
+    const slope = slopeField(station, displacementAzimuth);
+    if (slope) fields.push(slope);
+    fields.push({ label: '坐标（WGS84）', value: `${station.latitude.toFixed(6)}, ${station.longitude.toFixed(6)}`, wide: true });
+    let note: string | undefined;
+    if (isBaseStation(station)) {
+      note = '提供差分基准，不展示位移方向。';
+    } else if (!hasDisplacement) {
+      note = '暂无可用位移序列。';
+    }
+    return {
+      id: `station:${station.id}`,
+      name: station.name,
+      context: '调查测点',
+      stationType: station.stationType,
+      colorToken: station.colorToken,
+      status: station.status,
+      reason: station.reason,
+      metric: magnitude === null ? undefined : {
+        label: station.cumulative ? '累计水平位移' : '本窗口水平变化',
+        value: magnitude.toFixed(1),
+        unit: 'mm',
+        direction: displacementAzimuth === null ? null : directionText(displacementAzimuth),
+      },
+      fields,
+      note,
+      action: {
+        label: selectLabel,
+        run: () => {
+          setSelected(null);
+          onSelectRef.current(station.id);
+        },
+      },
+    };
+  }, [selected, stations, references, currentTime, selectLabel]);
+
   const hasSlope = stations.some((station) => station.downslopeAzimuth !== null);
   const hasBase = stations.some((station) => isBaseStation(station));
+  const zoomBy = (delta: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const [min, max] = map.getZooms();
+    map.setZoom(Math.max(min, Math.min(max, map.getZoom() + delta)), false);
+  };
 
   return (
     <div className="space-y-2">
-      <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
-      <div ref={containerRef} role="region" aria-label="测点位置与水平位移方向" aria-busy={amap.status === 'loading'}
-        className={cn('h-[min(65dvh,28rem)] min-h-96 w-full touch-none overflow-hidden rounded-lg bg-muted/40', amap.status === 'loading' && 'animate-pulse')} />
-      {timeline.length > 1 && (
-        <div className="flex items-center gap-3">
-          <Button type="button" variant="outline" size="icon" className="size-9 shrink-0"
-            aria-label={isPlaying ? '暂停位移回放' : '播放位移回放'} onClick={togglePlayback}>
-            {isPlaying ? <PauseIcon className="size-4" /> : <PlayIcon className="size-4" />}
-          </Button>
-          <input
-            type="range"
-            min={0}
-            max={lastFrame}
-            value={Math.min(frame, lastFrame)}
-            aria-label="位移回放时刻"
-            onChange={(event) => {
-              setIsPlaying(false);
-              setFrame(Number(event.target.value));
-            }}
-            className="min-w-0 flex-1 accent-primary"
-          />
-          <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-            {timeline[Math.min(frame, lastFrame)]!.slice(5, 16)}
-          </span>
+      <div
+        data-map-basemap={layerSelection.baseLayer}
+        className="relative isolate overflow-hidden rounded-xl border border-border/70 bg-muted/40"
+      >
+        <div
+          ref={containerRef}
+          role="region"
+          aria-label="测点位置与水平位移方向"
+          aria-busy={amap.status === 'loading'}
+          className={cn('h-[min(60dvh,26rem)] min-h-80 w-full touch-none', amap.status === 'loading' && 'animate-pulse')}
+        />
+
+        <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-end">
+          <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
         </div>
-      )}
-      <ul aria-label="地图图例" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+
+        <div className={cn('pointer-events-none absolute end-3 z-20', timeline.length > 1 ? 'bottom-16' : 'bottom-3')}>
+          <MapZoomControls
+            onZoomIn={() => zoomBy(1)}
+            onZoomOut={() => zoomBy(-1)}
+            onFitView={fitAllMarkers}
+          />
+        </div>
+
+        {timeline.length > 1 && (
+          <div
+            data-map-overlay=""
+            className="pointer-events-auto absolute inset-x-3 bottom-3 z-20 flex items-center gap-2.5 rounded-full border border-border/70 bg-popover/90 px-2.5 py-1.5 shadow-sm backdrop-blur-md"
+          >
+            <button
+              type="button"
+              onClick={togglePlayback}
+              aria-label={isPlaying ? '暂停位移回放' : '播放位移回放'}
+              className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <MorphIcon activeKey={isPlaying ? 'pause' : 'play'}>
+                {isPlaying ? <PauseIcon className="size-3.5" aria-hidden /> : <PlayIcon className="size-3.5 translate-x-px" aria-hidden />}
+              </MorphIcon>
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={lastFrame}
+              value={safeFrame}
+              aria-label="位移回放时刻"
+              onChange={(event) => {
+                setIsPlaying(false);
+                setFrame(Number(event.target.value));
+              }}
+              className="min-w-0 flex-1 accent-primary"
+            />
+            <span className="shrink-0 pe-1 text-xs text-muted-foreground tabular-nums">
+              {currentTime?.slice(5, 16) ?? ''}
+            </span>
+          </div>
+        )}
+
+        <MapStationSheet info={sheetInfo} onClose={() => setSelected(null)} />
+      </div>
+
+      <ul aria-label="地图图例" className="flex flex-wrap items-center gap-x-4 gap-y-1 px-0.5 text-xs text-muted-foreground">
         <li className="inline-flex items-center gap-1.5">
-          <span className="size-2.5 rounded-full border border-background bg-foreground/60" aria-hidden />
+          <span className="size-2.5 rounded-full border border-background bg-foreground/75" aria-hidden />
           移动站
         </li>
         {hasBase && (
@@ -396,7 +462,7 @@ export default function StationMap({ stations, references = [], onSelect, select
         )}
         <li className="inline-flex items-center gap-1.5">
           <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden><path d="M8 14V3M8 3l-4 4M8 3l4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          水平位移方向
+          水平位移
         </li>
         {hasSlope && (
           <li className="inline-flex items-center gap-1.5">
@@ -406,8 +472,8 @@ export default function StationMap({ stations, references = [], onSelect, select
         )}
         {references.length > 0 && (
           <li className="inline-flex items-center gap-1.5">
-            <span className="size-2.5 rounded-full bg-status-unknown" aria-hidden />
-            同组测点
+            <span className="size-2.5 rounded-full border border-status-unknown bg-transparent" aria-hidden />
+            同组参照
           </li>
         )}
       </ul>

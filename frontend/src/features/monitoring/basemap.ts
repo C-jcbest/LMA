@@ -10,14 +10,11 @@ export type BaseLayer = 'satellite' | 'road';
 export interface MapLayerSelection {
   baseLayer: BaseLayer;
   showRoads: boolean;
-  terrain3d: boolean;
 }
 
-export const DEFAULT_LAYER_SELECTION: MapLayerSelection = { baseLayer: 'satellite', showRoads: false, terrain3d: false };
+export const DEFAULT_LAYER_SELECTION: MapLayerSelection = { baseLayer: 'satellite', showRoads: false };
 
-export const mapViewOptions = (selection: MapLayerSelection) => (selection.terrain3d
-  ? { viewMode: '3D' as const, terrain: true, pitch: 55, pitchEnable: true }
-  : { viewMode: '2D' as const, pitch: 0, pitchEnable: false });
+export const MAP_2D_OPTIONS = { viewMode: '2D' as const, pitch: 0, pitchEnable: false };
 export type AMapState = { status: 'loading' } | { status: 'ready'; sdk: typeof AMap } | { status: 'error'; message: string };
 
 export const amapPosition = (location: Coordinates): [number, number] =>
@@ -39,7 +36,7 @@ function requestSdk(client: LmaClient): Promise<typeof AMap> {
         return AMapLoader.load({
           key: config.amap_token,
           version: '2.0',
-          plugins: ['AMap.Scale', 'AMap.ToolBar'],
+          plugins: ['AMap.Scale'],
         }).catch(() => {
           throw new Error('高德地图加载失败，请检查地图密钥和网络后刷新。');
         });
@@ -75,7 +72,7 @@ export function useAMap(): AMapState {
 }
 
 export function createBaseLayers(sdk: typeof AMap, selection: MapLayerSelection) {
-  const road = new sdk.TileLayer();
+  const road = typeof sdk.createDefaultLayer === 'function' ? sdk.createDefaultLayer() : new sdk.TileLayer();
   const satellite = new sdk.TileLayer.Satellite();
   const roadLabels = new sdk.TileLayer.RoadNet();
   const select = ({ baseLayer, showRoads }: MapLayerSelection) => {
@@ -97,9 +94,13 @@ export function createBaseLayers(sdk: typeof AMap, selection: MapLayerSelection)
   return { layers: [road, satellite, roadLabels], select };
 }
 
+export function applyMapStyle(map: AMap.Map, baseLayer: BaseLayer, resolvedTheme: 'light' | 'dark') {
+  map.setMapStyle?.(baseLayer === 'road' && resolvedTheme === 'dark' ? 'amap://styles/dark' : 'amap://styles/normal');
+}
+
 export function bindMapWheelZoom(map: AMap.Map, container: HTMLElement) {
   const onWheel = (event: WheelEvent) => {
-    const insidePopup = event.target instanceof Element && event.target.closest('.map-station-popup');
+    const insidePopup = event.target instanceof Element && event.target.closest('[data-map-overlay]');
     if (insidePopup || event.ctrlKey || event.deltaY === 0) {
       return;
     }
@@ -113,7 +114,8 @@ export function bindMapWheelZoom(map: AMap.Map, container: HTMLElement) {
     }
     const [minimum, maximum] = map.getZooms();
     const change = Math.max(-1, Math.min(1, -delta / 240));
-    map.setZoom(Math.max(minimum, Math.min(maximum, map.getZoom() + change)), true);
+    const immediate = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    map.setZoom(Math.max(minimum, Math.min(maximum, map.getZoom() + change)), immediate);
   };
   container.addEventListener('wheel', onWheel, { capture: true, passive: false });
   return () => container.removeEventListener('wheel', onWheel, true);

@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useAuiEvent } from '@assistant-ui/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLmaClient } from '@/app/providers/LmaClientContext';
-import { STATUS_PRIORITY } from '@/features/monitoring/investigation';
+import { investigationStatusLabel, STATUS_PRIORITY } from '@/features/monitoring/investigation';
 import type { SessionConclusion } from '@/services/api';
 import type { InvestigationStatus } from '@/types/envelope';
 
@@ -11,12 +11,13 @@ export interface SessionVerdict {
   stations: string[];
 }
 
-export type SessionStatusFilter = 'all' | '需人工复核' | '持续关注' | 'none';
+export type SessionStatusFilter = 'all' | '需人工复核' | '持续关注' | '数据待核查' | '未见明显变化' | 'none';
 
 export function matchesSessionStatusFilter(verdict: SessionVerdict | undefined, filter: SessionStatusFilter): boolean {
   if (filter === 'all') return true;
   if (filter === 'none') return !verdict;
-  return verdict?.status === filter;
+  if (!verdict) return false;
+  return investigationStatusLabel(verdict.status) === filter;
 }
 
 const NO_CONCLUSIONS: readonly SessionConclusion[] = [];
@@ -33,7 +34,9 @@ function toVerdicts(conclusions: readonly SessionConclusion[]): Map<string, Sess
       verdicts.set(conclusion.session_id, { status: conclusion.status, stations: [conclusion.station_name] });
       continue;
     }
-    verdict.stations.push(conclusion.station_name);
+    if (!verdict.stations.includes(conclusion.station_name)) {
+      verdict.stations.push(conclusion.station_name);
+    }
     if (priorityOf(conclusion.status) < priorityOf(verdict.status)) {
       verdict.status = conclusion.status;
     }

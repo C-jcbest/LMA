@@ -49,6 +49,7 @@ export default function RainfallChart({ days, height = 140, onAsk, askDisabled }
     tooltip: {
       trigger: 'axis',
       confine: true,
+      transitionDuration: typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 0.12,
       backgroundColor: colors.surface,
       borderColor: colors.border,
       textStyle: { color: colors.text, fontSize: 13 },

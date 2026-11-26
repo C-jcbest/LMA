@@ -443,10 +443,64 @@ export function conclusionsToMarkdown(conclusions: ConclusionsArtifactData): str
     .join('\n\n');
 }
 
+const SUBSTANTIVE_MARKDOWN = /(?:^#{1,6}\s|\]\(#evidence-|^\s*\|)/m;
+
+export function splitAnswerParts(
+  parts: readonly { type: string; text?: string; toolName?: string }[],
+  isRunning = false,
+): { foldedIndexes: Set<number>; narrationNotes: string[]; firstAnswerTextIndex: number } {
+  let lastInvestigationToolIndex = -1;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (part.type === 'tool-call' && part.toolName !== CONCLUSIONS_TOOL_NAME) {
+      lastInvestigationToolIndex = index;
+    }
+  }
+
+  const foldedIndexes = new Set<number>();
+  const narrationNotes: string[] = [];
+
+  if (lastInvestigationToolIndex !== -1) {
+    const hasPostToolText = parts.some(
+      (part, index) => index > lastInvestigationToolIndex && part.type === 'text' && Boolean(part.text?.trim()),
+    );
+    const shouldFoldPreToolText = hasPostToolText || isRunning;
+    if (shouldFoldPreToolText) {
+      for (let index = 0; index < lastInvestigationToolIndex; index += 1) {
+        const part = parts[index]!;
+        if (part.type === 'text') {
+          const cleaned = withoutEchoedEvidenceMarkers(part.text ?? '').trim();
+          if (cleaned && SUBSTANTIVE_MARKDOWN.test(cleaned)) {
+            continue;
+          }
+          foldedIndexes.add(index);
+          if (cleaned) {
+            narrationNotes.push(cleaned);
+          }
+        }
+      }
+    }
+  }
+
+  let firstAnswerTextIndex = -1;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (part.type === 'text' && !foldedIndexes.has(index) && part.text?.trim()) {
+      firstAnswerTextIndex = index;
+      break;
+    }
+  }
+
+  return { foldedIndexes, narrationNotes, firstAnswerTextIndex };
+}
+
 export function answerToMarkdown(parts: readonly PartState[]): string {
   const steps = buildSteps(parts, collectStations(parts));
   const conclusions = findConclusions(parts);
-  const text = withoutEchoedEvidenceMarkers(parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n\n')).trim();
+  const { foldedIndexes } = splitAnswerParts(parts, false);
+  const text = withoutEchoedEvidenceMarkers(
+    parts.flatMap((part, index) => (part.type === 'text' && !foldedIndexes.has(index) ? [part.text] : [])).join('\n\n'),
+  ).trim();
   if (!text) {
     return conclusions ? conclusionsToMarkdown(conclusions) : '';
   }

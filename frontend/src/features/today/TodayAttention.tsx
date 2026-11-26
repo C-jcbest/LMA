@@ -1,12 +1,12 @@
 import { useContext, useEffect, useState, type FC } from 'react';
-import { isInspectionFromToday } from './inspection-date';
-import { ArrowRightIcon, RefreshCwIcon, SlidersHorizontalIcon } from 'lucide-react';
+import { formatInspectionRecency, isInspectionFromToday } from './inspection-date';
+import { ArrowRightIcon, RefreshCwIcon, SlidersHorizontalIcon, SquareIcon } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useNavigation } from '@/app/navigation';
 import { LmaClientContext } from '@/app/providers/LmaClientContext';
 import { Button } from '@/components/ui/button';
-import { EASE_OUT } from '@/components/ui/motion-primitives';
+import { EASE_IN, EASE_OUT } from '@/components/ui/motion-primitives';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FindingChips, triggersOf } from '@/features/inspection/findings';
@@ -16,13 +16,6 @@ import { formatMillimeters, largestChange, StatusDot } from '@/features/monitori
 import { TrendLine } from '@/features/monitoring/TrendLine';
 import { cn } from 'cn';
 import type { InspectionStation, LatestInspection } from '@/services/api';
-
-const formatFinishedAt = (value: string) => {
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).format(new Date(value));
-};
 
 const TodaySkeleton: FC = () => (
   <div aria-hidden className="animate-in fade-in fill-mode-both [animation-delay:150ms] [animation-duration:200ms]">
@@ -37,12 +30,18 @@ const TodaySkeleton: FC = () => (
 
 function useInspectionFinishedWhileOpen(latest: LatestInspection | null) {
   const [baselineInspectionId, setBaselineInspectionId] = useState<string | null | undefined>(undefined);
+  const currentId = latest?.inspection?.id ?? null;
+  const changed = baselineInspectionId !== undefined && currentId !== null && currentId !== baselineInspectionId;
   useEffect(() => {
     if (baselineInspectionId === undefined && latest) {
-      setBaselineInspectionId(latest.inspection?.id ?? null);
+      setBaselineInspectionId(currentId);
+      return;
     }
-  }, [latest, baselineInspectionId]);
-  return baselineInspectionId !== undefined && latest?.inspection != null && latest.inspection.id !== baselineInspectionId;
+    if (!changed) return;
+    const timer = window.setTimeout(() => setBaselineInspectionId(currentId), 2400);
+    return () => window.clearTimeout(timer);
+  }, [latest, baselineInspectionId, currentId, changed]);
+  return changed;
 }
 
 function investigationProgress(station: InspectionStation, inspectionFinishedAt: string | undefined) {
@@ -81,7 +80,7 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
         <span className="min-w-0">
           <span className="flex min-w-0 items-center gap-2.5">
             <StatusDot status={station.screening} />
-            <span className="max-w-full shrink-0 truncate text-base font-semibold">{station.station_name}</span>
+            <span className="min-w-0 truncate text-base font-semibold">{station.station_name}</span>
             <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
             {isNew && <span className="text-status-attention shrink-0 text-xs font-medium">新出现</span>}
           </span>
@@ -99,9 +98,6 @@ const AttentionRow: FC<{ station: InspectionStation; inspectionFinishedAt: strin
           <span className="today-row-change text-base font-medium tabular-nums">
             {formatMillimeters(leadTrigger.value_mm)}
             <span className="text-muted-foreground ms-1 text-xs font-normal">mm</span>
-            {leadTrigger.kind === 'acceleration' && (
-              <span className="text-muted-foreground block text-[11px] font-normal">近期变快</span>
-            )}
           </span>
         )}
         {leadTrigger?.value_mm == null && change && (
@@ -123,7 +119,7 @@ export const TodayAttention: FC<{ onOpenScopedInspection?: () => void }> = ({ on
     queryFn: ({ signal }) => client!.listStations(signal),
     enabled: Boolean(client),
   });
-  const { latest, isLoading, hasLoadError, isStarting, hasStartError, reload, start } = useInspection();
+  const { latest, isLoading, hasLoadError, isStarting, isCancelling, hasStartError, reload, start, cancel } = useInspection();
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const update = () => setNow(Date.now());
@@ -181,7 +177,7 @@ export const TodayAttention: FC<{ onOpenScopedInspection?: () => void }> = ({ on
       <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
         {latest?.inspection && (
           <time dateTime={latest.inspection.finished_at} className={cn('tabular-nums', historical && 'font-medium text-foreground')}>
-            {historical ? '上次巡检 ' : ''}{formatFinishedAt(latest.inspection.finished_at)}{historical ? '' : ' 巡检'}
+            {formatInspectionRecency(latest.inspection.finished_at, now)}
           </time>
         )}
         {needsLook.length > 0 && investigatedCount > 0 && (
@@ -198,6 +194,19 @@ export const TodayAttention: FC<{ onOpenScopedInspection?: () => void }> = ({ on
           <RefreshCwIcon className={cn('size-3.5', (isRunning || isStarting) && 'animate-spin')} aria-hidden />
           {startLabel}
         </Button>
+        {isRunning && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isCancelling}
+            onClick={cancel}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <SquareIcon className="size-3 fill-current" aria-hidden />
+            {isCancelling ? '正在停止…' : '停止'}
+          </Button>
+        )}
         {onOpenScopedInspection && (
           <Button
             type="button"
@@ -207,17 +216,26 @@ export const TodayAttention: FC<{ onOpenScopedInspection?: () => void }> = ({ on
             className="text-muted-foreground hover:text-foreground"
           >
             <SlidersHorizontalIcon className="size-3.5" aria-hidden />
-            专项巡检
+            按范围巡检
           </Button>
         )}
       </div>
-      {latest?.running && (
-        <Progress
-          className="mt-4 h-1 bg-muted"
-          aria-label="巡检进度"
-          value={(latest.running.completed_stations / Math.max(1, latest.running.total_stations)) * 100}
-        />
-      )}
+      <AnimatePresence initial={false}>
+        {latest?.running && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto', transition: EASE_OUT }}
+            exit={{ opacity: 0, height: 0, transition: EASE_IN }}
+            className="overflow-hidden"
+          >
+            <Progress
+              className="mt-4 h-1 bg-muted"
+              aria-label="巡检进度"
+              value={(latest.running.completed_stations / Math.max(1, latest.running.total_stations)) * 100}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {hasLoadError && (
         <p role="alert" className="text-muted-foreground mt-3 text-sm">

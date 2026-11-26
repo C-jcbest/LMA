@@ -5,19 +5,39 @@ import { Button } from './button';
 
 export const SPRING_SNAPPY = { type: 'spring', stiffness: 520, damping: 38, mass: 0.8 } as const;
 export const SPRING_PANEL = { type: 'spring', stiffness: 360, damping: 34, mass: 0.9 } as const;
-export const EASE_OUT = { duration: 0.22, ease: [0.22, 1, 0.36, 1] } as const;
-export const EASE_IN = { duration: 0.16, ease: [0.4, 0, 1, 1] } as const;
+export const EASE_OUT = { duration: 0.2, ease: [0.22, 1, 0.36, 1] } as const;
+export const EASE_IN = { duration: 0.14, ease: [0.4, 0, 1, 1] } as const;
+
+export function MorphIcon({ activeKey, children }: { activeKey: string; children: ReactNode }) {
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.span
+        key={activeKey}
+        initial={{ opacity: 0, scale: 0.72 }}
+        animate={{ opacity: 1, scale: 1, transition: { duration: 0.12, ease: [0.22, 1, 0.36, 1] } }}
+        exit={{ opacity: 0, scale: 0.72, transition: { duration: 0.08, ease: [0.4, 0, 1, 1] } }}
+        className="inline-flex items-center justify-center"
+      >
+        {children}
+      </motion.span>
+    </AnimatePresence>
+  );
+}
 
 interface PendingDelete {
   id: string;
   label: string;
+  detail?: string;
   commit: () => Promise<void>;
-  timerId: number;
+  timerId: number | null;
+  remainingMs: number;
+  startedAt: number;
+  paused: boolean;
 }
 
 interface SessionUndoContextValue {
   pendingIds: ReadonlySet<string>;
-  scheduleDelete: (id: string, label: string, commit: () => Promise<void>) => void;
+  scheduleDelete: (id: string, label: string, commit: () => Promise<void>, detail?: string) => void;
   undoDelete: (id: string) => void;
 }
 
@@ -41,7 +61,7 @@ export function SessionUndoProvider({ children }: { children: ReactNode }) {
   const commitItem = useCallback((id: string) => {
     const item = pendingRef.current.find((entry) => entry.id === id);
     if (!item) return;
-    window.clearTimeout(item.timerId);
+    if (item.timerId !== null) window.clearTimeout(item.timerId);
     setPending((current) => current.filter((entry) => entry.id !== id));
     void item.commit().catch(() => {});
   }, []);
@@ -49,20 +69,36 @@ export function SessionUndoProvider({ children }: { children: ReactNode }) {
   const undoDelete = useCallback((id: string) => {
     const item = pendingRef.current.find((entry) => entry.id === id);
     if (!item) return;
-    window.clearTimeout(item.timerId);
+    if (item.timerId !== null) window.clearTimeout(item.timerId);
     setPending((current) => current.filter((entry) => entry.id !== id));
   }, []);
 
-  const scheduleDelete = useCallback((id: string, label: string, commit: () => Promise<void>) => {
+  const scheduleDelete = useCallback((id: string, label: string, commit: () => Promise<void>, detail?: string) => {
     if (pendingRef.current.some((entry) => entry.id === id)) return;
     const timerId = window.setTimeout(() => commitItem(id), UNDO_DELAY_MS);
-    setPending((current) => [...current, { id, label, commit, timerId }]);
+    setPending((current) => [
+      ...current,
+      { id, label, detail, commit, timerId, remainingMs: UNDO_DELAY_MS, startedAt: Date.now(), paused: false },
+    ]);
+  }, [commitItem]);
+
+  const setPaused = useCallback((id: string, paused: boolean) => {
+    setPending((current) => current.map((item) => {
+      if (item.id !== id || item.paused === paused) return item;
+      if (paused) {
+        if (item.timerId !== null) window.clearTimeout(item.timerId);
+        const elapsed = Date.now() - item.startedAt;
+        return { ...item, timerId: null, remainingMs: Math.max(400, item.remainingMs - elapsed), paused: true };
+      }
+      const timerId = window.setTimeout(() => commitItem(id), item.remainingMs);
+      return { ...item, timerId, startedAt: Date.now(), paused: false };
+    }));
   }, [commitItem]);
 
   useEffect(() => {
     const flushAll = () => {
       for (const item of pendingRef.current) {
-        window.clearTimeout(item.timerId);
+        if (item.timerId !== null) window.clearTimeout(item.timerId);
         void item.commit().catch(() => {});
       }
       pendingRef.current = [];
@@ -91,15 +127,24 @@ export function SessionUndoProvider({ children }: { children: ReactNode }) {
               key={latest.id}
               role="status"
               aria-live="polite"
-              initial={{ opacity: 0, y: 16, scale: 0.96 }}
+              initial={{ opacity: 0, y: 14, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              exit={{ opacity: 0, y: 10, scale: 0.96 }}
               transition={SPRING_SNAPPY}
-              className="pointer-events-auto flex max-w-md items-center gap-3 rounded-xl border bg-popover/95 px-3.5 py-2 text-sm text-popover-foreground shadow-lg backdrop-blur-sm"
+              onMouseEnter={() => setPaused(latest.id, true)}
+              onMouseLeave={() => setPaused(latest.id, false)}
+              onFocus={() => setPaused(latest.id, true)}
+              onBlur={() => setPaused(latest.id, false)}
+              className="pointer-events-auto relative flex max-w-md items-center gap-3 overflow-hidden rounded-xl border bg-popover/95 px-3.5 py-2.5 text-sm text-popover-foreground shadow-lg backdrop-blur-sm"
             >
-              <span className="min-w-0 truncate">
-                已移除「<span className="font-medium">{latest.label}</span>」
-              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate">
+                  已移除「<span className="font-medium">{latest.label}</span>」
+                </p>
+                {latest.detail && (
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{latest.detail}</p>
+                )}
+              </div>
               <Button
                 type="button"
                 size="xs"
@@ -120,6 +165,14 @@ export function SessionUndoProvider({ children }: { children: ReactNode }) {
               >
                 <XIcon className="size-3.5" aria-hidden />
               </Button>
+              <motion.span
+                key={`${latest.id}:${latest.paused ? 'paused' : 'running'}`}
+                aria-hidden
+                initial={{ scaleX: latest.remainingMs / UNDO_DELAY_MS }}
+                animate={{ scaleX: latest.paused ? latest.remainingMs / UNDO_DELAY_MS : 0 }}
+                transition={{ duration: latest.paused ? 0 : latest.remainingMs / 1000, ease: 'linear' }}
+                className="absolute inset-x-0 bottom-0 h-0.5 origin-left bg-foreground/25"
+              />
             </motion.div>
           )}
         </AnimatePresence>

@@ -41,27 +41,44 @@ def issue_token(settings: Settings, now: float | None = None) -> str:
     return f"{payload}.{_signature(settings, payload)}"
 
 
-def token_valid(settings: Settings, token: str | None, now: float | None = None) -> bool:
+def token_expires_at(settings: Settings, token: str | None) -> int | None:
     if not token or "." not in token:
-        return False
+        return None
     payload, signature = token.split(".", 1)
     if not hmac.compare_digest(signature, _signature(settings, payload)):
-        return False
+        return None
     try:
-        expires_at = int(payload)
+        return int(payload)
     except ValueError:
-        return False
-    return expires_at > (now or time.time())
+        return None
+
+
+def token_valid(settings: Settings, token: str | None, now: float | None = None) -> bool:
+    expires_at = token_expires_at(settings, token)
+    return expires_at is not None and expires_at > (now or time.time())
+
+
+def _set_session_cookie(response: Response, settings: Settings) -> None:
+    response.set_cookie(
+        SESSION_COOKIE, issue_token(settings), max_age=SESSION_DAYS * 86400,
+        httponly=True, secure=True, samesite="lax", path="/",
+    )
 
 
 def require_login(settings: Settings):
     """作为全局依赖挂在应用上；不用 HTTP middleware，避免包裹 SSE 流和取消语义。"""
 
-    async def dependency(request: Request) -> None:
+    async def dependency(request: Request, response: Response) -> None:
         if not auth_enabled(settings) or request.url.path in PUBLIC_PATHS:
             return
-        if not token_valid(settings, request.cookies.get(SESSION_COOKIE)):
+        token = request.cookies.get(SESSION_COOKIE)
+        now = time.time()
+        expires_at = token_expires_at(settings, token)
+        if expires_at is None or expires_at <= now:
             raise HTTPException(401, "请先登录。")
+        # 活跃访问时滑动续期（剩余有效期少于 6 天时顺延 7 天），避免日常使用途中被 401 打断。
+        if expires_at - now < (SESSION_DAYS - 1) * 86400:
+            _set_session_cookie(response, settings)
 
     return dependency
 
@@ -70,8 +87,13 @@ def auth_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/auth")
 
     @router.get("/session")
-    async def session(request: Request):
-        authenticated = not auth_enabled(settings) or token_valid(settings, request.cookies.get(SESSION_COOKIE))
+    async def session(request: Request, response: Response):
+        token = request.cookies.get(SESSION_COOKIE)
+        now = time.time()
+        expires_at = token_expires_at(settings, token) if auth_enabled(settings) else None
+        authenticated = not auth_enabled(settings) or (expires_at is not None and expires_at > now)
+        if auth_enabled(settings) and authenticated and expires_at is not None and expires_at - now < (SESSION_DAYS - 1) * 86400:
+            _set_session_cookie(response, settings)
         return {"enabled": auth_enabled(settings), "authenticated": authenticated}
 
     @router.post("/login", status_code=204)
@@ -83,13 +105,10 @@ def auth_router(settings: Settings) -> APIRouter:
         if not (username_ok and password_ok):
             await asyncio.sleep(_FAILED_LOGIN_DELAY_SECONDS)
             raise HTTPException(401, "账号或密码错误。")
-        response.set_cookie(
-            SESSION_COOKIE, issue_token(settings), max_age=SESSION_DAYS * 86400,
-            httponly=True, secure=True, samesite="strict", path="/",
-        )
+        _set_session_cookie(response, settings)
 
     @router.post("/logout", status_code=204)
     async def logout(response: Response):
-        response.delete_cookie(SESSION_COOKIE, httponly=True, secure=True, samesite="strict", path="/")
+        response.delete_cookie(SESSION_COOKIE, httponly=True, secure=True, samesite="lax", path="/")
 
     return router

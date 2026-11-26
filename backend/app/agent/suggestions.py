@@ -131,15 +131,14 @@ async def suggest_questions(context: dict) -> list[str]:
             continue
         window = station["windows"][item.window]
         name = station["station_name"]
-        if station["group_name"]:
-            name = f"{station['group_name']}·{name}"
-        if station["same_name_count"] > 1:
-            name = f"{name}（UUID：{item.station_uuid}）"
+        if station["same_name_count"] > 1 and station["group_name"]:
+            name = f"{station['group_name']} {name}"
         if "recorded_at" in window:
-            period = f"{_date_label(window['recorded_at'])}巡检记录"
+            period = f"{_date_label(window['recorded_at'])} 巡检"
         else:
-            period = f"{_date_label(window['begin_time'])}至{_date_label(window['end_time'])}"
-        question = f"{name}（{period}）：{item.question}"
+            period = f"{_date_label(window['begin_time'])} 至 {_date_label(window['end_time'])}"
+        body = item.question.strip()
+        question = f"查看 {name}（{period}）：{body}" if not body.startswith(name) else body
         if question not in questions:
             questions.append(question)
     if result.questions and not questions:

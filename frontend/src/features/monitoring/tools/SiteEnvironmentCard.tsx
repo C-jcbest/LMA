@@ -1,28 +1,48 @@
 import { cn } from 'cn';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { MapLayerControl } from '../MapLayerControl';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTheme } from '@/app/providers/ThemeProvider';
+import { MapLayerControl, MapStationSheet, MapZoomControls, type MapSheetInfo } from '../MapLayerControl';
 import type { SiteEnvironmentArtifactData, StationArtifact } from '@/types/envelope';
 import {
   amapPosition,
+  applyMapStyle,
   bindMapWheelZoom,
   createBaseLayers,
   DEFAULT_LAYER_SELECTION,
-  mapViewOptions,
+  MAP_2D_OPTIONS,
   useAMap,
   type MapLayerSelection,
 } from '../basemap';
-import { appendDownslopeFan, createMapMarker, createMapPopup, directionText, placeMapMarkerLabels } from '../map-markers';
+import { appendDownslopeFan, createMapMarker, directionText, placeMapMarkerLabels } from '../map-markers';
 import { validCoordinates, type Coordinates } from '../coordinates';
+
+const formatGeology = (geology: SiteEnvironmentArtifactData['geology']) => {
+  if (!geology) return '暂无地质数据';
+  const parts: string[] = [];
+  for (const part of [geology.name, geology.lithology, geology.age]) {
+    const trimmed = part?.trim();
+    if (!trimmed) continue;
+    if (parts.some((existing) => existing === trimmed || existing.includes(trimmed))) continue;
+    parts.push(trimmed);
+  }
+  return parts.join(' · ') || '暂无地层名称';
+};
 
 export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironmentArtifactData }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<AMap.Map | null>(null);
+  const allMarkersRef = useRef<AMap.Marker[]>([]);
+  const { resolvedTheme } = useTheme();
   const amap = useAMap();
   const sdk = amap.status === 'ready' ? amap.sdk : null;
   const [layerSelection, setLayerSelection] = useState<MapLayerSelection>(DEFAULT_LAYER_SELECTION);
   const [mapError, setMapError] = useState('');
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const layersRef = useRef<ReturnType<typeof createBaseLayers> | null>(null);
   const layerSelectionRef = useRef(layerSelection);
   layerSelectionRef.current = layerSelection;
+  const resolvedThemeRef = useRef(resolvedTheme);
+  resolvedThemeRef.current = resolvedTheme;
   const stations = useMemo(() => {
     const seen = new Set<string>();
     return [environment.center_station, ...environment.group_stations].filter((station): station is StationArtifact & Coordinates => {
@@ -40,6 +60,17 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
   const invalidNames = [...new Set([center, ...environment.group_stations]
     .filter((station) => !validCoordinates(station)).map((station) => station.station_name))];
 
+  const fitAllMarkers = useCallback(() => {
+    const map = mapRef.current;
+    const markers = allMarkersRef.current;
+    if (!map || markers.length === 0) return;
+    if (markers.length > 1) {
+      map.setFitView(markers, false, [64, 64, 64, 64], 16);
+    } else if (validCoordinates(center)) {
+      map.setZoomAndCenter(15, amapPosition(center), false);
+    }
+  }, [center]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !sdk || !validCoordinates(center)) {
@@ -52,30 +83,25 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
       center: amapPosition(center),
       zoom: 15,
       zooms: [2, 20],
-      ...mapViewOptions(layerSelection),
+      ...MAP_2D_OPTIONS,
       scrollWheel: false,
       resizeEnable: true,
       dragEnable: true,
       touchZoom: true,
       rotateEnable: false,
     });
-    map.addControl(new sdk.ToolBar({ position: 'RB' }));
+    mapRef.current = map;
+    applyMapStyle(map, layerSelectionRef.current.baseLayer, resolvedThemeRef.current);
     map.addControl(new sdk.Scale());
     const unbindWheel = bindMapWheelZoom(map, container);
-    const popup = new sdk.InfoWindow({
-      isCustom: true,
-      autoMove: true,
-      avoid: [12, 12, 24, 12],
-      closeWhenClickMap: true,
-      offset: new sdk.Pixel(0, -14),
-    });
-    const markers = stations.map((station) => {
-      const isCenter = station === stations[0];
+    const markers = stations.map((station, index) => {
+      const isCenter = index === 0;
       const colorToken = isCenter ? '--foreground' : '--status-unknown';
-      const role = isCenter ? '当前调查测点' : '同组监测点';
       const element = createMapMarker({
-        name: station.station_name, colorToken, current: isCenter,
-        detail: isCenter ? '当前调查' : (station.station_type || '同组监测点'),
+        name: station.station_name,
+        colorToken,
+        current: isCenter,
+        detail: isCenter ? '当前测点' : (station.station_type === '基准站' ? '基准站' : ''),
         reference: station.station_type === '基准站',
       });
       if (isCenter && downslopeAzimuth !== null) {
@@ -83,30 +109,20 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
       }
       const position = amapPosition(station);
       const marker = new sdk.Marker({ position, content: element, anchor: 'center' });
-      element.addEventListener('click', () => {
-        const fields = [{
-          label: '坐标 · WGS84', value: `${station.latitude.toFixed(6)}, ${station.longitude.toFixed(6)}`, wide: true,
-        }];
-        if (isCenter && downslopeAzimuth !== null) {
-          fields.push({ label: '下坡方向 · 约 90 m 地形', value: directionText(downslopeAzimuth), wide: true });
-        }
-        if (station.location) {
-          fields.push({ label: '安装位置', value: station.location, wide: true });
-        }
-        const content = createMapPopup({
-          name: station.station_name, context: role, stationType: station.station_type,
-          status: station.station_status, colorToken, fields, onClose: () => popup.close(),
-        }, container);
-        popup.setContent(content);
-        popup.open(map, position);
+      element.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setSelectedIndex(index);
       });
       marker.setMap(map);
       return { marker, element };
     });
+    allMarkersRef.current = markers.map((item) => item.marker);
     if (markers.length > 1) {
-      map.setFitView(markers.map((item) => item.marker), true, [75, 75, 75, 75], 16);
+      map.setFitView(allMarkersRef.current, true, [64, 64, 64, 64], 16);
     }
     const placeLabels = () => placeMapMarkerLabels(map, container, markers);
+    const onMapClick = () => setSelectedIndex(null);
+    map.on('click', onMapClick);
     map.on('mapmove', placeLabels);
     map.on('zoomchange', placeLabels);
     map.on('resize', placeLabels);
@@ -119,30 +135,83 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
     return () => {
       unbindWheel();
       window.clearTimeout(loadTimeout);
-      popup.close();
+      map.off('click', onMapClick);
       map.destroy();
+      mapRef.current = null;
+      allMarkersRef.current = [];
       layersRef.current = null;
     };
-  }, [sdk, center, stations, downslopeAzimuth, layerSelection.terrain3d]);
+  }, [sdk, center, stations, downslopeAzimuth]);
 
   useEffect(() => {
     layersRef.current?.select(layerSelection);
-  }, [layerSelection]);
+    if (mapRef.current) {
+      applyMapStyle(mapRef.current, layerSelection.baseLayer, resolvedTheme);
+    }
+  }, [layerSelection, resolvedTheme]);
+
+  const sheetInfo = useMemo<MapSheetInfo | null>(() => {
+    if (selectedIndex === null) return null;
+    const station = stations[selectedIndex];
+    if (!station) return null;
+    const isCenter = selectedIndex === 0;
+    const fields: MapSheetInfo['fields'] = [{
+      label: '坐标（WGS84）',
+      value: `${station.latitude.toFixed(6)}, ${station.longitude.toFixed(6)}`,
+      wide: true,
+    }];
+    if (isCenter && downslopeAzimuth !== null) {
+      fields.push({ label: '下坡方向（约 90 m 坡面）', value: directionText(downslopeAzimuth), wide: true });
+    }
+    if (station.location) {
+      fields.push({ label: '安装位置', value: station.location, wide: true });
+    }
+    return {
+      id: `${selectedIndex}:${station.station_uuid ?? station.station_name}`,
+      name: station.station_name,
+      context: isCenter ? '当前调查测点' : '同组监测点',
+      stationType: station.station_type,
+      status: station.station_status && station.station_status !== '正常' ? station.station_status : null,
+      colorToken: isCenter ? '--foreground' : '--status-unknown',
+      fields,
+    };
+  }, [selectedIndex, stations, downslopeAzimuth]);
+
+  const zoomBy = (delta: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const [min, max] = map.getZooms();
+    map.setZoom(Math.max(min, Math.min(max, map.getZoom() + delta)), false);
+  };
 
   const terrain = environment.terrain;
   const geology = environment.geology;
   return (
     <div className="space-y-4">
-      <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
-      <div className="relative isolate overflow-hidden rounded-lg border">
-        <div ref={containerRef} role="region" aria-label="场地环境地图" aria-busy={amap.status === 'loading'}
-          className={cn('h-[min(60dvh,32rem)] w-full touch-none', amap.status === 'loading' && 'animate-pulse bg-muted/40')} />
+      <div
+        data-map-basemap={layerSelection.baseLayer}
+        className="relative isolate overflow-hidden rounded-xl border border-border/70 bg-muted/40"
+      >
+        <div
+          ref={containerRef}
+          role="region"
+          aria-label="场地环境地图"
+          aria-busy={amap.status === 'loading'}
+          className={cn('h-[min(56dvh,28rem)] min-h-72 w-full touch-none', amap.status === 'loading' && 'animate-pulse')}
+        />
+        <div className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-end">
+          <MapLayerControl selection={layerSelection} onChange={setLayerSelection} />
+        </div>
+        <div className="pointer-events-none absolute end-3 bottom-3 z-20">
+          <MapZoomControls onZoomIn={() => zoomBy(1)} onZoomOut={() => zoomBy(-1)} onFitView={fitAllMarkers} />
+        </div>
+        <MapStationSheet info={sheetInfo} onClose={() => setSelectedIndex(null)} />
       </div>
       {downslopeAzimuth !== null && (
-        <p className="text-xs text-muted-foreground">白色虚线扇形为当前测点的下坡方向（约 90 m 地形的平均坡面，不代替现场勘查的主滑方向）</p>
+        <p className="text-xs text-muted-foreground">虚线扇形为当前测点下坡方向（约 90 m 地形平均坡面，不代替现场勘查主滑方向）。</p>
       )}
       {amap.status === 'error' && <p role="status" className="text-sm text-muted-foreground">{amap.message}</p>}
-      {invalidNames.length > 0 && <p className="text-sm text-muted-foreground">以下测点坐标缺失或超出经纬度范围，未绘制：{invalidNames.join('、')}。请核对平台登记坐标。</p>}
+      {invalidNames.length > 0 && <p className="text-sm text-muted-foreground">以下测点坐标缺失或无效，未绘制：{invalidNames.join('、')}。</p>}
       {mapError && <p role="status" className="text-sm text-muted-foreground">{mapError}</p>}
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div>
@@ -151,15 +220,15 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
         </div>
         <div>
           <dt className="text-muted-foreground">地形</dt>
-          <dd>
+          <dd className="tabular-nums">
             {terrain
               ? `高程 ${terrain.dem_elevation_m ?? '—'} m · 坡度 ${terrain.slope_degrees ?? '—'}° · 坡向 ${terrain.aspect || '—'} · 500 m 起伏 ${terrain.relief_500m_m ?? '—'} m`
               : '暂无地形数据'}
           </dd>
         </div>
-        <div>
+        <div className="sm:col-span-2">
           <dt className="text-muted-foreground">地质</dt>
-          <dd>{geology ? [geology.name, geology.lithology || geology.age].filter(Boolean).join(' · ') || '暂无地层名称' : '暂无地质数据'}</dd>
+          <dd>{formatGeology(geology)}</dd>
         </div>
       </dl>
     </div>

@@ -2,9 +2,11 @@ import React, { forwardRef, useEffect, useRef, useState } from 'react';
 import { useAuiEvent, useAuiState } from '@assistant-ui/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ActivityIcon, ListIcon, Mountain, PanelLeftClose, PanelLeftOpen, PlusIcon, Settings, SunIcon, type LucideIcon } from 'lucide-react';
+import { motion } from 'motion/react';
 import { ThreadList, ThreadListLoadError } from '@/components/assistant-ui/elements/thread-list.aui';
 import { Thread } from '@/components/assistant-ui/elements/thread.aui';
 import { Button } from '@/components/ui/button';
+import { SPRING_SNAPPY } from '@/components/ui/motion-primitives';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { PanelResizeHandle, usePanelResize } from '@/components/ui/panel-resize-handle';
 import { InspectionProvider, useInspection } from '@/features/inspection/InspectionContext';
@@ -41,22 +43,31 @@ const NavigationItem: React.FC<{
   label: string;
   isCurrent: boolean;
   badge?: number;
+  indicatorGroup?: string;
   onClick: () => void;
-}> = ({ icon: Icon, label, isCurrent, badge, onClick }) => (
+}> = ({ icon: Icon, label, isCurrent, badge, indicatorGroup, onClick }) => (
   <button
     type="button"
     aria-label={label}
     aria-current={isCurrent ? 'page' : undefined}
     onClick={onClick}
     className={cn(
-      'flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-      isCurrent && 'bg-muted font-medium text-foreground',
+      'relative flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+      isCurrent && 'font-medium text-foreground',
     )}
   >
-    <Icon className="size-4 shrink-0" aria-hidden />
-    {label}
+    {isCurrent && (
+      <motion.span
+        layoutId={indicatorGroup ?? 'sidebar-nav-pill'}
+        transition={SPRING_SNAPPY}
+        aria-hidden
+        className="absolute inset-0 rounded-md bg-muted"
+      />
+    )}
+    <Icon className="relative z-10 size-4 shrink-0" aria-hidden />
+    <span className="relative z-10">{label}</span>
     {badge !== undefined && badge > 0 && (
-      <span className="ms-auto text-xs font-medium text-status-attention tabular-nums" title={`${badge} 个测点建议调查`}>{badge}</span>
+      <span className="relative z-10 ms-auto text-xs font-medium text-status-attention tabular-nums" title={`${badge} 个测点建议调查`}>{badge}</span>
     )}
   </button>
 );
@@ -82,10 +93,16 @@ function usePageEntries(): PageEntry[] {
   ];
 }
 
-const NavigationRail = forwardRef<HTMLButtonElement, SettingsMenuActions & { expandLabel: string; onExpand: () => void }>(({ expandLabel, onExpand, onOpenSettings, onLogout }, expandButtonRef) => {
+const NavigationRail = forwardRef<HTMLButtonElement, SettingsMenuActions & { expandLabel: string; onExpand: () => void; hidden?: boolean }>(({ expandLabel, onExpand, onOpenSettings, onLogout, hidden = false }, expandButtonRef) => {
   const entries = usePageEntries();
   return (
-    <nav aria-label="快捷导航" data-navigation-rail="" className="flex h-full w-12 shrink-0 flex-col items-center gap-0.5 border-r bg-sidebar pt-[max(0.5rem,env(safe-area-inset-top))]">
+    <nav
+      aria-label="快捷导航"
+      aria-hidden={hidden || undefined}
+      inert={hidden}
+      data-navigation-rail=""
+      className="rail-inner flex h-full flex-col items-center gap-0.5 bg-sidebar pt-[max(0.5rem,env(safe-area-inset-top))]"
+    >
       <Button ref={expandButtonRef} type="button" variant="ghost" size="icon" onClick={onExpand} aria-label={expandLabel} title={expandLabel}
         className="mb-2 text-muted-foreground hover:text-foreground">
         <PanelLeftOpen className="size-4" />
@@ -93,12 +110,20 @@ const NavigationRail = forwardRef<HTMLButtonElement, SettingsMenuActions & { exp
       {entries.map(({ icon: Icon, label, isCurrent, badge, open }) => (
         <button key={label} type="button" onClick={open} aria-label={label} title={label} aria-current={isCurrent ? 'page' : undefined}
           className={cn(
-            'relative flex size-9 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-            isCurrent && 'bg-muted text-foreground',
+            'relative flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            isCurrent && 'text-foreground',
           )}>
-          <Icon className="size-4" aria-hidden />
+          {isCurrent && (
+            <motion.span
+              layoutId="rail-nav-pill"
+              transition={SPRING_SNAPPY}
+              aria-hidden
+              className="absolute inset-0 rounded-md bg-muted"
+            />
+          )}
+          <Icon className="relative z-10 size-4" aria-hidden />
           {badge !== undefined && badge > 0 && (
-            <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-status-attention" aria-hidden />
+            <span className="absolute top-1.5 right-1.5 z-10 size-1.5 rounded-full bg-status-attention" aria-hidden />
           )}
         </button>
       ))}
@@ -115,7 +140,7 @@ const NavigationRail = forwardRef<HTMLButtonElement, SettingsMenuActions & { exp
 });
 NavigationRail.displayName = 'NavigationRail';
 
-const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOpenSettings, onLogout }) => {
+const Sidebar: React.FC<SidebarProps & { indicatorGroup?: string }> = ({ onClose, closeLabel, onNavigate, onOpenSettings, onLogout, indicatorGroup }) => {
   const { showConversation } = useNavigation();
   const entries = usePageEntries();
 
@@ -145,7 +170,7 @@ const Sidebar: React.FC<SidebarProps> = ({ onClose, closeLabel, onNavigate, onOp
       </div>
       <nav aria-label="页面" className="shrink-0 space-y-0.5 px-2">
         {entries.map(({ icon, label, isCurrent, badge, open }) => (
-          <NavigationItem key={label} icon={icon} label={label} isCurrent={isCurrent} badge={badge} onClick={go(open)} />
+          <NavigationItem key={label} icon={icon} label={label} isCurrent={isCurrent} badge={badge} indicatorGroup={indicatorGroup} onClick={go(open)} />
         ))}
       </nav>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2 pt-5">
@@ -288,7 +313,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
 
   const navigationLabel = canDockSidebar ? '展开侧边栏' : '打开导航';
   const headerTitle = page === 'conversation' ? threadTitle : page === 'home' ? '今日' : PAGE_TITLES[page];
-  const showHeader = !isDesktop || page === 'conversation' || page === 'station';
+  const showHeader = !isDesktop || page === 'conversation';
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-background">
@@ -298,39 +323,40 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
           ref={navigationPanelRef}
           data-navigation-docked=""
           data-state={isSidebarDocked ? 'open' : 'closed'}
-          aria-hidden={!isSidebarDocked}
-          inert={!isSidebarDocked}
           style={navigationResize.style}
-          className="navigation-panel relative h-full shrink-0"
+          className="navigation-shell"
         >
-          <div className="panel-inner h-full overflow-hidden border-r">
+          <div
+            aria-hidden={!isSidebarDocked}
+            inert={!isSidebarDocked}
+            className="panel-inner h-full overflow-hidden"
+          >
             <Sidebar
+              indicatorGroup="docked-nav-pill"
               onClose={() => setSidebarCollapsed(true)}
               closeLabel="折叠侧边栏"
               onOpenSettings={openSettings}
               onLogout={onLogout}
             />
           </div>
+          <NavigationRail
+            ref={navigationButtonRef}
+            hidden={isSidebarDocked}
+            expandLabel={navigationLabel}
+            onOpenSettings={openSettings}
+            onLogout={onLogout}
+            onExpand={() => {
+              if (canDockSidebar) {
+                setSidebarCollapsed(false);
+              } else {
+                setIsDrawerOpen(true);
+              }
+            }}
+          />
           {isSidebarDocked && (
             <PanelResizeHandle label="调整导航宽度" panelId="session-navigation-docked" edge="right" {...navigationResize.handleProps} />
           )}
         </div>
-      )}
-
-      {isDesktop && !isSidebarDocked && (
-        <NavigationRail
-          ref={navigationButtonRef}
-          expandLabel={navigationLabel}
-          onOpenSettings={openSettings}
-          onLogout={onLogout}
-          onExpand={() => {
-            if (canDockSidebar) {
-              setSidebarCollapsed(false);
-            } else {
-              setIsDrawerOpen(true);
-            }
-          }}
-        />
       )}
 
       {!canDockSidebar && (
@@ -352,6 +378,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
             <SheetDescription className="sr-only">切换页面，或打开最近的调查。</SheetDescription>
             <ThreadListLoadError />
             <Sidebar
+              indicatorGroup="drawer-nav-pill"
               onClose={() => setIsDrawerOpen(false)}
               closeLabel="关闭导航"
               onNavigate={() => setIsDrawerOpen(false)}
@@ -381,7 +408,7 @@ const AppLayoutContent: React.FC<AppLayoutProps> = ({ onOpenSettings, onLogout }
           </header>
         )}
         <ThreadListLoadError />
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="view-transition-page min-h-0 flex-1 overflow-hidden">
           {(page === 'home' || page === 'lab') && <TodayPage draft={homeDraft} onDraftChange={setHomeDraft} initialScopedOpen={page === 'lab'} />}
           {page === 'conversation' && <Thread autoFocus={isDesktop} welcome={<NewInvestigation />} />}
           <div className="h-full" hidden={page !== 'stations'}><StationsPage active={page === 'stations'} /></div>

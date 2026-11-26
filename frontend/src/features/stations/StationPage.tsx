@@ -19,7 +19,7 @@ import { useInspection } from '@/features/inspection/InspectionContext';
 import { useChartColors } from '@/features/monitoring/chartColors';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import { WindowMetrics } from '@/features/monitoring/StationInspector';
-import { chartClock, chartMillis } from '@/features/monitoring/chart-time';
+import { chartClock, chartDay, chartMillis } from '@/features/monitoring/chart-time';
 import { useStationInspector } from '@/features/monitoring/StationInspectorContext';
 import { StatusDot } from '@/features/monitoring/status';
 import { buildTimelineOption, displacementBasis, displacementBasisLabel, formatChartTime, peerSeriesFor, type DailyRainfall, type PeerSeries } from '@/features/monitoring/timeline';
@@ -28,7 +28,7 @@ import type { ChartRange, ChartSelection } from '@/features/monitoring/TimelineC
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { cn } from 'cn';
 import type { InspectionStation, ScreeningFinding, StationRecord, StationWindow, TimelineDays } from '@/services/api';
-import type { GnssArtifactData } from '@/types/envelope';
+import type { GnssArtifactData, RainEvent } from '@/types/envelope';
 
 const TimelineChart = lazy(() => import('@/features/monitoring/TimelineChart'));
 
@@ -76,10 +76,26 @@ const CustomRangeForm: FC<{
   const [begin, setBegin] = useState(initial?.begin ?? toDateInput(new Date(Date.now() - 30 * DAY_MILLIS)));
   const [end, setEnd] = useState(initial?.end ?? today);
   const span = customRangeDays(begin, end);
-  const isValid = Boolean(begin && end) && span >= 1 && span <= MAX_RANGE_DAYS && end <= today;
+  let errorMessage: string | null = null;
+  if (!begin || !end) {
+    errorMessage = '请选择开始和结束日期';
+  } else if (span < 1) {
+    errorMessage = '结束日期不能早于开始日期';
+  } else if (end > today) {
+    errorMessage = '结束日期不能晚于今天';
+  } else if (span > MAX_RANGE_DAYS) {
+    errorMessage = '最多 366 天（含起止日）';
+  }
+  const isValid = errorMessage === null;
   return (
     <form
       className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          onCancel();
+        }
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         if (isValid) {
@@ -96,7 +112,7 @@ const CustomRangeForm: FC<{
         <Button type="button" variant="ghost" onClick={onCancel}>取消</Button>
         <Button type="submit" disabled={!isValid}>查看</Button>
       </div>
-      {span > MAX_RANGE_DAYS && <p role="alert" className="w-full text-muted-foreground">最多 366 天（含起止日）</p>}
+      {errorMessage && <p role="alert" className="w-full text-xs text-muted-foreground">{errorMessage}</p>}
     </form>
   );
 };
@@ -131,14 +147,25 @@ function NewStationInvestigationButton({ onStarted }: { onStarted: () => void })
   );
 }
 
-function StationChatActions({ expanded, onExpand, onClose, onNewInvestigation }: {
+function StationChatActions({ stationName, expanded, onBack, onExpand, onClose, onNewInvestigation }: {
+  stationName: string;
   expanded: boolean;
+  onBack: () => void;
   onExpand: () => void;
   onClose: () => void;
   onNewInvestigation: () => void;
 }) {
   return (
     <div className="flex min-h-11 shrink-0 items-center gap-1 border-b px-3">
+      {expanded && (
+        <>
+          <Button type="button" variant="ghost" size="icon" className="-ms-1 size-8 text-muted-foreground" aria-label="返回" onClick={onBack}>
+            <ArrowLeftIcon className="size-4" />
+          </Button>
+          <span className="shrink-0 text-sm font-semibold">{stationName}</span>
+          <span aria-hidden className="px-0.5 text-muted-foreground">/</span>
+        </>
+      )}
       <StationInvestigationTitle />
       <NewStationInvestigationButton onStarted={onNewInvestigation} />
       <Button variant="ghost" size="icon" title={expanded ? '恢复分栏' : '展开调查'} aria-label={expanded ? '恢复分栏' : '展开调查'} onClick={onExpand}>
@@ -168,11 +195,14 @@ const DisplacementChart: FC<{
   stationName: string;
   data: GnssArtifactData;
   rainfall: readonly DailyRainfall[];
+  rainEvents?: readonly RainEvent[];
+  rainfallDaily?: ReadonlyArray<{ date: string; value: number | null }>;
+  rainThresholdMm?: number;
   peers: readonly PeerSeries[];
   findings: readonly ScreeningFinding[];
   onAsk: () => void;
   disabled: boolean;
-}> = ({ stationName, data, rainfall, peers, findings, onAsk, disabled }) => {
+}> = ({ stationName, data, rainfall, rainEvents, rainfallDaily, rainThresholdMm, peers, findings, onAsk, disabled }) => {
   const { attachAskTarget, composerInputRef } = useStationInspector();
   const isLoading = useConversationLoading();
   const chartColors = useChartColors();
@@ -185,39 +215,56 @@ const DisplacementChart: FC<{
   );
 
   const askAbout = (target: ChartRange | ChartSelection) => {
-    attachAskTarget({ kind: 'displacement', stationUuid: data.station_uuid, stationName, ...target });
+    attachAskTarget({ kind: target.kind ?? 'displacement', stationUuid: data.station_uuid, stationName, start: target.start, end: target.end });
     onAsk();
     requestAnimationFrame(() => composerInputRef.current?.focus());
   };
 
+  const askAboutRainEvent = (event: RainEvent) => {
+    const start = chartDay(chartMillis(event.start)).start;
+    const end = chartDay(chartMillis(event.end)).end;
+    askAbout({ kind: 'rainfall', start, end });
+  };
+
   return (
-    <div>
-      <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className="text-muted-foreground min-w-0 text-sm tabular-nums">
-          {range && `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`}
-          {!range && displacementBasis(data) !== 'fixed' && displacementBasisLabel(data)}
-        </p>
-        {range && (
-          <div className="ms-auto flex shrink-0 items-center gap-1">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
-            <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={() => askAbout(range)}>{range.kind === 'rainfall' ? '问当前降雨' : '问当前范围'}</Button>
-          </div>
-        )}
+    <div className="space-y-4">
+      <div>
+        <div className="flex min-h-8 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p className="text-muted-foreground min-w-0 text-sm tabular-nums">
+            {range && `${formatChartTime(range.start)} 至 ${formatChartTime(range.end)}`}
+            {!range && displacementBasis(data) !== 'fixed' && displacementBasisLabel(data)}
+          </p>
+          {range && (
+            <div className="ms-auto flex shrink-0 items-center gap-1">
+              <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>还原</Button>
+              <Button type="button" variant="outline" size="sm" disabled={isLoading || disabled} onClick={() => askAbout(range)}>{range.kind === 'rainfall' ? '问当前降雨' : '问当前范围'}</Button>
+            </div>
+          )}
+        </div>
+        <ErrorBoundary fallbackTitle="时间轴渲染异常">
+          <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+            <TimelineChart
+              viewKey={`${data.station_uuid}:${data.begin_time}:${data.end_time}:${mode}`}
+              option={option}
+              label={`${stationName} 位移时间轴`}
+              resetSignal={resetSignal}
+              onRangeChange={setRange}
+              onAsk={askAbout}
+              hasRainfall={rainfall.length > 0}
+              askDisabled={isLoading || disabled}
+            />
+          </Suspense>
+        </ErrorBoundary>
       </div>
-      <ErrorBoundary fallbackTitle="时间轴渲染异常">
-        <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-          <TimelineChart
-            viewKey={`${data.station_uuid}:${data.begin_time}:${data.end_time}:${mode}`}
-            option={option}
-            label={`${stationName} 位移时间轴`}
-            resetSignal={resetSignal}
-            onRangeChange={setRange}
-            onAsk={askAbout}
-            hasRainfall={rainfall.length > 0}
-            askDisabled={isLoading || disabled}
-          />
-        </Suspense>
-      </ErrorBoundary>
+      {rainEvents && rainfallDaily && (
+        <RainEvents
+          events={rainEvents}
+          daily={rainfallDaily}
+          thresholdMm={rainThresholdMm ?? 25}
+          onAskEvent={askAboutRainEvent}
+          askDisabled={isLoading || disabled}
+        />
+      )}
     </div>
   );
 };
@@ -302,7 +349,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const client = useLmaClient();
   const globalAui = useAui();
   const { returnFromStation, resultAnchor: recordAnchor, showStationResult: setRecordAnchor } = useNavigation();
-  const { latest } = useInspection();
+  const { latest, reload: reloadInspection } = useInspection();
   const isSideBySide = useMediaQuery('(min-width: 1100px)');
   const queryClient = useQueryClient();
   const [timeWindow, updateTimeWindow] = useState<StationWindow>(() => storedWindow(stationUuid));
@@ -324,10 +371,11 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   const rainfallQuery = useQuery({
     queryKey: ['station-rainfall', stationUuid, timeWindow],
     queryFn: ({ signal }) => client.getStationRainfall(stationUuid, timeWindow, signal),
+    placeholderData: keepPreviousData,
     staleTime: 30 * 60 * 1000,
     retry: 1,
   });
-  const rainfall = timelineQuery.isPlaceholderData ? undefined : rainfallQuery.data;
+  const rainfall = rainfallQuery.data;
   const dailyRainfall = useMemo<DailyRainfall[]>(
     () => (rainfall?.daily ?? []).flatMap((day) => (day.value === null ? [] : [{ date: day.date, value: day.value, isForecast: false }])),
     [rainfall],
@@ -345,7 +393,9 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
   });
   const investigationCompleted = () => {
     void queryClient.invalidateQueries({ queryKey: ['station-timeline', stationUuid] });
+    void queryClient.invalidateQueries({ queryKey: ['session-conclusions'] });
     void globalAui.threads().reload();
+    reloadInspection();
   };
 
   const directoryQuery = useQuery({ queryKey: ['stations'], queryFn: ({ signal }) => client.listStations(signal) });
@@ -401,6 +451,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
     setChatMode('split');
   };
 
+  const hasDisplacementSeries = !timeline || timeline.series !== null;
   const dataPanel = (conversationReady: boolean) => (
     <section aria-label="测点数据" className="h-full min-w-0 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
       <div className="station-data">
@@ -415,33 +466,35 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               <StatusDot status={inspection.screening} />{investigationStatusLabel(inspection.screening)}
             </span>
           )}
-          <div className={cn('flex flex-wrap items-center gap-2', isSideBySide && 'ms-auto')}>
-            {groupPeers.length > 0 && (
-              <Toggle size="sm" variant="outline" pressed={showPeers} onPressedChange={setShowPeers}>同组对比</Toggle>
-            )}
-            <div className="flex items-center gap-1">
-              <Segmented
-                label="时间范围"
-                value={'days' in timeWindow && !isEditingRange ? String(timeWindow.days) : ''}
-                options={WINDOW_OPTIONS}
-                onValueChange={(value) => {
-                  setIsEditingRange(false);
-                  setTimeWindow({ days: Number(value) as TimelineDays });
-                }}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-expanded={isEditingRange}
-                className={cn('px-2.5 font-normal', isEditingRange || 'begin' in timeWindow ? 'bg-muted' : 'text-muted-foreground')}
-                onClick={() => setIsEditingRange((editing) => !editing)}
-              >自定义</Button>
+          {hasDisplacementSeries && (
+            <div className={cn('flex flex-wrap items-center gap-2', isSideBySide && 'ms-auto')}>
+              {groupPeers.length > 0 && (
+                <Toggle size="sm" variant="outline" pressed={showPeers} onPressedChange={setShowPeers}>同组对比</Toggle>
+              )}
+              <div className="flex items-center gap-1">
+                <Segmented
+                  label="时间范围"
+                  value={'days' in timeWindow && !isEditingRange ? String(timeWindow.days) : ''}
+                  options={WINDOW_OPTIONS}
+                  onValueChange={(value) => {
+                    setIsEditingRange(false);
+                    setTimeWindow({ days: Number(value) as TimelineDays });
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={isEditingRange}
+                  className={cn('px-2.5 font-normal', isEditingRange || 'begin' in timeWindow ? 'bg-muted' : 'text-muted-foreground')}
+                  onClick={() => setIsEditingRange((editing) => !editing)}
+                >自定义</Button>
+              </div>
             </div>
-          </div>
-          {isSideBySide && chatMode === 'closed' && <Button variant="outline" size="sm" onClick={showChat}>AI 调查</Button>}
+          )}
+          {isSideBySide && chatMode === 'closed' && <Button variant="outline" size="sm" className={cn(!hasDisplacementSeries && 'ms-auto')} onClick={showChat}>AI 调查</Button>}
         </div>
-        {isEditingRange && (
+        {hasDisplacementSeries && isEditingRange && (
           <CustomRangeForm
             initial={'begin' in timeWindow ? timeWindow : undefined}
             onApply={(range) => {
@@ -495,8 +548,18 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
                 </div>
               )}
               <WindowMetrics data={timeline.series} />
-              <DisplacementChart stationName={timeline.station_name} data={timeline.series} rainfall={dailyRainfall} peers={isSwitchingWindow ? [] : peerSeries} findings={findings} onAsk={showChat} disabled={!conversationReady || isSwitchingWindow} />
-              {rainfall && <RainEvents events={rainfall.events} daily={rainfall.daily} thresholdMm={rainfall.threshold_mm} />}
+              <DisplacementChart
+                stationName={timeline.station_name}
+                data={timeline.series}
+                rainfall={dailyRainfall}
+                rainEvents={rainfall?.events}
+                rainfallDaily={rainfall?.daily}
+                rainThresholdMm={rainfall?.threshold_mm}
+                peers={peerSeries}
+                findings={findings}
+                onAsk={showChat}
+                disabled={!conversationReady || isSwitchingWindow}
+              />
               {rainfallQuery.isError && (
                 <p className="text-muted-foreground text-sm">
                   降雨资料暂不可用。
@@ -539,7 +602,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
         <div className="flex h-full min-h-0 flex-col">
           {!isSideBySide && <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
             <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
-            {panel === 'chat' ? <StationInvestigationTitle /> : <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>}
+            <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>
             {panel === 'chat' && <NewStationInvestigationButton onStarted={() => setRecordAnchor(undefined)} />}
             <Segmented
               label="测点页内容"
@@ -561,10 +624,14 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
               inert={isSideBySide && chatMode === 'closed'}
               aria-hidden={isSideBySide && chatMode === 'closed' ? true : undefined}
               className={cn('relative flex h-full min-w-0 flex-col', isSideBySide ? 'station-chat-panel' : 'flex-1', !isSideBySide && panel !== 'chat' && 'hidden')}>
-              {isSideBySide && <StationChatActions expanded={chatMode === 'expanded'}
+              {isSideBySide && <StationChatActions
+                stationName={stationName}
+                expanded={chatMode === 'expanded'}
+                onBack={returnFromStation}
                 onExpand={() => setChatMode(chatMode === 'expanded' ? 'split' : 'expanded')}
                 onClose={() => setChatMode('closed')}
-                onNewInvestigation={() => setRecordAnchor(undefined)} />}
+                onNewInvestigation={() => setRecordAnchor(undefined)}
+              />}
               {isSideBySide && chatMode === 'split' && <PanelResizeHandle label="调整数据与调查宽度" panelId={`station-chat-${stationUuid}`} edge="left" {...chatResize.handleProps} />}
               <div className="min-h-0 flex-1">{chatPanel}</div>
             </div>

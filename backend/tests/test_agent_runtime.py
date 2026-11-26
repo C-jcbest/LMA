@@ -335,7 +335,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         tool_messages = [m for m in result["messages"] if m.type == "tool"]
         self.assertEqual(len(tool_messages), 1)
         self.assertEqual(tool_messages[0].status, "error")
-        self.assertEqual(tool_messages[0].content, "工具执行失败，未取得可用数据，请说明这一限制。")
+        self.assertEqual(tool_messages[0].content, "本次数据查询未能完成，暂未取得可用数据。")
         self.assertIsNone(tool_messages[0].artifact)
 
     async def test_platform_business_error_is_not_retried_or_exposed(self):
@@ -361,7 +361,7 @@ class AgentRuntimeTests(unittest.IsolatedAsyncioTestCase):
         message = next(m for m in result["messages"] if m.type == "tool")
         self.assertEqual(attempts, [1])
         self.assertEqual(message.status, "error")
-        self.assertIn("监测平台拒绝本次查询", message.content)
+        self.assertIn("监测平台暂未返回该查询结果", message.content)
         self.assertNotIn("PRIVATE_CODE", str(message))
         self.assertNotIn("secret vendor response", str(message))
         self.assertIsNone(message.artifact)

@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
-import { useAui, useAuiState } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 import { ChevronLeftIcon, ChevronRightIcon, Maximize2Icon, Minimize2Icon, XIcon } from 'lucide-react';
 import { useOptionalSetFocusStation } from '@/app/providers/LmaClientContext';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
@@ -110,14 +111,35 @@ interface TimelineViewProps {
   toolCallId: string;
 }
 
+const uniqueSeriesOptions = (seriesList: readonly GnssArtifactData[]) => {
+  const counts = new Map<string, number>();
+  for (const item of seriesList) {
+    const label = seriesLabel(item);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  return seriesList.map((item, index) => {
+    const base = seriesLabel(item);
+    const total = counts.get(base) ?? 1;
+    if (total === 1) {
+      return { value: String(index), label: base };
+    }
+    const order = (seen.get(base) ?? 0) + 1;
+    seen.set(base, order);
+    return { value: String(index), label: `${base} (${order})` };
+  });
+};
+
 const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedIndex, onSelectIndex, peers, viewState, toolCallId }) => {
   const { attachAskTarget, isSplit, composerInputRef, closeInspector } = useStationInspector();
+  const isThreadRunning = useAuiState((state) => state.thread.isRunning);
   const chartColors = useChartColors();
   const [mode, setMode] = useState<TimelineMode>(viewState.mode ?? 'components');
   const [range, setRange] = useState<ChartRange | null>(null);
   const [resetSignal, setResetSignal] = useState(0);
 
   const data = seriesList[selectedIndex]!;
+  const seriesOptions = useMemo(() => uniqueSeriesOptions(seriesList), [seriesList]);
   const peerSeries = useMemo(
     () => peerSeriesFor(data, peers.map((peer) => ({ name: peer.name, series: peer.series.map((item) => item.data) }))),
     [data, peers],
@@ -142,12 +164,14 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         {seriesList.length > 1 ? (
-          <Segmented
-            label="时间窗口"
-            value={String(selectedIndex)}
-            options={seriesList.map((item, index) => ({ value: String(index), label: seriesLabel(item) }))}
-            onValueChange={(value) => onSelectIndex(Number(value))}
-          />
+          <div className="max-w-full overflow-x-auto">
+            <Segmented
+              label="时间窗口"
+              value={String(selectedIndex)}
+              options={seriesOptions}
+              onValueChange={(value) => onSelectIndex(Number(value))}
+            />
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">{seriesLabel(data)}</p>
         )}
@@ -180,7 +204,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
               <Button type="button" variant="ghost" size="sm" onClick={() => setResetSignal((value) => value + 1)}>
                 还原
               </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => askAbout(range)}>
+              <Button type="button" variant="outline" size="sm" disabled={isThreadRunning} onClick={() => askAbout(range)}>
                 {range.kind === 'rainfall' ? '问当前降雨' : '问当前范围'}
               </Button>
             </div>
@@ -195,6 +219,7 @@ const TimelineView: FC<TimelineViewProps> = ({ station, seriesList, selectedInde
               resetSignal={resetSignal}
               onRangeChange={setRange}
               onAsk={askAbout}
+              askDisabled={isThreadRunning}
               hasRainfall={rainfall.length > 0}
               initialState={viewState.charts.get(`${toolCallId}:${mode}`)}
               onStateChange={(state) => viewState.charts.set(`${toolCallId}:${mode}`, state)}
@@ -273,6 +298,7 @@ const TAB_CLASS = 'h-11 flex-none px-1 font-normal text-muted-foreground group-d
 
 interface InspectorBodyProps {
   viewKey: string;
+  selectionVersion: number;
   station: StationEvidence;
   focusToolCallId?: string;
   stations: readonly StationEvidence[];
@@ -281,8 +307,18 @@ interface InspectorBodyProps {
   onClose: () => void;
 }
 
-const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCallId, stations, title, onSelectStation, onClose }) => {
+const InspectorBody: FC<InspectorBodyProps> = ({
+  viewKey,
+  selectionVersion,
+  station,
+  focusToolCallId,
+  stations,
+  title,
+  onSelectStation,
+  onClose,
+}) => {
   const { viewStates, canExpand, isFullscreen, toggleFullscreen } = useStationInspector();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const saved = useMemo(() => {
     let state = viewStates.current.get(viewKey);
     if (!state) {
@@ -324,7 +360,19 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
   const setActiveTab = (tab: string) => {
     saved.tab = tab;
     updateActiveTab(tab);
+    scrollContainerRef.current?.scrollTo({ top: 0 });
   };
+
+  useEffect(() => {
+    if (!focusToolCallId) return;
+    const targetTab = saved.tab ?? initialTab(station, focusToolCallId);
+    updateActiveTab(targetTab);
+    const matchingIndex = sortedSeries.findIndex((item) => item.toolCallId === focusToolCallId);
+    if (matchingIndex >= 0) {
+      updateSelectedIndex(matchingIndex);
+    }
+  }, [selectionVersion, focusToolCallId, station, sortedSeries, saved]);
+
   const siteEvidence = station.site.find((item) => item.toolCallId === focusToolCallId) ?? station.site.at(-1);
   let noteToolCallId = focusToolCallId;
   if (activeTab === 'timeline') {
@@ -341,30 +389,53 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
     }
     const target = weatherRef.current?.querySelector<HTMLElement>(`[data-evidence-tool="${CSS.escape(focusToolCallId)}"]`);
     target?.scrollIntoView({ block: 'nearest' });
-  }, [activeTab, focusToolCallId]);
+  }, [activeTab, focusToolCallId, selectionVersion]);
+
+  const showDeviceStatus = Boolean(station.status && station.status !== '正常');
 
   return (
     <>
       <header className="flex min-h-12 shrink-0 items-center justify-between gap-3 px-4 sm:px-6">
         <div className="flex min-w-0 items-baseline gap-3">
           {title}
-          {station.status && <StationStatus status={station.status} />}
+          {showDeviceStatus && <StationStatus status={station.status} />}
         </div>
         <div className="flex shrink-0 items-center">
-          {canExpand && <Button type="button" variant="ghost" size="icon" className="size-10" aria-label={isFullscreen ? '恢复依据分栏' : '展开依据全屏'} onClick={toggleFullscreen}>
-            {isFullscreen ? <Minimize2Icon className="size-4" /> : <Maximize2Icon className="size-4" />}
-          </Button>}
           {stations.length > 1 && (
-            <>
-              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!previousStation} aria-label="上一个测点" onClick={() => onSelectStation(previousStation!.id)}>
+            <div className="me-1 flex items-center">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-9"
+                disabled={!previousStation}
+                title={previousStation ? `上一个：${previousStation.name}` : '已是第一个测点'}
+                aria-label="上一个测点"
+                onClick={() => onSelectStation(previousStation!.id)}
+              >
                 <ChevronLeftIcon className="size-4" />
               </Button>
-              <Button type="button" variant="ghost" size="icon" className="size-10" disabled={!nextStation} aria-label="下一个测点" onClick={() => onSelectStation(nextStation!.id)}>
+              <span className="px-1 text-xs text-muted-foreground tabular-nums">
+                {stationIndex + 1}/{stations.length}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-9"
+                disabled={!nextStation}
+                title={nextStation ? `下一个：${nextStation.name}` : '已是最后一个测点'}
+                aria-label="下一个测点"
+                onClick={() => onSelectStation(nextStation!.id)}
+              >
                 <ChevronRightIcon className="size-4" />
               </Button>
-            </>
+            </div>
           )}
-          <Button type="button" variant="ghost" size="icon" className="size-10" aria-label="关闭依据" onClick={onClose}>
+          {canExpand && <Button type="button" variant="ghost" size="icon" className="size-9" title={isFullscreen ? '恢复分栏' : '展开全屏'} aria-label={isFullscreen ? '恢复依据分栏' : '展开依据全屏'} onClick={toggleFullscreen}>
+            {isFullscreen ? <Minimize2Icon className="size-4" /> : <Maximize2Icon className="size-4" />}
+          </Button>}
+          <Button type="button" variant="ghost" size="icon" className="size-9" title="关闭" aria-label="关闭依据" onClick={onClose}>
             <XIcon className="size-4" />
           </Button>
         </div>
@@ -378,7 +449,7 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
           <TabsTrigger value="details" className={TAB_CLASS}>明细</TabsTrigger>
         </TabsList>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
+        <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6">
           {hasTimeline && (
             <TabsContent value="timeline" forceMount hidden={activeTab !== 'timeline'}>
               <TimelineView
@@ -415,14 +486,15 @@ const InspectorBody: FC<InspectorBodyProps> = ({ viewKey, station, focusToolCall
               </DetailSection>
             ))}
             {hasTimeline && (
-              <details className="rounded-lg border">
-                <summary className="flex min-h-10 cursor-pointer items-center px-3 text-sm font-medium">
-                  原始坐标 · {seriesLabel(seriesList[selectedIndex]!)}
-                </summary>
-                <div className="border-t p-3">
+              <Collapsible className="rounded-lg border">
+                <CollapsibleTrigger className="group/raw flex min-h-10 w-full items-center gap-2 px-3 text-start text-sm font-medium transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/raw:rotate-90" aria-hidden />
+                  <span>原始坐标 · {seriesLabel(seriesList[selectedIndex]!)}</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-t p-3">
                   <GnssResultView data={seriesList[selectedIndex]!} />
-                </div>
-              </details>
+                </CollapsibleContent>
+              </Collapsible>
             )}
           </TabsContent>
           <EvidenceNotes station={station} toolCallId={noteToolCallId} />
@@ -473,8 +545,7 @@ export const StationInspector: FC = () => {
     side: 'right',
     panelRef,
     availableWidth: () => {
-      const navigationWidth = [...document.querySelectorAll('[data-navigation-docked], [data-navigation-rail]')]
-        .reduce((total, element) => total + element.getBoundingClientRect().width, 0);
+      const navigationWidth = document.querySelector('[data-navigation-docked]')?.getBoundingClientRect().width ?? 0;
       return window.innerWidth - navigationWidth - 360;
     },
   });
@@ -510,13 +581,16 @@ export const StationInspector: FC = () => {
       return;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !event.defaultPrevented) {
-        closeInspector();
+      if (event.key === 'Escape') {
+        resize.onEscapeKeyDown(event);
+        if (!event.defaultPrevented) {
+          closeInspector();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isInspectorOpen, closeInspector]);
+  }, [isInspectorOpen, closeInspector, resize]);
 
   useEffect(() => {
     if (hasContent && !isSplit && !isClosing) {
@@ -531,7 +605,6 @@ export const StationInspector: FC = () => {
   const titleText = station ? station.name : evidence!.title;
   const close = () => closeInspector();
   const viewKey = station ? `${selection.messageId}:${station.id}` : `${selection.messageId}:${selection.toolCallId}`;
-  const inspectorKey = `${viewKey}:${selectionVersion}`;
   const title = <h2 id={titleId} className="min-w-0 truncate text-base font-medium">{titleText}</h2>;
 
   return (
@@ -565,11 +638,12 @@ export const StationInspector: FC = () => {
     >
       {isSplit && <PanelResizeHandle label="调整聊天与依据宽度" panelId="station-evidence" edge="left" {...resize.handleProps} />}
       {!station ? (
-        <EvidenceBody key={inspectorKey} envelope={evidence!.envelope} title={title} onClose={close} />
+        <EvidenceBody key={viewKey} envelope={evidence!.envelope} title={title} onClose={close} />
       ) : (
         <InspectorBody
-          key={inspectorKey}
+          key={viewKey}
           viewKey={viewKey}
+          selectionVersion={selectionVersion}
           station={station}
           focusToolCallId={selection.toolCallId}
           stations={stations}

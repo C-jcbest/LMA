@@ -79,10 +79,14 @@ interface BrushEndEvent {
 }
 
 const FULL_RANGE_TOLERANCE = 0.01;
-const ASK_BAR_TOP = 18;
-const ASK_BAR_HALF_WIDTH = 64;
+const ASK_BAR_TOP = 28;
+const ASK_BAR_HALF_WIDTH = 68;
 const PLOT_LEFT = 48;
 const PLOT_RIGHT = 12;
+
+interface AxisPointerEvent {
+  axesInfo?: Array<{ axisDim?: string; axisIndex?: number; value?: number }>;
+}
 
 const enableDragSelection = (chart: echarts.ECharts) => {
   if (!window.matchMedia('(hover: hover)').matches) return;
@@ -105,6 +109,8 @@ export default function TimelineChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const previousViewRef = useRef<string | null>(null);
+  const previousHasRainfallRef = useRef<boolean | null>(null);
+  const snappedAxisTimeRef = useRef<number | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [hover, setHover] = useState<{ time: number; kind: AskKind } | null>(null);
   const [selection, setSelection] = useState<ChartSelection | null>(null);
@@ -167,6 +173,11 @@ export default function TimelineChart({
         saveViewState(null);
       });
       chart.on('legendselectchanged', () => saveViewState());
+      chart.on('updateAxisPointer', (event) => {
+        const axesInfo = (event as AxisPointerEvent).axesInfo;
+        const xAxisInfo = axesInfo?.find((info) => info.axisDim === 'x' && typeof info.value === 'number' && Number.isFinite(info.value));
+        snappedAxisTimeRef.current = xAxisInfo?.value ?? null;
+      });
 
       const gridAt = (point: [number, number]) => {
         if (hasRainfallRef.current && chart.containPixel({ gridIndex: 1 }, point)) {
@@ -178,10 +189,13 @@ export default function TimelineChart({
       const updateHover = ({ offsetX, offsetY }: { offsetX: number; offsetY: number }) => {
         const grid = gridAt([offsetX, offsetY]);
         if (grid === null) {
+          snappedAxisTimeRef.current = null;
           setHover(null);
           return;
         }
-        const time = chart.convertFromPixel({ xAxisIndex: grid }, offsetX);
+        const snapped = snappedAxisTimeRef.current;
+        const converted = chart.convertFromPixel({ xAxisIndex: grid }, offsetX);
+        const time = typeof snapped === 'number' && Number.isFinite(snapped) ? snapped : converted;
         if (typeof time === 'number' && Number.isFinite(time)) {
           setHover({ time, kind: grid === 1 ? 'rainfall' : 'displacement' });
         }
@@ -238,11 +252,14 @@ export default function TimelineChart({
       return;
     }
     const isNewView = previousViewRef.current !== viewKey;
-    chart.setOption(option, { notMerge: isNewView });
+    const rainfallLayoutChanged = previousHasRainfallRef.current !== null && previousHasRainfallRef.current !== hasRainfall;
+    chart.setOption(option, { notMerge: isNewView || rainfallLayoutChanged });
     previousViewRef.current = viewKey;
+    previousHasRainfallRef.current = hasRainfall;
     enableDragSelection(chart);
     if (isNewView) {
       zoomKind.current = initialState?.zoom?.kind ?? 'displacement';
+      snappedAxisTimeRef.current = null;
       onRangeChangeRef.current(null);
       setSelection(null);
       setHover(null);
@@ -259,7 +276,11 @@ export default function TimelineChart({
         saveViewState(initialState.selection);
       }
     }
-  }, [option, viewKey, isReady]);
+  }, [option, viewKey, hasRainfall, isReady]);
+
+  useEffect(() => {
+    chartRef.current?.resize();
+  }, [height]);
 
   useEffect(() => {
     if (resetSignal === 0) return;
@@ -319,18 +340,32 @@ export default function TimelineChart({
       );
     }
   } else if (onAsk && hover !== null && !isSelectingRef.current) {
-    const left = askBarLeft(hover.time);
     const day = chartDay(hover.time);
-    if (left !== null) {
-      askBar = (
-        <Button type="button" variant="outline" size="xs" disabled={askDisabled} onClick={() => ask({ ...day, kind: hover.kind })}
+    askBar = (
+      <div className="animate-in fade-in duration-150 absolute end-3 top-0 flex items-center gap-0.5 rounded-full border bg-popover/95 p-0.5 shadow-sm backdrop-blur-sm">
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={askDisabled}
+          onClick={() => ask({ ...day, kind: hover.kind })}
           aria-label={`追问 ${formatDay(hover.time)}`}
-          className="absolute -translate-x-1/2 rounded-full bg-popover px-2.5 shadow-sm"
-          style={{ left, top: ASK_BAR_TOP }}>
+          className="rounded-full px-2.5 text-foreground hover:bg-muted"
+        >
           问{formatDay(hover.time)}{hover.kind === 'rainfall' ? '降雨' : ''}
         </Button>
-      );
-    }
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="关闭日期追问"
+          onClick={() => setHover(null)}
+          className="rounded-full text-muted-foreground sm:hidden"
+        >
+          <XIcon aria-hidden />
+        </Button>
+      </div>
+    );
   }
 
   return (

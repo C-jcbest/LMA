@@ -30,8 +30,8 @@ _UPSTREAM_CONCURRENCY = 4
 
 async def screen_with_points(
     client: BeidouClient, station: Station, limiter: asyncio.Semaphore,
-) -> tuple[ScreeningResult, list[GnssDataPoint]]:
-    """读取一个测点的长期与近期数据并初筛；同时返回长期序列，巡检原型用它画图。失败时序列为空。"""
+) -> tuple[ScreeningResult, list[GnssDataPoint], list[GnssDataPoint]]:
+    """读取一个测点的长期与近期数据并初筛；同时返回长期与近期序列供视觉初判按触发窗口选图。"""
     now = business_now().replace(tzinfo=None)
     end_time = now.strftime(TIME_FORMAT)
     try:
@@ -49,15 +49,15 @@ async def screen_with_points(
             )
     except (BeidouApiError, httpx.HTTPError):
         logger.warning("inspection data request failed", exc_info=True)
-        return ScreeningResult("暂无法分析", ["监测平台数据暂不可用"]), []
+        return ScreeningResult("暂无法分析", ["监测平台数据暂不可用"]), [], []
     except Exception:
         logger.exception("inspection station failed: %s", station.station_uuid)
-        return ScreeningResult("暂无法分析", ["该测点数据无法解析，初筛未完成"]), []
+        return ScreeningResult("暂无法分析", ["该测点数据无法解析，初筛未完成"]), [], []
     try:
-        return screen_station(long_points, recent_points, station_reference(station), now), long_points
+        return screen_station(long_points, recent_points, station_reference(station), now), long_points, recent_points
     except Exception:
         logger.exception("inspection screening failed: %s", station.station_uuid)
-        return ScreeningResult("暂无法分析", ["该测点初筛计算失败"]), []
+        return ScreeningResult("暂无法分析", ["该测点初筛计算失败"]), [], []
 
 
 async def run_inspection(
@@ -76,7 +76,7 @@ async def run_inspection(
             limiter = asyncio.Semaphore(_UPSTREAM_CONCURRENCY)
 
             async def screen_and_count(station: Station) -> ScreeningResult:
-                result, _ = await screen_with_points(client, station, limiter)
+                result, _, _ = await screen_with_points(client, station, limiter)
                 await storage.increment_inspection_progress(inspection_id)
                 return result
 

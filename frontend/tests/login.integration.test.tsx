@@ -39,7 +39,7 @@ describe('访问保护', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('账号或密码错误。');
     expect(mockClient.login).toHaveBeenCalledWith('admin', 'wrong');
     expect(username).toHaveValue('admin');
-    expect(screen.getByLabelText('密码')).toHaveValue('');
+    expect(screen.getByLabelText('密码')).toHaveValue('wrong');
   });
 
   it('登录成功进入应用；之后任一接口返回 401 时回到登录页并说明已过期', async () => {

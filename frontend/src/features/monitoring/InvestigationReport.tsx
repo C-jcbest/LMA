@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState, type FC } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { CheckIcon, CopyIcon, DownloadIcon, FileTextIcon } from 'lucide-react';
+import { CheckIcon, ChevronRightIcon, CopyIcon, DownloadIcon, FileTextIcon, Loader2Icon } from 'lucide-react';
 import { TooltipIconButton } from '@/components/tooltip-icon-button';
+import { MorphIcon } from '@/components/ui/motion-primitives';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { cn } from 'cn';
 import type { ConclusionsArtifactData } from '@/types/envelope';
@@ -18,6 +19,9 @@ import { StatusDot } from './status';
 
 const orderedStations = (conclusions: ConclusionsArtifactData) =>
   [...conclusions.stations].sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status]);
+
+const sanitizeFilename = (name: string) =>
+  name.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
 
 export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }> = ({ conclusions }) => {
   const messageId = useAuiState((state) => state.message.id);
@@ -36,9 +40,16 @@ export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }>
             <span className="text-muted-foreground shrink-0">{investigationStatusLabel(item.status)}</span>
           </>
         );
-        const chipClass = 'flex min-h-8 max-w-full items-center gap-2 rounded-full border px-3 text-sm';
         if (!stationIds.has(item.station_uuid)) {
-          return <li key={item.station_uuid} className={chipClass} title={item.reason}>{content}</li>;
+          return (
+            <li
+              key={item.station_uuid}
+              title={item.reason}
+              className="flex min-h-8 max-w-full items-center gap-2 rounded-full bg-muted/60 px-3 text-sm"
+            >
+              {content}
+            </li>
+          );
         }
         const isSelected = selection?.messageId === messageId && selection.stationId === item.station_uuid;
         return (
@@ -50,12 +61,12 @@ export const ConclusionStatusStrip: FC<{ conclusions: ConclusionsArtifactData }>
               aria-pressed={isSelected}
               onClick={() => (isSelected ? closeInspector() : openStation({ messageId, stationId: item.station_uuid }))}
               className={cn(
-                chipClass,
-                'transition hover:bg-muted active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                'flex min-h-8 max-w-full items-center gap-1.5 rounded-full border bg-background px-3 text-sm transition hover:bg-muted active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                 isSelected && 'border-foreground/40 bg-muted',
               )}
             >
               {content}
+              <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
             </button>
           </li>
         );
@@ -85,6 +96,8 @@ export const ConclusionsFallback: FC = () => {
 
 export const AnswerActions: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
+  const threadTitle = useAuiState((state) =>
+    state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.title);
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const markdown = answerToMarkdown(parts);
   const [isPrinting, setIsPrinting] = useState(false);
@@ -95,29 +108,36 @@ export const AnswerActions: FC = () => {
   }, []);
 
   const download = () => {
+    const filename = sanitizeFilename(threadTitle && threadTitle !== '新会话' ? threadTitle : '') || '调查回答';
     const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = '调查回答.md';
+    link.download = `${filename}.md`;
     link.click();
     URL.revokeObjectURL(url);
   };
 
   return (
     <>
-      <TooltipIconButton tooltip="复制" onClick={() => copyToClipboard(markdown)}>
-        {isCopied ? <CheckIcon /> : <CopyIcon />}
+      <TooltipIconButton tooltip={isCopied ? '已复制' : '复制'} onClick={() => copyToClipboard(markdown)}>
+        <MorphIcon activeKey={isCopied ? 'copied' : 'copy'}>
+          {isCopied ? <CheckIcon /> : <CopyIcon />}
+        </MorphIcon>
       </TooltipIconButton>
       <TooltipIconButton tooltip="导出为 Markdown" onClick={download}>
         <DownloadIcon />
       </TooltipIconButton>
-      <TooltipIconButton tooltip="导出调查 PDF" disabled={isPrinting} onClick={() => {
-        setExportFailed(false);
-        setIsPrinting(true);
-      }}>
-        <FileTextIcon />
+      <TooltipIconButton
+        tooltip={isPrinting ? '正在生成 PDF…' : '导出调查 PDF'}
+        disabled={isPrinting}
+        onClick={() => {
+          setExportFailed(false);
+          setIsPrinting(true);
+        }}
+      >
+        {isPrinting ? <Loader2Icon className="animate-spin" /> : <FileTextIcon />}
       </TooltipIconButton>
-      {exportFailed && <span role="alert" className="text-xs">PDF 未能导出，请重试</span>}
+      {exportFailed && <span role="alert" className="text-xs text-destructive">PDF 未能导出，请重试</span>}
       {isPrinting && <PrintReport onDone={finishPrinting} />}
     </>
   );

@@ -13,11 +13,15 @@ const STATUS_DOT_CLASS: Record<string, string> = {
 export const StatusDot: FC<{ status: string | null | undefined; className?: string }> = ({ status, className }) => (
   <span
     aria-hidden
-    className={cn('size-2 shrink-0 rounded-full', (status && STATUS_DOT_CLASS[status]) || 'bg-status-unknown', className)}
+    className={cn(
+      'size-2 shrink-0 rounded-full transition-colors duration-200',
+      (status && STATUS_DOT_CLASS[status]) || 'bg-status-unknown',
+      className,
+    )}
   />
 );
 
-const AXIS_LABELS = { n: '北向', e: '东向', u: '垂向' } as const;
+const AXIS_LABELS = { n: '北向', e: '东向', u: '垂直' } as const;
 
 export function largestChange(station: Pick<InspectionStation, 'metrics'>): { axis: string; millimeters: number } | null {
   const changes = station.metrics?.net_change_mm;

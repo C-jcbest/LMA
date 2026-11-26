@@ -258,7 +258,12 @@ export interface TimelineInput {
   findings?: readonly ScreeningFinding[];
 }
 
-const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPoint[], colorOf: (axis: Axis | 'h') => string) => {
+const stepMarks = (
+  events: readonly StepEvent[],
+  points: readonly DisplacementPoint[],
+  colorOf: (axis: Axis | 'h') => string,
+  borderColor: string,
+) => {
   const valueAt = new Map(points.map((point) => [point.time, point]));
   return {
     symbol: 'triangle',
@@ -271,7 +276,7 @@ const stepMarks = (events: readonly StepEvent[], points: readonly DisplacementPo
         return [];
       }
       const color = colorOf(event.axis);
-      return [{ name: stepEventText(event), coord: [toMillis(event.time), value], itemStyle: { color, borderColor: '#fff', borderWidth: 1 } }];
+      return [{ name: stepEventText(event), coord: [toMillis(event.time), value], itemStyle: { color, borderColor, borderWidth: 1.25 } }];
     }),
   };
 };
@@ -281,6 +286,7 @@ const displacementLine = (
   values: readonly (readonly [number, number | null])[],
   color: string,
   width: number,
+  emphasisFocus: 'none' | 'series' = 'none',
 ) => ({
   name,
   type: 'line',
@@ -291,7 +297,7 @@ const displacementLine = (
   connectNulls: false,
   lineStyle: { color, width },
   itemStyle: { color },
-  emphasis: { disabled: true },
+  emphasis: emphasisFocus === 'series' ? { focus: 'series' as const, lineStyle: { width: width + 0.75 } } : { disabled: true },
 });
 
 const gapBands = (gaps: readonly GapArtifact[], colors: ChartColors) => ({
@@ -341,11 +347,12 @@ const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
     .filter((item) => item.seriesName !== GAP_SERIES_NAME && item.seriesName !== STEP_SERIES_NAME);
   const lines = items.map((item) => {
     const value = Array.isArray(item.value) ? item.value[1] : item.value;
-    const text = typeof value === 'number' ? `${value.toFixed(2)} mm` : '缺测';
     if (item.seriesName === RAINFALL_SERIES_NAME && Array.isArray(item.value)) {
+      const text = typeof value === 'number' ? `${value.toFixed(1)} mm` : '缺测';
       const day = formatChartTime(Number(item.value[2])).slice(5, 10);
       return `${item.marker}${day} 日降雨 ${text}`;
     }
+    const text = typeof value === 'number' ? `${formatSigned(value, MILLIMETER_DIGITS)} mm` : '缺测';
     return `${item.marker}${item.seriesName} ${text}`;
   });
   const axisValue = items[0]?.axisValue;
@@ -353,8 +360,12 @@ const formatTooltip = (params: TooltipItem | TooltipItem[]) => {
   return [header, ...lines].join('<br/>');
 };
 
+const prefersReducedMotion = () =>
+  typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
 export function buildTimelineOption(input: TimelineInput, colors: ChartColors): EChartsCoreOption {
   const { data, rainfall, peers, mode, findings } = input;
+  const reducedMotion = prefersReducedMotion();
   const displacement = displacementOf(data);
   const hasRainfall = rainfall.length > 0;
   const axisIndexes = hasRainfall ? [0, 1] : [0];
@@ -373,9 +384,10 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
           peer.name,
           peer.points.map((point) => [toMillis(point.time), point.h] as const),
           colors.peer,
-          1,
+          1.15,
+          'series',
         )),
-        displacementLine(`${data.station_name} 水平`, lineValues('h'), colors.primary, 2.25),
+        displacementLine(`${data.station_name} 水平`, lineValues('h'), colors.primary, 2.25, 'series'),
       ];
 
   const axisColors: Record<Axis | 'h', string> = { n: colors.north, e: colors.east, u: colors.up, h: colors.primary };
@@ -390,11 +402,18 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
   const inspectionMarkers = (findings ?? []).flatMap((finding) => finding.time ? [{ name: finding.text, xAxis: toMillis(finding.time) }] : []);
   const stepSeries = {
     ...displacementLine(STEP_SERIES_NAME, [], colors.mutedText, 0),
-    markPoint: stepMarks(steps, displacement, (axis) => axisColors[axis]),
+    markPoint: stepMarks(steps, displacement, (axis) => axisColors[axis], colors.surface),
     ...(inspectionMarkers.length > 0 ? {
       markLine: {
         symbol: 'none',
-        label: { show: false },
+        label: {
+          show: true,
+          position: 'insideEndTop',
+          formatter: '巡检线索',
+          color: colors.mutedText,
+          fontSize: 11,
+        },
+        tooltip: { trigger: 'item', formatter: (params: { name: string }) => params.name },
         lineStyle: { color: colors.mutedText, type: 'dashed' },
         data: inspectionMarkers,
       },
@@ -420,7 +439,10 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
   };
 
   return {
-    animation: false,
+    animation: !reducedMotion,
+    animationDuration: 0,
+    animationDurationUpdate: reducedMotion ? 0 : 180,
+    animationEasingUpdate: 'cubicOut',
     useUTC: true,
     textStyle: { fontFamily: 'inherit' },
     grid: hasRainfall
@@ -458,6 +480,7 @@ export function buildTimelineOption(input: TimelineInput, colors: ChartColors): 
     tooltip: {
       trigger: 'axis',
       confine: true,
+      transitionDuration: reducedMotion ? 0 : 0.12,
       backgroundColor: colors.surface,
       borderColor: colors.border,
       textStyle: { color: colors.text, fontSize: 13 },

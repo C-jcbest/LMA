@@ -452,12 +452,14 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_weather_day_limits(self):
         now = datetime(2026, 9, 15, 12, 0, tzinfo=BUSINESS_TZ)
-        with patch.object(weather, "business_now", return_value=now):
-            with self.assertRaisesRegex(ToolFailure, "历史天气最多只能查询到昨天"):
-                await weather.query_weather.ainvoke({
-                    "latitude": 30, "longitude": 120,
-                    "start_date": "2026-09-10", "end_date": "2026-09-15"
-                })
+        fetch = AsyncMock(return_value={"current": {"temperature_2m": 20}, "daily": {"time": [], "precipitation_sum": []}})
+        with patch.object(weather, "business_now", return_value=now), patch.object(weather, "_fetch_json", fetch):
+            result = json.loads(await weather.query_weather.ainvoke({
+                "latitude": 30, "longitude": 120,
+                "start_date": "2026-09-10", "end_date": "2026-09-15"
+            }))
+        self.assertEqual(result["query"]["history_end_date"], "2026-09-14")
+        self.assertTrue(any("截至昨天" in item for item in result.get("limitations", [])))
 
     async def test_base_station_does_not_query_deformation(self):
         base = Station(station_uuid="base", station_name="基准站", station_type=1, group_uuid="g", group_name="测试组")

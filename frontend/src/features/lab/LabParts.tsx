@@ -18,7 +18,7 @@ interface SummaryProps {
   screened?: number;
   attention?: number;
   judged?: number;
-  status?: 'running' | 'done' | 'error';
+  status?: 'running' | 'done' | 'error' | 'cancelled';
   vision_enabled?: boolean;
   elapsed_seconds?: number;
   common_mode_checked?: boolean;
@@ -62,10 +62,16 @@ const ROW_ORDER: Record<string, number> = { 建议调查: 1, 数据不足: 2, �
 const PENDING_ORDER = 4;
 
 const WINDOW_LABEL = { long: '90 天', recent: '近 7 天' } as const;
-const RECENT_PREFIX = '近期小时序列：';
+const RECENT_PREFIXES = ['近期小时序列：', '近 7 天：'] as const;
 
-const triggerText = (trigger: Trigger) =>
-  trigger.text.startsWith(RECENT_PREFIX) ? trigger.text.slice(RECENT_PREFIX.length) : trigger.text;
+const triggerText = (trigger: Trigger) => {
+  for (const prefix of RECENT_PREFIXES) {
+    if (trigger.text.startsWith(prefix)) {
+      return trigger.text.slice(prefix.length);
+    }
+  }
+  return trigger.text;
+};
 
 function qualitySummary(notes: readonly QualityNote[]): string {
   const spikes = notes.filter((note) => note.kind === 'spike').length;
@@ -85,9 +91,18 @@ export const InspectionSummaryPart: FC<DataMessagePartProps<SummaryProps>> = ({ 
   const total = data.total ?? 0;
   const screened = data.screened ?? 0;
   const attention = data.attention ?? 0;
+  const judged = data.judged ?? 0;
+  const totalSteps = total + (data.vision_enabled ? attention : 0);
+  const completedSteps = screened + (data.vision_enabled ? judged : 0);
+  const progressValue = data.status === 'done'
+    ? 100
+    : totalSteps > 0 ? Math.min(100, (completedSteps / totalSteps) * 100) : 0;
+
   let statusText = <span className="text-shimmer">巡检中</span>;
   if (data.status === 'done') {
     statusText = <span>完成 · 用时 {data.elapsed_seconds ?? 0} 秒</span>;
+  } else if (data.status === 'cancelled') {
+    statusText = <span>已停止 · 已显示的结果保留</span>;
   } else if (data.status === 'error') {
     statusText = <span className="text-destructive">未完成，已显示的结果保留</span>;
   }
@@ -97,13 +112,13 @@ export const InspectionSummaryPart: FC<DataMessagePartProps<SummaryProps>> = ({ 
         <h2 className="text-base font-semibold">{data.label ?? '准备巡检'}</h2>
         <p className="text-sm text-muted-foreground tabular-nums">{statusText}</p>
       </div>
-      <Progress className="mt-3 h-1 bg-muted" aria-label="初筛进度" value={total > 0 ? (screened / total) * 100 : 0} />
+      <Progress className="mt-3 h-1 bg-muted" aria-label="巡检进度" value={progressValue} />
       <p className="mt-2 text-sm text-muted-foreground tabular-nums">
         已初筛 {screened} / {total}
         <span className="mx-2">·</span>
         <span className={cn(attention > 0 && 'text-status-attention')}>建议调查 {attention}</span>
         {data.vision_enabled && attention > 0 && (
-          <><span className="mx-2">·</span>视觉初判 {data.judged ?? 0} / {attention}</>
+          <><span className="mx-2">·</span>视觉初判 {judged} / {attention}</>
         )}
       </p>
       {data.vision_enabled === false && (
@@ -143,11 +158,14 @@ const VisionVerdict: FC<{ vision: VisionProps }> = ({ vision }) => {
           <button
             type="button"
             aria-expanded={showImage}
-            onClick={() => setShowImage((current) => !current)}
+            onClick={(event) => {
+              event.stopPropagation();
+              setShowImage((current) => !current);
+            }}
             className="mt-1 inline-flex min-h-8 items-center gap-1 rounded-md text-xs text-muted-foreground transition hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             模型看到的图
-            <ChevronDownIcon aria-hidden className={cn('size-3.5 transition-transform', showImage && 'rotate-180')} />
+            <ChevronDownIcon aria-hidden className={cn('size-3.5 transition-transform duration-200', showImage && 'rotate-180')} />
           </button>
           <AnimatePresence initial={false}>
             {showImage && (
@@ -187,7 +205,11 @@ export const StationRowPart: FC<DataMessagePartProps<RowProps>> = ({ data }) => 
       transition={SPRING_SNAPPY}
       aria-label={data.station_name}
       style={style}
-      className="today-row rounded-lg"
+      onClick={(event) => {
+        if ((event.target as Element).closest('button, a')) return;
+        openStation(data.station_uuid);
+      }}
+      className="today-row cursor-pointer rounded-lg transition-colors hover:bg-muted/50"
     >
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -219,7 +241,10 @@ export const StationRowPart: FC<DataMessagePartProps<RowProps>> = ({ data }) => 
           {triggers.length > 2 && (
             <button
               type="button"
-              onClick={() => setShowAll((current) => !current)}
+              onClick={(event) => {
+                event.stopPropagation();
+                setShowAll((current) => !current);
+              }}
               className="mt-0.5 min-h-7 rounded-sm text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
               {showAll ? '收起' : `另有 ${triggers.length - 2} 条线索`}

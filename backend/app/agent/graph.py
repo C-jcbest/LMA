@@ -55,11 +55,11 @@ def _on_tool_error(exc: Exception, request) -> str | None:
         return exc.content
     if isinstance(exc, BeidouApiError):
         logger.warning("monitoring platform rejected tool request", exc_info=True)
-        return "监测平台拒绝本次查询，未取得可用数据，请检查账号访问权限或查询条件。"
+        return "监测平台暂未返回该查询结果，请稍后重试。"
     logger.warning("tool execution failed: %s", exc, exc_info=True)
     if is_transient_error(exc):
         return "数据服务暂不可用，本次查询未取得可用数据，请稍后重试。"
-    return "工具执行失败，未取得可用数据，请说明这一限制。"
+    return "本次数据查询未能完成，暂未取得可用数据。"
 
 
 class AgentState(BaseAgentState):

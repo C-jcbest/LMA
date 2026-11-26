@@ -1,6 +1,6 @@
 import type { PartState } from '@assistant-ui/react';
 import { describe, expect, it } from 'vitest';
-import { answerToMarkdown, buildSteps, collectStations } from '../src/features/monitoring/investigation';
+import { answerToMarkdown, buildSteps, collectStations, splitAnswerParts } from '../src/features/monitoring/investigation';
 
 const complete = { type: 'complete' } as const;
 
@@ -284,5 +284,25 @@ describe('调查过程由官方 tool part 派生', () => {
       toolPart('get_displacement', { args: { station: 'A' }, isError: true }),
     ];
     expect(stepsOf(parts).map((step) => step.state)).toEqual(['failed', 'complete', 'failed']);
+  });
+
+  it('多轮取数前的过渡播报折叠进调查过程，保留最终正文与带标题的实质内容', () => {
+    const parts = [
+      { type: 'text', text: '我来调查测试点 A 的近期位移。' } as PartState,
+      toolPart('get_displacement', { artifact: gnssEnvelope('测试点 A') }),
+      { type: 'text', text: '位移数据已取得，继续查询降雨。' } as PartState,
+      toolPart('query_weather'),
+      { type: 'text', text: '测试点 A 近 30 天北向累计变化 +12 mm，建议人工复核。' } as PartState,
+    ];
+    const split = splitAnswerParts(parts, false);
+    expect([...split.foldedIndexes]).toEqual([0, 2]);
+    expect(split.narrationNotes).toEqual([
+      '我来调查测试点 A 的近期位移。',
+      '位移数据已取得，继续查询降雨。',
+    ]);
+    expect(split.firstAnswerTextIndex).toBe(4);
+    const md = answerToMarkdown(parts);
+    expect(md).not.toContain('我来调查');
+    expect(md).toContain('建议人工复核');
   });
 });

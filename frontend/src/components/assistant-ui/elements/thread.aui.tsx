@@ -1,13 +1,12 @@
 "use client";
 
-import { MarkdownText } from "@/components/markdown-text";
 import { EvidenceMarkdown } from "@/features/monitoring/EvidenceMarkdown";
 import { ComposerAskTargets, MessageAskTargets } from "@/features/monitoring/AskTargetChips";
 import { TooltipIconButton } from "@/components/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
+import { EASE_IN, EASE_OUT, MorphIcon } from "@/components/ui/motion-primitives";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ContextUsageElement } from "@/components/assistant-ui/elements/context-usage.aui";
 import {
   InvestigationIndicator,
   InvestigationProcess,
@@ -15,9 +14,9 @@ import {
 import { ConclusionsFallback, AnswerActions } from "@/features/monitoring/InvestigationReport";
 import { useStationInspector } from "@/features/monitoring/StationInspectorContext";
 import { cn } from 'cn';
-import { useSessionMetadata } from "@/lib/session-metadata";
 import { useNavigation } from "@/app/navigation";
 import { RecoveryNotice, useConversationLoading } from "@/app/providers/AssistantProvider";
+import { AnimatePresence, motion } from "motion/react";
 import {
   ActionBarPrimitive,
   AuiIf,
@@ -257,7 +256,7 @@ const ThreadScrollToBottom: FC = () => {
       <TooltipIconButton
         tooltip="回到最新消息"
         variant="outline"
-        className="aui-thread-scroll-to-bottom bg-background hover:bg-accent absolute -top-12 z-10 size-8 self-center rounded-full p-0 shadow-sm disabled:invisible [&_svg]:size-4"
+        className="aui-thread-scroll-to-bottom bg-background/95 hover:bg-accent absolute -top-11 z-10 size-8 self-center rounded-full p-0 shadow-sm backdrop-blur-sm transition-[opacity,transform] duration-200 disabled:pointer-events-none disabled:translate-y-1.5 disabled:opacity-0 [&_svg]:size-4"
       >
         <ArrowDownIcon />
       </TooltipIconButton>
@@ -290,15 +289,9 @@ const Composer: FC<{ autoFocus: boolean; placeholder: string }> = ({ autoFocus, 
   );
 };
 
-const ComposerContextUsage: FC = () => {
-  const contextUsage = useSessionMetadata()?.context_usage;
-  return <ContextUsageElement usage={contextUsage} />;
-};
-
 const ComposerAction: FC<{ isLoading: boolean }> = ({ isLoading }) => {
   return (
     <div className="aui-composer-action-wrapper flex h-8 shrink-0 items-center gap-1.5">
-      <ComposerContextUsage />
       <AuiIf condition={(s) => !s.thread.isRunning}>
         <ComposerPrimitive.Send asChild disabled={isLoading}>
           <TooltipIconButton
@@ -334,8 +327,14 @@ const ComposerAction: FC<{ isLoading: boolean }> = ({ isLoading }) => {
 const MessageError: FC = () => {
   return (
     <MessagePrimitive.Error>
-      <ErrorPrimitive.Root className="aui-message-error-root border-destructive/40 bg-destructive/10 text-destructive mt-2 rounded-md border p-3 text-sm">
+      <ErrorPrimitive.Root className="aui-message-error-root border-destructive/40 bg-destructive/10 text-destructive mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-sm">
         <span className="aui-message-error-message wrap-break-word">本次回答未完成，请重试。</span>
+        <ActionBarPrimitive.Reload asChild>
+          <Button type="button" variant="outline" size="xs" className="shrink-0 gap-1 border-destructive/30 text-foreground">
+            <RefreshCwIcon className="size-3" aria-hidden />
+            重试
+          </Button>
+        </ActionBarPrimitive.Reload>
       </ErrorPrimitive.Root>
     </MessagePrimitive.Error>
   );
@@ -379,25 +378,34 @@ const AssistantMessage: FC = () => {
         <MessageError />
       </div>
 
-      {showPrevious && previousMarkdown && (
-        <div className="bg-muted/40 mx-1 mt-3 rounded-lg border px-3.5 py-3 text-sm sm:mx-2">
-          <div className="text-muted-foreground mb-1.5 flex items-center justify-between text-xs">
-            <span>重新生成前的回答</span>
-            <button
-              type="button"
-              onClick={() => setShowPrevious(false)}
-              className="hover:text-foreground focus-visible:ring-ring rounded px-1 focus-visible:ring-2 focus-visible:outline-none"
-            >
-              收起
-            </button>
-          </div>
-          <pre className="text-muted-foreground max-h-48 overflow-y-auto font-sans text-xs leading-6 whitespace-pre-wrap">{previousMarkdown}</pre>
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {showPrevious && previousMarkdown && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto', transition: EASE_OUT }}
+            exit={{ opacity: 0, height: 0, transition: EASE_IN }}
+            className="overflow-hidden"
+          >
+            <div className="bg-muted/40 mx-1 mt-3 rounded-lg border px-3.5 py-3 text-sm sm:mx-2">
+              <div className="text-muted-foreground mb-1.5 flex items-center justify-between text-xs">
+                <span>重新生成前的回答</span>
+                <button
+                  type="button"
+                  onClick={() => setShowPrevious(false)}
+                  className="hover:text-foreground focus-visible:ring-ring rounded px-1 focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  收起
+                </button>
+              </div>
+              <pre className="text-muted-foreground max-h-48 overflow-y-auto font-sans text-xs leading-6 whitespace-pre-wrap">{previousMarkdown}</pre>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div
         data-slot="aui_assistant-message-footer"
-        className="ms-2 flex h-10 shrink-0 items-center pt-1.5"
+        className="ms-2 flex min-h-9 shrink-0 items-center pt-1"
       >
         <AssistantActionBar
           onBeforeReload={() => {
@@ -455,15 +463,15 @@ const UserMessage: FC = () => {
     <MessagePrimitive.Root
       data-message-id={messageId}
       data-slot="aui_user-message-root"
-      className="fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-2 px-2 duration-150 [contain-intrinsic-size:auto_200px] [content-visibility:auto] [&:where(>*)]:col-start-2"
+      className="group/user fade-in slide-in-from-bottom-1 animate-in grid auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] content-start gap-y-1 px-2 duration-150 [contain-intrinsic-size:auto_120px] [content-visibility:auto] [&:where(>*)]:col-start-2"
       data-role="user"
     >
-      <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0 space-y-1.5 pb-8">
+      <div className="aui-user-message-content-wrapper relative col-start-2 min-w-0 space-y-1.5">
         <MessageAskTargets />
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
-        <div className="aui-user-action-bar-wrapper absolute end-0 bottom-0 h-8 pt-1 peer-empty:hidden">
+        <div className="aui-user-action-bar-wrapper flex h-6 items-center justify-end opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 group-focus-within/user:opacity-100 peer-empty:hidden [@media(hover:none)]:opacity-100">
           <UserActionBar />
         </div>
       </div>
@@ -472,16 +480,17 @@ const UserMessage: FC = () => {
 };
 
 const UserActionBar: FC = () => {
+  const isCopied = useAuiState((s) => s.message.isCopied);
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      autohide="always"
-      className="aui-user-action-bar-root flex items-center justify-end gap-1"
+      className="aui-user-action-bar-root text-muted-foreground flex items-center justify-end gap-0.5"
     >
       <ActionBarPrimitive.Copy asChild>
-        <TooltipIconButton tooltip="复制消息">
-          <AuiIf condition={(s) => s.message.isCopied}><CheckIcon /></AuiIf>
-          <AuiIf condition={(s) => !s.message.isCopied}><CopyIcon /></AuiIf>
+        <TooltipIconButton tooltip={isCopied ? "已复制" : "复制消息"}>
+          <MorphIcon activeKey={isCopied ? "copied" : "copy"}>
+            {isCopied ? <CheckIcon /> : <CopyIcon />}
+          </MorphIcon>
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
       <AuiIf condition={(s) => !s.thread.isRunning && !s.thread.messages.slice(s.message.index + 1).some((message) => message.role === "user")}>

@@ -86,13 +86,13 @@ class ScreeningTests(unittest.TestCase):
         self.assertEqual(held_result.screening, "建议调查")
         step = next(finding for finding in held_result.findings if finding.kind == "held_step")
         self.assertGreaterEqual(step.days, 2.9)
-        self.assertIn("成因需人工调查", step.text)
+        self.assertIn("台阶", step.text)
 
     def test_hourly_trend_survives_short_history(self):
         recent = [point(NOW - timedelta(hours=168-i), 100 + i * 0.0001) for i in range(168)]
         result = screen(daily(lambda i: 0, days=30), recent)
         self.assertEqual(result.screening, "建议调查")
-        self.assertTrue(any("近期小时序列" in reason and "持续同向" in reason for reason in result.reasons))
+        self.assertTrue(any("近 7 天" in reason and "持续同向" in reason for reason in result.reasons))
 
     def test_duplicate_timestamps_do_not_inflate_coverage(self):
         recent = [hourly()[0]] * 168
@@ -144,7 +144,7 @@ class ScreeningTests(unittest.TestCase):
 
     def test_recent_acceleration_is_reported(self):
         result = screen(daily(lambda i: -0.05 * i if i < 76 else -3.8 - 0.8 * (i - 76), noise_mm=0.5))
-        self.assertTrue(any("快于此前" in reason for reason in result.reasons), result.reasons)
+        self.assertTrue(any("加快" in reason for reason in result.reasons), result.reasons)
 
     def test_persistent_step_flags_but_isolated_spike_does_not(self):
         step = screen(daily(lambda i: 0 if i < 50 else 30, noise_mm=0.5))
@@ -153,8 +153,20 @@ class ScreeningTests(unittest.TestCase):
 
         spike = screen(daily(lambda i: 40 if i == 50 else 0, noise_mm=0.5))
         self.assertEqual(spike.screening, "未见明显变化", spike.reasons)
-        self.assertTrue(any("异常跳点" in reason for reason in spike.reasons))
+        self.assertTrue(any("跳点" in reason for reason in spike.reasons))
         self.assertEqual([finding.kind for finding in spike.findings if finding.role == "trigger"], [])
+
+    def test_isolated_spike_does_not_mask_real_held_step(self):
+        # 40 mm single-point spike at day 20 must not mask a real 20 mm sustained step at day 50
+        def series_mm(i):
+            if i == 20:
+                return 40
+            return 0 if i < 50 else 20
+
+        result = screen(daily(series_mm, noise_mm=0.5))
+        self.assertEqual(result.screening, "建议调查")
+        self.assertIn("held_step", kinds(result, "trigger"))
+        self.assertIn("spike", kinds(result, "quality"))
 
     def test_insufficient_history_is_data_problem_not_stability(self):
         result = screen(daily(lambda i: 0, days=10))
@@ -246,6 +258,7 @@ class InspectionIsolationTests(unittest.IsolatedAsyncioTestCase):
                 raise ValueError("平台返回无法解析的数据")
 
         station = Station(station_uuid="s", station_name="坏数据站", station_type=3, group_uuid="g", group_name="组")
-        result, points = await screen_with_points(BrokenClient(), station, asyncio.Semaphore(1))
-        self.assertEqual(points, [])
+        result, long_points, recent_points = await screen_with_points(BrokenClient(), station, asyncio.Semaphore(1))
+        self.assertEqual(long_points, [])
+        self.assertEqual(recent_points, [])
         self.assertEqual(result.screening, "暂无法分析")

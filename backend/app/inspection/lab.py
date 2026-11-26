@@ -1,10 +1,8 @@
-"""巡检原型：点击巡检后以生成式 UI 流式推送结果。
+"""统一巡检引擎：支持全量、按组与单站流式推送，完成后自动写回今日页与测点列表。
 
 一次巡检是一条 LangGraph 线程。announce 节点先写入一条助手消息，inspect 节点把汇总卡片和每个测点的行
 用 push_ui_message 挂到这条消息上：先推出全部待巡检测点，初筛完成一站就合并更新一站，
-建议调查的测点再交给视觉模型初判。组件状态保存在图状态的 ui 字段，刷新或重连后可恢复。
-
-原型不写入正式巡检表，今日页和测点列表仍以正式巡检为准。
+建议调查的测点按触发窗口交由视觉模型初判。完成后同步更新正式巡检表，刷新或重连后可恢复。
 """
 
 import asyncio
@@ -31,7 +29,7 @@ logger = logging.getLogger(__name__)
 DISPLACEMENT_STATION_TYPES = {2, 3}
 _UPSTREAM_CONCURRENCY = 4
 _VISION_CONCURRENCY = 2
-_AXIS_LABELS = {"n": "北向", "e": "东向", "u": "垂向"}
+_AXIS_LABELS = {"n": "北向", "e": "东向", "u": "垂直"}
 
 SUMMARY_COMPONENT = "inspection_summary"
 ROW_COMPONENT = "station_row"
@@ -91,7 +89,7 @@ def _row_findings(result: ScreeningResult) -> dict:
     }
 
 
-def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpointer):
+def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpointer, storage=None):
     async def announce(state: LabState) -> dict:
         return {"messages": [AIMessage(id=str(uuid4()), content="正在巡检…")]}
 
@@ -107,6 +105,8 @@ def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpo
         def push_row(station: Station, **props) -> None:
             push_ui_message(ROW_COMPONENT, props, id=f"row-{message.id}-{station.station_uuid}", message=message, merge=True)
 
+        stations: list[Station] = []
+        results: dict[str, ScreeningResult] = {}
         try:
             async with platform_client_factory() as client:
                 stations = stations_in_scope(await client.get_stations(), scope)
@@ -119,19 +119,22 @@ def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpo
                              group_name=station.group_name, status="pending")
 
                 counts = {"screened": 0, "attention": 0, "judged": 0}
-                results: dict[str, ScreeningResult] = {}
                 upstream = asyncio.Semaphore(_UPSTREAM_CONCURRENCY)
                 vision_slots = asyncio.Semaphore(_VISION_CONCURRENCY)
 
                 async def handle(station: Station) -> None:
-                    result, long_points = await screen_with_points(client, station, upstream)
+                    result, long_points, recent_points = await screen_with_points(client, station, upstream)
                     results[station.station_uuid] = result
                     needs_look = result.screening == "建议调查"
                     counts["screened"] += 1
                     counts["attention"] += int(needs_look)
+                    triggers = [finding for finding in result.findings if finding.role == "trigger"]
+                    use_recent = bool(triggers) and all(finding.window == "recent" for finding in triggers) and bool(recent_points)
+                    chart_points = recent_points if use_recent else long_points
+                    chart_window: Literal["long", "recent"] = "recent" if use_recent else "long"
                     vision_status = "skipped"
                     if needs_look:
-                        vision_status = "running" if has_vision and long_points else "unavailable"
+                        vision_status = "running" if has_vision and chart_points else "unavailable"
                     push_row(station, status="screened", screening=result.screening, change=_largest_change(result),
                              trend=result.trend, vision={"status": vision_status}, **_row_findings(result))
                     push_summary(screened=counts["screened"], attention=counts["attention"])
@@ -139,22 +142,27 @@ def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpo
                         return
                     async with vision_slots:
                         try:
-                            png = await asyncio.to_thread(render_displacement_chart, long_points, station.station_name)
+                            png = await asyncio.to_thread(
+                                render_displacement_chart, chart_points, station.station_name, window=chart_window,
+                            )
                             verdict = await judge_chart(png, station.station_name, result.reasons[:8])
                             vision = {
                                 "status": "done", **verdict.model_dump(),
                                 "image": f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}",
                             }
                         except Exception:
-                            logger.warning("inspection lab vision failed: %s", station.station_uuid, exc_info=True)
+                            logger.warning("inspection vision failed: %s", station.station_uuid, exc_info=True)
                             vision = {"status": "error"}
                     counts["judged"] += 1
                     push_row(station, vision=vision)
                     push_summary(judged=counts["judged"])
 
                 await asyncio.gather(*(handle(station) for station in stations))
+        except asyncio.CancelledError:
+            push_summary(status="cancelled", elapsed_seconds=round(time.monotonic() - started))
+            raise
         except Exception:
-            logger.exception("inspection lab failed")
+            logger.exception("inspection run failed")
             push_summary(status="error", elapsed_seconds=round(time.monotonic() - started))
             return {"messages": [AIMessage(id=message.id, content="巡检未完成：监测平台暂不可用。")]}
 
@@ -168,6 +176,13 @@ def build_lab_graph(platform_client_factory: Callable[[], BeidouClient], checkpo
                 for station, result in members:
                     if len(result.findings) != before[station.station_uuid]:
                         push_row(station, **_row_findings(result))
+
+        if storage is not None and stations:
+            try:
+                screened_pairs = [(station, results[station.station_uuid]) for station in stations if station.station_uuid in results]
+                await storage.upsert_scoped_inspection_results(screened_pairs, scope.get("kind") or "all")
+            except Exception:
+                logger.warning("failed to persist scoped inspection into today table", exc_info=True)
 
         elapsed = round(time.monotonic() - started)
         push_summary(status="done", elapsed_seconds=elapsed, common_mode_checked=scope.get("kind") != "station")

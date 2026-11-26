@@ -13,7 +13,6 @@ import { TrendLine } from '@/features/monitoring/TrendLine';
 import type { InspectionStation, Screening, StationDirectoryEntry } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { investigationStatusLabel } from '@/features/monitoring/investigation';
 import type { MapStation } from '@/features/monitoring/StationMap';
 
@@ -78,6 +77,8 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
   const { openStation } = useNavigation();
   const change = largestChange(station);
   const isAttention = station.screening === '建议调查';
+  const note = stationNote(station);
+  const showDeviceStatus = Boolean(station.platform_status && station.platform_status !== '正常');
 
   return (
     <li className="animate-in fade-in duration-200">
@@ -86,15 +87,22 @@ const StationRow: FC<{ station: StationListItem }> = ({ station }) => {
         onClick={() => openStation(station.station_uuid)}
         className="station-row w-full rounded-lg text-start transition hover:bg-muted/60 active:scale-99 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
-        <span className="flex min-w-0 items-center gap-2.5">
-          <StatusDot status={station.screening} />
-          <span className="max-w-full shrink-0 truncate font-medium">{station.station_name}</span>
-          {station.platform_status && <span className={cn('shrink-0', platformStatusClass(station.platform_status))}>{station.platform_status}</span>}
-          <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
+        <span className="min-w-0">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <StatusDot status={station.screening} />
+            <span className="max-w-full shrink-0 truncate font-medium">{station.station_name}</span>
+            {showDeviceStatus && <span className={cn('shrink-0', platformStatusClass(station.platform_status!))}>{station.platform_status}</span>}
+            <span className="text-muted-foreground min-w-0 truncate text-xs">{station.group_name}</span>
+          </span>
+          {note && (
+            <span className="station-row-note-mobile mt-0.5 block truncate ps-4.5 text-xs text-muted-foreground">
+              {note}
+            </span>
+          )}
         </span>
         <span className="station-row-trend"><TrendLine values={station.trend} emphasized={isAttention} className="h-7" /></span>
         <span className="station-row-note text-muted-foreground min-w-0 truncate text-sm">
-          {stationNote(station)}
+          {note}
         </span>
         <span className="text-end text-sm tabular-nums">
           {change ? `${formatMillimeters(change.millimeters)} mm` : <span className="text-muted-foreground">—</span>}
@@ -140,16 +148,14 @@ function overviewMapStation(station: StationListItem): MapStation | null {
 
 const GroupOverviewMap: FC<{ stations: readonly StationListItem[] }> = ({ stations }) => {
   const { openStation } = useNavigation();
-  const mapStations = useMemo(
-    () => stations.flatMap((station) => overviewMapStation(station) ?? []),
-    [stations],
-  );
+  const mapKey = JSON.stringify(stations.flatMap((station) => overviewMapStation(station) ?? []));
+  const mapStations = useMemo(() => JSON.parse(mapKey) as MapStation[], [mapKey]);
   if (mapStations.length === 0) {
-    return null;
+    return <p className="rounded-lg bg-muted/40 px-4 py-3 text-xs text-muted-foreground">该分组暂无可用坐标，无法展示位置概览。</p>;
   }
   return (
     <ErrorBoundary fallbackTitle="地图渲染异常">
-      <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+      <Suspense fallback={<Skeleton className="h-80 w-full rounded-xl" />}>
         <StationMap stations={mapStations} onSelect={openStation} selectLabel="打开测点 →" />
       </Suspense>
     </ErrorBoundary>
@@ -251,38 +257,50 @@ export const StationsPage: FC<{ active?: boolean }> = ({ active = true }) => {
 
         {hasStations && (
           <>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              {groups.length > 1 && (
-                <Select value={group} onValueChange={setGroup}>
-                  <SelectTrigger size="sm" aria-label="选择分组" className="min-w-40"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={ALL_GROUPS}>全部分组</SelectItem>
-                    {groups.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              )}
-              <Segmented label="筛选" value={filter} options={filterOptions} onValueChange={(value) => setFilter(value as Filter)} />
-            </div>
-            {groups.length > 1 && activeGroup === ALL_GROUPS && (
-              <div aria-label="按分组查看地图" className="mt-3 flex flex-wrap items-center gap-1.5">
+            {groups.length > 1 && (
+              <div aria-label="按分组筛选" className="mt-5 flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  aria-pressed={activeGroup === ALL_GROUPS}
+                  onClick={() => setGroup(ALL_GROUPS)}
+                  className={cn(
+                    'inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                    activeGroup === ALL_GROUPS
+                      ? 'border-foreground/30 bg-foreground text-background font-medium'
+                      : 'bg-card/50 text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  <span>全部分组</span>
+                  <span className="tabular-nums opacity-75">{stations.length}</span>
+                </button>
                 {groups.map((name) => {
                   const members = stations.filter((station) => station.group_name === name);
                   const hasAttention = members.some((station) => station.screening === '建议调查');
+                  const isActive = activeGroup === name;
                   return (
                     <button
                       key={name}
                       type="button"
-                      onClick={() => setGroup(name)}
-                      className="inline-flex min-h-8 items-center gap-1.5 rounded-full border bg-card/50 px-3 text-xs text-muted-foreground transition hover:bg-muted hover:text-foreground active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                      aria-pressed={isActive}
+                      onClick={() => setGroup(isActive ? ALL_GROUPS : name)}
+                      className={cn(
+                        'inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition active:scale-98 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                        isActive
+                          ? 'border-foreground/30 bg-foreground text-background font-medium'
+                          : 'bg-card/50 text-muted-foreground hover:bg-muted hover:text-foreground',
+                      )}
                     >
                       {hasAttention && <span className="size-1.5 rounded-full bg-status-attention" aria-hidden />}
                       <span>{name}</span>
-                      <span className="tabular-nums text-muted-foreground/75">{members.length}</span>
+                      <span className="tabular-nums opacity-75">{members.length}</span>
                     </button>
                   );
                 })}
               </div>
             )}
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <Segmented label="筛选" value={filter} options={filterOptions} onValueChange={(value) => setFilter(value as Filter)} />
+            </div>
             {active && activeGroup !== ALL_GROUPS && (
               <div role="region" aria-label={`${activeGroup}位置概览`} className="mt-4">
                 <GroupOverviewMap stations={groupStations} />
@@ -291,7 +309,24 @@ export const StationsPage: FC<{ active?: boolean }> = ({ active = true }) => {
             <ul aria-label="测点列表" className="station-list mt-3 -mx-3 divide-y divide-transparent">
               {visible.map((station) => <StationRow key={station.station_uuid} station={station} />)}
             </ul>
-            {visible.length === 0 && <p className="text-muted-foreground mt-4 text-sm">没有符合条件的测点。</p>}
+            {visible.length === 0 && (
+              <p className="text-muted-foreground mt-4 text-sm">
+                没有符合条件的测点。
+                {activeGroup !== ALL_GROUPS && (search.trim() || filter !== 'all') && (
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="ms-1 h-auto p-0 align-baseline text-sm text-foreground underline"
+                    onClick={() => {
+                      setGroup(ALL_GROUPS);
+                      setFilter('all');
+                    }}
+                  >
+                    在全部分组中查看
+                  </Button>
+                )}
+              </p>
+            )}
           </>
         )}
       </section>

@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type FC, type ReactNode } from 'react';
 import { useAuiState } from '@assistant-ui/react';
-import { ChevronDownIcon, Maximize2Icon } from 'lucide-react';
+import { ChevronDownIcon, MapPinIcon, Maximize2Icon } from 'lucide-react';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useMediaQuery } from '@/hooks/use-media-query';
-import type { ToolArtifactEnvelopeFor } from '@/types/envelope';
+import type { SiteEnvironmentArtifactData, ToolArtifactEnvelopeFor } from '@/types/envelope';
 import { useChartColors } from './chartColors';
 import { timelineAskTarget } from './ask-targets';
 import type { ChartSelection } from './TimelineChart';
@@ -152,30 +153,80 @@ interface CardShellProps {
   children: ReactNode;
 }
 
+const formatGeologyText = (geology: SiteEnvironmentArtifactData['geology']) => {
+  if (!geology) return '暂无地质数据';
+  const uniqueParts: string[] = [];
+  for (const part of [geology.name, geology.lithology, geology.age]) {
+    const trimmed = part?.trim();
+    if (!trimmed) continue;
+    if (uniqueParts.some((existing) => existing === trimmed || existing.includes(trimmed))) continue;
+    uniqueParts.push(trimmed);
+  }
+  return uniqueParts.join(' · ') || '暂无地层名称';
+};
+
+const CompactSiteSummary: FC<{ environment: SiteEnvironmentArtifactData; onOpenMap?: () => void }> = ({ environment, onOpenMap }) => {
+  const { center_station: center, terrain, geology } = environment;
+  const metrics = [
+    { label: '高程', value: terrain?.dem_elevation_m != null ? `${terrain.dem_elevation_m} m` : '—' },
+    { label: '坡度', value: terrain?.slope_degrees != null ? `${terrain.slope_degrees}°` : '—' },
+    { label: '坡向', value: terrain?.aspect || '—' },
+    { label: '500 m 起伏', value: terrain?.relief_500m_m != null ? `${terrain.relief_500m_m} m` : '—' },
+  ];
+  return (
+    <div className="space-y-3 pt-1">
+      {terrain && (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-4">
+          {metrics.map((item) => (
+            <div key={item.label} className="min-w-0">
+              <dt className="text-xs text-muted-foreground">{item.label}</dt>
+              <dd className="mt-0.5 text-sm font-medium tabular-nums">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t pt-2.5 text-xs text-muted-foreground">
+        <div className="min-w-0 space-y-0.5">
+          <p className="wrap-break-word text-foreground/90">{formatGeologyText(geology)}</p>
+          {validCoordinates(center) && (
+            <p className="tabular-nums">WGS84 · {center.latitude.toFixed(5)}, {center.longitude.toFixed(5)}</p>
+          )}
+        </div>
+        {onOpenMap && (
+          <Button type="button" variant="outline" size="xs" onClick={onOpenMap} className="shrink-0 gap-1.5 rounded-full">
+            <MapPinIcon className="size-3.5" aria-hidden />
+            查看场地地图
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultExpanded = true }) => {
   const [isOpen, setIsOpen] = useState(defaultExpanded);
   return (
     <Collapsible asChild open={isOpen} onOpenChange={setIsOpen}>
     <figure data-slot="evidence-card" className="evidence-card not-prose">
       <figcaption className="-me-1.5 flex items-center gap-1">
-        <CollapsibleTrigger className="group/card flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
-          <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 py-1">
+        <CollapsibleTrigger className="group/card flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md text-start focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 py-0.5">
             <span className="break-words text-sm font-medium">{title}</span>
             {meta && <span className="text-xs text-muted-foreground tabular-nums">{meta}</span>}
           </span>
           <ChevronDownIcon
             aria-hidden
-            className="size-4 shrink-0 text-muted-foreground transition group-hover/card:text-foreground group-data-[state=closed]/card:-rotate-90"
+            className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-hover/card:text-foreground group-data-[state=closed]/card:-rotate-90"
           />
         </CollapsibleTrigger>
         {onOpen && (
-          <button type="button" onClick={onOpen} aria-label={`展开${title}`} title={`展开${title}`}
-            className="evidence-card-open inline-flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-background hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
-            <Maximize2Icon className="size-4" aria-hidden />
+          <button type="button" onClick={onOpen} aria-label={`在侧栏查看${title}`} title={`在侧栏查看${title}`}
+            className="evidence-card-open inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-background hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+            <Maximize2Icon className="size-3.5" aria-hidden />
           </button>
         )}
       </figcaption>
-      <CollapsibleContent className="pt-1">{children}</CollapsibleContent>
+      <CollapsibleContent className="pt-1.5">{children}</CollapsibleContent>
     </figure>
     </Collapsible>
   );
@@ -236,7 +287,13 @@ const SeriesChart: FC<{ station: StationEvidence; envelope: ToolArtifactEnvelope
   );
 };
 
-const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefined; onOpen?: () => void; defaultExpanded: boolean }> = ({ step, station, onOpen, defaultExpanded }) => {
+const StepCard: FC<{
+  step: InvestigationStep;
+  station: StationEvidence | undefined;
+  hasStationMap: boolean;
+  onOpen?: () => void;
+  defaultExpanded: boolean;
+}> = ({ step, station, hasStationMap, onOpen, defaultExpanded }) => {
   const envelope = step.envelope!;
   switch (envelope.kind) {
     case 'gnss_series': {
@@ -265,9 +322,13 @@ const StepCard: FC<{ step: InvestigationStep; station: StationEvidence | undefin
     case 'site_environment':
       return (
         <CardShell title={`${envelope.data.center_station.station_name} 场地环境`} onOpen={onOpen}>
-          <WhenVisible minHeight={320}>
-            <SiteEnvironmentResultView environment={envelope.data} />
-          </WhenVisible>
+          {hasStationMap ? (
+            <CompactSiteSummary environment={envelope.data} onOpenMap={onOpen} />
+          ) : (
+            <WhenVisible minHeight={320}>
+              <SiteEnvironmentResultView environment={envelope.data} />
+            </WhenVisible>
+          )}
         </CardShell>
       );
     default:
@@ -325,5 +386,6 @@ export const EvidenceCard: FC<{ cardId: string; besideTable: boolean }> = ({ car
     && (numbers.get(candidate.evidenceId ?? '') ?? Infinity) < (citationNumber ?? Infinity)
   ));
   const isComputationBesideTable = besideTable && step.envelope?.kind === 'computation';
-  return <StepCard step={step} station={station} onOpen={onOpen} defaultExpanded={!hasEarlierSeries && !isComputationBesideTable} />;
+  const hasStationMap = stations.some((item) => Boolean(item.coordinates));
+  return <StepCard step={step} station={station} hasStationMap={hasStationMap} onOpen={onOpen} defaultExpanded={!hasEarlierSeries && !isComputationBesideTable} />;
 };

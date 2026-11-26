@@ -9,9 +9,11 @@ interface InspectionValue {
   isLoading: boolean;
   hasLoadError: boolean;
   isStarting: boolean;
+  isCancelling: boolean;
   hasStartError: boolean;
   reload: () => void;
   start: () => void;
+  cancel: () => void;
 }
 
 const InspectionContext = createContext<InspectionValue | null>(null);
@@ -22,16 +24,24 @@ export function InspectionProvider({ children }: { children: ReactNode }) {
   const [hasLoadError, setHasLoadError] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isStarting, setIsStarting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [hasStartError, setHasStartError] = useState(false);
+  const [pollTick, setPollTick] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options?: { force?: boolean; silent?: boolean }) => {
     if (abortRef.current) {
-      return;
+      if (!options?.force) {
+        return;
+      }
+      abortRef.current.abort();
+      abortRef.current = null;
     }
     const controller = new AbortController();
     abortRef.current = controller;
-    setIsLoading(true);
+    if (!options?.silent) {
+      setIsLoading(true);
+    }
     try {
       const result = await client.getLatestInspection(controller.signal);
       if (controller.signal.aborted) {
@@ -47,6 +57,7 @@ export function InspectionProvider({ children }: { children: ReactNode }) {
       if (abortRef.current === controller) {
         abortRef.current = null;
         setIsLoading(false);
+        setPollTick((tick) => tick + 1);
       }
     }
   }, [client]);
@@ -62,23 +73,34 @@ export function InspectionProvider({ children }: { children: ReactNode }) {
 
   const isRunning = latest?.running != null;
   useEffect(() => {
-    if (!isRunning || isLoading) {
+    if (!isRunning) {
       return;
     }
-    const timer = window.setTimeout(() => void load(), POLL_INTERVAL_MS);
+    const timer = window.setTimeout(() => void load({ silent: true }), POLL_INTERVAL_MS);
     return () => window.clearTimeout(timer);
-  }, [isRunning, isLoading, load]);
+  }, [isRunning, pollTick, load]);
 
   const start = useCallback(async () => {
     setIsStarting(true);
     setHasStartError(false);
     try {
       await client.startInspection();
-      await load();
+      await load({ force: true, silent: true });
     } catch {
       setHasStartError(true);
     } finally {
       setIsStarting(false);
+    }
+  }, [client, load]);
+
+  const cancel = useCallback(async () => {
+    setIsCancelling(true);
+    try {
+      await client.cancelInspection();
+      await load({ force: true, silent: true });
+    } catch {
+    } finally {
+      setIsCancelling(false);
     }
   }, [client, load]);
 
@@ -87,10 +109,12 @@ export function InspectionProvider({ children }: { children: ReactNode }) {
     isLoading,
     hasLoadError,
     isStarting,
+    isCancelling,
     hasStartError,
-    reload: () => void load(),
+    reload: () => void load({ force: true, silent: latest !== null }),
     start: () => void start(),
-  }), [latest, isLoading, hasLoadError, isStarting, hasStartError, load, start]);
+    cancel: () => void cancel(),
+  }), [latest, isLoading, hasLoadError, isStarting, isCancelling, hasStartError, load, start, cancel]);
 
   return <InspectionContext.Provider value={value}>{children}</InspectionContext.Provider>;
 }

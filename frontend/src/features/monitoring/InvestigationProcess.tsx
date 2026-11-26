@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FC } from 'react';
 import { ActionBarPrimitive, useAuiState, type AssistantState } from '@assistant-ui/react';
-import { AlertCircleIcon, CheckIcon, ChevronRightIcon, MinusIcon, RefreshCwIcon } from 'lucide-react';
+import { AlertCircleIcon, CheckIcon, ChevronRightIcon, Loader2Icon, MinusIcon, RefreshCwIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Collapsible,
@@ -17,6 +17,7 @@ import {
   buildSteps,
   collectStations,
   findConclusions,
+  splitAnswerParts,
   type InvestigationStep,
   type StationEvidence,
   type StepState,
@@ -53,7 +54,10 @@ const RunElapsed: FC<{ messageId: string }> = ({ messageId }) => {
   }
   return (
     <span className="shrink-0 text-muted-foreground tabular-nums">
-      {seconds} 秒{seconds >= LEAVE_HINT_AFTER_SECONDS && ' · 可先离开，调查会继续'}
+      {seconds} 秒
+      {seconds >= LEAVE_HINT_AFTER_SECONDS && (
+        <span className="animate-in fade-in duration-300"> · 可先离开，调查会继续</span>
+      )}
     </span>
   );
 };
@@ -103,9 +107,9 @@ export const Sparkline: FC<{ values: readonly (number | null)[] }> = ({ values }
 const StepIcon: FC<{ state: StepState }> = ({ state }) => {
   switch (state) {
     case 'running':
-      return <span className="size-3.5 shrink-0 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" aria-hidden />;
+      return <Loader2Icon className="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />;
     case 'failed':
-      return <AlertCircleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
+      return <AlertCircleIcon className="size-3.5 shrink-0 text-destructive" aria-hidden />;
     case 'cancelled':
       return <MinusIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />;
     case 'complete':
@@ -199,6 +203,7 @@ export const InvestigationProcess: FC = () => {
   const stations = useMemo(() => collectStations(parts), [parts]);
   const conclusions = useMemo(() => findConclusions(parts), [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
+  const { narrationNotes } = useMemo(() => splitAnswerParts(parts, isRunning), [parts, isRunning]);
   const failures = steps.filter((step) => step.state === 'failed' && step.envelope?.error);
 
   if (steps.length === 0) return null;
@@ -220,21 +225,28 @@ export const InvestigationProcess: FC = () => {
   }
 
   return (
-    <div data-slot="investigation" className="investigation-process mb-4 flex flex-col gap-2">
+    <div data-slot="investigation" className="investigation-process mb-3 flex flex-col gap-2">
       {steps.length > 0 && <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
-        <CollapsibleTrigger className="group/process flex min-h-10 max-w-full items-center gap-2 rounded-lg px-1 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <CollapsibleTrigger className="group/process flex min-h-9 max-w-full items-center gap-2 rounded-lg px-1 text-start text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <StepIcon state={headlineState} />
           <span className={cn('min-w-0 truncate', isRunning && 'text-shimmer')} role={isRunning ? 'status' : undefined}>
             {headlineOf(steps, stations.length, isRunning)}
           </span>
           {isRunning && <RunElapsed messageId={messageId} />}
-          <ChevronRightIcon className="size-3.5 shrink-0 transition-transform group-data-[state=open]/process:rotate-90" aria-hidden />
+          <ChevronRightIcon className="size-3.5 shrink-0 transition-transform duration-200 group-data-[state=open]/process:rotate-90" aria-hidden />
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="-ms-1.5 flex flex-col py-1">
             {steps.map((step) => (
-              <StepRow key={step.toolCallId} step={step} onOpenStation={open} />
+              <StepRow key={step.toolCallId} step={step} onOpenStation={toggleStation} />
             ))}
+            {narrationNotes.length > 0 && (
+              <div className="mt-1.5 space-y-1 border-t pt-2 ps-6 pe-2 text-xs leading-relaxed text-muted-foreground">
+                {narrationNotes.map((note, index) => (
+                  <p key={index} className="wrap-break-word">{note}</p>
+                ))}
+              </div>
+            )}
           </div>
         </CollapsibleContent>
       </Collapsible>}
@@ -243,14 +255,14 @@ export const InvestigationProcess: FC = () => {
         <Collapsible open={showFailures} onOpenChange={setShowFailures}>
           <CollapsibleTrigger className="group/failures flex min-h-9 items-center gap-2 text-start text-sm text-muted-foreground">
             {failures.length} 项查询未完成
-            <ChevronRightIcon className="size-3.5 transition-transform group-data-[state=open]/failures:rotate-90" aria-hidden />
+            <ChevronRightIcon className="size-3.5 transition-transform duration-200 group-data-[state=open]/failures:rotate-90" aria-hidden />
           </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-1 text-sm text-muted-foreground">
+          <CollapsibleContent className="space-y-1.5 text-sm text-muted-foreground">
             {failures.map((step) => {
               const message = step.envelope!.error!.message;
               const subject = step.detail ? `${step.label} · ${step.detail}` : step.label;
               return (
-                <p key={step.toolCallId} title={`${subject}：${message}`} className="truncate">
+                <p key={step.toolCallId} className="leading-relaxed wrap-break-word">
                   <span className="text-foreground">{subject}</span>：{message}
                 </p>
               );

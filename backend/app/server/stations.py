@@ -32,11 +32,14 @@ def timeline_window(days: int | None, begin: date | None, end: date | None) -> T
         return TimelineWindow(now - timedelta(days=window_days), now)
     if begin is None or end is None or days is not None:
         raise ValueError("自定义范围需要同时给出起止日期，且不与预设天数混用")
-    if begin > end or end > now.date():
-        raise ValueError("起止日期颠倒或结束日期晚于今天")
-    if (end - begin).days + 1 > MAX_CUSTOM_WINDOW_DAYS:
+    if begin > end:
+        raise ValueError("开始日期不能晚于结束日期")
+    clamped_end = min(end, now.date())
+    if begin > clamped_end:
+        raise ValueError("开始日期不能晚于今天")
+    if (clamped_end - begin).days + 1 > MAX_CUSTOM_WINDOW_DAYS:
         raise ValueError(f"自定义范围最长 {MAX_CUSTOM_WINDOW_DAYS} 天（含起止日）")
-    return TimelineWindow(datetime.combine(begin, time.min), min(datetime.combine(end, time.max), now))
+    return TimelineWindow(datetime.combine(begin, time.min), min(datetime.combine(clamped_end, time.max), now))
 
 
 async def find_station(data: MonitoringData, station_uuid: str) -> Station | None:

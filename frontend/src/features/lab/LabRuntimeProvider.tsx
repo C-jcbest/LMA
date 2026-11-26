@@ -107,7 +107,7 @@ export function LabRuntimeProvider({ client, children }: { client: LmaClient; ch
       try {
         const { externalId } = await config.initialize();
         if (!externalId) {
-          throw new Error('原型巡检尚未创建。');
+          throw new Error('巡检尚未创建。');
         }
         if (isJoinRun(config.runConfig)) {
           yield* client.joinLabRun(externalId, config.abortSignal);
@@ -120,7 +120,7 @@ export function LabRuntimeProvider({ client, children }: { client: LmaClient; ch
         yield* client.streamLabRun(externalId, messages, scope, config.abortSignal);
       } catch (reason) {
         if (!config.abortSignal.aborted) {
-          setRunError(reason instanceof Error ? reason.message : '原型巡检未能启动。');
+          setRunError(reason instanceof Error ? reason.message : '巡检未能启动。');
         }
       }
     },
@@ -138,7 +138,7 @@ export function LabRuntimeProvider({ client, children }: { client: LmaClient; ch
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ActiveRunRejoin pendingJoins={pendingJoins.current} />
-      {runError && <p role="alert" className="mb-4 text-sm text-destructive">{runError}</p>}
+      {runError && <p role="alert" className="mx-auto max-w-208 px-5 pt-3 text-sm text-destructive sm:px-6">{runError}</p>}
       <OpenInspectionContext.Provider value={handleThreadIdChange}>{children}</OpenInspectionContext.Provider>
     </AssistantRuntimeProvider>
   );

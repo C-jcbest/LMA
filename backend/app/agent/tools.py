@@ -18,6 +18,7 @@ from app.monitoring_data import (
     match_names,
     monitoring,
     name_key,
+    non_displacement_note,
     series_artifact_data,
     station_summary,
 )
@@ -118,20 +119,23 @@ async def get_displacement(
     """
     async with monitoring() as data:
         station = await data.resolve_station(station_name_or_uuid)
-        if station.station_type == BASE_STATION_TYPE:
-            return BASE_STATION_NOTE, None
+        note = non_displacement_note(station.station_type)
+        if note is not None:
+            return note, None
         series = await data.displacement(station, begin_time, end_time, sampling, sample_times)
         group_stations = [
             item for item in await data.stations()
             if item.group_uuid == station.group_uuid and item.station_uuid != station.station_uuid
         ]
         others = []
+        skipped_peers: dict[str, tuple[str, str]] = {}
         for identifier in dict.fromkeys(compare_stations or []):
             other = await data.resolve_station(identifier)
             if other.station_uuid == station.station_uuid:
                 continue
             if other.station_type not in DISPLACEMENT_STATION_TYPES:
-                raise ToolInputError(f"{other.station_name} 不是移动站，没有形变序列，不能做共同时段对比")
+                skipped_peers[other.station_uuid] = (other.station_name, "非移动站，无形变序列")
+                continue
             others.append(other)
         outcomes = await asyncio.gather(
             *(data.displacement(other, begin_time, end_time, sampling, series.sample_times) for other in others),
@@ -142,8 +146,8 @@ async def get_displacement(
     comparisons = {}
     if split_time:
         comparisons.update(_split_comparison(series, split_time))
-    if others:
-        comparisons.update(_station_comparison(series, others, outcomes))
+    if others or skipped_peers:
+        comparisons.update(_station_comparison(series, others, outcomes, skipped_peers))
 
     display = series_artifact_data(series, features=features, comparisons=comparisons, group_stations=group_stations)
     facts = _model_facts(series, features, comparisons, include_points)
@@ -159,10 +163,18 @@ def _split_comparison(series: DisplacementSeries, split_time: str) -> dict:
     return {axis: compare_windows(first_features[axis], second_features[axis]) for axis in first_features}
 
 
-def _station_comparison(series: DisplacementSeries, others, outcomes) -> dict:
+def _station_comparison(
+    series: DisplacementSeries,
+    others,
+    outcomes,
+    skipped_peers: dict[str, tuple[str, str]] | None = None,
+) -> dict:
     observations = {series.station.station_uuid: series.observations}
     names = {series.station.station_uuid: series.station.station_name}
     failures = {}
+    for uuid, (peer_name, reason) in (skipped_peers or {}).items():
+        names[uuid] = peer_name
+        failures[uuid] = reason
     for other, outcome in zip(others, outcomes):
         names[other.station_uuid] = other.station_name
         if isinstance(outcome, BaseException):

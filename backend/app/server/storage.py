@@ -68,10 +68,10 @@ CREATE TABLE IF NOT EXISTS lma_station_records (
     PRIMARY KEY (session_id, anchor_id, station_uuid)
 );
 CREATE INDEX IF NOT EXISTS lma_station_records_recent ON lma_station_records(station_uuid, created_at DESC);
--- 巡检原型：一次原型巡检是一条 LangGraph 线程，这里只记目录；结果和组件保存在 checkpoint。
+-- 按范围巡检：一次按范围巡检是一条 LangGraph 线程，这里记目录，流式结果与组件保存在 checkpoint，完成后初筛结果同步写回正式巡检表。
 CREATE TABLE IF NOT EXISTS lma_lab_inspections (
     id uuid PRIMARY KEY,
-    label text NOT NULL DEFAULT '原型巡检',
+    label text NOT NULL DEFAULT '巡检',
     status text NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'running', 'success', 'error', 'cancelled', 'interrupted')),
     created_at timestamptz NOT NULL DEFAULT now(),
     finished_at timestamptz
@@ -359,6 +359,51 @@ class SessionStorage:
                 "UPDATE lma_inspections SET status = %s, finished_at = now() WHERE id = %s",
                 (status, inspection_id),
             )
+
+    async def upsert_scoped_inspection_results(self, screened: Sequence[tuple], scope_kind: str) -> None:
+        """统一巡检落库：全量巡检写入新记录，按组/单站巡检原地更新最近一次成功巡检中的对应测点。"""
+        if not screened:
+            return
+        from uuid import uuid4
+        async with self.pool.connection() as connection:
+            async with connection.transaction():
+                target_id: str | None = None
+                if scope_kind != "all":
+                    cursor = await connection.execute(
+                        "SELECT id FROM lma_inspections WHERE status = 'success' ORDER BY started_at DESC LIMIT 1",
+                    )
+                    row = await cursor.fetchone()
+                    if row is not None:
+                        target_id = str(row["id"])
+                if target_id is None:
+                    target_id = str(uuid4())
+                    await connection.execute(
+                        """INSERT INTO lma_inspections (id, status, total_stations, completed_stations, finished_at)
+                           VALUES (%s, 'success', %s, %s, now())""",
+                        (target_id, len(screened), len(screened)),
+                    )
+                else:
+                    await connection.execute(
+                        "UPDATE lma_inspections SET finished_at = now() WHERE id = %s",
+                        (target_id,),
+                    )
+                for station, result in screened:
+                    await connection.execute(
+                        """INSERT INTO lma_inspection_stations
+                           (inspection_id, station_uuid, station_name, group_name, screening, reasons, findings, metrics, trend)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                           ON CONFLICT (inspection_id, station_uuid) DO UPDATE SET
+                             station_name = EXCLUDED.station_name,
+                             group_name = EXCLUDED.group_name,
+                             screening = EXCLUDED.screening,
+                             reasons = EXCLUDED.reasons,
+                             findings = EXCLUDED.findings,
+                             metrics = EXCLUDED.metrics,
+                             trend = EXCLUDED.trend""",
+                        (target_id, station.station_uuid, station.station_name, station.group_name,
+                         result.screening, Jsonb(result.reasons), Jsonb([asdict(finding) for finding in result.findings]),
+                         Jsonb(result.metrics), Jsonb(result.trend)),
+                    )
 
     async def suggestion_sources(self) -> dict:
         """推荐专用的有界投影；不读趋势数组、原始观测或会话 checkpoint。"""

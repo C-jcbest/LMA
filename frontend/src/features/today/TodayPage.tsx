@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAui } from '@assistant-ui/react';
-import { ArrowUpIcon } from 'lucide-react';
+import { ArrowUpIcon, Loader2Icon } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useNavigation } from '@/app/navigation';
 import { Button } from '@/components/ui/button';
 import { EASE_IN, EASE_OUT } from '@/components/ui/motion-primitives';
+import { useInspection } from '@/features/inspection/InspectionContext';
 import { ScopedInspectionSheet } from '@/features/lab/InspectionLabPage';
 import { TodayAttention } from './TodayAttention';
 
-const QUICK_STARTERS = [
-  '分析最新建议调查测点的位移与降雨关联',
+const DEFAULT_STARTERS = [
+  '查看近期位移变化较明显的测点',
   '对比同组测点近期变化是否同步',
 ];
 
@@ -23,18 +24,38 @@ export function TodayPage({
   initialScopedOpen?: boolean;
 }) {
   const aui = useAui();
-  const { showConversation } = useNavigation();
+  const { page, goHome, showConversation } = useNavigation();
+  const { latest } = useInspection();
   const [sending, setSending] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [scopedOpen, setScopedOpen] = useState(initialScopedOpen);
   const submitting = useRef(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  const starters = useMemo(() => {
+    const attention = (latest?.stations ?? []).filter((station) => station.screening === '建议调查');
+    if (attention.length === 0) {
+      return DEFAULT_STARTERS;
+    }
+    const top = attention[0]!;
+    const second = attention[1];
+    return second
+      ? [`调查 ${top.station_name} 的近期位移变化与降雨关联`, `对比 ${top.station_name} 和 ${second.station_name} 的变化特征`]
+      : [`调查 ${top.station_name} 的近期位移变化与降雨关联`, `核查 ${top.group_name} 同组测点是否同步变化`];
+  }, [latest]);
+
   useEffect(() => {
     if (initialScopedOpen) {
       setScopedOpen(true);
     }
   }, [initialScopedOpen]);
+
+  const handleScopedOpenChange = (open: boolean) => {
+    setScopedOpen(open);
+    if (!open && page === 'lab') {
+      goHome();
+    }
+  };
 
   const send = async () => {
     const text = draft.trim();
@@ -73,7 +94,7 @@ export function TodayPage({
                 className="overflow-hidden"
               >
                 <div className="mb-2 flex flex-wrap gap-1.5">
-                  {QUICK_STARTERS.map((starter) => (
+                  {starters.map((starter) => (
                     <button
                       key={starter}
                       type="button"
@@ -105,12 +126,12 @@ export function TodayPage({
                 }
               }} />
             <Button type="submit" size="icon" aria-label="发送消息" disabled={sending || !draft.trim()} className="size-8 shrink-0 rounded-full">
-              <ArrowUpIcon className="size-4" />
+              {sending ? <Loader2Icon className="size-4 animate-spin" aria-hidden /> : <ArrowUpIcon className="size-4" aria-hidden />}
             </Button>
           </div>
         </form>
       </div>
-      <ScopedInspectionSheet open={scopedOpen} onOpenChange={setScopedOpen} />
+      <ScopedInspectionSheet open={scopedOpen} onOpenChange={handleScopedOpenChange} />
     </section>
   );
 }

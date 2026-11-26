@@ -45,6 +45,15 @@ STATION_STATUS_TEXT = {10: "正常", 20: "离线", 30: "告警", 40: "故障"}
 BASE_STATION_TYPE = 1
 DISPLACEMENT_STATION_TYPES = {2, 3}
 BASE_STATION_NOTE = "未查询形变数据：该监测点为基准站，仅提供差分基准，不适用移动站形变序列分析；这不表示监测异常。"
+RELAY_STATION_NOTE = "未查询形变数据：该监测点为中继站，仅用于通信中继，不产生移动站形变序列；这不表示监测异常。"
+
+
+def non_displacement_note(station_type: int | None) -> str | None:
+    if station_type == BASE_STATION_TYPE:
+        return BASE_STATION_NOTE
+    if station_type not in DISPLACEMENT_STATION_TYPES:
+        return RELAY_STATION_NOTE
+    return None
 
 _UUID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
@@ -119,11 +128,15 @@ class _Block:
     fetched_at: float
 
 
+_STATION_LIST_TTL_SECONDS = 60
+
+
 class _SeriesCache:
-    """一个会话已取得的日历块；跨运行保留，过期即重新读取。"""
+    """一个会话已取得的日历块与短期测点台账；跨运行保留，过期即重新读取。"""
 
     def __init__(self):
         self.blocks: dict[tuple, _Block] = {}
+        self.stations_cache: tuple[list[Station], float] | None = None
         self.loop_locks: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[tuple, asyncio.Lock]] = WeakKeyDictionary()
 
     def lock_for(self, key: tuple) -> asyncio.Lock:
@@ -136,6 +149,14 @@ class _SeriesCache:
         if block is None or time.monotonic() - block.fetched_at > _CACHE_TTL_SECONDS:
             return None
         return block
+
+    def fresh_stations(self) -> list[Station] | None:
+        if self.stations_cache is None:
+            return None
+        items, fetched_at = self.stations_cache
+        if time.monotonic() - fetched_at > _STATION_LIST_TTL_SECONDS:
+            return None
+        return items
 
 
 _session_caches: OrderedDict[str, _SeriesCache] = OrderedDict()
@@ -197,7 +218,12 @@ class MonitoringData:
     async def stations(self) -> list[Station]:
         async with self._station_lock:
             if self._stations is None:
-                self._stations = await self.client().get_stations()
+                cached = self._cache.fresh_stations()
+                if cached is not None:
+                    self._stations = cached
+                else:
+                    self._stations = await self.client().get_stations()
+                    self._cache.stations_cache = (self._stations, time.monotonic())
             return self._stations
 
     async def groups(self):
@@ -223,8 +249,9 @@ class MonitoringData:
         self, station: Station, begin_time: str, end_time: str,
         sampling: Sampling = "hourly", sample_times: list[str] | None = None,
     ) -> DisplacementSeries:
-        if station.station_type == BASE_STATION_TYPE:
-            raise ToolFailure(BASE_STATION_NOTE)
+        note = non_displacement_note(station.station_type)
+        if note is not None:
+            raise ToolFailure(note)
         start = datetime.strptime(begin_time, TIME_FORMAT)
         end = datetime.strptime(end_time, TIME_FORMAT)
         if start >= end:

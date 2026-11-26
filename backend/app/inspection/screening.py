@@ -53,7 +53,7 @@ class AxisSeries:
 
 
 Window = Literal["long", "recent"]
-_WINDOW_PREFIX = {"long": "", "recent": "近期小时序列："}
+_WINDOW_PREFIX = {"long": "", "recent": "近 7 天："}
 
 
 @dataclass
@@ -215,44 +215,59 @@ def _axis_findings(series: AxisSeries, axis: str, window: Window) -> tuple[list[
         is_faster = abs(recent_slope) >= _ACCELERATION_RATIO * abs(earlier_slope)
         is_significant = abs(recent_slope) * (recent[-1][0] - recent[0][0]) > _TREND_NOISE_MULTIPLE * noise
         if is_faster and is_significant and recent_slope * earlier_slope >= 0:
-            add("acceleration", "trigger", f"{name}近 {comparison_days:.1f} 天变化快于此前，仍需分窗复核",
+            add("acceleration", "trigger", f"{name}近 {round(comparison_days)} 天变化较此前加快",
                 days=round(comparison_days, 1))
 
     steps = [series.values[i + 1] - series.values[i] for i in range(len(series.values) - 1)]
     adjacent = [i for i in range(len(steps))
                 if 0 < series.days[i + 1] - series.days[i] <= series.cadence_days * 1.5]
     if len(adjacent) != len(steps):
-        add("gap", "quality", f"{name}存在缺测跨越，跨越差值不作为单步跳变或保持证据")
+        add("gap", "quality", f"{name}存在缺测时段")
     for index, change in enumerate(steps):
         if index not in adjacent and abs(change) > _STEP_NOISE_MULTIPLE * noise:
             hold = _step_hold(series, index, change, adjacent)
             if _is_held(hold):
                 add("gap_jump", "trigger",
-                    f"{name}缺测两端相差约 {change:+.1f} mm，之后保持约 {_duration_text(hold.days)}，成因需人工调查",
+                    f"{name}缺测前后偏移约 {change:+.1f} mm，已保持约 {_duration_text(hold.days)}",
                     change, round(hold.days, 1))
             elif not hold.returned:
                 add("gap_jump", "quality",
-                    f"{name}缺测两端相差约 {change:+.1f} mm，之后仅 {hold.points} 个观测，暂按数据质量记录，后续巡检看是否保持",
+                    f"{name}缺测前后偏移约 {change:+.1f} mm，后续仅 {hold.points} 个观测，待继续观察",
                     change, round(hold.days, 1))
     if adjacent:
         step_noise = _robust_sigma([steps[i] for i in adjacent])
-        largest_index = max(adjacent, key=lambda index: abs(steps[index]))
-        largest = steps[largest_index]
-        if abs(largest) > _STEP_NOISE_MULTIPLE * step_noise:
-            hold = _step_hold(series, largest_index, largest, adjacent)
+        threshold = _STEP_NOISE_MULTIPLE * step_noise
+        candidates = sorted(
+            (i for i in adjacent if abs(steps[i]) > threshold),
+            key=lambda i: abs(steps[i]),
+            reverse=True,
+        )
+        emitted_held = False
+        emitted_spike = False
+        emitted_tail = False
+        for candidate_index in candidates:
+            change = steps[candidate_index]
+            hold = _step_hold(series, candidate_index, change, adjacent)
             held_days = round(hold.days, 1)
             if _is_held(hold):
-                ending = "后回落" if hold.returned else ""
-                add("held_step", "trigger",
-                    f"{name}出现约 {largest:+.1f} mm 的台阶，已保持约 {_duration_text(hold.days)}{ending}，成因需人工调查",
-                    largest, held_days)
+                if not emitted_held:
+                    ending = "后回落" if hold.returned else ""
+                    add("held_step", "trigger",
+                        f"{name}出现约 {change:+.1f} mm 台阶，已保持约 {_duration_text(hold.days)}{ending}",
+                        change, held_days, time=time_at(candidate_index + 1))
+                    emitted_held = True
             elif hold.returned:
-                add("spike", "quality", f"{name}异常跳点约 {largest:+.1f} mm，随后恢复，按数据质量处理", largest,
-                    time=time_at(largest_index + 1))
-            else:
+                if not emitted_spike:
+                    add("spike", "quality", f"{name}出现约 {change:+.1f} mm 瞬时跳点，随后恢复", change,
+                        time=time_at(candidate_index + 1))
+                    emitted_spike = True
+            elif not emitted_tail:
                 add("tail_step", "quality",
-                    f"{name}出现约 {largest:+.1f} mm 跳变，之后仅 {hold.points} 个观测（约 {_duration_text(hold.days)}），"
-                    "数据太少，暂按数据质量记录，后续巡检看是否保持", largest, held_days)
+                    f"{name}末端跳变约 {change:+.1f} mm，后续仅 {hold.points} 个观测（约 {_duration_text(hold.days)}），待继续观察",
+                    change, held_days, time=time_at(candidate_index + 1))
+                emitted_tail = True
+            if emitted_held and emitted_spike and emitted_tail:
+                break
 
     return findings, direction, slope, noise
 
@@ -328,8 +343,12 @@ def screen_station(
         findings.append(Finding(
             "data", "quality", f"近 {LONG_WINDOW_DAYS} 天仅有 {valid_days} 天有效数据，无法判断长期趋势", window="long",
         ))
-    if long_duplicates or recent_duplicates:
-        findings.append(Finding("data", "quality", f"重复时间已剔除：长期 {long_duplicates} 条，近期 {recent_duplicates} 条"))
+    duplicate_parts = []
+    if long_duplicates:
+        duplicate_parts.append(f"长期 {long_duplicates} 条")
+    if recent_duplicates:
+        duplicate_parts.append(f"近期 {recent_duplicates} 条")
+    duplicate_note = f"已剔除重复时间记录（{'、'.join(duplicate_parts)}）" if duplicate_parts else None
     directions: dict[str, int] = {}
     metrics["net_change_mm"] = {}
     metrics["slope_mm_per_day"] = {}
@@ -366,8 +385,8 @@ def screen_station(
     metrics["last_observed_at"] = last_observed.strftime(TIME_FORMAT) if last_observed is not None else None
     is_stale = latest_time is None or (now - latest_time).total_seconds() > _STALE_AFTER_HOURS * 3600
     data_problems: list[Finding] = []
-    if long_duplicates or recent_duplicates:
-        data_problems.append(Finding("data", "quality", "存在重复时间，需核查数据来源"))
+    if duplicate_note:
+        data_problems.append(Finding("data", "quality", duplicate_note))
     if is_stale:
         data_problems.append(Finding("data", "quality", f"最近 {_STALE_AFTER_HOURS} 小时没有数据", window="recent"))
     elif recent_completeness < _MIN_COMPLETENESS:

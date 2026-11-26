@@ -4,7 +4,7 @@ import { MarkdownText } from '@/components/markdown-text';
 import { cn } from 'cn';
 import { cardReferenceFromHref, citedEvidenceIds, evidenceNumbers, insertEvidenceCards, type CardReference } from './evidence-cards';
 import { EvidenceCard, hasEvidenceCard, mapContentOf } from './EvidenceCards';
-import { buildSteps, collectStations, type InvestigationStep } from './investigation';
+import { buildSteps, collectStations, splitAnswerParts, type InvestigationStep } from './investigation';
 import { useStationInspector } from './StationInspectorContext';
 
 const EvidenceContext = createContext<{ steps: InvestigationStep[]; numbers: Map<string, number> }>({ steps: [], numbers: new Map() });
@@ -55,19 +55,35 @@ const components = { a: EvidenceLink, p: Paragraph };
 
 export const EvidenceMarkdown: FC = () => {
   const parts = useAuiState((state) => state.message.parts);
-  const text = useAuiState((state) => (state.part.type === 'text' ? state.part.text : ''));
+  const isRunning = useAuiState((state) => state.message.status?.type === 'running');
+  const currentPart = useAuiState((state) => state.part);
+  const text = currentPart.type === 'text' ? currentPart.text : '';
+  const partIndex = parts.indexOf(currentPart as typeof parts[number]);
+
+  const { foldedIndexes, firstAnswerTextIndex } = useMemo(
+    () => splitAnswerParts(parts, isRunning),
+    [parts, isRunning],
+  );
+  const isFolded = partIndex >= 0 && foldedIndexes.has(partIndex);
+
   const stations = useMemo(() => collectStations(parts), [parts]);
   const steps = useMemo(() => buildSteps(parts, stations), [parts, stations]);
+  const visibleTexts = useMemo(
+    () => parts.flatMap((part, index) => (part.type === 'text' && !foldedIndexes.has(index) && part.text.trim() ? [{ index, text: part.text }] : [])),
+    [parts, foldedIndexes],
+  );
   const context = useMemo(() => ({
     steps,
-    numbers: evidenceNumbers(parts.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n\n')),
-  }), [parts, steps]);
+    numbers: evidenceNumbers(visibleTexts.map((item) => item.text).join('\n\n')),
+  }), [visibleTexts, steps]);
 
-  const textParts = parts.flatMap((part) => (part.type === 'text' && part.text.trim() ? [part.text] : []));
-  const earlierTexts = textParts.slice(0, Math.max(0, textParts.indexOf(text)));
+  const earlierTexts = visibleTexts
+    .filter((item) => (partIndex >= 0 ? item.index < partIndex : item.text !== text))
+    .map((item) => item.text);
   const cardKey = steps.filter(hasEvidenceCard).map((step) => step.evidenceId).join();
   const alreadyShownKey = earlierTexts.flatMap(citedEvidenceIds).join();
-  const includeStationMap = earlierTexts.length === 0 && mapContentOf(stations, new Map()).stations.length > 0;
+  const isFirstAnswerPart = partIndex >= 0 ? partIndex === firstAnswerTextIndex : earlierTexts.length === 0;
+  const includeStationMap = isFirstAnswerPart && mapContentOf(stations, new Map()).stations.length > 0;
 
   const preprocess = useCallback(
     (markdown: string) => insertEvidenceCards(markdown, {
@@ -77,6 +93,10 @@ export const EvidenceMarkdown: FC = () => {
     }),
     [cardKey, alreadyShownKey, includeStationMap],
   );
+
+  if (isFolded) {
+    return null;
+  }
 
   return (
     <EvidenceContext.Provider value={context}>

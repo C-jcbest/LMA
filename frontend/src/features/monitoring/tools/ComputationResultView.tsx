@@ -137,6 +137,8 @@ export const ComputationResultView: FC<{ data: ComputationArtifactData }> = ({ d
   <div className="space-y-3 text-sm">
     <ResultValue value={data.result} />
     {data.truncated && <p className="text-xs text-muted-foreground">结果较长，已截取前 200 行。</p>}
-    <p className="text-xs text-muted-foreground">数据：{data.inputs.map((input) => input.description).join('；')}</p>
+    {data.inputs.length > 0 && (
+      <p className="text-xs text-muted-foreground">数据：{data.inputs.map((input) => input.description).join('；')}</p>
+    )}
   </div>
 );

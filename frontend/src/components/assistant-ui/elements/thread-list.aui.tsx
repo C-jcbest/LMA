@@ -468,18 +468,23 @@ export const ThreadListItem: FC = () => {
               className="text-muted-foreground ms-3 shrink-0 text-xs tabular-nums"
               dateTime={lastMessageAt.toISOString()}
             >
-              {new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric" }).format(lastMessageAt)}
+              {new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "numeric", day: "numeric" }).format(lastMessageAt)}
             </time>
           )}
         </ThreadListItemPrimitive.Trigger>
       )}
-      <ThreadListItemMore
-        isRunning={isRunning}
-        onRename={() => setIsRenaming(true)}
-        onDelete={() => {
-          scheduleDelete(itemId, title || "新会话", () => Promise.resolve(aui.threadListItem().delete()));
-        }}
-      />
+      {!isRenaming && (
+        <ThreadListItemMore
+          isRunning={isRunning}
+          onRename={() => setIsRenaming(true)}
+          onDelete={() => {
+            const detail = verdict && verdict.stations.length > 0
+              ? `将同时移除 ${verdict.stations.length} 条已登记测点结论`
+              : undefined;
+            scheduleDelete(itemId, title || "新会话", () => Promise.resolve(aui.threadListItem().delete()), detail);
+          }}
+        />
+      )}
     </ThreadListItemPrimitive.Root>
   );
 };
@@ -559,7 +564,7 @@ const ThreadListItemMore: FC<{
           variant="ghost"
           size="icon"
           data-slot="aui_thread-list-item-more"
-          className="data-[state=open]:bg-accent absolute end-1.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 group-hover:opacity-100 group-has-focus-visible:opacity-100 group-data-active:opacity-100 data-[state=open]:opacity-100"
+          className="data-[state=open]:bg-accent absolute end-1.5 top-1/2 size-6 -translate-y-1/2 p-0 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-has-focus-visible:opacity-100 group-data-active:opacity-100 data-[state=open]:opacity-100 [@media(hover:none)]:opacity-70"
         >
           <MoreHorizontalIcon className="size-3.5" />
           <span className="sr-only">更多选项</span>

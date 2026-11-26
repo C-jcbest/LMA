@@ -32,3 +32,7 @@ raw_points  # 2026-11-17 位移依据不再另存原始记录，原始数据以�
 generate_title_node  # 2026-11-17 标题改为单次模型调用 generate_title
 numerical_model_data  # 2026-11-17 删除未使用的投影函数
 vite-env.d.ts  # Vite 类型移至前端 tsconfig.json
+terrain3d  # 2026-11-27 删除 JSAPI 2.0 伪 3D 地形开关
+createMapPopup  # 2026-11-27 改为 React 地图内嵌详情卡片 MapStationSheet
+map-station-popup  # 2026-11-27 随原生 InfoWindow 弹窗 DOM 样式删除
+原型巡检  # 2026-11-27 按范围巡检与日常巡检统一，不再称原型巡检

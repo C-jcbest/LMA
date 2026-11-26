@@ -58,7 +58,7 @@ class SuggestionTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.agent.suggestions._get_suggestion_llm", return_value=model):
             questions = await suggest_questions(context)
         self.assertEqual(questions, [
-            f"演示坡体·演示点A（UUID：{row['station_uuid']}）（2026-08-14至2026-11-12）：位移趋势如何？"
+            "查看 演示坡体 演示点A（2026-08-14 至 2026-11-12）：位移趋势如何？"
         ])
         model.ainvoke.assert_awaited_once()
         sent = json.loads(model.ainvoke.call_args.args[0][1].content)
@@ -88,7 +88,7 @@ class SuggestionTests(unittest.IsolatedAsyncioTestCase):
         ]}))
         with patch("app.agent.suggestions._get_suggestion_llm", return_value=model):
             result = await suggest_questions(suggestion_context({"stations": [row]}))
-        self.assertIn("2026-01-01至2026-01-07", result[0])
+        self.assertIn("2026-01-01 至 2026-01-07", result[0])
         self.assertNotIn("2026-11-12", result[0])
 
     async def test_all_fabricated_references_are_failure_instead_of_valid_empty_selection(self):

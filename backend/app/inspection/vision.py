@@ -77,7 +77,12 @@ def _display_range(values: Sequence[float]) -> tuple[float, float]:
     return middle - half_range, middle + half_range
 
 
-def render_displacement_chart(points: Sequence[GnssDataPoint], station_name: str) -> bytes:
+def render_displacement_chart(
+    points: Sequence[GnssDataPoint],
+    station_name: str,
+    *,
+    window: Literal["long", "recent"] = "long",
+) -> bytes:
     """三栏位移图（PNG）。标题和坐标轴只用 ASCII，服务器没有中文字体时也不会乱码。"""
     import matplotlib
 
@@ -86,7 +91,10 @@ def render_displacement_chart(points: Sequence[GnssDataPoint], station_name: str
 
     times = [datetime.strptime(point.data_time, TIME_FORMAT) for point in points]
     figure, axes = plt.subplots(3, 1, figsize=(9, 6), sharex=True)
-    figure.suptitle(f"Daily displacement, last 90 days - {station_name}", fontsize=11)
+    safe_name = "".join(ch for ch in station_name if 32 <= ord(ch) < 127).strip() or "Station"
+    window_title = "Hourly displacement, last 7 days" if window == "recent" else "Daily displacement, last 90 days"
+    gap_threshold_seconds = 3 * 3600 if window == "recent" else _GAP_DAYS * 86400
+    figure.suptitle(f"{window_title} - {safe_name}", fontsize=11)
     for axis, (key, label) in zip(axes, _AXES):
         raw = [finite_number(getattr(point, key)) for point in points]
         first = next((value for value in raw if value is not None), None)
@@ -106,7 +114,7 @@ def render_displacement_chart(points: Sequence[GnssDataPoint], station_name: str
         if below:
             axis.scatter(*zip(*below), marker="v", color="#dc2626", s=18, zorder=3)
         for (start, _), (end, _) in zip(series, series[1:]):
-            if (end - start).total_seconds() > _GAP_DAYS * 86400:
+            if (end - start).total_seconds() > gap_threshold_seconds:
                 axis.axvspan(start, end, color="#f59e0b", alpha=0.18, linewidth=0)
         axis.set_ylim(low, high)
     figure.autofmt_xdate()

@@ -263,6 +263,10 @@ export class LmaClient {
     await this.request('/inspections', { method: 'POST' });
   }
 
+  async cancelInspection(): Promise<void> {
+    await this.request('/inspections/cancel', { method: 'POST' });
+  }
+
   async getStationTimeline(stationUuid: string, window: StationWindow, signal?: AbortSignal): Promise<StationTimeline> {
     const path = `/stations/${encodeURIComponent(stationUuid)}/timeline?${windowQuery(window)}`;
     return (await this.request(path, { signal })).json();

@@ -142,7 +142,7 @@ describe('测点时间轴数据', () => {
     const steps = option.series.find((item: { name: string }) => item.name === '台阶');
     expect(steps.markPoint.data).toEqual([{
       name: '北向台阶 +4.0 mm · 11-03 00:00', coord: [Date.parse('2026-11-03T00:00:00+08:00'), 4],
-      itemStyle: { color: 'north', borderColor: '#fff', borderWidth: 1 },
+      itemStyle: { color: 'north', borderColor: 'surface', borderWidth: 1.25 },
     }]);
     expect(option.legend.data).toContainEqual(expect.objectContaining({ name: '台阶' }));
   });

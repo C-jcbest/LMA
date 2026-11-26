@@ -1,12 +1,13 @@
-import { useContext, useEffect, useState, type FC } from 'react';
+import { useContext, useEffect, useRef, useState, type FC } from 'react';
 import { AuiConfig, AuiProvider, MessagePrimitive, ThreadPrimitive, useAui, useAuiState } from '@assistant-ui/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { PlayIcon } from 'lucide-react';
+import { PlayIcon, SquareIcon } from 'lucide-react';
 import { LmaClientContext } from '@/app/providers/LmaClientContext';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { useInspection } from '@/features/inspection/InspectionContext';
 import type { LabInspection, LabScope, LabScopeGroup } from '@/services/api';
 import { cn } from 'cn';
 import { InspectionSummaryPart, ROW_COMPONENT, StationRowPart, SUMMARY_COMPONENT } from './LabParts';
@@ -44,32 +45,34 @@ const LabAssistantMessage: FC = () => (
   </MessagePrimitive.Root>
 );
 
-const LabUserMessage: FC = () => (
-  <MessagePrimitive.Root className="mb-2 text-xs text-muted-foreground">
-    <MessagePrimitive.Parts />
-  </MessagePrimitive.Root>
-);
+const LabUserMessage: FC = () => null;
 
 interface ScopePickerProps {
   groups: readonly LabScopeGroup[];
   onStart: (scope: LabScope, label: string) => void;
+  onStop?: () => void;
+  isRunning: boolean;
+  isStopping: boolean;
   disabled: boolean;
 }
 
-const ScopePicker: FC<ScopePickerProps> = ({ groups, onStart, disabled }) => {
+const ScopePicker: FC<ScopePickerProps> = ({ groups, onStart, onStop, isRunning, isStopping, disabled }) => {
   const [kind, setKind] = useState<ScopeKind>('all');
   const [groupUuid, setGroupUuid] = useState('');
   const [stationUuid, setStationUuid] = useState('');
   const stations = groups.flatMap((group) => group.stations.map((station) => ({ ...station, groupName: group.group_name })));
 
+  const effectiveGroupUuid = groupUuid || groups[0]?.group_uuid || '';
+  const effectiveStationUuid = stationUuid || stations[0]?.station_uuid || '';
+
   let scope: LabScope | null = { kind: 'all' };
   let label = '全部测点';
   if (kind === 'group') {
-    const group = groups.find((item) => item.group_uuid === groupUuid);
+    const group = groups.find((item) => item.group_uuid === effectiveGroupUuid);
     scope = group ? { kind: 'group', group_uuid: group.group_uuid } : null;
     label = group ? `${group.group_name} 分组` : '';
   } else if (kind === 'station') {
-    const station = stations.find((item) => item.station_uuid === stationUuid);
+    const station = stations.find((item) => item.station_uuid === effectiveStationUuid);
     scope = station ? { kind: 'station', station_uuid: station.station_uuid } : null;
     label = station ? station.station_name : '';
   }
@@ -78,7 +81,7 @@ const ScopePicker: FC<ScopePickerProps> = ({ groups, onStart, disabled }) => {
     <div className="flex flex-wrap items-center gap-3">
       <Segmented label="巡检范围" value={kind} options={SCOPE_OPTIONS} onValueChange={(value) => setKind(value as ScopeKind)} />
       {kind === 'group' && (
-        <Select value={groupUuid} onValueChange={setGroupUuid}>
+        <Select value={effectiveGroupUuid} onValueChange={setGroupUuid}>
           <SelectTrigger size="sm" aria-label="选择分组" className="min-w-44"><SelectValue placeholder="选择分组" /></SelectTrigger>
           <SelectContent>
             {groups.map((group) => (
@@ -88,7 +91,7 @@ const ScopePicker: FC<ScopePickerProps> = ({ groups, onStart, disabled }) => {
         </Select>
       )}
       {kind === 'station' && (
-        <Select value={stationUuid} onValueChange={setStationUuid}>
+        <Select value={effectiveStationUuid} onValueChange={setStationUuid}>
           <SelectTrigger size="sm" aria-label="选择测点" className="min-w-52"><SelectValue placeholder="选择测点" /></SelectTrigger>
           <SelectContent>
             {stations.map((station) => (
@@ -99,10 +102,17 @@ const ScopePicker: FC<ScopePickerProps> = ({ groups, onStart, disabled }) => {
           </SelectContent>
         </Select>
       )}
-      <Button type="button" size="sm" disabled={disabled || scope === null} onClick={() => scope && onStart(scope, label)}>
-        <PlayIcon className="size-3.5" aria-hidden />
-        开始巡检
-      </Button>
+      {isRunning && onStop ? (
+        <Button type="button" variant="outline" size="sm" disabled={isStopping} onClick={onStop}>
+          <SquareIcon className="size-3 fill-current" aria-hidden />
+          {isStopping ? '正在停止…' : '停止巡检'}
+        </Button>
+      ) : (
+        <Button type="button" size="sm" disabled={disabled || scope === null} onClick={() => scope && onStart(scope, label)}>
+          <PlayIcon className="size-3.5" aria-hidden />
+          开始巡检
+        </Button>
+      )}
     </div>
   );
 };
@@ -111,6 +121,7 @@ const ScopedInspectionBody: FC<{ compact?: boolean }> = ({ compact = false }) =>
   const client = useContext(LmaClientContext)!;
   const queryClient = useQueryClient();
   const aui = useAui();
+  const { reload: reloadInspection } = useInspection();
   const currentId = useAuiState((state) =>
     state.threads.threadItems.find((item) => item.id === state.threads.mainThreadId)?.remoteId);
   const hasMessages = useAuiState((state) => state.thread.messages.length > 0);
@@ -119,6 +130,8 @@ const ScopedInspectionBody: FC<{ compact?: boolean }> = ({ compact = false }) =>
   const openInspection = useOpenLabInspection();
   const [pendingStart, setPendingStart] = useState<{ id: string; scope: LabScope; label: string } | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
+  const wasRunningRef = useRef(false);
 
   const scopes = useQuery({
     queryKey: ['lab-scopes'],
@@ -132,7 +145,11 @@ const ScopedInspectionBody: FC<{ compact?: boolean }> = ({ compact = false }) =>
 
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: ['lab-inspections'] });
-  }, [isRunning, queryClient]);
+    if (wasRunningRef.current && !isRunning) {
+      reloadInspection();
+    }
+    wasRunningRef.current = isRunning;
+  }, [isRunning, queryClient, reloadInspection]);
 
   const start = async (scope: LabScope, label: string) => {
     setStartError(null);
@@ -143,7 +160,22 @@ const ScopedInspectionBody: FC<{ compact?: boolean }> = ({ compact = false }) =>
       openInspection(created.id);
     } catch {
       setPendingStart(null);
-      setStartError('专项巡检未能启动，请稍后重试。');
+      setStartError('巡检未能启动，请稍后重试。');
+    }
+  };
+
+  const stop = async () => {
+    if (!currentId) return;
+    setIsStopping(true);
+    try {
+      await client.cancelLabRun(currentId);
+      aui.thread().cancelRun();
+      void queryClient.invalidateQueries({ queryKey: ['lab-inspections'] });
+      reloadInspection();
+    } catch {
+      setStartError('停止请求未送达，请稍后重试。');
+    } finally {
+      setIsStopping(false);
     }
   };
 
@@ -163,8 +195,8 @@ const ScopedInspectionBody: FC<{ compact?: boolean }> = ({ compact = false }) =>
     <div className={cn('@container mx-auto w-full max-w-208', compact ? 'px-5 pb-8 pt-2 sm:px-6' : 'px-4 pt-6 pb-10 sm:px-6 sm:pt-8')}>
       {!compact && (
         <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">专项巡检</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">按全部、分组或单站执行逐站初筛与曲线初判。</p>
+          <h1 className="text-2xl font-semibold tracking-tight">按范围巡检</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">按全部、分组或单站执行初筛与曲线初判，完成后同步更新今日概览与测点列表。</p>
         </div>
       )}
 
@@ -173,13 +205,16 @@ const ScopedInspectionBody: FC<{ compact?: boolean }> = ({ compact = false }) =>
         <ScopePicker
           groups={scopes.data ?? []}
           onStart={(scope, label) => void start(scope, label)}
+          onStop={() => void stop()}
+          isRunning={isRunning}
+          isStopping={isStopping}
           disabled={isRunning || pendingStart !== null || !scopes.data}
         />
         {startError && <p role="alert" className="mt-2 text-sm text-destructive">{startError}</p>}
       </div>
 
       {(history.data?.length ?? 0) > 0 && (
-        <nav aria-label="最近的专项巡检" className="mt-4 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-muted-foreground">
+        <nav aria-label="最近的巡检记录" className="mt-4 flex flex-wrap items-center gap-x-1 gap-y-1 text-xs text-muted-foreground">
           <span className="me-1">最近</span>
           {history.data!.slice(0, 6).map((inspection) => (
             <button
@@ -214,12 +249,22 @@ export const ScopedInspectionSheet: FC<{ open: boolean; onOpenChange: (open: boo
   if (!client) {
     return null;
   }
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('labThread')) {
+        url.searchParams.delete('labThread');
+        window.history.replaceState(null, '', url);
+      }
+    }
+    onOpenChange(nextOpen);
+  };
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-2xl">
         <SheetHeader className="border-b px-5 py-4 sm:px-6">
-          <SheetTitle>专项巡检</SheetTitle>
-          <SheetDescription>按全部、分组或单站范围执行逐站初筛与 90 天曲线初判，结果不影响今日全局巡检。</SheetDescription>
+          <SheetTitle>按范围巡检</SheetTitle>
+          <SheetDescription>按全部、分组或单站执行逐站初筛与曲线初判，结果会同步更新到今日概览与测点列表。</SheetDescription>
         </SheetHeader>
         <AuiProvider extends={null} config={AuiConfig({})}>
           <LabRuntimeProvider client={client}>
