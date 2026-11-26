@@ -390,7 +390,7 @@
   align-items: center;
   gap: 5px;
   width: max-content;
-  max-width: 176px;
+  max-width: 224px;
   transform: translateY(-50%);
   padding: 3.5px 8px;
   border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
@@ -419,6 +419,7 @@
   border: 1.5px solid var(--status-unknown);
 }
 .evidence-map-marker__name {
+  min-width: 0;
   overflow: hidden;
   font-size: 11.5px;
   font-weight: 600;
@@ -426,12 +427,11 @@
   text-overflow: ellipsis;
 }
 .evidence-map-marker__value {
-  overflow: hidden;
+  flex-shrink: 0;
   color: var(--muted-foreground);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  text-overflow: ellipsis;
 }
 .evidence-map-marker__value[hidden] {
   display: none;
@@ -441,6 +441,7 @@
   pointer-events: none;
 }
 .evidence-map-marker__cluster {
+  flex-shrink: 0;
   padding: 0 5px;
   border-radius: 999px;
   background: var(--foreground);
@@ -449,6 +450,7 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.5;
+  white-space: nowrap;
 }
 .evidence-map-marker__cluster[hidden] {
   display: none;
@@ -469,13 +471,29 @@
   outline-offset: 2px;
 }
 
+.amap-scalecontrol {
+  padding: 2px 6px 3px;
+  border-radius: 6px;
+  background: color-mix(in oklab, var(--popover) 86%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.amap-scale-text {
+  background: transparent !important;
+  color: var(--popover-foreground) !important;
+  font-size: 11px !important;
+  font-variant-numeric: tabular-nums;
+}
 .amap-scale-line {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: color-mix(in oklab, var(--popover) 84%, transparent);
-  color: var(--popover-foreground);
+  background: transparent !important;
+  color: var(--popover-foreground) !important;
   border-color: var(--popover-foreground) !important;
-  backdrop-filter: blur(6px);
+}
+.amap-scale-edgeleft,
+.amap-scale-edgeright,
+.amap-scale-middle {
+  background-color: var(--popover-foreground) !important;
+  border-color: var(--popover-foreground) !important;
 }
 .amap-copyright {
   padding: 1px 5px;

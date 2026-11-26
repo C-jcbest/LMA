@@ -178,11 +178,11 @@ export const MapStationSheet: FC<{
             'pointer-events-auto flex flex-col overflow-hidden text-start text-sm text-popover-foreground',
             docked
               ? 'border-t border-border/70 bg-card px-3.5 py-3'
-              : 'absolute bottom-3 start-3 z-30 max-h-[calc(100%-3.5rem)] w-76 rounded-xl border border-border/80 bg-popover/95 p-3.5 shadow-lg backdrop-blur-md',
+              : 'absolute bottom-3 start-3 z-30 max-h-[calc(100%-1.5rem)] w-80 rounded-xl border border-border/80 bg-popover/95 p-3 shadow-lg backdrop-blur-md',
           )}
         >
           {showSwitcher && (
-            <div className="mb-2.5 flex items-center gap-1 overflow-x-auto pb-0.5">
+            <div className="mb-2 flex flex-wrap items-center gap-1">
               {clusterOptions!.map((member) => {
                 const active = member.id === activeClusterId;
                 return (
@@ -192,7 +192,7 @@ export const MapStationSheet: FC<{
                     aria-pressed={active}
                     onClick={() => onSelectClusterMember!(member.id)}
                     className={cn(
-                      'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      'inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       active
                         ? 'border-foreground/30 bg-foreground font-medium text-background'
                         : 'border-border/70 bg-muted/60 text-muted-foreground hover:text-foreground',

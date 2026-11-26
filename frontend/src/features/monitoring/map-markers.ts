@@ -246,7 +246,7 @@ export function placeMapMarkerLabels(map: AMap.Map, container: HTMLElement, mark
         && box.bottom > candidate.top && box.top < bottom);
       const overlapsLabel = placed.some((other) => other.right + 4 > candidate.left && other.left - 4 < right
         && other.bottom + 4 > candidate.top && other.top - 4 < bottom);
-      const score = Number(outside) * 1000 + Number(coversMarker) * 180 + Number(coversArrow) * 80 + Number(overlapsLabel) * 40;
+      const score = Number(outside) * 1000 + Number(overlapsLabel) * 240 + Number(coversMarker) * 180 + Number(coversArrow) * 80;
       if (score < bestScore) {
         chosen = candidate;
         bestScore = score;
