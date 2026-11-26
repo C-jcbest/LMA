@@ -222,7 +222,7 @@ const CardShell: FC<CardShellProps> = ({ title, meta, onOpen, children, defaultE
           />
         </CollapsibleTrigger>
         {onOpen && (
-          <button type="button" onClick={onOpen} aria-label={`在侧栏查看${title}`} title={`在侧栏查看${title}`}
+          <button type="button" onClick={onOpen} aria-label={`展开${title}`} title={`展开${title}`}
             className="evidence-card-open inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition hover:bg-background hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
             <Maximize2Icon className="size-3.5" aria-hidden />
           </button>

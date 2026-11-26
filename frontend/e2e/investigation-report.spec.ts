@@ -504,8 +504,7 @@ test('测点列表按分组查看时显示分组地图，平台异常状态只�
   await expect(list.getByText('离线')).toHaveCount(1);
   await expect(page.getByRole('region', { name: '测点位置与水平位移方向' })).toHaveCount(0);
 
-  await page.getByRole('combobox', { name: '选择分组' }).click();
-  await page.getByRole('option', { name: 'K3 分组' }).click();
+  await page.getByRole('button', { name: /^K3 分组/ }).click();
   await expect(page.getByRole('region', { name: '测点位置与水平位移方向' })).toBeVisible();
   await expect(list.getByRole('button')).toHaveCount(2);
 });

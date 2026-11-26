@@ -26,8 +26,8 @@ export function MapLayerControl({ selection, onChange, className }: {
         className={cn('inline-flex items-center rounded-full p-0.5 text-xs', GLASS_SURFACE)}
       >
         {([
-          { value: 'satellite', label: '卫星' },
-          { value: 'road', label: '地图' },
+          { value: 'satellite', label: '卫星', ariaLabel: '卫星图' },
+          { value: 'road', label: '地图', ariaLabel: '普通地图' },
         ] as const).map((option) => {
           const active = selection.baseLayer === option.value;
           return (
@@ -35,6 +35,7 @@ export function MapLayerControl({ selection, onChange, className }: {
               key={option.value}
               type="button"
               role="radio"
+              aria-label={option.ariaLabel}
               aria-checked={active}
               onClick={() => selectBase(option.value)}
               className={cn(
@@ -53,7 +54,9 @@ export function MapLayerControl({ selection, onChange, className }: {
           <motion.button
             key="roads-toggle"
             type="button"
-            aria-pressed={selection.showRoads}
+            role="checkbox"
+            aria-label="道路与地名"
+            aria-checked={selection.showRoads}
             title={selection.showRoads ? '隐藏路网地名' : '叠加路网地名'}
             initial={{ opacity: 0, scale: 0.92 }}
             animate={{ opacity: 1, scale: 1, transition: SPRING_SNAPPY }}

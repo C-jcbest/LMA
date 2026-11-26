@@ -220,7 +220,7 @@ export function SiteEnvironmentCard({ environment }: { environment: SiteEnvironm
         <p className="text-xs text-muted-foreground">虚线扇形为当前测点下坡方向（约 90 m 地形平均坡面，不代替现场勘查主滑方向）。</p>
       )}
       {amap.status === 'error' && <p role="status" className="text-sm text-muted-foreground">{amap.message}</p>}
-      {invalidNames.length > 0 && <p className="text-sm text-muted-foreground">以下测点坐标缺失或无效，未绘制：{invalidNames.join('、')}。</p>}
+      {invalidNames.length > 0 && <p className="text-sm text-muted-foreground">以下测点坐标缺失或超出经纬度范围，未绘制：{invalidNames.join('、')}。</p>}
       {mapError && <p role="status" className="text-sm text-muted-foreground">{mapError}</p>}
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
         <div>

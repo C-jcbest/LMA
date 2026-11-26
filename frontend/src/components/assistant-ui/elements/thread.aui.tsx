@@ -471,7 +471,7 @@ const UserMessage: FC = () => {
         <div className="aui-user-message-content peer bg-muted text-foreground rounded-(--composer-radius) px-4 py-2 wrap-break-word empty:hidden">
           <MessagePrimitive.Parts />
         </div>
-        <div className="aui-user-action-bar-wrapper flex h-6 items-center justify-end opacity-0 transition-opacity duration-150 group-hover/user:opacity-100 group-focus-within/user:opacity-100 peer-empty:hidden [@media(hover:none)]:opacity-100">
+        <div className="aui-user-action-bar-wrapper flex h-6 items-center justify-end peer-empty:hidden">
           <UserActionBar />
         </div>
       </div>
@@ -484,7 +484,8 @@ const UserActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      className="aui-user-action-bar-root text-muted-foreground flex items-center justify-end gap-0.5"
+      autohide="always"
+      className="aui-user-action-bar-root text-muted-foreground animate-in fade-in duration-150 flex items-center justify-end gap-0.5"
     >
       <ActionBarPrimitive.Copy asChild>
         <TooltipIconButton tooltip={isCopied ? "已复制" : "复制消息"}>

@@ -602,7 +602,7 @@ export const StationPage: FC<{ stationUuid: string; active: boolean; onRunningCh
         <div className="flex h-full min-h-0 flex-col">
           {!isSideBySide && <div className="flex shrink-0 items-center gap-1 border-b px-3 py-1.5">
             <Button type="button" variant="ghost" size="icon" aria-label="返回" onClick={returnFromStation}><ArrowLeftIcon className="size-4" /></Button>
-            <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>
+            {panel === 'chat' ? <StationInvestigationTitle /> : <h1 className="me-auto min-w-0 truncate text-sm font-medium">{stationName}</h1>}
             {panel === 'chat' && <NewStationInvestigationButton onStarted={() => setRecordAnchor(undefined)} />}
             <Segmented
               label="测点页内容"
